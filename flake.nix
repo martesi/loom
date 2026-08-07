@@ -76,6 +76,13 @@
 
             export GIO_EXTRA_MODULES="${pkgs.glib-networking}/lib/gio/modules''${GIO_EXTRA_MODULES:+:$GIO_EXTRA_MODULES}"
 
+            # GTK's file dialog reads GSettings, and GIO treats "no schemas
+            # installed" as a g_error — i.e. abort(), taking the whole app down
+            # the moment the picker opens. glib's setup hook collects the schema
+            # dirs into GSETTINGS_SCHEMAS_PATH but nothing puts them on the path
+            # GIO actually searches, so do that here.
+            export XDG_DATA_DIRS="$GSETTINGS_SCHEMAS_PATH''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
+
             # Everything below only applies when there is no DRM render node —
             # a real GPU host keeps its own hardware drivers untouched.
             if [ ! -e /dev/dri/renderD128 ]; then

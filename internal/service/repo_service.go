@@ -65,12 +65,21 @@ func (s *RepoService) CreateRepo() (*RepoInfo, error) {
 }
 
 func (s *RepoService) pickAndOpen(title string) (*RepoInfo, error) {
-	path, err := application.Get().Dialog.OpenFile().
+	app := application.Get()
+
+	dialog := app.Dialog.OpenFile().
 		SetTitle(title).
 		CanChooseFiles(false).
 		CanChooseDirectories(true).
-		CanCreateDirectories(true).
-		PromptForSingleSelection()
+		CanCreateDirectories(true)
+
+	// Parent the picker to the window it was triggered from, so it is modal to
+	// that window rather than a stray top-level. Current() is nil-able.
+	if window := app.Window.Current(); window != nil {
+		dialog = dialog.AttachToWindow(window)
+	}
+
+	path, err := dialog.PromptForSingleSelection()
 	if err != nil {
 		return nil, err
 	}
