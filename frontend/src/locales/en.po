@@ -1,0 +1,42 @@
+msgid ""
+msgstr ""
+"POT-Creation-Date: 2026-08-07 19:18+0800\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Generator: @lingui/cli\n"
+"Language: en\n"
+
+#. placeholder {0}: repo.imageCount
+#: src/routes/landing.tsx:85
+msgid "{0} images"
+msgstr "{0} images"
+
+#: src/routes/landing.tsx:41
+msgid "Create New Repo"
+msgstr "Create New Repo"
+
+#: src/routes/landing.tsx:55
+msgid "Loom"
+msgstr "Loom"
+
+#: src/routes/landing.tsx:31
+msgid "Loom keeps every derived-image relationship on a canvas that stays fast — even at thousands of images."
+msgstr "Loom keeps every derived-image relationship on a canvas that stays fast — even at thousands of images."
+
+#: src/routes/landing.tsx:63
+msgid "New Repo"
+msgstr "New Repo"
+
+#: src/routes/landing.tsx:38
+#: src/routes/landing.tsx:60
+msgid "Open Folder"
+msgstr "Open Folder"
+
+#: src/routes/landing.tsx:69
+msgid "Recent"
+msgstr "Recent"
+
+#: src/routes/landing.tsx:28
+msgid "Welcome to Loom"
+msgstr "Welcome to Loom"

@@ -1,0 +1,43 @@
+{
+  "name": "loom-frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build:dev": "tsc && vite build --minify false --mode development",
+    "build": "tsc && vite build --mode production",
+    "preview": "vite preview",
+    "check": "biome check",
+    "format": "biome check --write",
+    "i18n:extract": "lingui extract"
+  },
+  "dependencies": {
+    "@base-ui-components/react": "^1.0.0-rc.0",
+    "@lingui/core": "^6.6.0",
+    "@lingui/react": "^6.6.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@tanstack/react-router": "^1.170.21",
+    "@wailsio/runtime": "latest",
+    "@xyflow/react": "^12.11.2",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.30.0",
+    "react": "19",
+    "react-dom": "19",
+    "tailwind-merge": "^3.6.0",
+    "tailwindcss": "^4.3.3"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.7",
+    "@lingui/babel-plugin-lingui-macro": "^6.6.0",
+    "@lingui/cli": "^6.6.0",
+    "@lingui/macro": "^5.9.5",
+    "@lingui/vite-plugin": "^6.6.0",
+    "@types/react": "19",
+    "@types/react-dom": "19",
+    "@vitejs/plugin-react": "^6.0.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.0.5"
+  }
+}

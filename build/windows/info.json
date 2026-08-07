@@ -1,0 +1,15 @@
+{
+	"fixed": {
+		"file_version": "0.1.0"
+	},
+	"info": {
+		"0000": {
+			"ProductVersion": "0.1.0",
+			"CompanyName": "Loom",
+			"FileDescription": "Local-first image derivation manager",
+			"LegalCopyright": "© 2026, My Company",
+			"ProductName": "Loom",
+			"Comments": "This is a comment"
+		}
+	}
+}
