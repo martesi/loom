@@ -22,6 +22,8 @@ func main() {
 			application.NewService(&service.ImageService{}),
 			application.NewService(&service.BoardService{}),
 			application.NewService(&service.GroupService{}),
+			application.NewService(&service.TagService{}),
+			application.NewService(&service.LibraryService{}),
 			application.NewService(&service.UndoService{}),
 			application.NewService(&service.SystemService{}),
 		},
