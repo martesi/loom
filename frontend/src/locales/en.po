@@ -6,37 +6,123 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: @lingui/cli\n"
 "Language: en\n"
+"Project-Id-Version: \n"
+"Report-Msgid-Bugs-To: \n"
+"PO-Revision-Date: \n"
+"Last-Translator: \n"
+"Language-Team: \n"
+"Plural-Forms: \n"
 
 #. placeholder {0}: repo.imageCount
-#: src/routes/landing.tsx:85
+#: src/routes/landing.tsx:96
 msgid "{0} images"
 msgstr "{0} images"
 
-#: src/routes/landing.tsx:41
+#: src/routes/board.tsx:292
+msgid "Archive"
+msgstr "Archive"
+
+#: src/routes/board.tsx:186
+msgid "Auto"
+msgstr "Auto"
+
+#: src/routes/board.tsx:183
+msgid "Auto layout arrives in a later stage"
+msgstr "Auto layout arrives in a later stage"
+
+#: src/routes/board.tsx:175
+msgid "Canvas"
+msgstr "Canvas"
+
+#: src/routes/board.tsx:239
+msgid "Click a node to set as source — Esc to cancel"
+msgstr "Click a node to set as source — Esc to cancel"
+
+#: src/routes/landing.tsx:47
 msgid "Create New Repo"
 msgstr "Create New Repo"
 
-#: src/routes/landing.tsx:55
+#: src/components/board/canvas-toolbar.tsx:18
+msgid "Drag from a node's edge to link images — a dedicated link tool arrives in a later stage"
+msgstr "Drag from a node's edge to link images — a dedicated link tool arrives in a later stage"
+
+#: src/routes/board.tsx:261
+msgid "File not found on disk"
+msgstr "File not found on disk"
+
+#: src/components/board/zoom-controls.tsx:44
+msgid "Fit"
+msgstr "Fit"
+
+#: src/components/board/canvas-toolbar.tsx:22
+msgid "Grouping arrives in a later stage"
+msgstr "Grouping arrives in a later stage"
+
+#: src/routes/board.tsx:280
+msgid "Link source…"
+msgstr "Link source…"
+
+#: src/routes/board.tsx:165
+msgid "Loading board…"
+msgstr "Loading board…"
+
+#: src/routes/landing.tsx:61
 msgid "Loom"
 msgstr "Loom"
 
-#: src/routes/landing.tsx:31
+#: src/routes/landing.tsx:37
 msgid "Loom keeps every derived-image relationship on a canvas that stays fast — even at thousands of images."
 msgstr "Loom keeps every derived-image relationship on a canvas that stays fast — even at thousands of images."
 
-#: src/routes/landing.tsx:63
+#: src/routes/board.tsx:180
+msgid "Manual"
+msgstr "Manual"
+
+#: src/routes/landing.tsx:69
 msgid "New Repo"
 msgstr "New Repo"
 
-#: src/routes/landing.tsx:38
-#: src/routes/landing.tsx:60
+#: src/routes/board.tsx:270
+msgid "No prompt attached"
+msgstr "No prompt attached"
+
+#: src/routes/landing.tsx:44
+#: src/routes/landing.tsx:66
 msgid "Open Folder"
 msgstr "Open Folder"
 
-#: src/routes/landing.tsx:69
+#: src/routes/board.tsx:267
+msgid "Prompt"
+msgstr "Prompt"
+
+#: src/routes/landing.tsx:75
 msgid "Recent"
 msgstr "Recent"
 
-#: src/routes/landing.tsx:28
+#: src/components/board/canvas-toolbar.tsx:25
+msgid "Rescan folder for new images"
+msgstr "Rescan folder for new images"
+
+#: src/components/board/canvas-toolbar.tsx:13
+msgid "Select (default)"
+msgstr "Select (default)"
+
+#: src/routes/board.tsx:301
+msgid "Trash"
+msgstr "Trash"
+
+#: src/routes/board.tsx:290
+msgid "Unarchive"
+msgstr "Unarchive"
+
+#: src/routes/landing.tsx:34
 msgid "Welcome to Loom"
 msgstr "Welcome to Loom"
+
+#: src/components/board/zoom-controls.tsx:32
+msgid "Zoom in"
+msgstr "Zoom in"
+
+#: src/components/board/zoom-controls.tsx:21
+msgid "Zoom out"
+msgstr "Zoom out"

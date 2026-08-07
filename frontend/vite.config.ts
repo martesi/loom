@@ -1,4 +1,5 @@
-import { lingui } from '@lingui/vite-plugin'
+import { lingui, linguiTransformerBabelPreset } from '@lingui/vite-plugin'
+import babel from '@rolldown/plugin-babel'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import wails from '@wailsio/runtime/plugins/vite'
@@ -12,9 +13,12 @@ export default defineConfig({
     strictPort: true,
   },
   plugins: [
-    react({ babel: { plugins: ['@lingui/babel-plugin-lingui-macro'] } }),
+    react(),
     tailwindcss(),
     lingui(),
+    // plugin-react v6 (oxc) has no `babel` option, so the macro transform runs
+    // as its own rolldown babel pass.
+    babel({ presets: [linguiTransformerBabelPreset()] }),
     wails('./bindings'),
   ],
 })

@@ -1,7 +1,9 @@
 .ref
 .bin
 .task
+.test
 bin
+result
 frontend/dist
 frontend/node_modules
 build/linux/appimage/build
