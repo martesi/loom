@@ -236,6 +236,85 @@ func TestImageServiceEndToEnd(t *testing.T) {
 	}
 }
 
+// TestUndoSymmetryOnPartialNoOp exercises the fix for a class of bug where
+// a mutating call that's a partial no-op (some of its targets already had
+// the effect applied) used to unconditionally log an undo step covering
+// *everything requested*, not just what actually changed. Undoing that step
+// would then strip state that predated the action entirely. Board
+// membership and tags don't need real files/thumbnails, so this seeds image
+// rows directly rather than going through LoadBoard's scan.
+func TestUndoSymmetryOnPartialNoOp(t *testing.T) {
+	repoPath := t.TempDir()
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+
+	var img1, img2 int64
+	for i, id := range []*int64{&img1, &img2} {
+		res, err := repo.DB.Exec(`INSERT INTO images (file_path) VALUES (?)`, filepath.Join(repoPath, "img"+string(rune('a'+i))+".png"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		*id, err = res.LastInsertId()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	boards := &BoardService{}
+	undo := &UndoService{}
+	board, err := boards.CreateBoard(repoPath, "Board")
+	if err != nil {
+		t.Fatalf("CreateBoard: %v", err)
+	}
+
+	// img1 is placed on the board *before* the batch action under test —
+	// this membership must survive an undo of that later batch action.
+	if err := boards.AddImagesToBoard(repoPath, board.ID, []int64{img1}); err != nil {
+		t.Fatalf("AddImagesToBoard (pre-existing membership): %v", err)
+	}
+
+	// A batch "add to board" over [img1, img2] — img1 is already a member,
+	// img2 is not. Only img2's membership is new.
+	if err := boards.AddImagesToBoard(repoPath, board.ID, []int64{img1, img2}); err != nil {
+		t.Fatalf("AddImagesToBoard (batch): %v", err)
+	}
+
+	memberIDs := func() map[int64]bool {
+		imgs, err := repo.ListImagesForBoard(board.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := make(map[int64]bool, len(imgs))
+		for _, img := range imgs {
+			m[img.ID] = true
+		}
+		return m
+	}
+
+	if m := memberIDs(); !m[img1] || !m[img2] {
+		t.Fatalf("expected both images on board after batch add, got %+v", m)
+	}
+
+	// Undo should only undo the batch add (img2's membership) — img1 was
+	// already a member before that action and must stay a member.
+	result, err := undo.Undo(repoPath)
+	if err != nil {
+		t.Fatalf("Undo: %v", err)
+	}
+	if !result.Applied {
+		t.Fatalf("Undo: expected the batch add to be undoable, got %+v", result)
+	}
+	if m := memberIDs(); !m[img1] {
+		t.Fatalf("undo incorrectly removed pre-existing board membership: %+v", m)
+	}
+	if m := memberIDs(); m[img2] {
+		t.Fatalf("undo failed to remove the membership it actually added: %+v", m)
+	}
+}
+
 func generateFixture(t *testing.T, path, color string) {
 	t.Helper()
 	cmd := exec.Command("ffmpeg", "-y", "-f", "lavfi", "-i", "color=c="+color+":s=640x480",

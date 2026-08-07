@@ -59,12 +59,17 @@ func (s *TagService) AddTag(repoPath string, imageID int64, tagName string) (*Ta
 	if err != nil {
 		return nil, err
 	}
-	if err := repo.AddImageTag(imageID, tagID); err != nil {
+	added, err := repo.AddImageTag(imageID, tagID)
+	if err != nil {
 		return nil, err
 	}
-	p := tagStepPayload{ImageID: imageID, TagID: tagID}
-	if err := recordOp(repo, stepTagAdd, step(stepTagAdd, p), step(stepTagRemove, p)); err != nil {
-		return nil, err
+	// Already-tagged is a no-op — don't log an undo step whose inverse
+	// would strip a tag this call didn't attach.
+	if added {
+		p := tagStepPayload{ImageID: imageID, TagID: tagID}
+		if err := recordOp(repo, stepTagAdd, step(stepTagAdd, p), step(stepTagRemove, p)); err != nil {
+			return nil, err
+		}
 	}
 	return &TagInfo{ID: tagID, Name: tagName}, nil
 }
@@ -76,8 +81,12 @@ func (s *TagService) RemoveTag(repoPath string, imageID, tagID int64) error {
 	}
 	defer repo.Close()
 
-	if err := repo.RemoveImageTag(imageID, tagID); err != nil {
+	removed, err := repo.RemoveImageTag(imageID, tagID)
+	if err != nil {
 		return err
+	}
+	if !removed {
+		return nil
 	}
 	p := tagStepPayload{ImageID: imageID, TagID: tagID}
 	return recordOp(repo, stepTagRemove, step(stepTagRemove, p), step(stepTagAdd, p))

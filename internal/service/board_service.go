@@ -26,13 +26,13 @@ func (s *BoardService) ListBoards(repoPath string) ([]BoardSummary, error) {
 	if err != nil {
 		return nil, err
 	}
+	counts, err := repo.BoardImageCounts()
+	if err != nil {
+		return nil, err
+	}
 	out := make([]BoardSummary, len(boards))
 	for i, b := range boards {
-		images, err := repo.ListImagesForBoard(b.ID)
-		if err != nil {
-			return nil, err
-		}
-		out[i] = BoardSummary{ID: b.ID, Name: b.Name, LayoutMode: b.LayoutMode, ImageCount: len(images)}
+		out[i] = BoardSummary{ID: b.ID, Name: b.Name, LayoutMode: b.LayoutMode, ImageCount: counts[b.ID]}
 	}
 	return out, nil
 }
@@ -96,10 +96,18 @@ func (s *BoardService) AddImagesToBoard(repoPath string, boardID int64, imageIDs
 	}
 	defer repo.Close()
 
-	if err := repo.AddImagesToBoard(boardID, imageIDs); err != nil {
+	added, err := repo.AddImagesToBoard(boardID, imageIDs)
+	if err != nil {
 		return err
 	}
-	p := boardStepPayload{BoardID: boardID, ImageIDs: imageIDs}
+	// Only log the images actually newly attached — a batch add that
+	// includes already-member images (e.g. a mixed selection) must not
+	// record an undo step that would strip pre-existing membership when
+	// undone. See store.AddImagesToBoard.
+	if len(added) == 0 {
+		return nil
+	}
+	p := boardStepPayload{BoardID: boardID, ImageIDs: added}
 	return recordOp(repo, stepBoardAdd, step(stepBoardAdd, p), step(stepBoardRemove, p))
 }
 
@@ -110,10 +118,14 @@ func (s *BoardService) RemoveImagesFromBoard(repoPath string, boardID int64, ima
 	}
 	defer repo.Close()
 
-	if err := repo.RemoveImagesFromBoard(boardID, imageIDs); err != nil {
+	removed, err := repo.RemoveImagesFromBoard(boardID, imageIDs)
+	if err != nil {
 		return err
 	}
-	p := boardStepPayload{BoardID: boardID, ImageIDs: imageIDs}
+	if len(removed) == 0 {
+		return nil
+	}
+	p := boardStepPayload{BoardID: boardID, ImageIDs: removed}
 	return recordOp(repo, stepBoardRemove, step(stepBoardRemove, p), step(stepBoardAdd, p))
 }
 

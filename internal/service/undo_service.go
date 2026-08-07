@@ -114,7 +114,8 @@ func applyStep(repo *store.Repo, s OpStep) error {
 		} else if !ok {
 			return purgedErr(p.DerivedID)
 		}
-		return repo.LinkSource(p.SourceID, p.DerivedID)
+		_, err := repo.LinkSource(p.SourceID, p.DerivedID)
+		return err
 
 	case stepUnlink:
 		var p linkStepPayload
@@ -157,14 +158,16 @@ func applyStep(repo *store.Repo, s OpStep) error {
 		} else if !ok {
 			return purgedErr(p.ImageID)
 		}
-		return repo.AddImageTag(p.ImageID, p.TagID)
+		_, err := repo.AddImageTag(p.ImageID, p.TagID)
+		return err
 
 	case stepTagRemove:
 		var p tagStepPayload
 		if err := json.Unmarshal(s.Payload, &p); err != nil {
 			return err
 		}
-		return repo.RemoveImageTag(p.ImageID, p.TagID)
+		_, err := repo.RemoveImageTag(p.ImageID, p.TagID)
+		return err
 
 	case stepBoardAdd:
 		var p boardStepPayload
@@ -178,14 +181,16 @@ func applyStep(repo *store.Repo, s OpStep) error {
 				return purgedErr(id)
 			}
 		}
-		return repo.AddImagesToBoard(p.BoardID, p.ImageIDs)
+		_, err := repo.AddImagesToBoard(p.BoardID, p.ImageIDs)
+		return err
 
 	case stepBoardRemove:
 		var p boardStepPayload
 		if err := json.Unmarshal(s.Payload, &p); err != nil {
 			return err
 		}
-		return repo.RemoveImagesFromBoard(p.BoardID, p.ImageIDs)
+		_, err := repo.RemoveImagesFromBoard(p.BoardID, p.ImageIDs)
+		return err
 
 	case stepPositions:
 		var p positionsStepPayload

@@ -196,21 +196,31 @@ func (r *Repo) SetTrashed(imageID int64, trashed bool) error {
 }
 
 // LinkSource creates a source -> derived edge, rejecting self-links and any
-// edge that would introduce a cycle.
-func (r *Repo) LinkSource(sourceID, derivedID int64) error {
+// edge that would introduce a cycle. inserted reports whether a new row was
+// actually created — false when the edge already existed (INSERT OR IGNORE
+// no-op) — so callers building an undo step don't log a spurious "link"
+// operation whose inverse would delete an edge this call didn't create.
+func (r *Repo) LinkSource(sourceID, derivedID int64) (inserted bool, err error) {
 	if sourceID == derivedID {
-		return fmt.Errorf("cannot link an image to itself")
+		return false, fmt.Errorf("cannot link an image to itself")
 	}
 	cyclic, err := r.reachable(derivedID, sourceID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if cyclic {
-		return fmt.Errorf("linking would create a cycle")
+		return false, fmt.Errorf("linking would create a cycle")
 	}
-	_, err = r.DB.Exec(`INSERT OR IGNORE INTO relationships (source_image_id, derived_image_id) VALUES (?, ?)`,
+	res, err := r.DB.Exec(`INSERT OR IGNORE INTO relationships (source_image_id, derived_image_id) VALUES (?, ?)`,
 		sourceID, derivedID)
-	return err
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // reachable reports whether to is reachable from from by following

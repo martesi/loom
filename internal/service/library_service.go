@@ -58,13 +58,14 @@ func (s *LibraryService) ListImages(repoPath string, query LibraryQuery) ([]Libr
 	if err != nil {
 		return nil, err
 	}
+	boardsByImage, err := repo.BoardsForImages(ids)
+	if err != nil {
+		return nil, err
+	}
 
 	rows := make([]LibraryRow, len(images))
 	for i, img := range images {
-		boards, err := repo.BoardsForImage(img.ID)
-		if err != nil {
-			return nil, err
-		}
+		boards := boardsByImage[img.ID]
 		boardNames := make([]string, len(boards))
 		for j, b := range boards {
 			boardNames[j] = b.Name

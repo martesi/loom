@@ -44,14 +44,35 @@ func (r *Repo) FindOrCreateTag(name string) (int64, error) {
 	return res.LastInsertId()
 }
 
-func (r *Repo) AddImageTag(imageID, tagID int64) error {
-	_, err := r.DB.Exec(`INSERT OR IGNORE INTO image_tags (image_id, tag_id) VALUES (?, ?)`, imageID, tagID)
-	return err
+// AddImageTag attaches tagID to imageID. added reports whether the join row
+// was actually created — false when the image already carried this tag
+// (INSERT OR IGNORE no-op) — so callers building an undo step don't log a
+// spurious "tag add" whose inverse would strip a tag this call didn't add.
+func (r *Repo) AddImageTag(imageID, tagID int64) (added bool, err error) {
+	res, err := r.DB.Exec(`INSERT OR IGNORE INTO image_tags (image_id, tag_id) VALUES (?, ?)`, imageID, tagID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
-func (r *Repo) RemoveImageTag(imageID, tagID int64) error {
-	_, err := r.DB.Exec(`DELETE FROM image_tags WHERE image_id = ? AND tag_id = ?`, imageID, tagID)
-	return err
+// RemoveImageTag detaches tagID from imageID. removed reports whether a row
+// actually existed to delete, for the same undo-symmetry reason as
+// AddImageTag.
+func (r *Repo) RemoveImageTag(imageID, tagID int64) (removed bool, err error) {
+	res, err := r.DB.Exec(`DELETE FROM image_tags WHERE image_id = ? AND tag_id = ?`, imageID, tagID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 func (r *Repo) TagsForImage(imageID int64) ([]Tag, error) {

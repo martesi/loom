@@ -280,8 +280,14 @@ func (s *ImageService) LinkSource(repoPath string, sourceID, derivedID int64) er
 	}
 	defer repo.Close()
 
-	if err := repo.LinkSource(sourceID, derivedID); err != nil {
+	inserted, err := repo.LinkSource(sourceID, derivedID)
+	if err != nil {
 		return err
+	}
+	// An already-existing edge is a no-op — don't log an undo step whose
+	// inverse would delete an edge this call didn't create.
+	if !inserted {
+		return nil
 	}
 	p := linkStepPayload{SourceID: sourceID, DerivedID: derivedID}
 	return recordOp(repo, stepLink, step(stepLink, p), step(stepUnlink, p))
@@ -306,8 +312,12 @@ func (s *ImageService) LinkSourceToGroup(repoPath string, sourceID, groupID int6
 		if derivedID == sourceID {
 			continue
 		}
-		if err := repo.LinkSource(sourceID, derivedID); err != nil {
+		inserted, err := repo.LinkSource(sourceID, derivedID)
+		if err != nil {
 			return err
+		}
+		if !inserted {
+			continue
 		}
 		p := linkStepPayload{SourceID: sourceID, DerivedID: derivedID}
 		if err := recordOp(repo, stepLink, step(stepLink, p), step(stepUnlink, p)); err != nil {
