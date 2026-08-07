@@ -48,6 +48,7 @@ import type { MenuAction } from '../components/menu'
 import { PositionedMenu } from '../components/menu'
 import { TopNav } from '../components/top-nav'
 import { Button } from '../components/ui/button'
+import { useToast } from '../components/ui/toast'
 import { computeSubgraphLayout, placeCluster } from '../lib/layout'
 import { useUndoShortcuts } from '../lib/use-undo'
 
@@ -102,6 +103,23 @@ export function Board({ repo, boardId }: BoardProps) {
 
   const rfInstance = useRef<ReactFlowInstance<FlowNode, Edge> | null>(null)
   const navigate = useNavigate()
+  const toast = useToast()
+
+  // Surfaces a rejected service call (e.g. cycle rejection on link
+  // creation — see the data model's acyclicity rule) as a toast rather
+  // than letting it fail as a silent, unhandled promise rejection. Linking
+  // is the highest-value place to wire this: it's the one core mutation
+  // most likely to be user-triggered-but-rejected in normal use.
+  const reportError = useCallback(
+    (title: string) => (err: unknown) => {
+      toast.add({
+        title,
+        description: err instanceof Error ? err.message : String(err),
+        type: 'danger',
+      })
+    },
+    [toast]
+  )
 
   const refreshUndoState = useCallback(() => {
     UndoService.State(repo.path).then((s) => s && setUndoState(s))
@@ -319,18 +337,16 @@ export function Board({ repo, boardId }: BoardProps) {
       const sourceId = Number(connection.source)
       if (connection.target.startsWith('group:')) {
         const groupId = Number(connection.target.slice('group:'.length))
-        ImageService.LinkSourceToGroup(repo.path, sourceId, groupId).then(
-          loadBoard
-        )
+        ImageService.LinkSourceToGroup(repo.path, sourceId, groupId)
+          .then(loadBoard)
+          .catch(reportError(t`Couldn't link`))
         return
       }
-      ImageService.LinkSource(
-        repo.path,
-        sourceId,
-        Number(connection.target)
-      ).then(loadBoard)
+      ImageService.LinkSource(repo.path, sourceId, Number(connection.target))
+        .then(loadBoard)
+        .catch(reportError(t`Couldn't link`))
     },
-    [repo.path, loadBoard]
+    [repo.path, loadBoard, reportError]
   )
 
   const nodeIdToImageId = useCallback(
@@ -371,20 +387,24 @@ export function Board({ repo, boardId }: BoardProps) {
                 repo.path,
                 sourceImageId,
                 Number(linkingTargetId.slice('group:'.length))
-              ).then(loadBoard)
+              )
+                .then(loadBoard)
+                .catch(reportError(t`Couldn't link`))
             } else {
               ImageService.LinkSource(
                 repo.path,
                 sourceImageId,
                 Number(linkingTargetId)
-              ).then(loadBoard)
+              )
+                .then(loadBoard)
+                .catch(reportError(t`Couldn't link`))
             }
           }
         }
         setLinkingTargetId(null)
       }
     },
-    [linkingTargetId, repo.path, loadBoard, nodeIdToImageId]
+    [linkingTargetId, repo.path, loadBoard, nodeIdToImageId, reportError]
   )
 
   const handleSelectionChange: OnSelectionChangeFunc = useCallback(

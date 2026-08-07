@@ -15,11 +15,13 @@ export function useUndoShortcuts(repoPath: string, onChange: () => void) {
       const mod = event.ctrlKey || event.metaKey
       if (!mod) return
 
-      const isRedo =
-        (event.key === 'z' && event.shiftKey) ||
-        event.key === 'Z' ||
-        event.key === 'y'
-      const isUndo = event.key === 'z' && !event.shiftKey
+      // Compare case-insensitively and key undo/redo off event.shiftKey
+      // rather than the key's letter-case — Caps Lock flips 'z' to 'Z'
+      // without shiftKey being true, which would otherwise misroute a
+      // plain Ctrl/Cmd+Z (undo) into redo.
+      const key = event.key.toLowerCase()
+      const isRedo = (key === 'z' && event.shiftKey) || key === 'y'
+      const isUndo = key === 'z' && !event.shiftKey
 
       if (!isUndo && !isRedo) return
       event.preventDefault()
