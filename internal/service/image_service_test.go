@@ -6,12 +6,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"loom/internal/store"
 )
 
-// TestImageServiceEndToEnd drives ImageService exactly the way the frontend
-// does: LoadBoard (scan + register + thumbnail), drag-reposition, link, and
-// re-load to confirm persistence — the same call sequence the Canvas view
-// makes, without needing a webview.
+// TestImageServiceEndToEnd drives the services exactly the way the
+// frontend does: scan/register (via LoadBoard's discovery side effect),
+// explicit board placement, drag-reposition, link, undo/redo, and re-load
+// to confirm persistence — the same call sequence the Canvas + list views
+// make, without needing a webview.
 func TestImageServiceEndToEnd(t *testing.T) {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		t.Skip("ffmpeg not on PATH")
@@ -27,15 +30,62 @@ func TestImageServiceEndToEnd(t *testing.T) {
 	generateFixture(t, derivedPath, "green")
 
 	s := &ImageService{}
+	boards := &BoardService{}
+	undo := &UndoService{}
 
-	board, err := s.LoadBoard(repoPath)
+	board, err := boards.CreateBoard(repoPath, "Test board")
+	if err != nil {
+		t.Fatalf("CreateBoard: %v", err)
+	}
+
+	// Discovery (triggered by LoadBoard's scan) must not auto-place new
+	// images on any board — see "New image -> board assignment (resolved)"
+	// in the spec. A freshly scanned repo's board should come back empty
+	// even though two images now exist in the repo.
+	emptyBoard, err := s.LoadBoard(repoPath, board.ID)
+	if err != nil {
+		t.Fatalf("LoadBoard (pre-assignment): %v", err)
+	}
+	if len(emptyBoard.Images) != 0 {
+		t.Fatalf("newly scanned images must not auto-join a board, got %d on it", len(emptyBoard.Images))
+	}
+
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	all, err := repo.ListImages()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("expected 2 registered-but-unsorted images, got %d", len(all))
+	}
+	var seedID, derivedID int64
+	for _, img := range all {
+		if filepath.Base(img.FilePath) == "a_seed.png" {
+			seedID = img.ID
+		} else {
+			derivedID = img.ID
+		}
+	}
+	repo.Close()
+	if seedID == 0 || derivedID == 0 {
+		t.Fatalf("could not resolve both fixture image IDs: %+v", all)
+	}
+
+	if err := boards.AddImagesToBoard(repoPath, board.ID, []int64{seedID, derivedID}); err != nil {
+		t.Fatalf("AddImagesToBoard: %v", err)
+	}
+
+	loaded, err := s.LoadBoard(repoPath, board.ID)
 	if err != nil {
 		t.Fatalf("LoadBoard: %v", err)
 	}
-	if len(board.Images) != 2 {
-		t.Fatalf("expected 2 registered images (root + subfolder), got %d: %+v", len(board.Images), board.Images)
+	if len(loaded.Images) != 2 {
+		t.Fatalf("expected 2 images after explicit placement, got %d: %+v", len(loaded.Images), loaded.Images)
 	}
-	for _, img := range board.Images {
+	for _, img := range loaded.Images {
 		if img.Missing {
 			t.Errorf("image %q unexpectedly flagged missing", img.FileName)
 		}
@@ -47,28 +97,24 @@ func TestImageServiceEndToEnd(t *testing.T) {
 		}
 	}
 
-	var seedID, derivedID int64
-	for _, img := range board.Images {
-		if img.FileName == "a_seed.png" {
-			seedID = img.ID
-		} else {
-			derivedID = img.ID
-		}
-	}
-	if seedID == 0 || derivedID == 0 {
-		t.Fatalf("could not resolve both fixture image IDs: %+v", board.Images)
-	}
-
 	// Thumbnails must actually be servable over HTTP the way <img src> will
 	// request them.
-	req := httptest.NewRequest("GET", board.Images[0].ThumbURL, nil)
+	req := httptest.NewRequest("GET", loaded.Images[0].ThumbURL, nil)
 	rec := httptest.NewRecorder()
 	ServeThumb(rec, req)
 	if rec.Code != 200 {
-		t.Fatalf("ServeThumb %s: status %d", board.Images[0].ThumbURL, rec.Code)
+		t.Fatalf("ServeThumb %s: status %d", loaded.Images[0].ThumbURL, rec.Code)
 	}
 	if rec.Body.Len() == 0 {
-		t.Fatalf("ServeThumb %s: empty body", board.Images[0].ThumbURL)
+		t.Fatalf("ServeThumb %s: empty body", loaded.Images[0].ThumbURL)
+	}
+
+	// Full-res serving must work the same way, for the lightbox.
+	fullReq := httptest.NewRequest("GET", loaded.Images[0].FullURL, nil)
+	fullRec := httptest.NewRecorder()
+	ServeFull(fullRec, fullReq)
+	if fullRec.Code != 200 {
+		t.Fatalf("ServeFull %s: status %d", loaded.Images[0].FullURL, fullRec.Code)
 	}
 
 	// Drag-reposition must persist across reloads.
@@ -85,7 +131,7 @@ func TestImageServiceEndToEnd(t *testing.T) {
 		t.Fatalf("LinkSource: expected cycle rejection, got nil error")
 	}
 
-	board2, err := s.LoadBoard(repoPath)
+	board2, err := s.LoadBoard(repoPath, board.ID)
 	if err != nil {
 		t.Fatalf("LoadBoard (reload): %v", err)
 	}
@@ -110,6 +156,36 @@ func TestImageServiceEndToEnd(t *testing.T) {
 			rel.SourceImageID, rel.DerivedImageID, seedID, derivedID)
 	}
 
+	// Undo must revert the link; redo must reapply it.
+	undoResult, err := undo.Undo(repoPath)
+	if err != nil {
+		t.Fatalf("Undo: %v", err)
+	}
+	if !undoResult.Applied {
+		t.Fatalf("Undo: expected the link to be undoable, got %+v", undoResult)
+	}
+	afterUndo, err := s.LoadBoard(repoPath, board.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(afterUndo.Relationships) != 0 {
+		t.Fatalf("expected undo to remove the relationship, got %d", len(afterUndo.Relationships))
+	}
+	redoResult, err := undo.Redo(repoPath)
+	if err != nil {
+		t.Fatalf("Redo: %v", err)
+	}
+	if !redoResult.Applied {
+		t.Fatalf("Redo: expected the link to be redoable, got %+v", redoResult)
+	}
+	afterRedo, err := s.LoadBoard(repoPath, board.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(afterRedo.Relationships) != 1 {
+		t.Fatalf("expected redo to restore the relationship, got %d", len(afterRedo.Relationships))
+	}
+
 	// Archive + trash must round-trip and hide from the board.
 	if err := s.SetArchived(repoPath, derivedID, true); err != nil {
 		t.Fatalf("SetArchived: %v", err)
@@ -117,7 +193,7 @@ func TestImageServiceEndToEnd(t *testing.T) {
 	if err := s.TrashImage(repoPath, derivedID); err != nil {
 		t.Fatalf("TrashImage: %v", err)
 	}
-	board3, err := s.LoadBoard(repoPath)
+	board3, err := s.LoadBoard(repoPath, board.ID)
 	if err != nil {
 		t.Fatalf("LoadBoard (post-trash): %v", err)
 	}
@@ -128,17 +204,35 @@ func TestImageServiceEndToEnd(t *testing.T) {
 		t.Errorf("expected trashing an endpoint to hide its relationship, got %d", len(board3.Relationships))
 	}
 
+	// Restoring must undo the trash flag.
+	if err := s.RestoreImage(repoPath, derivedID); err != nil {
+		t.Fatalf("RestoreImage: %v", err)
+	}
+	board3b, err := s.LoadBoard(repoPath, board.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(board3b.Images) != 2 {
+		t.Fatalf("expected 2 images after restore, got %d", len(board3b.Images))
+	}
+
 	// Simulate the file going missing on disk.
 	if err := os.Rename(seedPath, seedPath+".bak"); err != nil {
 		t.Fatalf("rename: %v", err)
 	}
 
-	board4, err := s.LoadBoard(repoPath)
+	board4, err := s.LoadBoard(repoPath, board.ID)
 	if err != nil {
 		t.Fatalf("LoadBoard (post-missing): %v", err)
 	}
-	if len(board4.Images) != 1 || !board4.Images[0].Missing {
-		t.Fatalf("expected the remaining image to be flagged missing, got %+v", board4.Images)
+	var seedRow *ImageInfo
+	for i := range board4.Images {
+		if board4.Images[i].ID == seedID {
+			seedRow = &board4.Images[i]
+		}
+	}
+	if seedRow == nil || !seedRow.Missing {
+		t.Fatalf("expected the moved image to be flagged missing, got %+v", board4.Images)
 	}
 }
 

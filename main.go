@@ -20,16 +20,23 @@ func main() {
 		Services: []application.Service{
 			application.NewService(&service.RepoService{}),
 			application.NewService(&service.ImageService{}),
+			application.NewService(&service.BoardService{}),
+			application.NewService(&service.GroupService{}),
+			application.NewService(&service.UndoService{}),
+			application.NewService(&service.SystemService{}),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
 			Middleware: func(next http.Handler) http.Handler {
 				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if service.IsThumbRequest(r.URL.Path) {
+					switch {
+					case service.IsThumbRequest(r.URL.Path):
 						service.ServeThumb(w, r)
-						return
+					case service.IsFullRequest(r.URL.Path):
+						service.ServeFull(w, r)
+					default:
+						next.ServeHTTP(w, r)
 					}
-					next.ServeHTTP(w, r)
 				})
 			},
 		},

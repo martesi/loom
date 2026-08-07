@@ -16,13 +16,17 @@ type ImageInfo struct {
 	FileName   string  `json:"fileName"`
 	FilePath   string  `json:"filePath"`
 	ThumbURL   string  `json:"thumbUrl"`
+	FullURL    string  `json:"fullUrl"`
 	Width      int     `json:"width"`
 	Height     int     `json:"height"`
 	Archived   bool    `json:"archived"`
+	Trashed    bool    `json:"trashed"`
 	Missing    bool    `json:"missing"`
 	CanvasX    float64 `json:"canvasX"`
 	CanvasY    float64 `json:"canvasY"`
 	PromptText string  `json:"promptText"`
+	GroupID    int64   `json:"groupId"`
+	CreatedAt  string  `json:"createdAt"`
 }
 
 type RelationshipInfo struct {
@@ -31,17 +35,29 @@ type RelationshipInfo struct {
 	DerivedImageID int64 `json:"derivedImageId"`
 }
 
+type GroupInfo struct {
+	ID           int64   `json:"id"`
+	Name         string  `json:"name"`
+	Kind         string  `json:"kind"`
+	CoverImageID int64   `json:"coverImageId"`
+	MemberIDs    []int64 `json:"memberIds"`
+}
+
 type BoardData struct {
+	BoardID       int64              `json:"boardId"`
+	BoardName     string             `json:"boardName"`
+	LayoutMode    string             `json:"layoutMode"`
 	Images        []ImageInfo        `json:"images"`
 	Relationships []RelationshipInfo `json:"relationships"`
+	Groups        []GroupInfo        `json:"groups"`
 }
 
 // LoadBoard scans repoPath for newly discovered media, generates thumbnails
 // for anything missing one, flags files no longer found on disk, and
-// returns everything needed to render the (currently single, implicit)
-// canvas. Stage 1 has no board concept yet — every non-trashed image in the
-// repo lives on this one canvas.
-func (s *ImageService) LoadBoard(repoPath string) (*BoardData, error) {
+// returns everything needed to render one board's canvas — only images
+// explicitly placed on boardID (see "New image -> board assignment": scan
+// discovery never auto-places an image on any board).
+func (s *ImageService) LoadBoard(repoPath string, boardID int64) (*BoardData, error) {
 	repo, err := store.Bootstrap(repoPath)
 	if err != nil {
 		return nil, err
@@ -52,7 +68,16 @@ func (s *ImageService) LoadBoard(repoPath string) (*BoardData, error) {
 		return nil, err
 	}
 
-	images, err := repo.ListImages()
+	board, err := repo.GetBoard(boardID)
+	if err != nil {
+		return nil, fmt.Errorf("load board %d: %w", boardID, err)
+	}
+
+	// Discovery/thumbnailing/fallback-position assignment runs over every
+	// non-trashed image in the repo, not just this board's members — a
+	// brand-new file needs a thumbnail regardless of which board (if any)
+	// someone eventually places it on.
+	allImages, err := repo.ListImages()
 	if err != nil {
 		return nil, err
 	}
@@ -62,21 +87,19 @@ func (s *ImageService) LoadBoard(repoPath string) (*BoardData, error) {
 		return nil, err
 	}
 
-	missing := make([]bool, len(images))
+	missingByID := make(map[int64]bool, len(allImages))
 	placed := 0
-
-	for i := range images {
-		img := &images[i]
+	for i := range allImages {
+		img := &allImages[i]
 
 		if _, statErr := os.Stat(img.FilePath); statErr != nil {
-			missing[i] = true
+			missingByID[img.ID] = true
 		} else if img.ThumbPath == "" {
 			dest := filepath.Join(thumbsDir, fmt.Sprintf("%d.avif", img.ID))
 			if w, h, genErr := thumbnail.Generate(img.FilePath, dest, store.IsVideoFile(img.FilePath)); genErr == nil {
 				if err := repo.SetThumbInfo(img.ID, dest, w, h); err != nil {
 					return nil, err
 				}
-				img.ThumbPath, img.Width, img.Height = dest, w, h
 			}
 			// A single file that fails to thumbnail (corrupt/unsupported)
 			// shouldn't take down the whole board load — it just renders
@@ -84,36 +107,84 @@ func (s *ImageService) LoadBoard(repoPath string) (*BoardData, error) {
 		}
 
 		if !img.HasCanvasPos {
-			img.CanvasX, img.CanvasY = gridPosition(placed)
+			x, y := gridPosition(placed)
 			placed++
-			if err := repo.SetCanvasPosition(img.ID, img.CanvasX, img.CanvasY); err != nil {
+			if err := repo.SetCanvasPosition(img.ID, x, y); err != nil {
 				return nil, err
 			}
 		}
 	}
 
-	rels, err := repo.ListRelationships()
+	// Thumbnail generation writes thumb_path/width/height via SetThumbInfo
+	// as a side effect above; re-read from the DB rather than threading
+	// those values back through allImages, so board-scoped and repo-wide
+	// callers share one code path.
+	boardImages, err := repo.ListImagesForBoard(boardID)
 	if err != nil {
 		return nil, err
 	}
 
-	data := &BoardData{
-		Images:        make([]ImageInfo, len(images)),
-		Relationships: make([]RelationshipInfo, len(rels)),
+	boardImageIDs := make([]int64, len(boardImages))
+	boardIDSet := make(map[int64]bool, len(boardImages))
+	for i, img := range boardImages {
+		boardImageIDs[i] = img.ID
+		boardIDSet[img.ID] = true
 	}
-	for i, img := range images {
+
+	rels, err := repo.ListRelationshipsAmong(boardImageIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	allGroups, err := repo.ListGroups()
+	if err != nil {
+		return nil, err
+	}
+	var groups []GroupInfo
+	for _, g := range allGroups {
+		memberIDs, err := repo.GroupMemberIDs(g.ID)
+		if err != nil {
+			return nil, err
+		}
+		var onBoard []int64
+		for _, id := range memberIDs {
+			if boardIDSet[id] {
+				onBoard = append(onBoard, id)
+			}
+		}
+		if len(onBoard) == 0 {
+			continue
+		}
+		groups = append(groups, GroupInfo{
+			ID: g.ID, Name: g.Name, Kind: g.Kind, CoverImageID: g.CoverImageID, MemberIDs: onBoard,
+		})
+	}
+
+	data := &BoardData{
+		BoardID:       board.ID,
+		BoardName:     board.Name,
+		LayoutMode:    board.LayoutMode,
+		Images:        make([]ImageInfo, len(boardImages)),
+		Relationships: make([]RelationshipInfo, len(rels)),
+		Groups:        groups,
+	}
+	for i, img := range boardImages {
 		data.Images[i] = ImageInfo{
 			ID:         img.ID,
 			FileName:   filepath.Base(img.FilePath),
 			FilePath:   img.FilePath,
 			ThumbURL:   thumbURL(repoPath, img.ID),
+			FullURL:    fullURL(repoPath, img.ID),
 			Width:      img.Width,
 			Height:     img.Height,
 			Archived:   img.Archived,
-			Missing:    missing[i],
+			Trashed:    img.Trashed,
+			Missing:    missingByID[img.ID],
 			CanvasX:    img.CanvasX,
 			CanvasY:    img.CanvasY,
 			PromptText: img.PromptText,
+			GroupID:    img.GroupID,
+			CreatedAt:  img.CreatedAt,
 		}
 	}
 	for i, rel := range rels {
@@ -136,13 +207,70 @@ func gridPosition(index int) (float64, float64) {
 	return float64(col) * cellW, float64(row) * cellH
 }
 
+// SetPosition persists one node's dragged position (manual-layout mode) and
+// logs it as a single-entry undo step, capturing the prior position as the
+// inverse.
 func (s *ImageService) SetPosition(repoPath string, imageID int64, x, y float64) error {
 	repo, err := store.Bootstrap(repoPath)
 	if err != nil {
 		return err
 	}
 	defer repo.Close()
-	return repo.SetCanvasPosition(imageID, x, y)
+
+	prevX, prevY, hadPos, err := repo.GetCanvasPosition(imageID)
+	if err != nil {
+		return err
+	}
+	if !hadPos {
+		prevX, prevY = x, y
+	}
+
+	if err := repo.SetCanvasPosition(imageID, x, y); err != nil {
+		return err
+	}
+
+	fwd := step(stepPositions, positionsStepPayload{Entries: []positionEntry{{ImageID: imageID, X: x, Y: y}}})
+	inv := step(stepPositions, positionsStepPayload{Entries: []positionEntry{{ImageID: imageID, X: prevX, Y: prevY}}})
+	return recordOp(repo, stepPositions, fwd, inv)
+}
+
+type PositionUpdate struct {
+	ImageID int64   `json:"imageId"`
+	X       float64 `json:"x"`
+	Y       float64 `json:"y"`
+}
+
+// SetPositions applies a batch of position updates as a single undo step —
+// used by "auto-arrange selection" and by applying a computed auto-layout,
+// so undoing a one-shot arrange action reverts the whole cluster in one
+// step rather than one step per node.
+func (s *ImageService) SetPositions(repoPath string, updates []PositionUpdate) error {
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		return err
+	}
+	defer repo.Close()
+
+	before := make([]positionEntry, 0, len(updates))
+	after := make([]positionEntry, 0, len(updates))
+	for _, u := range updates {
+		prevX, prevY, hadPos, err := repo.GetCanvasPosition(u.ImageID)
+		if err != nil {
+			return err
+		}
+		if !hadPos {
+			prevX, prevY = u.X, u.Y
+		}
+		before = append(before, positionEntry{ImageID: u.ImageID, X: prevX, Y: prevY})
+		after = append(after, positionEntry{ImageID: u.ImageID, X: u.X, Y: u.Y})
+		if err := repo.SetCanvasPosition(u.ImageID, u.X, u.Y); err != nil {
+			return err
+		}
+	}
+
+	fwd := step(stepPositions, positionsStepPayload{Entries: after})
+	inv := step(stepPositions, positionsStepPayload{Entries: before})
+	return recordOp(repo, stepPositions, fwd, inv)
 }
 
 func (s *ImageService) LinkSource(repoPath string, sourceID, derivedID int64) error {
@@ -151,7 +279,42 @@ func (s *ImageService) LinkSource(repoPath string, sourceID, derivedID int64) er
 		return err
 	}
 	defer repo.Close()
-	return repo.LinkSource(sourceID, derivedID)
+
+	if err := repo.LinkSource(sourceID, derivedID); err != nil {
+		return err
+	}
+	p := linkStepPayload{SourceID: sourceID, DerivedID: derivedID}
+	return recordOp(repo, stepLink, step(stepLink, p), step(stepUnlink, p))
+}
+
+// LinkSourceToGroup fans out a source->member edge to every member of a
+// collapsed group being dropped onto — a group can never itself be the
+// derived (or source) end of an edge, only its members can. See the
+// edge<->group interaction rules in the spec.
+func (s *ImageService) LinkSourceToGroup(repoPath string, sourceID, groupID int64) error {
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		return err
+	}
+	defer repo.Close()
+
+	memberIDs, err := repo.GroupMemberIDs(groupID)
+	if err != nil {
+		return err
+	}
+	for _, derivedID := range memberIDs {
+		if derivedID == sourceID {
+			continue
+		}
+		if err := repo.LinkSource(sourceID, derivedID); err != nil {
+			return err
+		}
+		p := linkStepPayload{SourceID: sourceID, DerivedID: derivedID}
+		if err := recordOp(repo, stepLink, step(stepLink, p), step(stepUnlink, p)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *ImageService) UnlinkSource(repoPath string, relationshipID int64) error {
@@ -160,7 +323,16 @@ func (s *ImageService) UnlinkSource(repoPath string, relationshipID int64) error
 		return err
 	}
 	defer repo.Close()
-	return repo.UnlinkSource(relationshipID)
+
+	rel, err := repo.GetRelationship(relationshipID)
+	if err != nil {
+		return err
+	}
+	if err := repo.UnlinkSource(relationshipID); err != nil {
+		return err
+	}
+	p := linkStepPayload{SourceID: rel.SourceImageID, DerivedID: rel.DerivedImageID}
+	return recordOp(repo, stepUnlink, step(stepUnlink, p), step(stepLink, p))
 }
 
 func (s *ImageService) SetArchived(repoPath string, imageID int64, archived bool) error {
@@ -169,7 +341,13 @@ func (s *ImageService) SetArchived(repoPath string, imageID int64, archived bool
 		return err
 	}
 	defer repo.Close()
-	return repo.SetArchived(imageID, archived)
+
+	if err := repo.SetArchived(imageID, archived); err != nil {
+		return err
+	}
+	fwd := archivedStepPayload{ImageID: imageID, Archived: archived}
+	inv := archivedStepPayload{ImageID: imageID, Archived: !archived}
+	return recordOp(repo, stepSetArchived, step(stepSetArchived, fwd), step(stepSetArchived, inv))
 }
 
 // TrashImage flags an image as trashed, hiding it from the board. See
@@ -180,5 +358,27 @@ func (s *ImageService) TrashImage(repoPath string, imageID int64) error {
 		return err
 	}
 	defer repo.Close()
-	return repo.SetTrashed(imageID, true)
+
+	if err := repo.SetTrashed(imageID, true); err != nil {
+		return err
+	}
+	fwd := trashedStepPayload{ImageID: imageID, Trashed: true}
+	inv := trashedStepPayload{ImageID: imageID, Trashed: false}
+	return recordOp(repo, stepSetTrashed, step(stepSetTrashed, fwd), step(stepSetTrashed, inv))
+}
+
+// RestoreImage un-flags a previously trashed image.
+func (s *ImageService) RestoreImage(repoPath string, imageID int64) error {
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		return err
+	}
+	defer repo.Close()
+
+	if err := repo.SetTrashed(imageID, false); err != nil {
+		return err
+	}
+	fwd := trashedStepPayload{ImageID: imageID, Trashed: false}
+	inv := trashedStepPayload{ImageID: imageID, Trashed: true}
+	return recordOp(repo, stepSetTrashed, step(stepSetTrashed, fwd), step(stepSetTrashed, inv))
 }

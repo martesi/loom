@@ -16,10 +16,13 @@ type Image struct {
 	Height       int
 	FileSize     int64
 	Archived     bool
+	Trashed      bool
 	CanvasX      float64
 	CanvasY      float64
 	HasCanvasPos bool
 	PromptText   string
+	GroupID      int64
+	CreatedAt    string
 }
 
 type Relationship struct {
@@ -92,15 +95,31 @@ func (r *Repo) ScanAndRegisterImages() (int, error) {
 	return inserted, nil
 }
 
+const imageSelectCols = `
+	images.id, file_path, COALESCE(thumb_path, ''), COALESCE(width, 0),
+	COALESCE(height, 0), COALESCE(file_size, 0), archived, trashed, canvas_x, canvas_y,
+	COALESCE((SELECT p.text FROM prompts p WHERE p.id = images.prompt_id), ''),
+	COALESCE(group_id, 0), created_at`
+
+func scanImage(scanner interface {
+	Scan(dest ...any) error
+}) (Image, error) {
+	var img Image
+	var cx, cy sql.NullFloat64
+	err := scanner.Scan(&img.ID, &img.FilePath, &img.ThumbPath, &img.Width, &img.Height,
+		&img.FileSize, &img.Archived, &img.Trashed, &cx, &cy, &img.PromptText, &img.GroupID, &img.CreatedAt)
+	if err != nil {
+		return img, err
+	}
+	if cx.Valid && cy.Valid {
+		img.CanvasX, img.CanvasY, img.HasCanvasPos = cx.Float64, cy.Float64, true
+	}
+	return img, nil
+}
+
 // ListImages returns all non-trashed images.
 func (r *Repo) ListImages() ([]Image, error) {
-	rows, err := r.DB.Query(`
-		SELECT images.id, file_path, COALESCE(thumb_path, ''), COALESCE(width, 0),
-		       COALESCE(height, 0), COALESCE(file_size, 0), archived, canvas_x, canvas_y,
-		       COALESCE((SELECT p.text FROM prompts p WHERE p.id = images.prompt_id), '')
-		FROM images
-		WHERE trashed = 0
-		ORDER BY id`)
+	rows, err := r.DB.Query(`SELECT ` + imageSelectCols + ` FROM images WHERE trashed = 0 ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -108,14 +127,9 @@ func (r *Repo) ListImages() ([]Image, error) {
 
 	var images []Image
 	for rows.Next() {
-		var img Image
-		var cx, cy sql.NullFloat64
-		if err := rows.Scan(&img.ID, &img.FilePath, &img.ThumbPath, &img.Width, &img.Height,
-			&img.FileSize, &img.Archived, &cx, &cy, &img.PromptText); err != nil {
+		img, err := scanImage(rows)
+		if err != nil {
 			return nil, err
-		}
-		if cx.Valid && cy.Valid {
-			img.CanvasX, img.CanvasY, img.HasCanvasPos = cx.Float64, cy.Float64, true
 		}
 		images = append(images, img)
 	}
@@ -243,4 +257,98 @@ func (r *Repo) reachable(from, to int64) (bool, error) {
 func (r *Repo) UnlinkSource(relationshipID int64) error {
 	_, err := r.DB.Exec(`DELETE FROM relationships WHERE id = ?`, relationshipID)
 	return err
+}
+
+// GetRelationship looks up a relationship's endpoints — undo needs these to
+// build an inverse ("re-link the same pair") from just the relationship id
+// the frontend has on hand.
+func (r *Repo) GetRelationship(relationshipID int64) (*Relationship, error) {
+	var rel Relationship
+	err := r.DB.QueryRow(`SELECT id, source_image_id, derived_image_id FROM relationships WHERE id = ?`, relationshipID).
+		Scan(&rel.ID, &rel.SourceImageID, &rel.DerivedImageID)
+	if err != nil {
+		return nil, err
+	}
+	return &rel, nil
+}
+
+// UnlinkSourcePair removes the edge between a specific source/derived pair
+// (rather than by relationship id) — used by undo, which only knows the
+// endpoints it originally linked, not the surrogate id that was assigned.
+func (r *Repo) UnlinkSourcePair(sourceID, derivedID int64) error {
+	_, err := r.DB.Exec(`DELETE FROM relationships WHERE source_image_id = ? AND derived_image_id = ?`,
+		sourceID, derivedID)
+	return err
+}
+
+// ImageExists reports whether an image row is still present — undo uses
+// this to detect a target that was hard-purged since the operation being
+// undone/redone was originally recorded.
+func (r *Repo) ImageExists(imageID int64) (bool, error) {
+	var one int
+	err := r.DB.QueryRow(`SELECT 1 FROM images WHERE id = ?`, imageID).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// GetCanvasPosition returns an image's currently stored position, so a
+// position-change can be logged with enough information to invert.
+func (r *Repo) GetCanvasPosition(imageID int64) (x, y float64, ok bool, err error) {
+	var cx, cy sql.NullFloat64
+	err = r.DB.QueryRow(`SELECT canvas_x, canvas_y FROM images WHERE id = ?`, imageID).Scan(&cx, &cy)
+	if err == sql.ErrNoRows {
+		return 0, 0, false, nil
+	}
+	if err != nil {
+		return 0, 0, false, err
+	}
+	if cx.Valid && cy.Valid {
+		return cx.Float64, cy.Float64, true, nil
+	}
+	return 0, 0, false, nil
+}
+
+// GetFilePath returns an image's current file_path, for handlers that need
+// to serve the real file (e.g. the lightbox's full-resolution view) rather
+// than its thumbnail.
+func (r *Repo) GetFilePath(imageID int64) (string, error) {
+	var path string
+	err := r.DB.QueryRow(`SELECT file_path FROM images WHERE id = ?`, imageID).Scan(&path)
+	return path, err
+}
+
+// ListImagesByIDs returns the given (non-trashed) images, in no particular
+// order — used to build a subgraph for auto-arrange-selection.
+func (r *Repo) ListImagesByIDs(ids []int64) ([]Image, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := `SELECT ` + imageSelectCols + ` FROM images WHERE trashed = 0 AND id IN (` +
+		strings.Join(placeholders, ",") + `)`
+	rows, err := r.DB.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var images []Image
+	for rows.Next() {
+		img, err := scanImage(rows)
+		if err != nil {
+			return nil, err
+		}
+		images = append(images, img)
+	}
+	return images, rows.Err()
 }

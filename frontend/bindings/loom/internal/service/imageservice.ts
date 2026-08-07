@@ -14,22 +14,54 @@ export function LinkSource(repoPath: string, sourceID: number, derivedID: number
 }
 
 /**
+ * LinkSourceToGroup fans out a source->member edge to every member of a
+ * collapsed group being dropped onto — a group can never itself be the
+ * derived (or source) end of an edge, only its members can. See the
+ * edge<->group interaction rules in the spec.
+ */
+export function LinkSourceToGroup(repoPath: string, sourceID: number, groupID: number): $CancellablePromise<void> {
+    return $Call.ByID(3292999851, repoPath, sourceID, groupID);
+}
+
+/**
  * LoadBoard scans repoPath for newly discovered media, generates thumbnails
  * for anything missing one, flags files no longer found on disk, and
- * returns everything needed to render the (currently single, implicit)
- * canvas. Stage 1 has no board concept yet — every non-trashed image in the
- * repo lives on this one canvas.
+ * returns everything needed to render one board's canvas — only images
+ * explicitly placed on boardID (see "New image -> board assignment": scan
+ * discovery never auto-places an image on any board).
  */
-export function LoadBoard(repoPath: string): $CancellablePromise<$models.BoardData | null> {
-    return $Call.ByID(3370418912, repoPath);
+export function LoadBoard(repoPath: string, boardID: number): $CancellablePromise<$models.BoardData | null> {
+    return $Call.ByID(3370418912, repoPath, boardID);
+}
+
+/**
+ * RestoreImage un-flags a previously trashed image.
+ */
+export function RestoreImage(repoPath: string, imageID: number): $CancellablePromise<void> {
+    return $Call.ByID(2477729643, repoPath, imageID);
 }
 
 export function SetArchived(repoPath: string, imageID: number, archived: boolean): $CancellablePromise<void> {
     return $Call.ByID(1258308906, repoPath, imageID, archived);
 }
 
+/**
+ * SetPosition persists one node's dragged position (manual-layout mode) and
+ * logs it as a single-entry undo step, capturing the prior position as the
+ * inverse.
+ */
 export function SetPosition(repoPath: string, imageID: number, x: number, y: number): $CancellablePromise<void> {
     return $Call.ByID(336031175, repoPath, imageID, x, y);
+}
+
+/**
+ * SetPositions applies a batch of position updates as a single undo step —
+ * used by "auto-arrange selection" and by applying a computed auto-layout,
+ * so undoing a one-shot arrange action reverts the whole cluster in one
+ * step rather than one step per node.
+ */
+export function SetPositions(repoPath: string, updates: $models.PositionUpdate[] | null): $CancellablePromise<void> {
+    return $Call.ByID(1001501276, repoPath, updates);
 }
 
 /**
