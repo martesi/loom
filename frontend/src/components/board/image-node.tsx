@@ -16,17 +16,26 @@ export function ImageNode({ data, selected }: NodeProps) {
     data as unknown as ImageNodeData
   const [imgFailed, setImgFailed] = useState(false)
 
+  const handleClassName = cn(
+    '!bg-accent opacity-0 transition-opacity group-hover:opacity-100',
+    selected && 'opacity-100'
+  )
+
   return (
     <div
       className={cn(
-        'flex h-[110px] w-[150px] flex-col overflow-hidden rounded-lg border bg-card shadow-sm',
+        'group flex h-[110px] w-[150px] flex-col overflow-hidden rounded-lg border bg-card shadow-sm',
         missing
           ? 'border-[1.5px] border-dashed border-danger opacity-90'
           : 'border-black/8',
         selected && 'ring-2 ring-accent'
       )}
     >
-      <Handle type="target" position={Position.Left} className="!bg-accent" />
+      <Handle
+        type="target"
+        position={Position.Left}
+        className={handleClassName}
+      />
       <div className={cn('relative flex-1', missing && 'grayscale')}>
         {thumbUrl && !imgFailed ? (
           <img
@@ -60,7 +69,11 @@ export function ImageNode({ data, selected }: NodeProps) {
             : promptText || (archived ? 'Archived' : '—')}
         </div>
       </div>
-      <Handle type="source" position={Position.Right} className="!bg-accent" />
+      <Handle
+        type="source"
+        position={Position.Right}
+        className={handleClassName}
+      />
     </div>
   )
 }

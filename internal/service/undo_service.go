@@ -27,6 +27,18 @@ const (
 	stepBoardAdd    = "board_add"
 	stepBoardRemove = "board_remove"
 	stepPositions   = "set_positions"
+	stepMoveFile    = "move_file"
+
+	// stepGroupExistence covers both CreateGroup and Ungroup — mirroring the
+	// boolean-toggle idiom of stepSetArchived/stepSetTrashed, but for a
+	// whole row's existence rather than one column. CreateGroup's forward
+	// (and Ungroup's inverse) is Exists:true with the group's full fields;
+	// Ungroup's forward (and CreateGroup's inverse) is Exists:false with
+	// just the id.
+	stepGroupExistence    = "group_existence"
+	stepGroupMemberAdd    = "group_member_add"
+	stepGroupMemberRemove = "group_member_remove"
+	stepGroupSetCover     = "group_set_cover"
 )
 
 type linkStepPayload struct {
@@ -62,6 +74,42 @@ type positionEntry struct {
 
 type positionsStepPayload struct {
 	Entries []positionEntry `json:"entries"`
+}
+
+// moveFileStepPayload is shared by MoveFile's forward and inverse steps —
+// like archivedStepPayload/trashedStepPayload, both directions carry the
+// exact same shape, with applyStep always moving the image to NewPath. The
+// inverse step is built by swapping OldPath/NewPath relative to the forward
+// step, so "undo" is just "move it to what used to be OldPath" using the
+// identical apply logic as the forward direction (see ImageService.MoveFile
+// and applyStep's stepMoveFile case).
+type moveFileStepPayload struct {
+	ImageID int64  `json:"imageId"`
+	OldPath string `json:"oldPath"`
+	NewPath string `json:"newPath"`
+}
+
+// groupExistenceStepPayload is shared by CreateGroup and Ungroup — see
+// stepGroupExistence's doc comment for how forward/inverse divide up
+// Exists:true vs Exists:false. When Exists is false, only GroupID is
+// meaningful; the rest are the zero value.
+type groupExistenceStepPayload struct {
+	GroupID      int64   `json:"groupId"`
+	Exists       bool    `json:"exists"`
+	Name         string  `json:"name"`
+	Kind         string  `json:"kind"`
+	CoverImageID int64   `json:"coverImageId"`
+	MemberIDs    []int64 `json:"memberIds"`
+}
+
+type groupMemberStepPayload struct {
+	GroupID int64 `json:"groupId"`
+	ImageID int64 `json:"imageId"`
+}
+
+type groupCoverStepPayload struct {
+	GroupID      int64 `json:"groupId"`
+	CoverImageID int64 `json:"coverImageId"`
 }
 
 func step(kind string, payload any) OpStep {
@@ -210,6 +258,84 @@ func applyStep(repo *store.Repo, s OpStep) error {
 			}
 		}
 		return nil
+
+	case stepMoveFile:
+		var p moveFileStepPayload
+		if err := json.Unmarshal(s.Payload, &p); err != nil {
+			return err
+		}
+		if ok, err := repo.ImageExists(p.ImageID); err != nil {
+			return err
+		} else if !ok {
+			return purgedErr(p.ImageID)
+		}
+		_, _, err := repo.MoveFile(p.ImageID, p.NewPath)
+		return err
+
+	case stepGroupExistence:
+		var p groupExistenceStepPayload
+		if err := json.Unmarshal(s.Payload, &p); err != nil {
+			return err
+		}
+		if !p.Exists {
+			// Group should not exist after this step — dissolving a group
+			// that's already gone (or was never created, e.g. a double
+			// apply) is a harmless no-op, same as stepUnlink on a missing
+			// edge.
+			return repo.Ungroup(p.GroupID)
+		}
+		for _, id := range p.MemberIDs {
+			if ok, err := repo.ImageExists(id); err != nil {
+				return err
+			} else if !ok {
+				return purgedErr(id)
+			}
+		}
+		return repo.RecreateGroup(p.GroupID, p.Name, p.Kind, p.CoverImageID, p.MemberIDs)
+
+	case stepGroupMemberAdd:
+		var p groupMemberStepPayload
+		if err := json.Unmarshal(s.Payload, &p); err != nil {
+			return err
+		}
+		if ok, err := repo.ImageExists(p.ImageID); err != nil {
+			return err
+		} else if !ok {
+			return purgedErr(p.ImageID)
+		}
+		return repo.AddGroupMember(p.GroupID, p.ImageID)
+
+	case stepGroupMemberRemove:
+		var p groupMemberStepPayload
+		if err := json.Unmarshal(s.Payload, &p); err != nil {
+			return err
+		}
+		if ok, err := repo.ImageExists(p.ImageID); err != nil {
+			return err
+		} else if !ok {
+			return purgedErr(p.ImageID)
+		}
+		// This step kind is only ever recorded (see GroupService.RemoveMember)
+		// for a removal that GroupService already confirmed, at record time,
+		// would not dissolve the group — a dissolving removal is logged as a
+		// stepGroupExistence step instead, since group existence is what's
+		// actually changing there. Whether *this* replay dissolves the group
+		// is irrelevant to applyStep either way: it just re-runs the same
+		// store call the forward action originally made.
+		_, err := repo.RemoveGroupMember(p.GroupID, p.ImageID)
+		return err
+
+	case stepGroupSetCover:
+		var p groupCoverStepPayload
+		if err := json.Unmarshal(s.Payload, &p); err != nil {
+			return err
+		}
+		if ok, err := repo.ImageExists(p.CoverImageID); err != nil {
+			return err
+		} else if !ok {
+			return purgedErr(p.CoverImageID)
+		}
+		return repo.SetGroupCover(p.GroupID, p.CoverImageID)
 
 	default:
 		return fmt.Errorf("unknown operation step kind %q", s.Kind)

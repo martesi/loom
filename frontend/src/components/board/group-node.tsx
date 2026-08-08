@@ -43,10 +43,19 @@ export function GroupNode({ data, selected }: NodeProps) {
     onUngroup,
   } = data as unknown as GroupNodeData
 
+  const handleClassName = cn(
+    '!bg-accent opacity-0 transition-opacity group-hover:opacity-100',
+    selected && 'opacity-100'
+  )
+
   if (expanded) {
     return (
-      <div className="relative w-[280px] rounded-lg border border-black/8 bg-card p-4 shadow-lg">
-        <Handle type="target" position={Position.Left} className="!bg-accent" />
+      <div className="group relative w-[280px] rounded-lg border border-black/8 bg-card p-4 shadow-lg">
+        <Handle
+          type="target"
+          position={Position.Left}
+          className={handleClassName}
+        />
         <div className="mb-3 flex items-center justify-between">
           <div className="truncate text-[13px] font-semibold text-ink">
             {name || <Trans>Untitled set</Trans>}
@@ -124,12 +133,16 @@ export function GroupNode({ data, selected }: NodeProps) {
       type="button"
       onClick={onToggleExpand}
       className={cn(
-        'relative flex h-[110px] w-[150px] flex-col overflow-hidden rounded-lg border bg-card text-left shadow-sm',
+        'group relative flex h-[110px] w-[150px] flex-col overflow-hidden rounded-lg border bg-card text-left shadow-sm',
         'border-black/8',
         selected && 'ring-2 ring-accent'
       )}
     >
-      <Handle type="target" position={Position.Left} className="!bg-accent" />
+      <Handle
+        type="target"
+        position={Position.Left}
+        className={handleClassName}
+      />
       {/* Stacked-card illusion: two offset ghost layers behind the cover. */}
       <div className="pointer-events-none absolute -right-1.5 -top-1.5 h-full w-full rounded-lg border border-black/8 bg-card" />
       <div className="pointer-events-none absolute -right-0.5 -top-0.5 h-full w-full rounded-lg border border-black/8 bg-card" />

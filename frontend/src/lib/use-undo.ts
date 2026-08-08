@@ -48,3 +48,23 @@ export function useUndoShortcuts(repoPath: string, onChange: () => void) {
     return () => window.removeEventListener('keydown', handler)
   }, [repoPath, onChange, toast])
 }
+
+// Wires Ctrl/Cmd+G to group-as-set (Stage 11), mirroring
+// useUndoShortcuts's shape: a single window keydown listener, guarded by
+// whether the action is currently valid (a >=2-image selection) rather than
+// always firing and letting the handler no-op, so the browser's own
+// Ctrl/Cmd+G (find-next) isn't preempted when grouping isn't possible.
+export function useGroupShortcut(canGroup: boolean, onGroup: () => void) {
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const mod = event.ctrlKey || event.metaKey
+      if (!mod || event.key.toLowerCase() !== 'g') return
+      if (!canGroup) return
+      event.preventDefault()
+      onGroup()
+    }
+
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [canGroup, onGroup])
+}

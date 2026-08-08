@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { BoardSummary } from '../../../bindings/loom/internal/service'
 import { BoardService } from '../../../bindings/loom/internal/service'
 import { cn } from '../../lib/utils'
+import { Button } from '../ui/button'
 
 interface BoardSwitcherProps {
   repoPath: string
@@ -67,14 +68,14 @@ export function BoardSwitcher({
 
   return (
     <div ref={ref} className="relative">
-      <button
-        type="button"
+      <Button
+        variant="ghost"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[13px] font-semibold text-ink hover:bg-black/[0.04]"
+        className="h-auto justify-start gap-1.5 rounded-md px-2 py-1 text-[13px] font-semibold text-ink"
       >
         {currentBoardName}
         <ChevronDown className="h-3.5 w-3.5 text-ink-subtle" />
-      </button>
+      </Button>
 
       {open && (
         <div className="absolute left-0 top-full z-20 mt-1 w-56 rounded-lg border border-black/8 bg-white p-1.5 shadow-lg">
@@ -155,14 +156,14 @@ export function BoardSwitcher({
                 className="w-full rounded-md border border-accent px-2 py-1 text-[12.5px] outline-none"
               />
             ) : (
-              <button
-                type="button"
+              <Button
+                variant="ghost"
                 onClick={() => setCreating(true)}
-                className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-[12.5px] font-semibold text-accent hover:bg-black/[0.04]"
+                className="h-auto w-full justify-start gap-1.5 rounded-md px-2 py-1.5 text-[12.5px] font-semibold text-accent"
               >
                 <Plus className="h-3.5 w-3.5" />
                 <Trans>New board</Trans>
-              </button>
+              </Button>
             )}
           </div>
         </div>

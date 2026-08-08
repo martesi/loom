@@ -315,6 +315,125 @@ func TestUndoSymmetryOnPartialNoOp(t *testing.T) {
 	}
 }
 
+// TestImageServiceMoveFileUndoRedo exercises ImageService.MoveFile end to
+// end: the file actually relocates, file_path follows it, and the move is
+// undoable/redoable via the same op-log machinery every other mutation
+// uses. Image rows are seeded directly (no ffmpeg needed) the same way
+// TestUndoSymmetryOnPartialNoOp does — MoveFile only cares about the file
+// on disk, not thumbnails/dimensions.
+func TestImageServiceMoveFileUndoRedo(t *testing.T) {
+	repoPath := t.TempDir()
+	origPath := filepath.Join(repoPath, "a.png")
+	if err := os.WriteFile(origPath, []byte("fixture"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := repo.DB.Exec(`INSERT INTO images (file_path) VALUES (?)`, origPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imageID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo.Close()
+
+	s := &ImageService{}
+	undo := &UndoService{}
+
+	wantNew := filepath.Join(repoPath, "sub", "b.png")
+	oldPath, newPath, err := s.MoveFile(repoPath, imageID, filepath.Join("sub", "b.png"))
+	if err != nil {
+		t.Fatalf("MoveFile: %v", err)
+	}
+	if oldPath != origPath || newPath != wantNew {
+		t.Fatalf("MoveFile returned old=%q new=%q, want old=%q new=%q", oldPath, newPath, origPath, wantNew)
+	}
+	if _, err := os.Stat(wantNew); err != nil {
+		t.Fatalf("expected file at new location: %v", err)
+	}
+	if _, err := os.Stat(origPath); !os.IsNotExist(err) {
+		t.Fatalf("expected original location gone, stat err = %v", err)
+	}
+
+	repo2, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotPath, err := repo2.GetFilePath(imageID)
+	repo2.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != wantNew {
+		t.Fatalf("file_path not updated: got %q, want %q", gotPath, wantNew)
+	}
+
+	// Undo must move the file back and restore file_path.
+	undoResult, err := undo.Undo(repoPath)
+	if err != nil {
+		t.Fatalf("Undo: %v", err)
+	}
+	if !undoResult.Applied {
+		t.Fatalf("Undo: expected the move to be undoable, got %+v", undoResult)
+	}
+	if _, err := os.Stat(origPath); err != nil {
+		t.Fatalf("expected file back at original location after undo: %v", err)
+	}
+	if _, err := os.Stat(wantNew); !os.IsNotExist(err) {
+		t.Fatalf("expected new location gone after undo, stat err = %v", err)
+	}
+
+	// Redo must move it forward again.
+	redoResult, err := undo.Redo(repoPath)
+	if err != nil {
+		t.Fatalf("Redo: %v", err)
+	}
+	if !redoResult.Applied {
+		t.Fatalf("Redo: expected the move to be redoable, got %+v", redoResult)
+	}
+	if _, err := os.Stat(wantNew); err != nil {
+		t.Fatalf("expected file at new location again after redo: %v", err)
+	}
+}
+
+// TestImageServiceListDirectory exercises the service-layer wrapper:
+// results come back shaped as ImageInfo (thumb/full URLs included) and the
+// underlying store row is registered, matching what Explorer will consume.
+func TestImageServiceListDirectory(t *testing.T) {
+	repoPath := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoPath, "pic.png"), []byte("fixture"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &ImageService{}
+	listing, err := s.ListDirectory(repoPath, "")
+	if err != nil {
+		t.Fatalf("ListDirectory: %v", err)
+	}
+	if len(listing.Files) != 1 {
+		t.Fatalf("expected 1 file, got %+v", listing.Files)
+	}
+	f := listing.Files[0]
+	if f.ID == 0 {
+		t.Fatalf("expected a registered image id, got %+v", f)
+	}
+	if f.ThumbURL == "" || f.FullURL == "" {
+		t.Fatalf("expected thumb/full URLs to be populated, got %+v", f)
+	}
+	if f.FileName != "pic.png" {
+		t.Fatalf("FileName = %q, want pic.png", f.FileName)
+	}
+
+	if _, err := s.ListDirectory(repoPath, "../../etc"); err == nil {
+		t.Fatalf("expected ListDirectory to reject an escaping relPath")
+	}
+}
+
 func generateFixture(t *testing.T, path, color string) {
 	t.Helper()
 	cmd := exec.Command("ffmpeg", "-y", "-f", "lavfi", "-i", "color=c="+color+":s=640x480",

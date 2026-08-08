@@ -8,11 +8,10 @@
  * relationship edges always attach to a specific member image, a group can
  * never itself be an edge's source, and removing a member keeps its edges.
  * 
- * Group mutations are not currently wired into the Stage 5 undo log — the
- * spec's minimum undo list (link/unlink, archive/trash, tags, board
- * membership, position) doesn't name groups, and creating/dissolving a set
- * is comparatively rare and easy to redo by hand; this is a deliberate
- * scope cut, not an oversight.
+ * All five mutating methods below record undo/redo steps via recordOp, on
+ * the same OpStep/applyStep machinery as every other mutating service —
+ * see undo_service.go's stepGroupExistence/stepGroupMemberAdd/
+ * stepGroupMemberRemove/stepGroupSetCover.
  * @module
  */
 
@@ -35,16 +34,38 @@ export function CreateGroup(repoPath: string, name: string, kind: string, imageI
 /**
  * RemoveMember detaches imageID but keeps its relationship edges intact —
  * it becomes a standalone image again. If fewer than 2 members would
- * remain, the group is dissolved (see store.RemoveGroupMember).
+ * remain, the group is dissolved entirely (see store.RemoveGroupMember): in
+ * that case the group row itself — not just imageID's membership — is what
+ * changed, so the full pre-removal state (name, kind, cover, every member
+ * including imageID) is captured *before* calling the store, the same way
+ * Ungroup does, and the undo step recorded is stepGroupExistence rather
+ * than stepGroupMemberRemove/Add. Recording the membership-only pair for a
+ * dissolving removal would make its inverse (stepGroupMemberAdd) try to
+ * re-attach imageID to a group row that no longer exists — a foreign-key
+ * failure that, worse, would leave the undo cursor stuck replaying that
+ * same failing step forever (Undo only advances the cursor on success), so
+ * every earlier undoable op in the session would become unreachable too.
  */
 export function RemoveMember(repoPath: string, groupID: number, imageID: number): $CancellablePromise<void> {
     return $Call.ByID(1527990452, repoPath, groupID, imageID);
 }
 
+/**
+ * SetCover reads the group's current cover before changing it, so that
+ * value can be captured as the undo inverse — there's no boolean to negate
+ * the way stepSetArchived's toggle can, so (like SetPosition's
+ * GetCanvasPosition read) the prior value has to come from the DB.
+ */
 export function SetCover(repoPath: string, groupID: number, imageID: number): $CancellablePromise<void> {
     return $Call.ByID(266314469, repoPath, groupID, imageID);
 }
 
+/**
+ * Ungroup dissolves groupID. The group's fields and current members are
+ * read *before* deletion so they can be captured as the undo inverse — the
+ * row (and the images.group_id links to it) won't exist to read back
+ * afterward.
+ */
 export function Ungroup(repoPath: string, groupID: number): $CancellablePromise<void> {
     return $Call.ByID(2201106324, repoPath, groupID);
 }

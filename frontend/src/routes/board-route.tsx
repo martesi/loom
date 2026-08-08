@@ -59,19 +59,12 @@ function BoardIndexPage() {
       <div className="max-w-sm text-[12.5px] text-ink-subtle">
         <Trans>
           Boards are scoped canvases you place images onto explicitly. Create
-          one to start arranging images, or use the library view to browse
-          everything in the repo.
+          one to start arranging images.
         </Trans>
       </div>
       <div className="flex gap-2">
         <Button onClick={handleCreate} disabled={creating}>
           <Trans>Create board</Trans>
-        </Button>
-        <Button
-          variant="secondary"
-          onClick={() => navigate({ to: '/library' })}
-        >
-          <Trans>Go to library</Trans>
         </Button>
       </div>
     </div>

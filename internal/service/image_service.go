@@ -197,6 +197,52 @@ func (s *ImageService) LoadBoard(repoPath string, boardID int64) (*BoardData, er
 	return data, nil
 }
 
+// GetImage resolves a single image's info by ID, independent of any board —
+// used by the Detail panel (Stage 9) to show an image that isn't a member of
+// the currently-loaded board (e.g. reached via a Library/Explorer ctrl/cmd+
+// click on an image that lives elsewhere). Wraps the previously-unused
+// store.ListImagesByIDs with a single-element slice rather than adding a new
+// store-level single-row query.
+func (s *ImageService) GetImage(repoPath string, imageID int64) (*ImageInfo, error) {
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		return nil, err
+	}
+	defer repo.Close()
+
+	images, err := repo.ListImagesByIDs([]int64{imageID})
+	if err != nil {
+		return nil, err
+	}
+	if len(images) == 0 {
+		return nil, fmt.Errorf("image %d not found", imageID)
+	}
+	img := images[0]
+
+	missing := false
+	if _, statErr := os.Stat(img.FilePath); statErr != nil {
+		missing = true
+	}
+
+	return &ImageInfo{
+		ID:         img.ID,
+		FileName:   filepath.Base(img.FilePath),
+		FilePath:   img.FilePath,
+		ThumbURL:   thumbURL(repoPath, img.ID),
+		FullURL:    fullURL(repoPath, img.ID),
+		Width:      img.Width,
+		Height:     img.Height,
+		Archived:   img.Archived,
+		Trashed:    img.Trashed,
+		Missing:    missing,
+		CanvasX:    img.CanvasX,
+		CanvasY:    img.CanvasY,
+		PromptText: img.PromptText,
+		GroupID:    img.GroupID,
+		CreatedAt:  img.CreatedAt,
+	}, nil
+}
+
 // gridPosition assigns a stable, deterministic fallback layout to
 // newly-discovered images that have never been manually positioned.
 func gridPosition(index int) (float64, float64) {
@@ -360,8 +406,8 @@ func (s *ImageService) SetArchived(repoPath string, imageID int64, archived bool
 	return recordOp(repo, stepSetArchived, step(stepSetArchived, fwd), step(stepSetArchived, inv))
 }
 
-// TrashImage flags an image as trashed, hiding it from the board. See
-// store.SetTrashed for why this doesn't yet move the file to .loom/trash/.
+// TrashImage flags an image as trashed, hiding it from the board, and
+// physically moves the file into .loom/trash/ (see store.SetTrashed).
 func (s *ImageService) TrashImage(repoPath string, imageID int64) error {
 	repo, err := store.Bootstrap(repoPath)
 	if err != nil {
@@ -391,4 +437,93 @@ func (s *ImageService) RestoreImage(repoPath string, imageID int64) error {
 	fwd := trashedStepPayload{ImageID: imageID, Trashed: false}
 	inv := trashedStepPayload{ImageID: imageID, Trashed: true}
 	return recordOp(repo, stepSetTrashed, step(stepSetTrashed, fwd), step(stepSetTrashed, inv))
+}
+
+// DirListing is Explorer's non-recursive view of one directory under the
+// repo root: subdirectory names plus every media file in it, reusing
+// ImageInfo's shape (same fields LoadBoard and Library return) so Explorer
+// can share their row rendering rather than needing its own shape.
+type DirListing struct {
+	RelPath string      `json:"relPath"`
+	Dirs    []string    `json:"dirs"`
+	Files   []ImageInfo `json:"files"`
+}
+
+// ListDirectory lists relPath (relative to repoPath), non-recursively.
+// Every media file it finds is registered in the images table first (the
+// same INSERT OR IGNORE idiom ScanAndRegisterImages uses for repo-wide
+// discovery), so every returned file always has a real row — drag-and-drop
+// from Explorer never needs to special-case "not yet imported".
+func (s *ImageService) ListDirectory(repoPath, relPath string) (*DirListing, error) {
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		return nil, err
+	}
+	defer repo.Close()
+
+	listing, err := repo.ListDirectory(relPath)
+	if err != nil {
+		return nil, err
+	}
+
+	out := &DirListing{
+		RelPath: listing.RelPath,
+		Dirs:    listing.Dirs,
+		Files:   make([]ImageInfo, len(listing.Files)),
+	}
+	for i, img := range listing.Files {
+		_, statErr := os.Stat(img.FilePath)
+		out.Files[i] = ImageInfo{
+			ID:         img.ID,
+			FileName:   filepath.Base(img.FilePath),
+			FilePath:   img.FilePath,
+			ThumbURL:   thumbURL(repoPath, img.ID),
+			FullURL:    fullURL(repoPath, img.ID),
+			Width:      img.Width,
+			Height:     img.Height,
+			Archived:   img.Archived,
+			Trashed:    img.Trashed,
+			Missing:    statErr != nil,
+			CanvasX:    img.CanvasX,
+			CanvasY:    img.CanvasY,
+			PromptText: img.PromptText,
+			GroupID:    img.GroupID,
+			CreatedAt:  img.CreatedAt,
+		}
+	}
+	return out, nil
+}
+
+// MoveFile renames/moves an image's file to newRelPath (relative to
+// repoPath) and logs the move as an undoable step. Both undo and redo of
+// this step reuse store.MoveFile — see moveFileStepPayload in
+// undo_service.go for how the forward/inverse pair is built by swapping
+// which relative path is the target.
+func (s *ImageService) MoveFile(repoPath string, imageID int64, newRelPath string) (oldPath, newPath string, err error) {
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		return "", "", err
+	}
+	defer repo.Close()
+
+	oldPath, newPath, err = repo.MoveFile(imageID, newRelPath)
+	if err != nil {
+		return "", "", err
+	}
+
+	oldRel, relErr := filepath.Rel(repoPath, oldPath)
+	if relErr != nil {
+		oldRel = oldPath
+	}
+	newRel, relErr := filepath.Rel(repoPath, newPath)
+	if relErr != nil {
+		newRel = newPath
+	}
+
+	fwd := moveFileStepPayload{ImageID: imageID, OldPath: oldRel, NewPath: newRel}
+	inv := moveFileStepPayload{ImageID: imageID, OldPath: newRel, NewPath: oldRel}
+	if err := recordOp(repo, stepMoveFile, step(stepMoveFile, fwd), step(stepMoveFile, inv)); err != nil {
+		return "", "", err
+	}
+	return oldPath, newPath, nil
 }

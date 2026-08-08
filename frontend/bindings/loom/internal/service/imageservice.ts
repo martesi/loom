@@ -9,6 +9,18 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 // @ts-ignore: Unused imports
 import * as $models from "./models.js";
 
+/**
+ * GetImage resolves a single image's info by ID, independent of any board —
+ * used by the Detail panel (Stage 9) to show an image that isn't a member of
+ * the currently-loaded board (e.g. reached via a Library/Explorer ctrl/cmd+
+ * click on an image that lives elsewhere). Wraps the previously-unused
+ * store.ListImagesByIDs with a single-element slice rather than adding a new
+ * store-level single-row query.
+ */
+export function GetImage(repoPath: string, imageID: number): $CancellablePromise<$models.ImageInfo | null> {
+    return $Call.ByID(1073816885, repoPath, imageID);
+}
+
 export function LinkSource(repoPath: string, sourceID: number, derivedID: number): $CancellablePromise<void> {
     return $Call.ByID(3100663929, repoPath, sourceID, derivedID);
 }
@@ -24,6 +36,17 @@ export function LinkSourceToGroup(repoPath: string, sourceID: number, groupID: n
 }
 
 /**
+ * ListDirectory lists relPath (relative to repoPath), non-recursively.
+ * Every media file it finds is registered in the images table first (the
+ * same INSERT OR IGNORE idiom ScanAndRegisterImages uses for repo-wide
+ * discovery), so every returned file always has a real row — drag-and-drop
+ * from Explorer never needs to special-case "not yet imported".
+ */
+export function ListDirectory(repoPath: string, relPath: string): $CancellablePromise<$models.DirListing | null> {
+    return $Call.ByID(1985619183, repoPath, relPath);
+}
+
+/**
  * LoadBoard scans repoPath for newly discovered media, generates thumbnails
  * for anything missing one, flags files no longer found on disk, and
  * returns everything needed to render one board's canvas — only images
@@ -32,6 +55,17 @@ export function LinkSourceToGroup(repoPath: string, sourceID: number, groupID: n
  */
 export function LoadBoard(repoPath: string, boardID: number): $CancellablePromise<$models.BoardData | null> {
     return $Call.ByID(3370418912, repoPath, boardID);
+}
+
+/**
+ * MoveFile renames/moves an image's file to newRelPath (relative to
+ * repoPath) and logs the move as an undoable step. Both undo and redo of
+ * this step reuse store.MoveFile — see moveFileStepPayload in
+ * undo_service.go for how the forward/inverse pair is built by swapping
+ * which relative path is the target.
+ */
+export function MoveFile(repoPath: string, imageID: number, newRelPath: string): $CancellablePromise<[string, string]> {
+    return $Call.ByID(2053037199, repoPath, imageID, newRelPath);
 }
 
 /**
@@ -65,8 +99,8 @@ export function SetPositions(repoPath: string, updates: $models.PositionUpdate[]
 }
 
 /**
- * TrashImage flags an image as trashed, hiding it from the board. See
- * store.SetTrashed for why this doesn't yet move the file to .loom/trash/.
+ * TrashImage flags an image as trashed, hiding it from the board, and
+ * physically moves the file into .loom/trash/ (see store.SetTrashed).
  */
 export function TrashImage(repoPath: string, imageID: number): $CancellablePromise<void> {
     return $Call.ByID(2678142843, repoPath, imageID);

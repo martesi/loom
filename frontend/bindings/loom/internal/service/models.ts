@@ -17,6 +17,18 @@ export interface BoardSummary {
     "imageCount": number;
 }
 
+/**
+ * DirListing is Explorer's non-recursive view of one directory under the
+ * repo root: subdirectory names plus every media file in it, reusing
+ * ImageInfo's shape (same fields LoadBoard and Library return) so Explorer
+ * can share their row rendering rather than needing its own shape.
+ */
+export interface DirListing {
+    "relPath": string;
+    "dirs": string[] | null;
+    "files": ImageInfo[] | null;
+}
+
 export interface GroupInfo {
     "id": number;
     "name": string;
@@ -90,6 +102,24 @@ export interface RepoInfo {
     "path": string;
     "imageCount": number;
     "openedAt": string;
+
+    /**
+     * IsOpen reports whether this repo currently has a live window showing
+     * it (used by ListRecentRepos so the recent-repos list can flag entries
+     * that are already open elsewhere).
+     */
+    "isOpen": boolean;
+
+    /**
+     * OpenedElsewhere is set on the return value of open/SwitchTo when the
+     * requested repo turned out to already be open in another window. That
+     * window was focused instead of reusing/creating one for the caller, so
+     * the calling window's frontend must NOT navigate itself into this
+     * repo. Only ID/Path are populated alongside it — the calling window
+     * isn't navigating, so there's no need to bootstrap the repo again just
+     * to fill in Name/ImageCount/OpenedAt.
+     */
+    "openedElsewhere": boolean;
 }
 
 export interface TagInfo {

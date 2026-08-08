@@ -42,3 +42,17 @@ export function OpenFolder(): $CancellablePromise<$models.RepoInfo | null> {
 export function OpenRecent(path: string): $CancellablePromise<$models.RepoInfo | null> {
     return $Call.ByID(2243340126, path);
 }
+
+/**
+ * SwitchTo opens path in a brand-new top-level window rather than the
+ * calling window. It exists for the repo-switcher (Stage 10): when a
+ * window already showing repo A wants to switch to repo B, it must never
+ * navigate itself away from A, so — unlike open/OpenRecent — this method
+ * never reuses "the current window" as the destination.
+ * 
+ * If path is already open somewhere, that window is focused instead of
+ * creating a duplicate.
+ */
+export function SwitchTo(path: string): $CancellablePromise<$models.RepoInfo | null> {
+    return $Call.ByID(3428967684, path);
+}

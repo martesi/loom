@@ -19,7 +19,7 @@ import {
   useNodesState,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { useNavigate } from '@tanstack/react-router'
+import type { DragEvent } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   BoardData,
@@ -37,20 +37,22 @@ import {
   UndoService,
 } from '../../bindings/loom/internal/service'
 import { BoardPicker } from '../components/board/board-picker'
-import { BoardSwitcher } from '../components/board/board-switcher'
 import { CanvasToolbar } from '../components/board/canvas-toolbar'
+import {
+  FloatingPanel,
+  type PanelTab,
+} from '../components/board/floating-panel'
 import { GroupNode, type GroupNodeData } from '../components/board/group-node'
 import { ImageNode, type ImageNodeData } from '../components/board/image-node'
+import type { LibraryRevealRequest } from '../components/board/library-panel'
 import { LightboxViewer } from '../components/board/lightbox'
 import { TagPicker } from '../components/board/tag-picker'
 import { ZoomControls } from '../components/board/zoom-controls'
 import type { MenuAction } from '../components/menu'
 import { PositionedMenu } from '../components/menu'
-import { TopNav } from '../components/top-nav'
-import { Button } from '../components/ui/button'
 import { useToast } from '../components/ui/toast'
 import { computeSubgraphLayout, placeCluster } from '../lib/layout'
-import { useUndoShortcuts } from '../lib/use-undo'
+import { useGroupShortcut, useUndoShortcuts } from '../lib/use-undo'
 
 const nodeTypes: NodeTypes = { image: ImageNode, group: GroupNode }
 
@@ -60,6 +62,8 @@ interface BoardProps {
 }
 
 type FlowNode = Node<ImageNodeData | GroupNodeData>
+
+export type CanvasTool = 'select' | 'move'
 
 // nodeIdFor/groupIdFromNode translate between xyflow's flat node-id space
 // (plain image ids, or "group:<id>" for a collapsed set) and the
@@ -82,9 +86,14 @@ export function Board({ repo, boardId }: BoardProps) {
   const [focusedMemberId, setFocusedMemberId] = useState<number | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [zoomPercent, setZoomPercent] = useState(100)
-  const [linkingTargetId, setLinkingTargetId] = useState<string | null>(null)
+  const [tool, setTool] = useState<CanvasTool>('select')
+  const [spaceHeld, setSpaceHeld] = useState(false)
   const [lightboxIndex, setLightboxIndex] = useState(-1)
-  const [undoState, setUndoState] = useState({ canUndo: false, canRedo: false })
+  const [panelTab, setPanelTab] = useState<PanelTab>('library')
+  const [detailImageId, setDetailImageId] = useState<number | null>(null)
+  const [libraryRevealRequest, setLibraryRevealRequest] =
+    useState<LibraryRevealRequest | null>(null)
+  const [libraryRefreshToken, setLibraryRefreshToken] = useState(0)
   const [nodeMenu, setNodeMenu] = useState<{
     x: number
     y: number
@@ -100,9 +109,24 @@ export function Board({ repo, boardId }: BoardProps) {
     y: number
     imageIds: number[]
   } | null>(null)
+  const [paneMenu, setPaneMenu] = useState<{ x: number; y: number } | null>(
+    null
+  )
+  // Undo/redo state (Stage 5), restored here after Stage 7 removed it
+  // along with TopNav — its only consumer at the time. Stage 11's pane
+  // context menu is the new consumer: refreshUndoState is folded into
+  // loadBoard (below) so every board reload — including the ones undo/redo
+  // itself triggers — keeps canUndo/canRedo current.
+  const [undoState, setUndoState] = useState({ canUndo: false, canRedo: false })
+  // Selection unification (Stage 12): which selection toolbar actions
+  // target — flipped to whichever side (canvas nodes vs. the Library
+  // panel's checkbox selection) most recently became non-empty.
+  const [lastSelectionSource, setLastSelectionSource] = useState<
+    'canvas' | 'panel'
+  >('canvas')
+  const [panelSelectedIds, setPanelSelectedIds] = useState<number[]>([])
 
   const rfInstance = useRef<ReactFlowInstance<FlowNode, Edge> | null>(null)
-  const navigate = useNavigate()
   const toast = useToast()
 
   // Surfaces a rejected service call (e.g. cycle rejection on link
@@ -122,7 +146,9 @@ export function Board({ repo, boardId }: BoardProps) {
   )
 
   const refreshUndoState = useCallback(() => {
-    UndoService.State(repo.path).then((s) => s && setUndoState(s))
+    UndoService.State(repo.path).then((s) => {
+      if (s) setUndoState(s)
+    })
   }, [repo.path])
 
   const loadBoard = useCallback(() => {
@@ -141,14 +167,75 @@ export function Board({ repo, boardId }: BoardProps) {
     loadBoard()
   }, [loadBoard])
 
-  useUndoShortcuts(repo.path, loadBoard)
+  // The library panel tab is mounted alongside the canvas now (not a
+  // separate route), so undo/redo also needs to refresh its table — done
+  // via a bump token rather than a second useUndoShortcuts hook, which
+  // would double-apply every Ctrl/Cmd+Z (see library-panel.tsx).
+  useUndoShortcuts(repo.path, () => {
+    loadBoard()
+    setLibraryRefreshToken((v) => v + 1)
+  })
 
+  // Undo/Redo actions for the new pane-context-menu (Stage 11). Deliberately
+  // not routed through useUndoShortcuts — that hook owns the keyboard path
+  // and its own toast-on-error handling; these do the same thing for a
+  // mouse-driven trigger, following the same "toast the error, only reload
+  // on an actually-applied op" shape.
+  const handleUndo = useCallback(() => {
+    UndoService.Undo(repo.path).then((result) => {
+      if (!result) return
+      if (result.error) {
+        reportError(t`Couldn't undo`)(result.error)
+        return
+      }
+      if (result.applied) {
+        loadBoard()
+        setLibraryRefreshToken((v) => v + 1)
+      }
+    })
+  }, [repo.path, loadBoard, reportError])
+
+  const handleRedo = useCallback(() => {
+    UndoService.Redo(repo.path).then((result) => {
+      if (!result) return
+      if (result.error) {
+        reportError(t`Couldn't redo`)(result.error)
+        return
+      }
+      if (result.applied) {
+        loadBoard()
+        setLibraryRefreshToken((v) => v + 1)
+      }
+    })
+  }, [repo.path, loadBoard, reportError])
+
+  // Holding Space temporarily forces pan-on-left-drag regardless of the
+  // active tool (Figma/Miro convention) — see the panOnDrag/selectionOnDrag
+  // computation passed to <ReactFlow> below. Guarded against text-input
+  // focus so typing a literal space in the tag/rename fields doesn't hijack
+  // canvas panning.
   useEffect(() => {
+    const isTextInput = (target: EventTarget | null) =>
+      target instanceof HTMLElement &&
+      (target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable)
+
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setLinkingTargetId(null)
+      if (event.code === 'Space' && !isTextInput(event.target)) {
+        event.preventDefault()
+        setSpaceHeld(true)
+      }
+    }
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.code === 'Space') setSpaceHeld(false)
     }
     window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+    }
   }, [])
 
   const groupForImage = useCallback(
@@ -364,47 +451,132 @@ export function Board({ repo, boardId }: BoardProps) {
   const handleNodeDragStop: OnNodeDrag<FlowNode> = useCallback(
     (_event, node) => {
       if (boardData?.layoutMode !== 'manual') return
-      const imageId = nodeIdToImageId(node.id)
-      if (imageId == null) return
-      ImageService.SetPosition(
-        repo.path,
-        imageId,
-        node.position.x,
-        node.position.y
-      ).then(refreshUndoState)
+
+      const persistPosition = () => {
+        const imageId = nodeIdToImageId(node.id)
+        if (imageId == null) return
+        ImageService.SetPosition(
+          repo.path,
+          imageId,
+          node.position.x,
+          node.position.y
+        )
+      }
+
+      // Groups can't be a relationship source (handleConnect guards the
+      // same way — the edge<->group rules require dragging from a specific
+      // expanded member instead), so a dragged group node only ever
+      // repositions.
+      if (node.id.startsWith('group:')) {
+        persistPosition()
+        return
+      }
+
+      // Hit-test the dropped node's center against every other node's
+      // bounding box — landing on top of another node is a "connect"
+      // gesture, not a move. `measured` is xyflow's actual rendered size
+      // (set after first paint); the 150x110 fallback matches image-node.tsx
+      // and group-node.tsx's collapsed size for the first render or two
+      // before xyflow has measured anything.
+      const draggedW = node.measured?.width ?? 150
+      const draggedH = node.measured?.height ?? 110
+      const center = {
+        x: node.position.x + draggedW / 2,
+        y: node.position.y + draggedH / 2,
+      }
+      const target = nodes.find((n) => {
+        if (n.id === node.id) return false
+        const w = n.measured?.width ?? 150
+        const h = n.measured?.height ?? 110
+        return (
+          center.x >= n.position.x &&
+          center.x <= n.position.x + w &&
+          center.y >= n.position.y &&
+          center.y <= n.position.y + h
+        )
+      })
+
+      if (!target) {
+        persistPosition()
+        return
+      }
+
+      // Dropped onto another node: the dragged image becomes the relationship
+      // source (matches handleConnect's argument order). Position is
+      // deliberately not persisted — the loadBoard() refresh below rebuilds
+      // nodes from boardData's unchanged canvas_x/y, snapping the dragged
+      // node back to where it started, since the drop is a connect gesture,
+      // not a move.
+      const draggedImageId = Number(node.id)
+      if (target.id.startsWith('group:')) {
+        const groupId = Number(target.id.slice('group:'.length))
+        ImageService.LinkSourceToGroup(repo.path, draggedImageId, groupId)
+          .then(loadBoard)
+          .catch(reportError(t`Couldn't link`))
+        return
+      }
+      ImageService.LinkSource(repo.path, draggedImageId, Number(target.id))
+        .then(loadBoard)
+        .catch(reportError(t`Couldn't link`))
     },
-    [repo.path, boardData, nodeIdToImageId, refreshUndoState]
+    [repo.path, boardData, nodeIdToImageId, nodes, loadBoard, reportError]
   )
 
-  const handleNodeClick: NodeMouseHandler<FlowNode> = useCallback(
-    (_event, node) => {
-      if (linkingTargetId) {
-        if (node.id !== linkingTargetId) {
-          const sourceImageId = nodeIdToImageId(node.id)
-          if (sourceImageId != null) {
-            if (linkingTargetId.startsWith('group:')) {
-              ImageService.LinkSourceToGroup(
-                repo.path,
-                sourceImageId,
-                Number(linkingTargetId.slice('group:'.length))
-              )
-                .then(loadBoard)
-                .catch(reportError(t`Couldn't link`))
-            } else {
-              ImageService.LinkSource(
-                repo.path,
-                sourceImageId,
-                Number(linkingTargetId)
-              )
-                .then(loadBoard)
-                .catch(reportError(t`Couldn't link`))
-            }
-          }
-        }
-        setLinkingTargetId(null)
+  // Drag source is panel-image-row.tsx's new `application/x-loom-image-id`
+  // MIME type (single id, or a JSON array for a multi-selection drag) —
+  // Stage 3 guarantees every draggable row already has a real image id, so
+  // this reuses the exact same AddImagesToBoard + SetPosition pairing as
+  // handleNodeDragStop, no new backend surface.
+  const handleDropImages = useCallback(
+    (event: DragEvent) => {
+      event.preventDefault()
+      const raw = event.dataTransfer.getData('application/x-loom-image-id')
+      if (!raw || !rfInstance.current) return
+      let imageIds: number[]
+      try {
+        const parsed = JSON.parse(raw)
+        imageIds = Array.isArray(parsed) ? parsed.map(Number) : [Number(raw)]
+      } catch {
+        imageIds = [Number(raw)]
       }
+      imageIds = imageIds.filter((id) => Number.isFinite(id))
+      if (imageIds.length === 0) return
+      const basePosition = rfInstance.current.screenToFlowPosition({
+        x: event.clientX,
+        y: event.clientY,
+      })
+      BoardService.AddImagesToBoard(repo.path, boardId, imageIds).then(() => {
+        Promise.all(
+          imageIds.map((imageId, i) =>
+            ImageService.SetPosition(
+              repo.path,
+              imageId,
+              basePosition.x + i * 24,
+              basePosition.y + i * 24
+            )
+          )
+        ).then(loadBoard)
+      })
     },
-    [linkingTargetId, repo.path, loadBoard, nodeIdToImageId, reportError]
+    [repo.path, boardId, loadBoard]
+  )
+
+  const handleDetailRequest = useCallback((imageId: number) => {
+    setDetailImageId(imageId)
+    setPanelTab('detail')
+  }, [])
+
+  // Plain click only selects (React Flow's own click-to-select handles
+  // that) — it must not also jump the panel to Detail, matching
+  // panel-image-row.tsx's existing ctrl/cmd+click-only convention for
+  // Library/Explorer rows.
+  const handleNodeClick: NodeMouseHandler<FlowNode> = useCallback(
+    (event, node) => {
+      if (!(event.ctrlKey || event.metaKey)) return
+      const imageId = nodeIdToImageId(node.id)
+      if (imageId != null) handleDetailRequest(imageId)
+    },
+    [nodeIdToImageId, handleDetailRequest]
   )
 
   const handleSelectionChange: OnSelectionChangeFunc = useCallback(
@@ -435,6 +607,49 @@ export function Board({ repo, boardId }: BoardProps) {
     [selectedIds]
   )
 
+  useEffect(() => {
+    if (selectedImageIds.length > 0) {
+      setLastSelectionSource('canvas')
+    } else {
+      setLastSelectionSource((prev) =>
+        prev === 'canvas' && panelSelectedIds.length > 0 ? 'panel' : prev
+      )
+    }
+  }, [selectedImageIds, panelSelectedIds])
+
+  useEffect(() => {
+    if (panelSelectedIds.length > 0) {
+      setLastSelectionSource('panel')
+    } else {
+      setLastSelectionSource((prev) =>
+        prev === 'panel' && selectedImageIds.length > 0 ? 'canvas' : prev
+      )
+    }
+  }, [panelSelectedIds, selectedImageIds])
+
+  // Toolbar actions (Group, Archive, Trash) target whichever selection was
+  // touched most recently. Auto-arrange stays canvas-only below — it
+  // repositions xyflow nodes, which only exist for images already on this
+  // board's canvas.
+  const activeSelection =
+    lastSelectionSource === 'panel' ? panelSelectedIds : selectedImageIds
+  // Falls back to whatever's open in Detail when neither canvas nor panel
+  // has an active selection — e.g. after a ctrl/cmd+click from Library,
+  // which sets detailImageId but neither selection array — so Archive/Trash
+  // still work for "the image I'm currently looking at" now that Detail no
+  // longer has its own copies of those buttons.
+  const activeSelectionImageIds =
+    activeSelection.length > 0
+      ? activeSelection
+      : detailImageId != null
+        ? [detailImageId]
+        : []
+
+  const imageById = useMemo(
+    () => new Map((boardData?.images ?? []).map((img) => [img.id, img])),
+    [boardData]
+  )
+
   const singleSelectedImage: ImageInfo | null = useMemo(() => {
     if (selectedIds.length !== 1 || selectedIds[0].startsWith('group:'))
       return null
@@ -443,6 +658,26 @@ export function Board({ repo, boardId }: BoardProps) {
       null
     )
   }, [selectedIds, boardData])
+
+  // Keeps Detail's content in sync with a freshly single-selected canvas
+  // image WITHOUT switching the panel to the Detail tab — plain click only
+  // selects (see handleNodeClick's ctrl/cmd+click gate for the one thing
+  // that does switch tabs). This just means that if the user is already on
+  // Detail, it follows canvas selection instead of showing a stale image.
+  // Keyed on singleSelectedImage's id (a primitive), not the object itself
+  // or selectedIds — boardData reloads (undo/redo, an unrelated mutation,
+  // etc.) rebuild singleSelectedImage as a new object every time even when
+  // the same image stays selected, which would re-fire an object- or
+  // selectedIds-keyed effect on every such reload.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally keyed on the id alone, not the singleSelectedImage object — see comment above.
+  useEffect(() => {
+    if (singleSelectedImage) {
+      setDetailImageId(singleSelectedImage.id)
+    }
+    // Deselecting (singleSelectedImage becomes null) deliberately leaves
+    // detailImageId alone — nothing about clearing canvas selection implies
+    // the user wants to stop looking at the last detail they had open.
+  }, [singleSelectedImage?.id])
 
   const lightboxImages = boardData?.images ?? []
   const currentLightboxImage =
@@ -468,74 +703,124 @@ export function Board({ repo, boardId }: BoardProps) {
 
   const handleArchiveToggle = useCallback(
     (img: ImageInfo) => {
-      ImageService.SetArchived(repo.path, img.id, !img.archived).then(() => {
-        loadBoard()
-        refreshUndoState()
-      })
+      ImageService.SetArchived(repo.path, img.id, !img.archived).then(loadBoard)
     },
-    [repo.path, loadBoard, refreshUndoState]
+    [repo.path, loadBoard]
   )
   const handleTrash = useCallback(
     (imageId: number) => {
       ImageService.TrashImage(repo.path, imageId).then(() => {
         setSelectedIds([])
+        setDetailImageId((prev) => (prev === imageId ? null : prev))
         loadBoard()
       })
     },
     [repo.path, loadBoard]
   )
 
-  const handleGroupSelection = () => {
-    if (selectedImageIds.length < 2) return
-    GroupService.CreateGroup(repo.path, '', '', selectedImageIds).then(() => {
-      setSelectedIds([])
-      loadBoard()
-    })
-  }
-
-  const handleAutoArrange = () => {
-    if (!boardData || selectedIds.length === 0) return
-    const clusterIds = selectedIds
-    const edgesAmong = (boardData.relationships ?? [])
-      .map((rel) => ({
-        source: resolveNodeId(rel.sourceImageId),
-        target: resolveNodeId(rel.derivedImageId),
-      }))
-      .filter((e) => e.source !== e.target)
-    const clusterLayout = computeSubgraphLayout(clusterIds, edgesAmong)
-    const existingPositions = nodes
-      .filter((n) => !clusterIds.includes(n.id))
-      .map((n) => n.position)
-    const placed = placeCluster(clusterLayout, existingPositions)
-
-    const updates = [...placed.entries()]
-      .map(([id, pos]) => {
-        const imageId = nodeIdToImageId(id)
-        return imageId != null ? { imageId, x: pos.x, y: pos.y } : null
-      })
-      .filter((u): u is { imageId: number; x: number; y: number } => u !== null)
-
-    if (updates.length > 0) {
-      ImageService.SetPositions(repo.path, updates).then(() => {
+  // Undo-covered as of Stage 2 (GroupService.CreateGroup logs to the
+  // operation log) — this is now the permanent home for "group as set",
+  // reached via the toolbar Group button, the node context menu, and
+  // Ctrl/Cmd+G (see useGroupShortcut below), replacing Stage 7's stopgap
+  // floating action bar.
+  const handleGroupSelection = useCallback(() => {
+    if (activeSelectionImageIds.length < 2) return
+    GroupService.CreateGroup(repo.path, '', '', activeSelectionImageIds).then(
+      () => {
+        setSelectedIds([])
         loadBoard()
-      })
-    }
-  }
+      }
+    )
+  }, [activeSelectionImageIds, repo.path, loadBoard])
 
-  const handleUndo = () =>
-    UndoService.Undo(repo.path).then((result) => {
-      if (result?.applied) loadBoard()
-      refreshUndoState()
+  useGroupShortcut(activeSelectionImageIds.length >= 2, handleGroupSelection)
+
+  const activeSelectionArchived = useMemo(
+    () =>
+      activeSelectionImageIds.length > 0 &&
+      activeSelectionImageIds.every((id) => imageById.get(id)?.archived),
+    [activeSelectionImageIds, imageById]
+  )
+
+  const handleToolbarArchiveToggle = useCallback(() => {
+    if (activeSelectionImageIds.length === 0) return
+    const nextArchived = !activeSelectionArchived
+    Promise.all(
+      activeSelectionImageIds.map((id) =>
+        ImageService.SetArchived(repo.path, id, nextArchived)
+      )
+    ).then(() => {
+      loadBoard()
+      setLibraryRefreshToken((v) => v + 1)
     })
-  const handleRedo = () =>
-    UndoService.Redo(repo.path).then((result) => {
-      if (result?.applied) loadBoard()
-      refreshUndoState()
+  }, [activeSelectionImageIds, activeSelectionArchived, repo.path, loadBoard])
+
+  const handleToolbarTrash = useCallback(() => {
+    if (activeSelectionImageIds.length === 0) return
+    Promise.all(
+      activeSelectionImageIds.map((id) =>
+        ImageService.TrashImage(repo.path, id)
+      )
+    ).then(() => {
+      setSelectedIds([])
+      setDetailImageId((prev) =>
+        prev != null && activeSelectionImageIds.includes(prev) ? null : prev
+      )
+      loadBoard()
+      setLibraryRefreshToken((v) => v + 1)
     })
+  }, [activeSelectionImageIds, repo.path, loadBoard])
+
+  // idsOverride lets callers (the pane menu's "Auto-arrange board") arrange
+  // an explicit set of node ids instead of the current selection — reading
+  // `selectedIds` directly wouldn't work there since setSelectedIds is
+  // async and this needs the ids in the same call.
+  const handleAutoArrange = useCallback(
+    (idsOverride?: string[]) => {
+      const clusterIds = idsOverride ?? selectedIds
+      if (!boardData || clusterIds.length === 0) return
+      const edgesAmong = (boardData.relationships ?? [])
+        .map((rel) => ({
+          source: resolveNodeId(rel.sourceImageId),
+          target: resolveNodeId(rel.derivedImageId),
+        }))
+        .filter((e) => e.source !== e.target)
+      const clusterLayout = computeSubgraphLayout(clusterIds, edgesAmong)
+      const existingPositions = nodes
+        .filter((n) => !clusterIds.includes(n.id))
+        .map((n) => n.position)
+      const placed = placeCluster(clusterLayout, existingPositions)
+
+      const updates = [...placed.entries()]
+        .map(([id, pos]) => {
+          const imageId = nodeIdToImageId(id)
+          return imageId != null ? { imageId, x: pos.x, y: pos.y } : null
+        })
+        .filter(
+          (u): u is { imageId: number; x: number; y: number } => u !== null
+        )
+
+      if (updates.length > 0) {
+        ImageService.SetPositions(repo.path, updates).then(() => {
+          loadBoard()
+        })
+      }
+    },
+    [
+      boardData,
+      selectedIds,
+      resolveNodeId,
+      nodes,
+      nodeIdToImageId,
+      repo.path,
+      loadBoard,
+    ]
+  )
 
   const openNodeMenu = useCallback(
     (event: React.MouseEvent, nodeId: string) => {
       event.preventDefault()
+      setPaneMenu(null)
       setNodeMenu({ x: event.clientX, y: event.clientY, nodeId })
     },
     []
@@ -569,7 +854,8 @@ export function Board({ repo, boardId }: BoardProps) {
         key: 'find-in-list',
         label: t`Find in list`,
         onSelect: () => {
-          navigate({ to: '/library', hash: `img-${imageId}` })
+          setPanelTab('library')
+          setLibraryRevealRequest({ imageId, token: Date.now() })
         },
       },
       {
@@ -608,6 +894,25 @@ export function Board({ repo, boardId }: BoardProps) {
           GroupService.SetCover(repo.path, group.id, imageId).then(loadBoard),
       })
     }
+    // Multi-selection actions (Stage 11) — only offered when the
+    // right-clicked node is itself part of the current >=2-image
+    // selection, mirroring the toolbar's Group/Auto-arrange enable
+    // conditions rather than acting on just the one node clicked.
+    if (selectedImageIds.includes(imageId) && selectedImageIds.length >= 2) {
+      items.push({
+        key: 'group-as-set',
+        label: t`Group as set`,
+        separatorBefore: true,
+        onSelect: handleGroupSelection,
+      })
+      if (boardData.layoutMode === 'manual') {
+        items.push({
+          key: 'auto-arrange-selection',
+          label: t`Auto-arrange selection`,
+          onSelect: handleAutoArrange,
+        })
+      }
+    }
     items.push(
       {
         key: 'archive',
@@ -630,14 +935,65 @@ export function Board({ repo, boardId }: BoardProps) {
     groupForImage,
     repo.path,
     loadBoard,
-    navigate,
     handleTrash,
     handleArchiveToggle,
+    selectedImageIds,
+    handleGroupSelection,
+    handleAutoArrange,
   ])
+
+  // Empty-canvas right-click menu (Stage 11) — Undo/Redo, the same actions
+  // the deleted TopNav buttons drove, now reached via onPaneContextMenu
+  // instead of dedicated toolbar buttons; Select all/Auto-arrange board give
+  // it real content beyond those two.
+  const paneMenuItems: MenuAction[] = useMemo(
+    () => [
+      {
+        key: 'select-all',
+        label: t`Select all`,
+        disabled: nodes.length === 0,
+        onSelect: () => setSelectedIds(nodes.map((n) => n.id)),
+      },
+      {
+        key: 'auto-arrange-board',
+        label: t`Auto-arrange board`,
+        disabled: boardData?.layoutMode !== 'manual' || nodes.length === 0,
+        onSelect: () => handleAutoArrange(nodes.map((n) => n.id)),
+      },
+      {
+        key: 'undo',
+        label: t`Undo`,
+        separatorBefore: true,
+        disabled: !undoState.canUndo,
+        onSelect: handleUndo,
+      },
+      {
+        key: 'redo',
+        label: t`Redo`,
+        disabled: !undoState.canRedo,
+        onSelect: handleRedo,
+      },
+    ],
+    [
+      nodes,
+      boardData?.layoutMode,
+      handleAutoArrange,
+      undoState,
+      handleUndo,
+      handleRedo,
+    ]
+  )
 
   const handleMove: OnMove = useCallback((_event, viewport) => {
     setZoomPercent(Math.round(viewport.zoom * 100))
   }, [])
+
+  // Middle-mouse (button 1) always pans regardless of tool; holding Space
+  // forces left-drag (button 0) to pan too, temporarily overriding the
+  // active tool. Right-click (button 2) is deliberately never included —
+  // it must stay free for onPaneContextMenu.
+  const panOnDrag = spaceHeld || tool === 'move' ? [0, 1] : [1]
+  const selectionOnDrag = !spaceHeld && tool === 'select'
 
   if (!loaded || !boardData) {
     return (
@@ -649,68 +1005,22 @@ export function Board({ repo, boardId }: BoardProps) {
 
   return (
     <div className="flex h-screen flex-col bg-surface-canvas">
-      <TopNav
-        repoName={repo.name}
-        active="canvas"
-        boardHref={`/board/${boardId}`}
-        canUndo={undoState.canUndo}
-        canRedo={undoState.canRedo}
-        onUndo={handleUndo}
-        onRedo={handleRedo}
+      {/* TopNav is gone entirely (Stage 7) — the canvas is now the only
+          pane, full-width/relative flex-1, with FloatingPanel and the
+          canvas toolbars layered on top as absolute-positioned siblings
+          rather than flex siblings, so the canvas stays fully interactive
+          underneath (see Stage 12's drag-and-drop). */}
+      <div
+        className="relative flex-1"
+        onDragOver={(event) => {
+          if (
+            event.dataTransfer.types.includes('application/x-loom-image-id')
+          ) {
+            event.preventDefault()
+          }
+        }}
+        onDrop={handleDropImages}
       >
-        <BoardSwitcher
-          repoPath={repo.path}
-          boards={boards}
-          currentBoardId={boardId}
-          currentBoardName={boardData.boardName}
-          onBoardsChanged={loadBoard}
-        />
-        <div className="flex gap-0.5 rounded-sm bg-surface p-0.5">
-          <button
-            type="button"
-            onClick={() =>
-              BoardService.SetLayoutMode(repo.path, boardId, 'manual').then(
-                loadBoard
-              )
-            }
-            className={
-              boardData.layoutMode === 'manual'
-                ? 'rounded-[3px] bg-white px-2.5 py-1 text-[11.5px] font-semibold text-ink shadow-sm'
-                : 'rounded-[3px] px-2.5 py-1 text-[11.5px] font-semibold text-ink-subtle'
-            }
-          >
-            <Trans>Manual</Trans>
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              BoardService.SetLayoutMode(repo.path, boardId, 'auto').then(
-                loadBoard
-              )
-            }
-            className={
-              boardData.layoutMode === 'auto'
-                ? 'rounded-[3px] bg-white px-2.5 py-1 text-[11.5px] font-semibold text-ink shadow-sm'
-                : 'rounded-[3px] px-2.5 py-1 text-[11.5px] font-semibold text-ink-subtle'
-            }
-          >
-            <Trans>Auto</Trans>
-          </button>
-        </div>
-        {boardData.layoutMode === 'manual' && selectedIds.length > 0 && (
-          <Button variant="secondary" size="sm" onClick={handleAutoArrange}>
-            <Trans>Auto-arrange selection</Trans>
-          </Button>
-        )}
-        {selectedImageIds.length >= 2 && (
-          <Button variant="secondary" size="sm" onClick={handleGroupSelection}>
-            <Trans>Group as set</Trans>
-          </Button>
-        )}
-        <div className="text-xs text-ink-subtle">{zoomPercent}%</div>
-      </TopNav>
-
-      <div className="relative flex-1">
         <ReactFlowProvider>
           <ReactFlow
             nodes={nodes}
@@ -722,17 +1032,23 @@ export function Board({ repo, boardId }: BoardProps) {
             onNodeDragStop={handleNodeDragStop}
             onNodeClick={handleNodeClick}
             onNodeContextMenu={(event, node) => openNodeMenu(event, node.id)}
+            onPaneContextMenu={(event) => {
+              event.preventDefault()
+              setNodeMenu(null)
+              setPaneMenu({ x: event.clientX, y: event.clientY })
+            }}
             onSelectionChange={handleSelectionChange}
             onEdgesDelete={handleEdgesDelete}
             onPaneClick={() => {
               setSelectedIds([])
-              setLinkingTargetId(null)
             }}
             onMove={handleMove}
             onInit={(instance) => {
               rfInstance.current = instance
             }}
             nodesDraggable={boardData.layoutMode === 'manual'}
+            panOnDrag={panOnDrag}
+            selectionOnDrag={selectionOnDrag}
             defaultEdgeOptions={{
               style: { stroke: 'rgba(0,0,0,.22)', strokeWidth: 1.6 },
             }}
@@ -750,7 +1066,21 @@ export function Board({ repo, boardId }: BoardProps) {
           </ReactFlow>
         </ReactFlowProvider>
 
-        <CanvasToolbar onRescan={loadBoard} />
+        <CanvasToolbar
+          tool={tool}
+          onToolChange={setTool}
+          onGroupSelection={handleGroupSelection}
+          groupDisabled={activeSelectionImageIds.length < 2}
+          onAutoArrange={() => handleAutoArrange()}
+          autoArrangeDisabled={
+            !(boardData.layoutMode === 'manual' && selectedIds.length > 0)
+          }
+          onArchiveToggle={handleToolbarArchiveToggle}
+          archiveDisabled={activeSelectionImageIds.length === 0}
+          archiveActive={activeSelectionArchived}
+          onTrash={handleToolbarTrash}
+          trashDisabled={activeSelectionImageIds.length === 0}
+        />
 
         <ZoomControls
           zoomPercent={zoomPercent}
@@ -759,28 +1089,32 @@ export function Board({ repo, boardId }: BoardProps) {
           onFitView={() => rfInstance.current?.fitView({ duration: 200 })}
         />
 
-        {linkingTargetId && (
-          <div className="absolute left-1/2 top-4 z-10 flex -translate-x-1/2 items-center gap-2.5 rounded-md border border-black/8 bg-ink px-3.5 py-2 shadow-lg">
-            <span className="text-[12px] font-semibold text-white">
-              <Trans>Click a node to set as source — Esc to cancel</Trans>
-            </span>
-          </div>
-        )}
+        <FloatingPanel
+          repo={repo}
+          boards={boards}
+          currentBoardId={boardId}
+          currentBoardName={boardData.boardName}
+          onBoardsChanged={loadBoard}
+          onRevealOnCanvas={focusImage}
+          activeTab={panelTab}
+          onActiveTabChange={setPanelTab}
+          libraryRevealRequest={libraryRevealRequest}
+          libraryRefreshToken={libraryRefreshToken}
+          detailImageId={detailImageId}
+          boardImages={boardData.images ?? []}
+          onDetailRequest={handleDetailRequest}
+          layoutMode={boardData.layoutMode}
+          onLayoutModeChange={loadBoard}
+          onRescan={loadBoard}
+          onPanelSelectionChange={setPanelSelectedIds}
+        />
 
-        {singleSelectedImage && (
-          <SidePanel
-            repo={repo}
-            image={singleSelectedImage}
-            boards={boards}
-            onClose={() => setSelectedIds([])}
-            onLinkSource={() =>
-              setLinkingTargetId(nodeIdFor(singleSelectedImage.id))
-            }
-            onArchive={() => handleArchiveToggle(singleSelectedImage)}
-            onTrash={() => handleTrash(singleSelectedImage.id)}
-            onChange={loadBoard}
-          />
-        )}
+        {/* Stage 7's stopgap floating action bar (Auto-arrange/Group-as-set
+            with no permanent home yet) is gone — Stage 11 gives both a real
+            home: CanvasToolbar buttons, the node context menu, and
+            Ctrl/Cmd+G for grouping. Linking is now drag-one-node-onto-another
+            (see handleNodeDragStop) instead of a click-arm-then-click-target
+            mode, so there's no "linking in progress" banner anymore either. */}
 
         {nodeMenu && (
           <PositionedMenu
@@ -788,6 +1122,14 @@ export function Board({ repo, boardId }: BoardProps) {
             y={nodeMenu.y}
             items={nodeMenuItems}
             onClose={() => setNodeMenu(null)}
+          />
+        )}
+        {paneMenu && (
+          <PositionedMenu
+            x={paneMenu.x}
+            y={paneMenu.y}
+            items={paneMenuItems}
+            onClose={() => setPaneMenu(null)}
           />
         )}
         {tagPickerFor && (
@@ -843,176 +1185,6 @@ export function Board({ repo, boardId }: BoardProps) {
           }}
         />
       )}
-    </div>
-  )
-}
-
-interface SidePanelProps {
-  repo: RepoInfo
-  image: ImageInfo
-  boards: BoardSummary[]
-  onClose: () => void
-  onLinkSource: () => void
-  onArchive: () => void
-  onTrash: () => void
-  onChange: () => void
-}
-
-function SidePanel({
-  repo,
-  image,
-  boards,
-  onClose,
-  onLinkSource,
-  onArchive,
-  onTrash,
-  onChange,
-}: SidePanelProps) {
-  const [tags, setTags] = useState<TagInfo[]>([])
-  const [imageBoards, setImageBoards] = useState<BoardSummary[]>([])
-  const [tagInput, setTagInput] = useState('')
-
-  useEffect(() => {
-    TagService.TagsForImage(repo.path, image.id).then((t2) => setTags(t2 ?? []))
-    BoardService.BoardsForImage(repo.path, image.id).then((b) =>
-      setImageBoards(b ?? [])
-    )
-  }, [repo.path, image.id])
-
-  const addTag = async () => {
-    const name = tagInput.trim()
-    if (!name) return
-    await TagService.AddTag(repo.path, image.id, name)
-    setTagInput('')
-    TagService.TagsForImage(repo.path, image.id).then((t2) => setTags(t2 ?? []))
-    onChange()
-  }
-
-  return (
-    <div className="absolute right-4 top-4 bottom-4 flex w-[280px] flex-col gap-4 overflow-y-auto rounded-lg border border-black/8 bg-card/96 p-4 shadow-lg backdrop-blur">
-      <div className="flex items-center justify-between">
-        <span className="truncate text-[13px] font-semibold text-ink">
-          {image.fileName}
-        </span>
-        <button
-          type="button"
-          onClick={onClose}
-          className="text-[15px] text-ink-subtle hover:text-ink"
-        >
-          ×
-        </button>
-      </div>
-
-      {image.missing && (
-        <div className="rounded-md bg-danger-soft px-3 py-2 text-[11.5px] text-danger">
-          <Trans>File not found on disk</Trans>
-        </div>
-      )}
-
-      <div>
-        <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">
-          <Trans>Prompt</Trans>
-        </div>
-        <div className="rounded-md bg-surface px-2.5 py-2 text-[11.5px] leading-relaxed text-ink-muted">
-          {image.promptText || <Trans>No prompt attached</Trans>}
-        </div>
-      </div>
-
-      <div>
-        <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">
-          <Trans>Tags</Trans>
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          {tags.map((tag) => (
-            <button
-              key={tag.id}
-              type="button"
-              onClick={async () => {
-                await TagService.RemoveTag(repo.path, image.id, tag.id)
-                setTags((prev) => prev.filter((t2) => t2.id !== tag.id))
-                onChange()
-              }}
-              title={t`Remove tag`}
-              className="rounded-full bg-surface px-2.5 py-0.5 text-[11px] text-ink-muted hover:bg-danger-soft hover:text-danger"
-            >
-              {tag.name}
-            </button>
-          ))}
-          <input
-            value={tagInput}
-            onChange={(e) => setTagInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && addTag()}
-            placeholder={t`+ add`}
-            className="w-16 rounded-full border border-dashed border-black/18 bg-transparent px-2.5 py-0.5 text-[11px] text-ink-subtle outline-none focus:border-accent"
-          />
-        </div>
-      </div>
-
-      <div>
-        <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">
-          <Trans>Boards</Trans>
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          {imageBoards.map((b) => (
-            <button
-              key={b.id}
-              type="button"
-              title={t`Remove from board`}
-              onClick={async () => {
-                await BoardService.RemoveImagesFromBoard(repo.path, b.id, [
-                  image.id,
-                ])
-                onChange()
-              }}
-              className="rounded-full bg-accent-soft px-2.5 py-0.5 text-[11px] text-accent hover:bg-danger-soft hover:text-danger"
-            >
-              {b.name}
-            </button>
-          ))}
-          {boards
-            .filter((b) => !imageBoards.some((ib) => ib.id === b.id))
-            .map((b) => (
-              <button
-                key={b.id}
-                type="button"
-                title={t`Add to board`}
-                onClick={async () => {
-                  await BoardService.AddImagesToBoard(repo.path, b.id, [
-                    image.id,
-                  ])
-                  onChange()
-                }}
-                className="rounded-full border border-dashed border-black/18 px-2.5 py-0.5 text-[11px] text-ink-subtle hover:border-accent hover:text-accent"
-              >
-                + {b.name}
-              </button>
-            ))}
-        </div>
-      </div>
-
-      <div className="mt-auto flex flex-col gap-2">
-        <Button variant="secondary" size="sm" onClick={onLinkSource}>
-          <Trans>Link source…</Trans>
-        </Button>
-        <div className="flex gap-2">
-          <Button
-            variant="secondary"
-            size="sm"
-            className="flex-1"
-            onClick={onArchive}
-          >
-            {image.archived ? <Trans>Unarchive</Trans> : <Trans>Archive</Trans>}
-          </Button>
-          <Button
-            variant="danger"
-            size="sm"
-            className="flex-1"
-            onClick={onTrash}
-          >
-            <Trans>Trash</Trans>
-          </Button>
-        </div>
-      </div>
     </div>
   )
 }

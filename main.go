@@ -26,6 +26,7 @@ func main() {
 			application.NewService(&service.LibraryService{}),
 			application.NewService(&service.UndoService{}),
 			application.NewService(&service.SystemService{}),
+			application.NewService(&service.SettingsService{}),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
@@ -53,6 +54,10 @@ func main() {
 		Height:           800,
 		BackgroundColour: application.NewRGB(243, 242, 241),
 		URL:              "/",
+		// The app has its own right-click menus (canvas pane, canvas nodes,
+		// list rows) — without this, the webview's native context menu
+		// (Reload/Inspect Element/etc.) competes with or masks them.
+		DefaultContextMenuDisabled: true,
 	})
 
 	if err := app.Run(); err != nil {

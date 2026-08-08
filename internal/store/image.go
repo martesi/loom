@@ -4,7 +4,9 @@ import (
 	"database/sql"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -93,6 +95,101 @@ func (r *Repo) ScanAndRegisterImages() (int, error) {
 		inserted += int(n)
 	}
 	return inserted, nil
+}
+
+// DirListing is a non-recursive view of one directory under the repo root:
+// subdirectory names plus every media file found in it, already registered
+// in the images table (see ListDirectory) so every entry has a real row —
+// the service layer maps Files onto the same ImageInfo shape LoadBoard and
+// the Library view use, so Explorer never needs a separate "not yet
+// imported" case.
+type DirListing struct {
+	RelPath string
+	Dirs    []string
+	Files   []Image
+}
+
+// ListDirectory lists relPath (relative to the repo root), non-recursively.
+// relPath is clamped so it can never resolve outside the repo root, even via
+// ".." segments. Any media file found gets the same
+// `INSERT OR IGNORE INTO images (file_path)` treatment ScanAndRegisterImages
+// gives repo-wide discovery, so a file Explorer just listed always has a
+// real images row before the caller ever touches it (e.g. drag-and-drop
+// onto a board).
+func (r *Repo) ListDirectory(relPath string) (DirListing, error) {
+	absDir, cleanRel, err := clampRelPath(r.Path, relPath)
+	if err != nil {
+		return DirListing{}, err
+	}
+
+	entries, err := os.ReadDir(absDir)
+	if err != nil {
+		return DirListing{}, err
+	}
+
+	loomDir := filepath.Join(r.Path, loomDirName)
+	var dirs []string
+	var mediaPaths []string
+	for _, e := range entries {
+		full := filepath.Join(absDir, e.Name())
+		if e.IsDir() {
+			if full == loomDir {
+				continue
+			}
+			dirs = append(dirs, e.Name())
+			continue
+		}
+		if IsMediaFile(full) {
+			mediaPaths = append(mediaPaths, full)
+		}
+	}
+	sort.Strings(dirs)
+
+	for _, p := range mediaPaths {
+		if _, err := r.DB.Exec(`INSERT OR IGNORE INTO images (file_path) VALUES (?)`, p); err != nil {
+			return DirListing{}, err
+		}
+	}
+
+	files, err := r.imagesByFilePaths(mediaPaths)
+	if err != nil {
+		return DirListing{}, err
+	}
+
+	return DirListing{RelPath: cleanRel, Dirs: dirs, Files: files}, nil
+}
+
+// imagesByFilePaths returns the image rows matching the given file_path
+// values, in no particular order — the ListDirectory backing query, mirrors
+// ListImagesByIDs' shape but keyed by path instead of id since a freshly
+// discovered file has a path before its assigned id is known to the caller.
+func (r *Repo) imagesByFilePaths(paths []string) ([]Image, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(paths))
+	args := make([]any, len(paths))
+	for i, p := range paths {
+		placeholders[i] = "?"
+		args[i] = p
+	}
+	query := `SELECT ` + imageSelectCols + ` FROM images WHERE file_path IN (` +
+		strings.Join(placeholders, ",") + `)`
+	rows, err := r.DB.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var images []Image
+	for rows.Next() {
+		img, err := scanImage(rows)
+		if err != nil {
+			return nil, err
+		}
+		images = append(images, img)
+	}
+	return images, rows.Err()
 }
 
 const imageSelectCols = `
@@ -184,15 +281,124 @@ func (r *Repo) SetArchived(imageID int64, archived bool) error {
 	return err
 }
 
-// SetTrashed flags an image as trashed (hidden from the board). This is the
-// DB-flag half of Loom's trash concept; moving the file into .loom/trash/
-// and auto-purging after a retention period is a later, separate piece of
-// work.
+// SetTrashed flags an image as trashed (hidden from the board) and
+// physically moves its file between its current location and
+// .loom/trash/<relative-path-from-repo-root>, mirroring the directory
+// structure so a restore can always reconstruct the original path. Auto-
+// purging trashed files after a retention period is later, separate work.
+//
+// TrashImage, RestoreImage, and undo's applyStep(stepSetTrashed, ...) all
+// funnel through this one function, so this is the single place that needs
+// to get the physical move right.
+//
+// Ordering matters for failure recovery: the physical move happens first,
+// and the DB row is only updated once it succeeds. If the DB update then
+// fails, this rolls the file back to where it started so a single failed
+// SetTrashed call never leaves the filesystem and DB pointing at different
+// realities.
 func (r *Repo) SetTrashed(imageID int64, trashed bool) error {
+	curPath, err := r.GetFilePath(imageID)
+	if err != nil {
+		return err
+	}
+
+	trashRoot := filepath.Join(r.Path, loomDirName, "trash")
+	relFromTrash, underTrash := relUnder(trashRoot, curPath)
+
+	var destPath string
+	switch {
+	case trashed && underTrash:
+		// Already physically in trash (e.g. a redundant/replayed step) —
+		// just make sure the flag agrees.
+		return r.setTrashedFlag(imageID, trashed, curPath)
+	case trashed && !underTrash:
+		relFromRoot, ok := relUnder(r.Path, curPath)
+		if !ok {
+			// File lives outside the repo root entirely (shouldn't happen
+			// in practice) — nothing sane to move, just flip the flag.
+			return r.setTrashedFlag(imageID, trashed, curPath)
+		}
+		destPath = uniquePath(filepath.Join(trashRoot, relFromRoot))
+	case !trashed && underTrash:
+		destPath = uniquePath(filepath.Join(r.Path, relFromTrash))
+	default: // !trashed && !underTrash
+		// Already physically outside trash (e.g. a redundant/replayed
+		// restore) — just make sure the flag agrees.
+		return r.setTrashedFlag(imageID, trashed, curPath)
+	}
+
+	if _, statErr := os.Stat(curPath); statErr != nil {
+		// The file is already missing on disk (deleted out-of-band) —
+		// there's nothing to move. Still record the flag so the DB stays
+		// the source of truth for the intended state.
+		return r.setTrashedFlag(imageID, trashed, curPath)
+	}
+
+	if err := moveFileOnDisk(curPath, destPath); err != nil {
+		return fmt.Errorf("move file for trash flag: %w", err)
+	}
+	if err := r.setTrashedFlag(imageID, trashed, destPath); err != nil {
+		// DB update failed after a successful move — best-effort rollback
+		// so the file ends up back where the (unchanged) DB row still says
+		// it is, rather than stranding it at destPath with nothing
+		// pointing to it.
+		if rbErr := moveFileOnDisk(destPath, curPath); rbErr != nil {
+			return fmt.Errorf("%w (rollback move also failed: %v)", err, rbErr)
+		}
+		return err
+	}
+	return nil
+}
+
+func (r *Repo) setTrashedFlag(imageID int64, trashed bool, filePath string) error {
 	_, err := r.DB.Exec(`
-		UPDATE images SET trashed = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`,
-		trashed, imageID)
+		UPDATE images SET trashed = ?, file_path = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`,
+		trashed, filePath, imageID)
 	return err
+}
+
+// MoveFile renames/moves an image's file to newRelPath (relative to the
+// repo root, clamped the same way ListDirectory clamps its relPath so it
+// can never escape the root), updating file_path to match. A destination
+// collision gets the same " (1)", " (2)", ... suffix trash-move uses.
+// Returns both the path the file moved from and the path it actually ended
+// up at (which may differ from the caller's requested newRelPath if that
+// path was taken).
+//
+// Both TrashMove's caller-facing use and undo's inverse (moving a file
+// back) go through this same function — see moveFileStepPayload in
+// undo_service.go, which just swaps which path is old vs new.
+func (r *Repo) MoveFile(imageID int64, newRelPath string) (oldPath, newPath string, err error) {
+	oldPath, err = r.GetFilePath(imageID)
+	if err != nil {
+		return "", "", err
+	}
+
+	newAbs, _, err := clampRelPath(r.Path, newRelPath)
+	if err != nil {
+		return "", "", err
+	}
+	newAbs = uniquePath(newAbs)
+
+	if _, statErr := os.Stat(oldPath); statErr != nil {
+		return "", "", fmt.Errorf("source file not found: %w", statErr)
+	}
+
+	if err := moveFileOnDisk(oldPath, newAbs); err != nil {
+		return "", "", fmt.Errorf("move file: %w", err)
+	}
+
+	if _, err := r.DB.Exec(`
+		UPDATE images SET file_path = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`,
+		newAbs, imageID); err != nil {
+		// DB update failed after a successful move — roll the file back so
+		// it stays where the (unchanged) DB row still says it is.
+		if rbErr := moveFileOnDisk(newAbs, oldPath); rbErr != nil {
+			return "", "", fmt.Errorf("%w (rollback move also failed: %v)", err, rbErr)
+		}
+		return "", "", err
+	}
+	return oldPath, newAbs, nil
 }
 
 // LinkSource creates a source -> derived edge, rejecting self-links and any

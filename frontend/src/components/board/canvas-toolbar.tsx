@@ -1,17 +1,62 @@
 import { t } from '@lingui/core/macro'
-import { Group, Link2, MousePointer2, Plus } from 'lucide-react'
+import {
+  Archive,
+  Group,
+  Hand,
+  LayoutGrid,
+  Link2,
+  MousePointer2,
+  Trash2,
+} from 'lucide-react'
 import type { ReactNode } from 'react'
 import { cn } from '../../lib/utils'
+import type { CanvasTool } from '../../routes/board'
 
 interface CanvasToolbarProps {
-  onRescan: () => void
+  tool: CanvasTool
+  onToolChange: (tool: CanvasTool) => void
+  onGroupSelection: () => void
+  groupDisabled: boolean
+  onAutoArrange: () => void
+  autoArrangeDisabled: boolean
+  onArchiveToggle: () => void
+  archiveDisabled: boolean
+  archiveActive: boolean
+  onTrash: () => void
+  trashDisabled: boolean
 }
 
-export function CanvasToolbar({ onRescan }: CanvasToolbarProps) {
+export function CanvasToolbar({
+  tool,
+  onToolChange,
+  onGroupSelection,
+  groupDisabled,
+  onAutoArrange,
+  autoArrangeDisabled,
+  onArchiveToggle,
+  archiveDisabled,
+  archiveActive,
+  onTrash,
+  trashDisabled,
+}: CanvasToolbarProps) {
+  // Anchored opposite FloatingPanel's default left dock (floating-panel.tsx)
+  // so the two overlays don't occlude each other; there's no dock-side UI
+  // yet (Stage 7's "defaults now, UI later"), so this isn't dockSide-aware.
   return (
-    <div className="absolute left-4 top-4 z-10 flex w-[52px] flex-col gap-1.5 rounded-lg border border-black/8 bg-white/92 p-2 shadow-md backdrop-blur-sm">
-      <ToolbarButton active title={t`Select (default)`}>
+    <div className="absolute right-4 top-4 z-10 flex w-[52px] flex-col gap-1.5 rounded-lg border border-black/8 bg-white/92 p-2 shadow-md backdrop-blur-sm">
+      <ToolbarButton
+        active={tool === 'select'}
+        title={t`Select — left-drag to box-select, middle-mouse or Space to pan`}
+        onClick={() => onToolChange('select')}
+      >
         <MousePointer2 className="h-4 w-4" />
+      </ToolbarButton>
+      <ToolbarButton
+        active={tool === 'move'}
+        title={t`Move — left-drag to pan the canvas`}
+        onClick={() => onToolChange('move')}
+      >
+        <Hand className="h-4 w-4" />
       </ToolbarButton>
       <ToolbarButton
         disabled
@@ -19,11 +64,35 @@ export function CanvasToolbar({ onRescan }: CanvasToolbarProps) {
       >
         <Link2 className="h-4 w-4" />
       </ToolbarButton>
-      <ToolbarButton disabled title={t`Grouping arrives in a later stage`}>
+      <ToolbarButton
+        disabled={groupDisabled}
+        title={t`Group selected images as a set`}
+        onClick={onGroupSelection}
+      >
         <Group className="h-4 w-4" />
       </ToolbarButton>
-      <ToolbarButton title={t`Rescan folder for new images`} onClick={onRescan}>
-        <Plus className="h-4 w-4" />
+      <ToolbarButton
+        disabled={autoArrangeDisabled}
+        title={t`Auto-arrange selection`}
+        onClick={onAutoArrange}
+      >
+        <LayoutGrid className="h-4 w-4" />
+      </ToolbarButton>
+      <div className="my-0.5 h-px bg-black/8" />
+      <ToolbarButton
+        disabled={archiveDisabled}
+        title={archiveActive ? t`Unarchive selection` : t`Archive selection`}
+        onClick={onArchiveToggle}
+      >
+        <Archive className="h-4 w-4" />
+      </ToolbarButton>
+      <ToolbarButton
+        disabled={trashDisabled}
+        danger
+        title={t`Trash selection`}
+        onClick={onTrash}
+      >
+        <Trash2 className="h-4 w-4" />
       </ToolbarButton>
     </div>
   )
@@ -32,6 +101,7 @@ export function CanvasToolbar({ onRescan }: CanvasToolbarProps) {
 interface ToolbarButtonProps {
   active?: boolean
   disabled?: boolean
+  danger?: boolean
   title: string
   onClick?: () => void
   children: ReactNode
@@ -40,6 +110,7 @@ interface ToolbarButtonProps {
 function ToolbarButton({
   active,
   disabled,
+  danger,
   title,
   onClick,
   children,
@@ -51,10 +122,13 @@ function ToolbarButton({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        'flex h-9 w-9 items-center justify-center rounded-md text-ink-muted transition-colors',
+        'flex h-9 w-9 items-center justify-center rounded-md transition-colors',
+        danger ? 'text-danger' : 'text-ink-muted',
         active && 'bg-accent text-white',
         disabled && 'cursor-default opacity-40',
-        !active && !disabled && 'hover:bg-black/[0.04] hover:text-ink'
+        !active &&
+          !disabled &&
+          (danger ? 'hover:bg-danger-soft' : 'hover:bg-black/[0.04] hover:text-ink')
       )}
     >
       {children}

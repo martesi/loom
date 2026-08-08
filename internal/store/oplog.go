@@ -51,6 +51,17 @@ func (r *Repo) RecordOperation(kind, forward, inverse string) error {
 	if err != nil {
 		return err
 	}
+
+	// Prime the session boundary (in case this is the first touch of this
+	// repo path this process — e.g. a mutation happening without an earlier
+	// PeekUndo/PeekRedo/State call to establish it first) and cap it at
+	// cursor. The DELETE below is about to erase every row with seq >
+	// cursor and the INSERT is about to reuse those seq numbers for this
+	// brand-new operation, so the boundary can never legitimately sit above
+	// cursor once that happens — see capUndoSessionBoundary's doc comment.
+	if err := r.capUndoSessionBoundary(cursor); err != nil {
+		return err
+	}
 	newSeq := cursor + 1
 
 	tx, err := r.DB.Begin()
@@ -92,23 +103,41 @@ func (r *Repo) getOperation(seq int64) (*Operation, error) {
 }
 
 // PeekUndo returns the operation that Undo() would apply, or nil if there is
-// nothing to undo.
+// nothing to undo. Operations recorded before this process's session began
+// (seq at-or-before undoSessionBoundary) are never returned, so a relaunch
+// can't undo history from a previous run.
 func (r *Repo) PeekUndo() (*Operation, error) {
 	cursor, err := r.UndoCursor()
 	if err != nil {
 		return nil, err
 	}
+	boundary, err := r.undoSessionBoundary()
+	if err != nil {
+		return nil, err
+	}
+	if cursor <= boundary {
+		return nil, nil
+	}
 	return r.getOperation(cursor)
 }
 
 // PeekRedo returns the operation that Redo() would apply, or nil if there is
-// nothing to redo.
+// nothing to redo. As with PeekUndo, a redo target at-or-before the session
+// boundary is treated as unavailable rather than replayed.
 func (r *Repo) PeekRedo() (*Operation, error) {
 	cursor, err := r.UndoCursor()
 	if err != nil {
 		return nil, err
 	}
-	return r.getOperation(cursor + 1)
+	boundary, err := r.undoSessionBoundary()
+	if err != nil {
+		return nil, err
+	}
+	redoSeq := cursor + 1
+	if redoSeq <= boundary {
+		return nil, nil
+	}
+	return r.getOperation(redoSeq)
 }
 
 // MarkUndone moves the cursor back before seq, after seq's inverse has been

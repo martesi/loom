@@ -7,27 +7,61 @@ import type {
   LibraryRow,
   RepoInfo,
   TagInfo,
-} from '../../bindings/loom/internal/service'
+} from '../../../bindings/loom/internal/service'
 import {
   BoardService,
   ImageService,
   LibraryService,
   SystemService,
   TagService,
-  UndoService,
-} from '../../bindings/loom/internal/service'
-import { BoardPicker } from '../components/board/board-picker'
-import type { MenuAction } from '../components/menu'
-import { PositionedMenu } from '../components/menu'
-import { TopNav } from '../components/top-nav'
-import { useUndoShortcuts } from '../lib/use-undo'
-import { cn } from '../lib/utils'
+} from '../../../bindings/loom/internal/service'
+import { cn } from '../../lib/utils'
+import type { MenuAction } from '../menu'
+import { PositionedMenu } from '../menu'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../ui/select'
+import { BoardPicker } from './board-picker'
+import { PanelImageRow } from './panel-image-row'
 
-interface LibraryProps {
-  repo: RepoInfo
+export interface LibraryRevealRequest {
+  imageId: number
+  // Bumped on every "find in list" request so the same image can be
+  // re-highlighted even if it's already the current highlightId.
+  token: number
 }
 
-export function Library({ repo }: LibraryProps) {
+interface LibraryPanelProps {
+  repo: RepoInfo
+  currentBoardId: number
+  onRevealOnCanvas: (imageId: number) => void
+  revealRequest: LibraryRevealRequest | null
+  refreshToken: number
+  onDetailRequest: (imageId: number) => void
+  // Reports the checkbox multi-selection up to Board (Stage 12), so
+  // toolbar actions can target it via lastSelectionSource.
+  onSelectionChange?: (ids: number[]) => void
+}
+
+// Ported from the old /library route (Stage 4) into a FloatingPanel tab
+// (Stage 7): same table/filter/bulk-bar, now using the Stage 6 Select. The
+// old route's cross-navigation ("Show on board" -> navigate + scroll) is
+// replaced with onRevealOnCanvas(imageId) whenever the image is already a
+// member of the board that's currently open — a real cross-board
+// navigation only happens when the image genuinely lives elsewhere.
+export function LibraryPanel({
+  repo,
+  currentBoardId,
+  onRevealOnCanvas,
+  revealRequest,
+  refreshToken,
+  onDetailRequest,
+  onSelectionChange,
+}: LibraryPanelProps) {
   const [rows, setRows] = useState<LibraryRow[]>([])
   const [boards, setBoards] = useState<BoardSummary[]>([])
   const [tags, setTags] = useState<TagInfo[]>([])
@@ -36,7 +70,6 @@ export function Library({ repo }: LibraryProps) {
   const [statusFilter, setStatusFilter] = useState('')
   const [tagFilter, setTagFilter] = useState(0)
   const [selected, setSelected] = useState<Set<number>>(new Set())
-  const [undoState, setUndoState] = useState({ canUndo: false, canRedo: false })
   const [rowMenu, setRowMenu] = useState<{
     x: number
     y: number
@@ -51,10 +84,6 @@ export function Library({ repo }: LibraryProps) {
   const highlightRef = useRef<HTMLTableRowElement>(null)
   const navigate = useNavigate()
 
-  const refreshUndoState = useCallback(() => {
-    UndoService.State(repo.path).then((s) => s && setUndoState(s))
-  }, [repo.path])
-
   const refresh = useCallback(() => {
     LibraryService.ListImages(repo.path, {
       search,
@@ -64,33 +93,37 @@ export function Library({ repo }: LibraryProps) {
     }).then((list) => setRows(list ?? []))
     BoardService.ListBoards(repo.path).then((list) => setBoards(list ?? []))
     TagService.ListTags(repo.path).then((list) => setTags(list ?? []))
-    refreshUndoState()
-  }, [
-    repo.path,
-    search,
-    boardFilter,
-    statusFilter,
-    tagFilter,
-    refreshUndoState,
-  ])
+  }, [repo.path, search, boardFilter, statusFilter, tagFilter])
 
   useEffect(() => {
     const timeout = setTimeout(refresh, 150)
     return () => clearTimeout(timeout)
   }, [refresh])
 
-  useUndoShortcuts(repo.path, refresh)
-
-  // Cross-navigation from the canvas: /library#img-<id> scrolls to and
-  // highlights the row — this is the list-side half of the "find in
-  // list"/"show on board" cross-navigation pair.
+  // Undo/redo keyboard shortcuts are wired once, at the board level
+  // (board.tsx's useUndoShortcuts) — the panel and canvas are mounted
+  // together now rather than being separate routes, so a second shortcut
+  // hook here would double-apply every Ctrl/Cmd+Z. board.tsx bumps
+  // refreshToken after a successful undo/redo instead, so the table stays
+  // in sync without a second global keydown listener. Deliberately keyed
+  // only off refreshToken — refresh itself changes on every filter
+  // keystroke and would defeat the "only refetch on undo/redo" intent.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh intentionally omitted, see above
   useEffect(() => {
-    const match = window.location.hash.match(/^#img-(\d+)$/)
-    if (match) {
-      setHighlightId(Number(match[1]))
-      window.history.replaceState(null, '', window.location.pathname)
-    }
-  }, [])
+    if (refreshToken === 0) return
+    refresh()
+  }, [refreshToken])
+
+  // Driven by the canvas's node-context-menu "Find in list" action, now
+  // that this is a panel tab rather than a /library#img-<id> route. Keyed
+  // off revealRequest.token (not the whole object or imageId alone) so the
+  // same image can be re-highlighted on a repeat "Find in list" click.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally keyed on token only, see above
+  useEffect(() => {
+    if (!revealRequest) return
+    setHighlightId(revealRequest.imageId)
+  }, [revealRequest?.token])
+
   useEffect(() => {
     if (highlightId != null && highlightRef.current) {
       highlightRef.current.scrollIntoView({ block: 'center' })
@@ -111,20 +144,20 @@ export function Library({ repo }: LibraryProps) {
   const handleShowOnBoard = useCallback(
     async (row: LibraryRow) => {
       const memberBoards = await BoardService.BoardsForImage(repo.path, row.id)
-      if (!memberBoards || memberBoards.length === 0) {
+      if (!memberBoards || memberBoards.length === 0) return
+      if (memberBoards.some((b) => b.id === currentBoardId)) {
+        onRevealOnCanvas(row.id)
         return
       }
-      // With exactly one board, jump straight there; with several, the
-      // first is used as a reasonable default rather than blocking on a
-      // picker — see spec: "prompt to pick one if it's on multiple" is the
-      // richer version, this is the pragmatic v1.
+      // Genuinely elsewhere: the image isn't on the board that's already
+      // open, so a real cross-board navigation is the only way to show it.
       navigate({
         to: '/board/$boardId',
         params: { boardId: String(memberBoards[0].id) },
         hash: `img-${row.id}`,
       })
     },
-    [repo.path, navigate]
+    [repo.path, currentBoardId, onRevealOnCanvas, navigate]
   )
 
   const handleArchive = useCallback(
@@ -203,94 +236,116 @@ export function Library({ repo }: LibraryProps) {
 
   const selectedIds = useMemo(() => [...selected], [selected])
 
-  const handleUndo = () =>
-    UndoService.Undo(repo.path).then((result) => {
-      if (result?.applied) refresh()
-      refreshUndoState()
-    })
-  const handleRedo = () =>
-    UndoService.Redo(repo.path).then((result) => {
-      if (result?.applied) refresh()
-      refreshUndoState()
-    })
+  useEffect(() => {
+    onSelectionChange?.(selectedIds)
+  }, [selectedIds, onSelectionChange])
+
+  const tagItems = useMemo(
+    () => [
+      { label: t`Tags: any`, value: 0 },
+      ...tags.map((tg) => ({ label: tg.name, value: tg.id })),
+    ],
+    [tags]
+  )
+  const boardItems = useMemo(
+    () => [
+      { label: t`Board: any`, value: 0 },
+      { label: t`Unassigned`, value: -1 },
+      ...boards.map((b) => ({ label: b.name, value: b.id })),
+    ],
+    [boards]
+  )
+  const statusItems = useMemo(
+    () => [
+      { label: t`Active`, value: '' },
+      { label: t`Archived`, value: 'archived' },
+      { label: t`Trashed`, value: 'trashed' },
+      { label: t`All`, value: 'all' },
+    ],
+    []
+  )
 
   return (
-    <div className="flex h-screen flex-col bg-surface-canvas">
-      <TopNav
-        repoName={repo.name}
-        active="library"
-        boardHref="/board"
-        canUndo={undoState.canUndo}
-        canRedo={undoState.canRedo}
-        onUndo={handleUndo}
-        onRedo={handleRedo}
-      />
-
-      <div className="flex items-center gap-3 border-b border-black/6 px-6 py-3.5">
-        <div className="flex h-[34px] max-w-[320px] flex-1 items-center gap-2 rounded-md border border-black/14 px-2.5">
+    <div className="flex h-full flex-col">
+      <div className="flex flex-none flex-col gap-2 border-b border-black/6 p-2.5">
+        <div className="flex h-[30px] items-center gap-2 rounded-md border border-black/14 px-2.5">
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={t`Search prompts, filenames, tags…`}
-            className="w-full text-[12.5px] text-ink outline-none placeholder:text-ink-subtle"
+            className="w-full text-[12px] text-ink outline-none placeholder:text-ink-subtle"
           />
         </div>
-        <select
-          value={tagFilter}
-          onChange={(e) => setTagFilter(Number(e.target.value))}
-          className="rounded-full border border-black/12 px-3 py-1.5 text-[12px] font-medium text-ink-muted"
-        >
-          <option value={0}>{t`Tags: any`}</option>
-          {tags.map((tg) => (
-            <option key={tg.id} value={tg.id}>
-              {tg.name}
-            </option>
-          ))}
-        </select>
-        <select
-          value={boardFilter}
-          onChange={(e) => setBoardFilter(Number(e.target.value))}
-          className="rounded-full border border-black/12 px-3 py-1.5 text-[12px] font-medium text-ink-muted"
-        >
-          <option value={0}>{t`Board: any`}</option>
-          <option value={-1}>{t`Unassigned`}</option>
-          {boards.map((b) => (
-            <option key={b.id} value={b.id}>
-              {b.name}
-            </option>
-          ))}
-        </select>
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="rounded-full border border-black/12 px-3 py-1.5 text-[12px] font-medium text-ink-muted"
-        >
-          <option value="">{t`Active`}</option>
-          <option value="archived">{t`Archived`}</option>
-          <option value="trashed">{t`Trashed`}</option>
-          <option value="all">{t`All`}</option>
-        </select>
+        <div className="flex flex-wrap gap-1.5">
+          <Select
+            items={tagItems}
+            value={tagFilter}
+            onValueChange={(v) => setTagFilter(v as number)}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {tagItems.map((item) => (
+                <SelectItem key={String(item.value)} value={item.value}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
+            items={boardItems}
+            value={boardFilter}
+            onValueChange={(v) => setBoardFilter(v as number)}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {boardItems.map((item) => (
+                <SelectItem key={String(item.value)} value={item.value}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
+            items={statusItems}
+            value={statusFilter}
+            onValueChange={(v) => setStatusFilter(v as string)}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {statusItems.map((item) => (
+                <SelectItem key={String(item.value)} value={item.value}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto pb-16">
-        <table className="w-full border-collapse">
+      <div className="flex-1 overflow-auto">
+        <table className="w-full min-w-[460px] border-collapse">
           <thead>
-            <tr className="border-b border-black/6 text-left text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">
-              <th className="w-10 px-6 py-2.5" />
-              <th className="w-14 px-2 py-2.5" />
-              <th className="px-2 py-2.5">
-                <Trans>Prompt</Trans>
+            <tr className="border-b border-black/6 text-left text-[10.5px] font-semibold uppercase tracking-wide text-ink-subtle">
+              <th className="w-8 px-2.5 py-2" />
+              <th className="px-1.5 py-2">
+                <Trans>File</Trans>
               </th>
-              <th className="px-2 py-2.5">
+              <th className="px-1.5 py-2">
                 <Trans>Tags</Trans>
               </th>
-              <th className="px-2 py-2.5">
+              <th className="px-1.5 py-2">
                 <Trans>Board</Trans>
               </th>
-              <th className="px-2 py-2.5">
+              <th className="px-1.5 py-2">
                 <Trans>Date</Trans>
               </th>
-              <th className="px-2 py-2.5">
+              <th className="px-1.5 py-2">
                 <Trans>Status</Trans>
               </th>
             </tr>
@@ -305,67 +360,58 @@ export function Library({ repo }: LibraryProps) {
                   setRowMenu({ x: e.clientX, y: e.clientY, row })
                 }}
                 className={cn(
-                  'border-b border-black/4 text-[12.5px]',
+                  'border-b border-black/4 text-[11.5px]',
                   selected.has(row.id) && 'bg-accent-soft',
                   row.id === highlightId &&
                     'bg-accent-soft ring-2 ring-inset ring-accent'
                 )}
               >
-                <td className="px-6 py-2">
+                <td className="px-2.5 py-1.5">
                   <input
                     type="checkbox"
                     checked={selected.has(row.id)}
                     onChange={() => toggleSelected(row.id)}
                   />
                 </td>
-                <td className="px-2 py-2">
-                  <div className="h-[38px] w-[38px] overflow-hidden rounded-md bg-[repeating-linear-gradient(45deg,#EDEBE9_0px,#EDEBE9_8px,#E1DFDD_8px,#E1DFDD_16px)]">
-                    {row.thumbUrl && (
-                      <img
-                        src={row.thumbUrl}
-                        alt=""
-                        className="h-full w-full object-cover"
-                      />
-                    )}
-                  </div>
+                <td className="px-1.5 py-1.5">
+                  <PanelImageRow
+                    image={row}
+                    onDetailRequest={onDetailRequest}
+                    showStatusBadges={false}
+                    dragImageIds={selectedIds}
+                  />
                 </td>
-                <td className="px-2 py-2">
-                  <div className="font-semibold text-ink">{row.fileName}</div>
-                  <div className="truncate text-[11.5px] text-ink-subtle">
-                    {row.promptText || '—'}
-                  </div>
-                </td>
-                <td className="px-2 py-2">
+                <td className="px-1.5 py-1.5">
                   <div className="flex flex-wrap gap-1">
                     {(row.tags ?? []).map((tag) => (
                       <span
                         key={tag}
-                        className="rounded-full bg-surface px-2 py-0.5 text-[10.5px] text-ink-muted"
+                        className="rounded-full bg-surface px-2 py-0.5 text-[10px] text-ink-muted"
                       >
                         {tag}
                       </span>
                     ))}
                   </div>
                 </td>
-                <td className="px-2 py-2 text-ink-muted">
+                <td className="px-1.5 py-1.5 text-ink-muted">
                   {(row.boards ?? []).join(', ') || '—'}
                 </td>
-                <td className="px-2 py-2 text-ink-subtle">
+                <td className="px-1.5 py-1.5 text-ink-subtle">
                   {new Date(row.createdAt).toLocaleDateString()}
                 </td>
-                <td className="px-2 py-2">
+                <td className="px-1.5 py-1.5">
                   {row.missing && (
-                    <span className="rounded-full bg-danger-soft px-2 py-0.5 text-[10.5px] font-semibold text-danger">
+                    <span className="rounded-full bg-danger-soft px-2 py-0.5 text-[10px] font-semibold text-danger">
                       <Trans>Missing</Trans>
                     </span>
                   )}
                   {!row.missing && row.trashed && (
-                    <span className="rounded-full bg-surface px-2 py-0.5 text-[10.5px] font-semibold text-ink-subtle">
+                    <span className="rounded-full bg-surface px-2 py-0.5 text-[10px] font-semibold text-ink-subtle">
                       <Trans>Trashed</Trans>
                     </span>
                   )}
                   {!row.missing && !row.trashed && row.archived && (
-                    <span className="rounded-full bg-surface px-2 py-0.5 text-[10.5px] font-semibold text-ink-subtle">
+                    <span className="rounded-full bg-surface px-2 py-0.5 text-[10px] font-semibold text-ink-subtle">
                       <Trans>Archived</Trans>
                     </span>
                   )}
@@ -387,11 +433,11 @@ export function Library({ repo }: LibraryProps) {
       </div>
 
       {selected.size > 0 && (
-        <div className="fixed bottom-4 left-1/2 flex h-11 w-[min(640px,90vw)] -translate-x-1/2 items-center justify-between rounded-lg bg-ink px-4 shadow-lg">
-          <span className="text-[12.5px] font-semibold text-white">
+        <div className="flex h-10 flex-none items-center justify-between gap-3 border-t border-black/6 bg-ink px-3">
+          <span className="text-[11.5px] font-semibold text-white">
             {selected.size} <Trans>selected</Trans>
           </span>
-          <div className="flex gap-4">
+          <div className="flex gap-3">
             <button
               type="button"
               onClick={(e) =>
@@ -401,7 +447,7 @@ export function Library({ repo }: LibraryProps) {
                   imageIds: selectedIds,
                 })
               }
-              className="text-[12px] font-semibold text-white hover:underline"
+              className="text-[11.5px] font-semibold text-white hover:underline"
             >
               <Trans>Add to board</Trans>
             </button>
@@ -417,7 +463,7 @@ export function Library({ repo }: LibraryProps) {
                   refresh()
                 })
               }
-              className="text-[12px] font-semibold text-white hover:underline"
+              className="text-[11.5px] font-semibold text-white hover:underline"
             >
               <Trans>Archive</Trans>
             </button>
@@ -433,7 +479,7 @@ export function Library({ repo }: LibraryProps) {
                   refresh()
                 })
               }
-              className="text-[12px] font-semibold text-[#FF9E9E] hover:underline"
+              className="text-[11.5px] font-semibold text-[#FF9E9E] hover:underline"
             >
               <Trans>Trash</Trans>
             </button>

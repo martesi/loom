@@ -36,80 +36,98 @@
           # The CLI embeds templates and task files; tests want a display.
           doCheck = false;
         };
+        commonHook = ''
+          export GOBIN="$PWD/.bin"
+          export PATH="$GOBIN:$PATH"
+
+          export GIO_EXTRA_MODULES="${pkgs.glib-networking}/lib/gio/modules''${GIO_EXTRA_MODULES:+:$GIO_EXTRA_MODULES}"
+
+          # GTK's file dialog reads GSettings, and GIO treats "no schemas
+          # installed" as a g_error — i.e. abort(), taking the whole app down
+          # the moment the picker opens. glib's setup hook collects the schema
+          # dirs into GSETTINGS_SCHEMAS_PATH but nothing puts them on the path
+          # GIO actually searches, so do that here.
+          export XDG_DATA_DIRS="$GSETTINGS_SCHEMAS_PATH''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
+
+          # Everything below only applies when there is no DRM render node —
+          # a real GPU host keeps its own hardware drivers untouched.
+          if [ ! -e /dev/dri/renderD128 ]; then
+            # Use this shell's Mesa rather than whatever the host exposes. The
+            # host ICD set can be a single unusable driver (powervr on WSL),
+            # which is what makes zink fail with "failed to choose pdev" and
+            # EGL fall over with "failed to get driver name for fd -1".
+            export LIBGL_DRIVERS_PATH="${pkgs.mesa}/lib/dri"
+            export __EGL_VENDOR_LIBRARY_FILENAMES="${pkgs.mesa}/share/glvnd/egl_vendor.d/50_mesa.json"
+
+            # Lavapipe, the software Vulkan ICD. VK_DRIVER_FILES is the current
+            # name, VK_ICD_FILENAMES the one older loaders still read.
+            VK_ICD_FILENAMES="$(echo ${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.*.json)"
+            export VK_ICD_FILENAMES
+            export VK_DRIVER_FILES="$VK_ICD_FILENAMES"
+
+            # Take the software paths directly instead of letting Mesa probe
+            # for hardware, fail, and log its way down to them.
+            export LIBGL_ALWAYS_SOFTWARE=1
+            export GALLIUM_DRIVER=llvmpipe
+            export GSK_RENDERER=cairo
+            export WEBKIT_DISABLE_COMPOSITING_MODE=1
+            export WEBKIT_DISABLE_DMABUF_RENDERER=1
+          fi
+
+          # No at-spi bus in a headless session.
+          export NO_AT_BRIDGE=1
+        '';
+
+        commonBuildInputs = [
+          wails3
+          pkgs.go
+          pkgs.gcc
+          pkgs.pkg-config
+          pkgs.gtk4
+          pkgs.webkitgtk_6_0
+          pkgs.nodejs
+          pkgs.bun
+          pkgs.sqlite
+          pkgs.ffmpeg
+          pkgs.imagemagick
+
+          # Graphics stack. Nothing here pulls in a GPU: mesa carries the
+          # llvmpipe/swrast DRI drivers and the lavapipe Vulkan ICD, which are
+          # what GTK4 and WebKit fall back to when there is no render node.
+          pkgs.mesa
+          pkgs.libglvnd
+          pkgs.libgbm
+          pkgs.vulkan-loader
+
+          # WebKit has no TLS backend of its own; without this every https://
+          # fetch from the webview fails.
+          pkgs.glib-networking
+
+          # Virtual X server, for running the app with no display attached.
+          pkgs.xvfb-run
+        ];
       in
       {
         packages.wails3 = wails3;
 
         devShells.default = pkgs.mkShell {
-          buildInputs = [
-            wails3
-            pkgs.go
-            pkgs.gcc
-            pkgs.pkg-config
-            pkgs.gtk4
-            pkgs.webkitgtk_6_0
-            pkgs.nodejs
-            pkgs.bun
-            pkgs.sqlite
-            pkgs.ffmpeg
-            pkgs.imagemagick
+          buildInputs = commonBuildInputs;
+          shellHook = commonHook;
+        };
 
-            # Graphics stack. Nothing here pulls in a GPU: mesa carries the
-            # llvmpipe/swrast DRI drivers and the lavapipe Vulkan ICD, which are
-            # what GTK4 and WebKit fall back to when there is no render node.
-            pkgs.mesa
-            pkgs.libglvnd
-            pkgs.libgbm
-            pkgs.vulkan-loader
-
-            # WebKit has no TLS backend of its own; without this every https://
-            # fetch from the webview fails.
-            pkgs.glib-networking
-
-            # Virtual X server, for running the app with no display attached.
-            pkgs.xvfb-run
+        # GUI closure (Xvfb, xdotool, imagemagick) split out from `default`
+        # so everyday development doesn't pay for it — see
+        # docs/panel-unification-plan.md's e2e verification steps, which are
+        # the only thing that needs this shell.
+        devShells.e2e = pkgs.mkShell {
+          buildInputs = commonBuildInputs ++ [
+            pkgs.xvfb
+            pkgs.xdpyinfo
+            pkgs.xdotool
           ];
-
           shellHook = ''
-            export GOBIN="$PWD/.bin"
-            export PATH="$GOBIN:$PATH"
-
-            export GIO_EXTRA_MODULES="${pkgs.glib-networking}/lib/gio/modules''${GIO_EXTRA_MODULES:+:$GIO_EXTRA_MODULES}"
-
-            # GTK's file dialog reads GSettings, and GIO treats "no schemas
-            # installed" as a g_error — i.e. abort(), taking the whole app down
-            # the moment the picker opens. glib's setup hook collects the schema
-            # dirs into GSETTINGS_SCHEMAS_PATH but nothing puts them on the path
-            # GIO actually searches, so do that here.
-            export XDG_DATA_DIRS="$GSETTINGS_SCHEMAS_PATH''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
-
-            # Everything below only applies when there is no DRM render node —
-            # a real GPU host keeps its own hardware drivers untouched.
-            if [ ! -e /dev/dri/renderD128 ]; then
-              # Use this shell's Mesa rather than whatever the host exposes. The
-              # host ICD set can be a single unusable driver (powervr on WSL),
-              # which is what makes zink fail with "failed to choose pdev" and
-              # EGL fall over with "failed to get driver name for fd -1".
-              export LIBGL_DRIVERS_PATH="${pkgs.mesa}/lib/dri"
-              export __EGL_VENDOR_LIBRARY_FILENAMES="${pkgs.mesa}/share/glvnd/egl_vendor.d/50_mesa.json"
-
-              # Lavapipe, the software Vulkan ICD. VK_DRIVER_FILES is the current
-              # name, VK_ICD_FILENAMES the one older loaders still read.
-              VK_ICD_FILENAMES="$(echo ${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.*.json)"
-              export VK_ICD_FILENAMES
-              export VK_DRIVER_FILES="$VK_ICD_FILENAMES"
-
-              # Take the software paths directly instead of letting Mesa probe
-              # for hardware, fail, and log its way down to them.
-              export LIBGL_ALWAYS_SOFTWARE=1
-              export GALLIUM_DRIVER=llvmpipe
-              export GSK_RENDERER=cairo
-              export WEBKIT_DISABLE_COMPOSITING_MODE=1
-              export WEBKIT_DISABLE_DMABUF_RENDERER=1
-            fi
-
-            # No at-spi bus in a headless session.
-            export NO_AT_BRIDGE=1
+            ${commonHook}
+            export DISPLAY="''${DISPLAY:-:99}"
           '';
         };
       });

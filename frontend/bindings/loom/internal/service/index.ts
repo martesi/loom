@@ -6,6 +6,7 @@ import * as GroupService from "./groupservice.js";
 import * as ImageService from "./imageservice.js";
 import * as LibraryService from "./libraryservice.js";
 import * as RepoService from "./reposervice.js";
+import * as SettingsService from "./settingsservice.js";
 import * as SystemService from "./systemservice.js";
 import * as TagService from "./tagservice.js";
 import * as UndoService from "./undoservice.js";
@@ -15,6 +16,7 @@ export {
     ImageService,
     LibraryService,
     RepoService,
+    SettingsService,
     SystemService,
     TagService,
     UndoService
@@ -23,6 +25,7 @@ export {
 export type {
     BoardData,
     BoardSummary,
+    DirListing,
     GroupInfo,
     ImageInfo,
     LibraryQuery,

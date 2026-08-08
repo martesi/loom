@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"net/url"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
@@ -17,6 +18,20 @@ type RepoInfo struct {
 	Path       string `json:"path"`
 	ImageCount int    `json:"imageCount"`
 	OpenedAt   string `json:"openedAt"`
+
+	// IsOpen reports whether this repo currently has a live window showing
+	// it (used by ListRecentRepos so the recent-repos list can flag entries
+	// that are already open elsewhere).
+	IsOpen bool `json:"isOpen"`
+
+	// OpenedElsewhere is set on the return value of open/SwitchTo when the
+	// requested repo turned out to already be open in another window. That
+	// window was focused instead of reusing/creating one for the caller, so
+	// the calling window's frontend must NOT navigate itself into this
+	// repo. Only ID/Path are populated alongside it — the calling window
+	// isn't navigating, so there's no need to bootstrap the repo again just
+	// to fill in Name/ImageCount/OpenedAt.
+	OpenedElsewhere bool `json:"openedElsewhere"`
 }
 
 // ListRecentRepos returns the global recent-repos list, most recently
@@ -39,12 +54,15 @@ func (s *RepoService) ListRecentRepos() ([]RepoInfo, error) {
 		count, _ := repo.ImageCount()
 		repo.Close()
 
+		_, isOpen := focusedWindowForRepo(r.Path)
+
 		infos = append(infos, RepoInfo{
 			ID:         r.Path,
 			Name:       repo.Name(),
 			Path:       r.Path,
 			ImageCount: count,
 			OpenedAt:   relativeTime(r.OpenedAt),
+			IsOpen:     isOpen,
 		})
 	}
 	return infos, nil
@@ -96,6 +114,66 @@ func (s *RepoService) OpenRecent(path string) (*RepoInfo, error) {
 }
 
 func (s *RepoService) open(path string) (*RepoInfo, error) {
+	if window, ok := focusedWindowForRepo(path); ok {
+		window.Focus()
+		return &RepoInfo{ID: path, Path: path, OpenedElsewhere: true}, nil
+	}
+
+	info, err := bootstrapAndTouch(path)
+	if err != nil {
+		return nil, err
+	}
+
+	registerRepoWindow(path, application.Get().Window.Current())
+	return info, nil
+}
+
+// SwitchTo opens path in a brand-new top-level window rather than the
+// calling window. It exists for the repo-switcher (Stage 10): when a
+// window already showing repo A wants to switch to repo B, it must never
+// navigate itself away from A, so — unlike open/OpenRecent — this method
+// never reuses "the current window" as the destination.
+//
+// If path is already open somewhere, that window is focused instead of
+// creating a duplicate.
+func (s *RepoService) SwitchTo(path string) (*RepoInfo, error) {
+	if window, ok := focusedWindowForRepo(path); ok {
+		window.Focus()
+		return &RepoInfo{ID: path, Path: path, OpenedElsewhere: true}, nil
+	}
+
+	if _, err := bootstrapAndTouch(path); err != nil {
+		return nil, err
+	}
+
+	// Deliberately NOT calling registerRepoWindow here. WindowManager.NewWithOptions
+	// inserts the new window into the app's window map synchronously — before its
+	// webview has loaded or run any frontend code — so registering path against it
+	// right away would make it briefly "already open" in the registry before its
+	// own bootstrap even runs. That new window boots to "/?openRepo="+path, which
+	// calls OpenRecent(path) -> open(path) as its very first move; open() would
+	// then find this same window already registered via focusedWindowForRepo,
+	// treat the repo as open "elsewhere" (i.e. in itself), focus itself as a
+	// no-op, and return OpenedElsewhere without Name/ImageCount — so the frontend
+	// would never navigate past a blank page. Leaving registration to that window's
+	// own open() call (same as every other repo-opening entry point) avoids the
+	// self-registration race entirely.
+	application.Get().Window.NewWithOptions(application.WebviewWindowOptions{
+		Title:            "Loom",
+		Width:            1200,
+		Height:           800,
+		BackgroundColour: application.NewRGB(243, 242, 241),
+		URL:              "/?openRepo=" + url.QueryEscape(path),
+	})
+
+	return &RepoInfo{ID: path, Path: path, OpenedElsewhere: true}, nil
+}
+
+// bootstrapAndTouch bootstraps (or opens the existing) .loom/ at path,
+// records it as the most-recently-opened repo, and builds the RepoInfo
+// describing it. Shared by open and SwitchTo so the two entry points don't
+// duplicate the bootstrap/touch-recent sequence.
+func bootstrapAndTouch(path string) (*RepoInfo, error) {
 	repo, err := store.Bootstrap(path)
 	if err != nil {
 		return nil, fmt.Errorf("open repo at %s: %w", path, err)

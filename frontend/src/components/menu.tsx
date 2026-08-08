@@ -31,17 +31,21 @@ export function PositionedMenu({
   onClose,
   width = 224,
 }: PositionedMenuProps) {
+  // Deliberately no window 'contextmenu' listener here: right-clicking
+  // elsewhere already opens (or moves) a menu through its own contextmenu
+  // handler, which sets this component's x/y/items directly — a second
+  // "close on any contextmenu" listener would fire on window *after* that
+  // handler (window sits outside the React root in the bubble chain), so
+  // it would immediately null out the very state the click just set.
   useEffect(() => {
     const close = () => onClose()
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
     }
     window.addEventListener('click', close)
-    window.addEventListener('contextmenu', close)
     window.addEventListener('keydown', onKey)
     return () => {
       window.removeEventListener('click', close)
-      window.removeEventListener('contextmenu', close)
       window.removeEventListener('keydown', onKey)
     }
   }, [onClose])
