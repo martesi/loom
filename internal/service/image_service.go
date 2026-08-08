@@ -494,6 +494,21 @@ func (s *ImageService) ListDirectory(repoPath, relPath string) (*DirListing, err
 	return out, nil
 }
 
+// CreateDirectory creates a new folder named name inside parentRelPath
+// (relative to repoPath; "" for the repo root) — Explorer's "New folder"
+// action, reached from its empty-space context menu. Not undo-logged: a
+// fresh empty folder has no corresponding database row (see
+// store.CreateDirectory), unlike every other Explorer mutation here.
+func (s *ImageService) CreateDirectory(repoPath, parentRelPath, name string) error {
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		return err
+	}
+	defer repo.Close()
+
+	return repo.CreateDirectory(parentRelPath, name)
+}
+
 // MoveFile renames/moves an image's file to newRelPath (relative to
 // repoPath) and logs the move as an undoable step. Both undo and redo of
 // this step reuse store.MoveFile — see moveFileStepPayload in

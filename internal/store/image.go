@@ -159,6 +159,23 @@ func (r *Repo) ListDirectory(relPath string) (DirListing, error) {
 	return DirListing{RelPath: cleanRel, Dirs: dirs, Files: files}, nil
 }
 
+// CreateDirectory creates a new, empty folder named name inside
+// parentRelPath (relative to the repo root; "" for the root itself) —
+// Explorer's "New folder" action. Folders aren't tracked in the database
+// (only registered image files get rows); ListDirectory picks up the new
+// folder on its next read since it walks the filesystem directly, not a
+// stored table, so there's nothing further to register here.
+func (r *Repo) CreateDirectory(parentRelPath, name string) error {
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+		return fmt.Errorf("invalid folder name %q", name)
+	}
+	absParent, _, err := clampRelPath(r.Path, parentRelPath)
+	if err != nil {
+		return err
+	}
+	return os.Mkdir(filepath.Join(absParent, name), 0o755)
+}
+
 // imagesByFilePaths returns the image rows matching the given file_path
 // values, in no particular order — the ListDirectory backing query, mirrors
 // ListImagesByIDs' shape but keyed by path instead of id since a freshly

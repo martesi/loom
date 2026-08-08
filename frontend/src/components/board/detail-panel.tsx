@@ -10,9 +10,11 @@ import type {
 import {
   BoardService,
   ImageService,
+  PromptService,
   TagService,
 } from '../../../bindings/loom/internal/service'
 import { useToast } from '../ui/toast'
+import { PromptPicker } from './prompt-picker'
 
 interface DetailPanelProps {
   repo: RepoInfo
@@ -120,9 +122,26 @@ export function DetailPanel({
 
   const image = boardImage ?? fetchedImage
 
+  // Prompt attach/detach can change promptText on an image that isn't part
+  // of the loaded board — onChange alone (board.tsx's loadBoard) wouldn't
+  // refresh that case, since fetchedImage comes from a separate GetImage
+  // call the board reload never touches.
+  const refreshImage = useCallback(() => {
+    onChange()
+    if (!boardImage && detailImageId != null) {
+      ImageService.GetImage(repo.path, detailImageId).then((img) =>
+        setFetchedImage(img ?? null)
+      )
+    }
+  }, [onChange, boardImage, detailImageId, repo.path])
+
   const [tags, setTags] = useState<TagInfo[]>([])
   const [imageBoards, setImageBoards] = useState<BoardSummary[]>([])
   const [tagInput, setTagInput] = useState('')
+  const [promptPickerAt, setPromptPickerAt] = useState<{
+    x: number
+    y: number
+  } | null>(null)
 
   useEffect(() => {
     if (!image) {
@@ -169,8 +188,35 @@ export function DetailPanel({
       )}
 
       <div>
-        <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">
-          <Trans>Prompt</Trans>
+        <div className="mb-2 flex items-center justify-between">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">
+            <Trans>Prompt</Trans>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={(e) => setPromptPickerAt({ x: e.clientX, y: e.clientY })}
+              className="text-[11px] font-semibold text-accent hover:underline"
+            >
+              {image.promptText ? (
+                <Trans>Change…</Trans>
+              ) : (
+                <Trans>Add prompt…</Trans>
+              )}
+            </button>
+            {image.promptText && (
+              <button
+                type="button"
+                onClick={async () => {
+                  await PromptService.DetachPrompt(repo.path, image.id)
+                  refreshImage()
+                }}
+                className="text-[11px] font-semibold text-ink-subtle hover:text-danger"
+              >
+                <Trans>Remove</Trans>
+              </button>
+            )}
+          </div>
         </div>
         <div className="rounded-md bg-surface px-2.5 py-2 text-[11.5px] leading-relaxed text-ink-muted">
           {image.promptText || <Trans>No prompt attached</Trans>}
@@ -248,6 +294,17 @@ export function DetailPanel({
             ))}
         </div>
       </div>
+
+      {promptPickerAt && (
+        <PromptPicker
+          x={promptPickerAt.x}
+          y={promptPickerAt.y}
+          repoPath={repo.path}
+          imageId={image.id}
+          onClose={() => setPromptPickerAt(null)}
+          onChange={refreshImage}
+        />
+      )}
     </div>
   )
 }

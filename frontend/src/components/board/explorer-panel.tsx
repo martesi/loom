@@ -16,11 +16,17 @@ import {
 import { cn } from '../../lib/utils'
 import type { MenuAction } from '../menu'
 import { PositionedMenu } from '../menu'
-import { PanelImageRow } from './panel-image-row'
+import { PanelImageRow, type RowImage } from './panel-image-row'
 
 interface ExplorerPanelProps {
   repo: RepoInfo
+  // Explicit "go look at this" — the row menu's "Show details" — which
+  // also switches the panel to the Detail tab.
   onDetailRequest: (imageId: number) => void
+  // Passive counterpart: fired whenever the selection narrows to exactly
+  // one file, so Detail's content follows selection the way it already
+  // does for a single canvas selection, without forcing a tab switch.
+  onPreviewRequest: (imageId: number) => void
 }
 
 // The repo root is represented by the empty relative path everywhere in
@@ -66,7 +72,11 @@ interface DragPayload {
 // LibraryPanel via panel-image-row.tsx (Stage 9) — this file only owns the
 // tree-specific chrome (indentation, chevrons, drag-and-drop, inline
 // rename) around that shared block.
-export function ExplorerPanel({ repo, onDetailRequest }: ExplorerPanelProps) {
+export function ExplorerPanel({
+  repo,
+  onDetailRequest,
+  onPreviewRequest,
+}: ExplorerPanelProps) {
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(() => new Set())
   const [dirCache, setDirCache] = useState<Map<string, DirListing>>(
     () => new Map()
@@ -76,6 +86,11 @@ export function ExplorerPanel({ repo, onDetailRequest }: ExplorerPanelProps) {
   const parentRef = useRef<HTMLDivElement>(null)
 
   const [dragOverDir, setDragOverDir] = useState<string | null>(null)
+  // dragRef alone (a ref) can drive handleDropOnDir's logic fine, but it
+  // can't drive a visual style — refs don't trigger re-renders — so the
+  // currently-dragged row's id is mirrored into state just for the
+  // dragging-opacity treatment below.
+  const [draggingImageId, setDraggingImageId] = useState<number | null>(null)
   const [renaming, setRenaming] = useState<{
     dirPath: string
     imageId: number
@@ -86,6 +101,11 @@ export function ExplorerPanel({ repo, onDetailRequest }: ExplorerPanelProps) {
     y: number
     row: FileRowData
   } | null>(null)
+  const [selected, setSelected] = useState<Set<number>>(() => new Set())
+  // Tracks the last file row selected via a plain click, so repeated
+  // shift+clicks keep extending from the same starting point — same
+  // anchor idiom library-panel.tsx uses for its checkbox rows.
+  const selectionAnchorRef = useRef<number | null>(null)
 
   // Forces a fresh ListDirectory fetch for relPath, overwriting whatever's
   // cached. Used both for first-expand loads and for post-move/rename
@@ -159,6 +179,63 @@ export function ExplorerPanel({ repo, onDetailRequest }: ExplorerPanelProps) {
     return out
   }, [dirCache, expandedDirs])
 
+  const toggleFileSelected = useCallback((id: number) => {
+    selectionAnchorRef.current = id
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
+  // File-row selection (Explorer/Finder-style, same shape as
+  // library-panel.tsx's handleRowClick): plain click selects just this
+  // file and sets the shift anchor; shift+click extends the anchor to
+  // this file as a range over the flattened `rows` array, skipping over
+  // any folder rows in between since only files are selectable; ctrl/cmd
+  // toggles just this file in/out of the selection. Ctrl/cmd is
+  // deliberately not reserved for anything else here — that's the canvas
+  // node click's gesture, not a list row's.
+  const handleFileRowClick = useCallback(
+    (image: { id: number }, event: MouseEvent) => {
+      const id = image.id
+      if (event.shiftKey && selectionAnchorRef.current != null) {
+        const anchorIdx = rows.findIndex(
+          (r) => r.kind === 'file' && r.image.id === selectionAnchorRef.current
+        )
+        const clickedIdx = rows.findIndex(
+          (r) => r.kind === 'file' && r.image.id === id
+        )
+        if (anchorIdx !== -1 && clickedIdx !== -1) {
+          const [start, end] =
+            anchorIdx < clickedIdx
+              ? [anchorIdx, clickedIdx]
+              : [clickedIdx, anchorIdx]
+          const rangeIds = rows
+            .slice(start, end + 1)
+            .filter((r): r is FileRowData => r.kind === 'file')
+            .map((r) => r.image.id)
+          setSelected((prev) => new Set([...prev, ...rangeIds]))
+        }
+        return
+      }
+      if (event.ctrlKey || event.metaKey) {
+        toggleFileSelected(id)
+        return
+      }
+      selectionAnchorRef.current = id
+      setSelected(new Set([id]))
+    },
+    [rows, toggleFileSelected]
+  )
+
+  // Detail follows a single selected file, same as a single canvas
+  // selection — see onPreviewRequest's doc comment on ExplorerPanelProps.
+  useEffect(() => {
+    if (selected.size === 1) onPreviewRequest([...selected][0])
+  }, [selected, onPreviewRequest])
+
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => parentRef.current,
@@ -218,9 +295,47 @@ export function ExplorerPanel({ repo, onDetailRequest }: ExplorerPanelProps) {
     [moveImage]
   )
 
+  const handleTrash = useCallback(
+    (row: FileRowData) => {
+      ImageService.TrashImage(repo.path, row.image.id).then(() =>
+        loadDir(row.dirPath)
+      )
+    },
+    [repo.path, loadDir]
+  )
+
+  // Right-click on a row that's part of a multi-selection trashes the
+  // whole selection instead of just that row — same "act on the whole
+  // selection" convention library-panel.tsx and board.tsx's node menu use.
+  const handleTrashSelection = useCallback(
+    (rowsToTrash: FileRowData[]) => {
+      const dirsToRefresh = new Set(rowsToTrash.map((r) => r.dirPath))
+      Promise.all(
+        rowsToTrash.map((r) => ImageService.TrashImage(repo.path, r.image.id))
+      ).then(() => {
+        setSelected(new Set())
+        for (const dir of dirsToRefresh) loadDir(dir)
+      })
+    },
+    [repo.path, loadDir]
+  )
+
   const rowMenuItems: MenuAction[] = useMemo(() => {
     if (!rowMenu) return []
     const { row } = rowMenu
+    if (selected.has(row.image.id) && selected.size >= 2) {
+      const selectedRows = rows.filter(
+        (r): r is FileRowData => r.kind === 'file' && selected.has(r.image.id)
+      )
+      return [
+        {
+          key: 'trash-selection',
+          label: t`Trash ${selectedRows.length} files`,
+          danger: true,
+          onSelect: () => handleTrashSelection(selectedRows),
+        },
+      ]
+    }
     return [
       {
         key: 'rename',
@@ -237,8 +352,49 @@ export function ExplorerPanel({ repo, onDetailRequest }: ExplorerPanelProps) {
         label: t`Show in file explorer`,
         onSelect: () => SystemService.RevealInFileExplorer(row.image.filePath),
       },
+      {
+        key: 'show-details',
+        label: t`Show details`,
+        onSelect: () => onDetailRequest(row.image.id),
+      },
+      {
+        key: 'trash',
+        label: t`Trash`,
+        danger: true,
+        separatorBefore: true,
+        onSelect: () => handleTrash(row),
+      },
     ]
-  }, [rowMenu])
+  }, [
+    rowMenu,
+    handleTrash,
+    handleTrashSelection,
+    selected,
+    rows,
+    onDetailRequest,
+  ])
+
+  const [folderMenu, setFolderMenu] = useState<{
+    x: number
+    y: number
+    parentRelPath: string
+  } | null>(null)
+
+  const createFolder = useCallback(
+    (parentRelPath: string, name: string) => {
+      ImageService.CreateDirectory(repo.path, parentRelPath, name)
+        .then(() => {
+          loadDir(parentRelPath)
+          if (parentRelPath !== ROOT) {
+            setExpandedDirs((prev) => new Set(prev).add(parentRelPath))
+          }
+        })
+        .catch((err) => {
+          console.error('Failed to create folder', err)
+        })
+    },
+    [repo.path, loadDir]
+  )
 
   return (
     <div className="flex h-full flex-col">
@@ -254,6 +410,15 @@ export function ExplorerPanel({ repo, onDetailRequest }: ExplorerPanelProps) {
           if (dragRef.current) e.preventDefault()
         }}
         onDrop={(e) => handleDropOnDir(e, ROOT)}
+        onContextMenu={(e) => {
+          // Right-click on the tree's empty space (below the last row, or
+          // the "No files yet" placeholder) — a folder or file row's own
+          // onContextMenu (below) stops propagation before this fires, so
+          // this only reaches here for genuinely blank space, same
+          // targeting rule the drop handler above already uses.
+          e.preventDefault()
+          setFolderMenu({ x: e.clientX, y: e.clientY, parentRelPath: ROOT })
+        }}
       >
         {rows.length === 0 && (
           <div className="p-4 text-[12.5px] text-ink-subtle">
@@ -299,11 +464,22 @@ export function ExplorerPanel({ repo, onDetailRequest }: ExplorerPanelProps) {
                       )
                     }
                     onDrop={(e) => handleDropOnDir(e, row.relPath)}
+                    onContextMenu={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setFolderMenu({
+                        x: e.clientX,
+                        y: e.clientY,
+                        parentRelPath: row.relPath,
+                      })
+                    }}
                   />
                 ) : (
                   <FileRow
                     row={row}
-                    onDetailRequest={onDetailRequest}
+                    onRowClick={handleFileRowClick}
+                    selected={selected.has(row.image.id)}
+                    dragging={draggingImageId === row.image.id}
                     renaming={renaming?.imageId === row.image.id}
                     renameValue={renaming?.value ?? row.image.fileName}
                     onRenameChange={(value) =>
@@ -322,6 +498,15 @@ export function ExplorerPanel({ repo, onDetailRequest }: ExplorerPanelProps) {
                     }
                     onContextMenu={(e) => {
                       e.preventDefault()
+                      e.stopPropagation()
+                      // Right-click on a row outside the current selection
+                      // replaces it with just that row, rather than acting
+                      // on a stale prior selection — matches Library's and
+                      // the canvas's right-click convention.
+                      if (!selected.has(row.image.id)) {
+                        selectionAnchorRef.current = row.image.id
+                        setSelected(new Set([row.image.id]))
+                      }
                       setRowMenu({ x: e.clientX, y: e.clientY, row })
                     }}
                     onDragStart={(e) => {
@@ -329,6 +514,7 @@ export function ExplorerPanel({ repo, onDetailRequest }: ExplorerPanelProps) {
                         image: row.image,
                         dirPath: row.dirPath,
                       }
+                      setDraggingImageId(row.image.id)
                       e.dataTransfer.effectAllowed = 'move'
                       e.dataTransfer.setData('text/plain', String(row.image.id))
                       e.dataTransfer.setData(
@@ -339,6 +525,7 @@ export function ExplorerPanel({ repo, onDetailRequest }: ExplorerPanelProps) {
                     onDragEnd={() => {
                       dragRef.current = null
                       setDragOverDir(null)
+                      setDraggingImageId(null)
                     }}
                   />
                 )}
@@ -356,6 +543,14 @@ export function ExplorerPanel({ repo, onDetailRequest }: ExplorerPanelProps) {
           onClose={() => setRowMenu(null)}
         />
       )}
+      {folderMenu && (
+        <NewFolderPopover
+          x={folderMenu.x}
+          y={folderMenu.y}
+          onSubmit={(name) => createFolder(folderMenu.parentRelPath, name)}
+          onClose={() => setFolderMenu(null)}
+        />
+      )}
     </div>
   )
 }
@@ -368,6 +563,7 @@ interface DirRowProps {
   onDragOver: (e: DragEvent) => void
   onDragLeave: () => void
   onDrop: (e: DragEvent) => void
+  onContextMenu: (e: MouseEvent) => void
 }
 
 function DirRow({
@@ -378,6 +574,7 @@ function DirRow({
   onDragOver,
   onDragLeave,
   onDrop,
+  onContextMenu,
 }: DirRowProps) {
   return (
     <button
@@ -386,6 +583,7 @@ function DirRow({
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
+      onContextMenu={onContextMenu}
       className={cn(
         'flex h-[34px] w-full items-center gap-1.5 border-b border-black/4 px-1.5 text-left text-[11.5px] font-semibold text-ink hover:bg-black/[0.03]',
         dragOver && 'bg-accent-soft ring-2 ring-inset ring-accent'
@@ -411,7 +609,9 @@ function DirRow({
 
 interface FileRowProps {
   row: FileRowData
-  onDetailRequest: (imageId: number) => void
+  onRowClick: (image: RowImage, event: MouseEvent) => void
+  selected: boolean
+  dragging: boolean
   renaming: boolean
   renameValue: string
   onRenameChange: (value: string) => void
@@ -425,7 +625,9 @@ interface FileRowProps {
 
 function FileRow({
   row,
-  onDetailRequest,
+  onRowClick,
+  selected,
+  dragging,
   renaming,
   renameValue,
   onRenameChange,
@@ -451,14 +653,18 @@ function FileRow({
   return (
     <div
       role="treeitem"
-      aria-selected={renaming}
+      aria-selected={selected || renaming}
       tabIndex={0}
       draggable={!renaming}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
-      className="flex h-[40px] w-full items-center gap-1.5 border-b border-black/4 px-1.5 text-[11.5px]"
+      className={cn(
+        'flex h-[40px] w-full items-center gap-1.5 border-b border-black/4 px-1.5 text-[11.5px]',
+        selected && 'bg-accent-soft',
+        dragging && 'opacity-40'
+      )}
       style={{ paddingLeft: 8 + row.depth * 16 + 16.5 }}
     >
       {renaming ? (
@@ -487,19 +693,76 @@ function FileRow({
               onClick={(e) => e.stopPropagation()}
               className="w-full rounded-sm border border-accent px-1 text-[11.5px] text-ink outline-none"
             />
-            <div className="truncate text-[10.5px] text-ink-subtle">
-              {image.promptText || '—'}
-            </div>
+            {image.promptText && (
+              <div className="truncate text-[10.5px] text-ink-subtle">
+                {image.promptText}
+              </div>
+            )}
           </div>
         </div>
       ) : (
         <PanelImageRow
           image={image}
-          onDetailRequest={onDetailRequest}
+          onRowClick={onRowClick}
           thumbSize={28}
           draggable={false}
         />
       )}
+    </div>
+  )
+}
+
+interface NewFolderPopoverProps {
+  x: number
+  y: number
+  onSubmit: (name: string) => void
+  onClose: () => void
+}
+
+// "New folder" prompt (Explorer's empty-space and folder-row context
+// menus) — a small positioned text input, same shape/dismiss behavior as
+// tag-picker.tsx.
+function NewFolderPopover({ x, y, onSubmit, onClose }: NewFolderPopoverProps) {
+  const [value, setValue] = useState('')
+  const ref = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    inputRef.current?.focus()
+  }, [])
+
+  useEffect(() => {
+    const onClick = (e: globalThis.MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
+    }
+    document.addEventListener('mousedown', onClick)
+    return () => document.removeEventListener('mousedown', onClick)
+  }, [onClose])
+
+  const submit = () => {
+    const trimmed = value.trim()
+    if (trimmed) onSubmit(trimmed)
+    onClose()
+  }
+
+  return (
+    <div
+      ref={ref}
+      className="fixed z-50 flex w-56 flex-col gap-2 rounded-lg border border-black/8 bg-white p-3 shadow-lg"
+      style={{ left: x, top: y }}
+    >
+      <input
+        ref={inputRef}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') submit()
+          else if (e.key === 'Escape') onClose()
+          e.stopPropagation()
+        }}
+        placeholder={t`Folder name…`}
+        className="w-full rounded-md border border-black/12 px-2.5 py-1.5 text-[12px] text-ink outline-none focus:border-accent"
+      />
     </div>
   )
 }

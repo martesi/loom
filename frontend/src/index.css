@@ -51,3 +51,28 @@ body {
   background: transparent;
   border: none;
 }
+
+/* WebKitGTK (the Linux webview) paints overflow scrollbars as a native
+   overlay compositing layer that ignores CSS stacking context entirely, so
+   an `overflow-auto` list's scrollbar can render on top of a
+   higher-z-index popover anchored near it (e.g. the Library panel's table
+   scrollbar over RepoSelect's popup). Styling ::-webkit-scrollbar switches
+   WebKit to classic, in-flow scrollbar painting, which respects z-index
+   like any other element and is a no-op cosmetic change on Chromium/macOS
+   WebKit where overlay scrollbars don't have this bug. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.18);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(0, 0, 0, 0.32);
+}

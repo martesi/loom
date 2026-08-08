@@ -17,12 +17,13 @@ export interface RowImage {
 
 interface PanelImageRowProps {
   image: RowImage
-  // Ctrl/cmd+click always fires this instead of onRowClick, regardless of
-  // panel — see board.tsx's detailImageId/activeTab wiring.
-  onDetailRequest: (imageId: number) => void
-  // Plain-click behavior is panel-specific (Library toggles a checkbox
-  // selection, Explorer currently has no row-click behavior at all) so it's
-  // left as an optional callback rather than baked into this component.
+  // Click handling (including modifier keys) is entirely panel-specific:
+  // Library and Explorer both implement plain-click-selects,
+  // shift-click-range, and ctrl/cmd-click-toggles selection themselves —
+  // ctrl/cmd is reserved for that here, not for jumping to Detail (that's
+  // the canvas node click's gesture, via board.tsx's handleNodeClick; lists
+  // reach Detail by narrowing selection to one row, or the row context
+  // menu's "Show details").
   onRowClick?: (image: RowImage, event: MouseEvent) => void
   thumbSize?: number
   showStatusBadges?: boolean
@@ -42,11 +43,10 @@ interface PanelImageRowProps {
 // Shared identity block (thumbnail + filename + prompt subtitle + optional
 // status badges) used by both LibraryPanel's table rows and Explorer's tree
 // rows — previously duplicated between the two (see explorer-panel.tsx's
-// pre-Stage-9 comment). Also owns the ctrl/cmd+click -> onDetailRequest
-// routing so both panels get it identically.
+// pre-Stage-9 comment). Click handling is left entirely to onRowClick; see
+// its doc comment for why ctrl/cmd isn't special-cased here.
 export function PanelImageRow({
   image,
-  onDetailRequest,
   onRowClick,
   thumbSize = 32,
   showStatusBadges = true,
@@ -56,20 +56,12 @@ export function PanelImageRow({
   dragImageIds,
 }: PanelImageRowProps) {
   const handleClick = (event: MouseEvent) => {
-    if (event.ctrlKey || event.metaKey) {
-      event.preventDefault()
-      event.stopPropagation()
-      onDetailRequest(image.id)
-      return
-    }
     onRowClick?.(image, event)
   }
 
   const handleDragStart = (event: DragEvent) => {
     const ids =
-      dragImageIds &&
-      dragImageIds.includes(image.id) &&
-      dragImageIds.length > 1
+      dragImageIds && dragImageIds.includes(image.id) && dragImageIds.length > 1
         ? dragImageIds
         : [image.id]
     event.dataTransfer.effectAllowed = 'copy'
@@ -79,10 +71,10 @@ export function PanelImageRow({
     )
   }
 
-  // ctrl/cmd+click is a modifier-key power-user shortcut layered on top of
-  // each panel's real, already keyboard-accessible row controls (Library's
-  // checkbox, Explorer's role="treeitem" wrapper) — not a replacement for
-  // them, so there's no separate keyboard equivalent to wire up here.
+  // Click selection is layered on top of each panel's real, already
+  // keyboard-accessible row controls (Library's checkbox, Explorer's
+  // role="treeitem" wrapper) — not a replacement for them, so there's no
+  // separate keyboard equivalent to wire up here.
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: see comment above.
     // biome-ignore lint/a11y/useKeyWithClickEvents: see comment above.
@@ -107,9 +99,11 @@ export function PanelImageRow({
       </div>
       <div className="min-w-0 flex-1">
         <div className="truncate font-semibold text-ink">{image.fileName}</div>
-        <div className="truncate text-[11px] text-ink-subtle">
-          {image.promptText || '—'}
-        </div>
+        {image.promptText && (
+          <div className="truncate text-[11px] text-ink-subtle">
+            {image.promptText}
+          </div>
+        )}
       </div>
       {showStatusBadges && (
         <>

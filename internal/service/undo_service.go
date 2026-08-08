@@ -39,6 +39,8 @@ const (
 	stepGroupMemberAdd    = "group_member_add"
 	stepGroupMemberRemove = "group_member_remove"
 	stepGroupSetCover     = "group_set_cover"
+
+	stepSetPrompt = "set_prompt"
 )
 
 type linkStepPayload struct {
@@ -110,6 +112,17 @@ type groupMemberStepPayload struct {
 type groupCoverStepPayload struct {
 	GroupID      int64 `json:"groupId"`
 	CoverImageID int64 `json:"coverImageId"`
+}
+
+// promptStepPayload covers both attach and detach — like
+// stepSetArchived/stepSetTrashed's boolean-toggle idiom, but the "value"
+// being toggled is a nullable FK rather than a bool, so HasPrompt stands in
+// for "prompt_id IS NOT NULL" and PromptID is only meaningful when it's
+// true.
+type promptStepPayload struct {
+	ImageID   int64 `json:"imageId"`
+	PromptID  int64 `json:"promptId"`
+	HasPrompt bool  `json:"hasPrompt"`
 }
 
 func step(kind string, payload any) OpStep {
@@ -336,6 +349,21 @@ func applyStep(repo *store.Repo, s OpStep) error {
 			return purgedErr(p.CoverImageID)
 		}
 		return repo.SetGroupCover(p.GroupID, p.CoverImageID)
+
+	case stepSetPrompt:
+		var p promptStepPayload
+		if err := json.Unmarshal(s.Payload, &p); err != nil {
+			return err
+		}
+		if ok, err := repo.ImageExists(p.ImageID); err != nil {
+			return err
+		} else if !ok {
+			return purgedErr(p.ImageID)
+		}
+		if !p.HasPrompt {
+			return repo.SetImagePrompt(p.ImageID, nil)
+		}
+		return repo.SetImagePrompt(p.ImageID, &p.PromptID)
 
 	default:
 		return fmt.Errorf("unknown operation step kind %q", s.Kind)

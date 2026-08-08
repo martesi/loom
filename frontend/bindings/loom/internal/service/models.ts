@@ -90,6 +90,14 @@ export interface PositionUpdate {
     "y": number;
 }
 
+export interface PromptInfo {
+    "id": number;
+    "name": string;
+    "text": string;
+    "negative": string;
+    "usageCount": number;
+}
+
 export interface RelationshipInfo {
     "id": number;
     "sourceImageId": number;

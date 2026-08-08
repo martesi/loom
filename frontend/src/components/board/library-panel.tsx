@@ -1,6 +1,7 @@
 import { t } from '@lingui/core/macro'
 import { Trans } from '@lingui/react/macro'
 import { useNavigate } from '@tanstack/react-router'
+import type { MouseEvent } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   BoardSummary,
@@ -41,7 +42,14 @@ interface LibraryPanelProps {
   onRevealOnCanvas: (imageId: number) => void
   revealRequest: LibraryRevealRequest | null
   refreshToken: number
+  // Explicit "go look at this" — the row menu's "Show details" — which
+  // also switches the panel to the Detail tab.
   onDetailRequest: (imageId: number) => void
+  // Passive counterpart: fired whenever the checked selection narrows to
+  // exactly one row, so Detail's content follows selection the way it
+  // already does for a single canvas selection, without forcing a tab
+  // switch.
+  onPreviewRequest: (imageId: number) => void
   // Reports the checkbox multi-selection up to Board (Stage 12), so
   // toolbar actions can target it via lastSelectionSource.
   onSelectionChange?: (ids: number[]) => void
@@ -60,6 +68,7 @@ export function LibraryPanel({
   revealRequest,
   refreshToken,
   onDetailRequest,
+  onPreviewRequest,
   onSelectionChange,
 }: LibraryPanelProps) {
   const [rows, setRows] = useState<LibraryRow[]>([])
@@ -138,14 +147,53 @@ export function LibraryPanel({
     }
   }, [highlightId])
 
-  const toggleSelected = (id: number) => {
+  // anchorRef tracks the last row selected via plain click or checkbox, so
+  // repeated shift+clicks keep extending from the same starting point
+  // rather than from wherever the previous shift+click landed.
+  const anchorRef = useRef<number | null>(null)
+
+  const toggleSelected = useCallback((id: number) => {
+    anchorRef.current = id
     setSelected((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
       else next.add(id)
       return next
     })
-  }
+  }, [])
+
+  // Row click selection (Explorer/Finder-style): plain click selects just
+  // this row and sets the shift anchor; shift+click extends the anchor to
+  // this row as a contiguous range, merged into whatever's already checked;
+  // ctrl/cmd+click toggles just this row in/out of the selection, same as
+  // the checkbox. Ctrl/cmd is deliberately not reserved for anything else
+  // here — that's the canvas node click's gesture (see board.tsx's
+  // handleNodeClick), not a list row's.
+  const handleRowClick = useCallback(
+    (image: { id: number }, event: MouseEvent) => {
+      const id = image.id
+      if (event.shiftKey && anchorRef.current != null) {
+        const anchorIdx = rows.findIndex((r) => r.id === anchorRef.current)
+        const clickedIdx = rows.findIndex((r) => r.id === id)
+        if (anchorIdx !== -1 && clickedIdx !== -1) {
+          const [start, end] =
+            anchorIdx < clickedIdx
+              ? [anchorIdx, clickedIdx]
+              : [clickedIdx, anchorIdx]
+          const rangeIds = rows.slice(start, end + 1).map((r) => r.id)
+          setSelected((prev) => new Set([...prev, ...rangeIds]))
+        }
+        return
+      }
+      if (event.ctrlKey || event.metaKey) {
+        toggleSelected(id)
+        return
+      }
+      anchorRef.current = id
+      setSelected(new Set([id]))
+    },
+    [rows, toggleSelected]
+  )
 
   const handleShowOnBoard = useCallback(
     async (row: LibraryRow) => {
@@ -202,6 +250,11 @@ export function LibraryPanel({
         label: t`Show in file explorer`,
         onSelect: () => SystemService.RevealInFileExplorer(row.filePath),
       },
+      {
+        key: 'show-details',
+        label: t`Show details`,
+        onSelect: () => onDetailRequest(row.id),
+      },
     ]
     if (row.trashed) {
       items.push({
@@ -238,13 +291,26 @@ export function LibraryPanel({
     }
     return items
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rowMenu, handleRestore, handleShowOnBoard, handleTrash, handleArchive])
+  }, [
+    rowMenu,
+    handleRestore,
+    handleShowOnBoard,
+    handleTrash,
+    handleArchive,
+    onDetailRequest,
+  ])
 
   const selectedIds = useMemo(() => [...selected], [selected])
 
   useEffect(() => {
     onSelectionChange?.(selectedIds)
   }, [selectedIds, onSelectionChange])
+
+  // Detail follows a single selected row, same as a single canvas
+  // selection — see onPreviewRequest's doc comment on LibraryPanelProps.
+  useEffect(() => {
+    if (selectedIds.length === 1) onPreviewRequest(selectedIds[0])
+  }, [selectedIds, onPreviewRequest])
 
   // Shared by the bulk-action bar and the multi-row context menu, so both
   // surfaces drive the same batch mutation logic.
@@ -453,7 +519,7 @@ export function LibraryPanel({
                 <td className="px-1.5 py-1.5">
                   <PanelImageRow
                     image={row}
-                    onDetailRequest={onDetailRequest}
+                    onRowClick={handleRowClick}
                     showStatusBadges={false}
                     dragImageIds={selectedIds}
                   />

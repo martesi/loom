@@ -39,12 +39,16 @@ interface FloatingPanelProps {
   libraryRefreshToken: number
   // Detail tab (Stage 9): which image to show, the loaded board's images
   // (so Detail can resolve a board member without a redundant fetch — see
-  // detail-panel.tsx), and the mutation handlers it needs. Ctrl/cmd+click on
-  // a Library/Explorer row routes here via onDetailRequest, which board.tsx
+  // detail-panel.tsx), and the mutation handlers it needs. A row context
+  // menu's "Show details" routes here via onDetailRequest, which board.tsx
   // wires to both setting detailImageId and switching activeTab to 'detail'.
+  // onPreviewRequest is the passive counterpart Library/Explorer use when
+  // their own selection narrows to one row — sets detailImageId without
+  // switching tabs, same as canvas's plain-click selection sync.
   detailImageId: number | null
   boardImages: ImageInfo[]
   onDetailRequest: (imageId: number) => void
+  onPreviewRequest: (imageId: number) => void
   // Stage 11's Settings modal, opened from the gear icon below — needs the
   // current board's layout mode and a way to trigger a reload after
   // changing it (BoardService.SetLayoutMode isn't undo-logged, see
@@ -81,6 +85,7 @@ export function FloatingPanel({
   detailImageId,
   boardImages,
   onDetailRequest,
+  onPreviewRequest,
   layoutMode,
   onLayoutModeChange,
   onRescan,
@@ -99,7 +104,10 @@ export function FloatingPanel({
     })
   }, [repo.path])
 
+  // onDragOver/onDrop below are purely a drag-event propagation firewall
+  // (see their own comment), not a user interaction target.
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: see comment above.
     <div
       className={cn(
         // bg-card/96 is effectively opaque (white at 96%), so backdrop-blur
@@ -112,6 +120,15 @@ export function FloatingPanel({
         dockSide === 'left' ? 'left-4' : 'right-4',
         !visible && 'hidden'
       )}
+      // The panel sits as an absolute-positioned sibling directly above the
+      // canvas (see board.tsx), so a drag that's released anywhere over it —
+      // including its own drop targets like Explorer's folder rows — would
+      // otherwise bubble up to the canvas wrapper's onDrop and also add the
+      // image to the board underneath. Stopping propagation here means a
+      // drop only reaches board.tsx's handler when it lands on the canvas
+      // itself, not merely within the same overlay stack.
+      onDragOver={(event) => event.stopPropagation()}
+      onDrop={(event) => event.stopPropagation()}
     >
       <div className="flex-none border-b border-black/6 p-2">
         <BoardSwitcher
@@ -160,6 +177,7 @@ export function FloatingPanel({
             revealRequest={libraryRevealRequest}
             refreshToken={libraryRefreshToken}
             onDetailRequest={onDetailRequest}
+            onPreviewRequest={onPreviewRequest}
             onSelectionChange={onPanelSelectionChange}
           />
         </div>
@@ -169,7 +187,11 @@ export function FloatingPanel({
             activeTab !== 'explorer' && 'hidden'
           )}
         >
-          <ExplorerPanel repo={repo} onDetailRequest={onDetailRequest} />
+          <ExplorerPanel
+            repo={repo}
+            onDetailRequest={onDetailRequest}
+            onPreviewRequest={onPreviewRequest}
+          />
         </div>
         <div
           className={cn(

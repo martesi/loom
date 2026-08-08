@@ -10,6 +10,17 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as $models from "./models.js";
 
 /**
+ * CreateDirectory creates a new folder named name inside parentRelPath
+ * (relative to repoPath; "" for the repo root) — Explorer's "New folder"
+ * action, reached from its empty-space context menu. Not undo-logged: a
+ * fresh empty folder has no corresponding database row (see
+ * store.CreateDirectory), unlike every other Explorer mutation here.
+ */
+export function CreateDirectory(repoPath: string, parentRelPath: string, name: string): $CancellablePromise<void> {
+    return $Call.ByID(283983083, repoPath, parentRelPath, name);
+}
+
+/**
  * GetImage resolves a single image's info by ID, independent of any board —
  * used by the Detail panel (Stage 9) to show an image that isn't a member of
  * the currently-loaded board (e.g. reached via a Library/Explorer ctrl/cmd+

@@ -5,6 +5,7 @@ import * as BoardService from "./boardservice.js";
 import * as GroupService from "./groupservice.js";
 import * as ImageService from "./imageservice.js";
 import * as LibraryService from "./libraryservice.js";
+import * as PromptService from "./promptservice.js";
 import * as RepoService from "./reposervice.js";
 import * as SettingsService from "./settingsservice.js";
 import * as SystemService from "./systemservice.js";
@@ -15,6 +16,7 @@ export {
     GroupService,
     ImageService,
     LibraryService,
+    PromptService,
     RepoService,
     SettingsService,
     SystemService,
@@ -31,6 +33,7 @@ export type {
     LibraryQuery,
     LibraryRow,
     PositionUpdate,
+    PromptInfo,
     RelationshipInfo,
     RepoInfo,
     TagInfo,

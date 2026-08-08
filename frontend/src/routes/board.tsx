@@ -464,12 +464,17 @@ export function Board({ repo, boardId }: BoardProps) {
       const persistPosition = () => {
         const imageId = nodeIdToImageId(node.id)
         if (imageId == null) return
+        // Must refresh boardData after persisting: the node-rebuild effect
+        // above is keyed on selectedIds (among other things), so the next
+        // selection change (e.g. clicking empty canvas to deselect) would
+        // otherwise rebuild this node from boardData's still-stale
+        // canvasX/Y and snap the just-dragged node back to its old spot.
         ImageService.SetPosition(
           repo.path,
           imageId,
           node.position.x,
           node.position.y
-        )
+        ).then(loadBoard)
       }
 
       // Groups can't be a relationship source (handleConnect guards the
@@ -570,6 +575,14 @@ export function Board({ repo, boardId }: BoardProps) {
     [repo.path, boardId, loadBoard]
   )
 
+  // Two tiers, mirroring how canvas selection drives Detail (see
+  // singleSelectedImage's effect below): handleDetailRequest is the
+  // explicit "go look at this" action (row context menu's "Show details"),
+  // which also switches the panel to the Detail tab. Passed to
+  // FloatingPanel as onPreviewRequest, plain setDetailImageId is the
+  // passive counterpart Library/Explorer use when their own selection
+  // narrows to exactly one row — content follows selection without forcing
+  // a tab switch, same as canvas's non-ctrl/cmd click.
   const handleDetailRequest = useCallback((imageId: number) => {
     setDetailImageId(imageId)
     setPanelTab('detail')
@@ -678,8 +691,11 @@ export function Board({ repo, boardId }: BoardProps) {
       setDetailImageId(singleSelectedImage.id)
     }
     // Deselecting (singleSelectedImage becomes null) deliberately leaves
-    // detailImageId alone — nothing about clearing canvas selection implies
-    // the user wants to stop looking at the last detail they had open.
+    // detailImageId alone here — onPaneClick is the one place that clears
+    // it, since only an explicit "click empty canvas to deselect" should
+    // drop Detail back to its placeholder, not every incidental way
+    // selectedIds can end up not resolving to a single image (e.g.
+    // switching to a multi-selection).
   }, [singleSelectedImage?.id])
 
   const lightboxImages = boardData?.images ?? []
@@ -1099,6 +1115,13 @@ export function Board({ repo, boardId }: BoardProps) {
             onEdgesDelete={handleEdgesDelete}
             onPaneClick={() => {
               setSelectedIds([])
+              // Clicking empty canvas to deselect should also drop Detail
+              // back to its "nothing selected" placeholder rather than
+              // leaving the last-viewed image showing with no selection to
+              // back it — ctrl/cmd+click on a Library/Explorer row (the
+              // other way into Detail) never touches selectedIds, so it's
+              // unaffected by this.
+              setDetailImageId(null)
             }}
             onMove={handleMove}
             onInit={(instance) => {
@@ -1161,6 +1184,7 @@ export function Board({ repo, boardId }: BoardProps) {
           detailImageId={detailImageId}
           boardImages={boardData.images ?? []}
           onDetailRequest={handleDetailRequest}
+          onPreviewRequest={setDetailImageId}
           layoutMode={boardData.layoutMode}
           onLayoutModeChange={loadBoard}
           onRescan={loadBoard}
