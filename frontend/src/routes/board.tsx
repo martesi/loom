@@ -112,6 +112,15 @@ export function Board({ repo, boardId }: BoardProps) {
   const [paneMenu, setPaneMenu] = useState<{ x: number; y: number } | null>(
     null
   )
+  // Context menu for a multi-select (marquee/drag-box) on the canvas. React
+  // Flow renders a `react-flow__nodesselection-rect` overlay over a drag-box
+  // selection that intercepts right-clicks, and only forwards them via its
+  // `onSelectionContextMenu` prop — without it, right-clicking a multi-select
+  // bubbles to the empty-canvas pane menu instead.
+  const [selectionMenu, setSelectionMenu] = useState<{
+    x: number
+    y: number
+  } | null>(null)
   // Undo/redo state (Stage 5), restored here after Stage 7 removed it
   // along with TopNav — its only consumer at the time. Stage 11's pane
   // context menu is the new consumer: refreshUndoState is folded into
@@ -412,7 +421,7 @@ export function Board({ repo, boardId }: BoardProps) {
     resolveNodeId,
     repo.path,
     loadBoard,
-    selectedIds.includes,
+    selectedIds,
     setEdges,
     setNodes,
   ])
@@ -633,17 +642,11 @@ export function Board({ repo, boardId }: BoardProps) {
   // board's canvas.
   const activeSelection =
     lastSelectionSource === 'panel' ? panelSelectedIds : selectedImageIds
-  // Falls back to whatever's open in Detail when neither canvas nor panel
-  // has an active selection — e.g. after a ctrl/cmd+click from Library,
-  // which sets detailImageId but neither selection array — so Archive/Trash
-  // still work for "the image I'm currently looking at" now that Detail no
-  // longer has its own copies of those buttons.
-  const activeSelectionImageIds =
-    activeSelection.length > 0
-      ? activeSelection
-      : detailImageId != null
-        ? [detailImageId]
-        : []
+  // A pure live-selection signal: no fallback to whatever's open in Detail,
+  // since Detail's displayed image is itself sticky (it doesn't clear on
+  // deselect), so a fallback would keep Archive/Trash enabled with no valid
+  // target. Toolbar actions are thus strictly selection-gated.
+  const activeSelectionImageIds = activeSelection
 
   const imageById = useMemo(
     () => new Map((boardData?.images ?? []).map((img) => [img.id, img])),
@@ -821,9 +824,27 @@ export function Board({ repo, boardId }: BoardProps) {
     (event: React.MouseEvent, nodeId: string) => {
       event.preventDefault()
       setPaneMenu(null)
+      const isGroup = nodeId.startsWith('group:')
+      const alreadySelected = selectedIds.includes(nodeId)
+      if (!isGroup && !alreadySelected) {
+        // Right-click on an image outside the current selection replaces it
+        // with just that image, rather than acting on a stale prior
+        // selection (matches Explorer/Finder-style right-click).
+        setSelectedIds([nodeId])
+      }
+      if (!isGroup && alreadySelected && selectedImageIds.length >= 2) {
+        // Right-clicking a node that's already part of a multi-selection
+        // acts on the whole selection -- the same menu the bounding-box
+        // overlay's right-click (onSelectionContextMenu) uses -- instead of
+        // collapsing to just this one node.
+        setNodeMenu(null)
+        setSelectionMenu({ x: event.clientX, y: event.clientY })
+        return
+      }
+      setSelectionMenu(null)
       setNodeMenu({ x: event.clientX, y: event.clientY, nodeId })
     },
-    []
+    [selectedIds, selectedImageIds]
   )
 
   const nodeMenuItems: MenuAction[] = useMemo(() => {
@@ -894,25 +915,6 @@ export function Board({ repo, boardId }: BoardProps) {
           GroupService.SetCover(repo.path, group.id, imageId).then(loadBoard),
       })
     }
-    // Multi-selection actions (Stage 11) — only offered when the
-    // right-clicked node is itself part of the current >=2-image
-    // selection, mirroring the toolbar's Group/Auto-arrange enable
-    // conditions rather than acting on just the one node clicked.
-    if (selectedImageIds.includes(imageId) && selectedImageIds.length >= 2) {
-      items.push({
-        key: 'group-as-set',
-        label: t`Group as set`,
-        separatorBefore: true,
-        onSelect: handleGroupSelection,
-      })
-      if (boardData.layoutMode === 'manual') {
-        items.push({
-          key: 'auto-arrange-selection',
-          label: t`Auto-arrange selection`,
-          onSelect: handleAutoArrange,
-        })
-      }
-    }
     items.push(
       {
         key: 'archive',
@@ -937,9 +939,54 @@ export function Board({ repo, boardId }: BoardProps) {
     loadBoard,
     handleTrash,
     handleArchiveToggle,
+  ])
+
+  // Right-click menu for a multi-select (marquee/drag-box). Reuses the same
+  // batch handlers the toolbar's Group/Auto-arrange/Archive/Trash buttons
+  // drive, so the menu always acts on the whole current selection. Only
+  // reachable when >=2 canvas images are selected, which is exactly when
+  // React Flow's selection overlay shows.
+  const selectionMenuItems: MenuAction[] = useMemo(() => {
+    if (selectedImageIds.length < 2) return []
+    const items: MenuAction[] = [
+      {
+        key: 'group-as-set',
+        label: t`Group as set`,
+        onSelect: handleGroupSelection,
+      },
+    ]
+    if (boardData?.layoutMode === 'manual') {
+      items.push({
+        key: 'auto-arrange-selection',
+        label: t`Auto-arrange selection`,
+        onSelect: () => handleAutoArrange(),
+      })
+    }
+    items.push(
+      {
+        key: 'archive',
+        label: activeSelectionArchived
+          ? t`Unarchive selection`
+          : t`Archive selection`,
+        separatorBefore: true,
+        onSelect: handleToolbarArchiveToggle,
+      },
+      {
+        key: 'trash',
+        label: t`Trash selection`,
+        danger: true,
+        onSelect: handleToolbarTrash,
+      }
+    )
+    return items
+  }, [
     selectedImageIds,
+    boardData?.layoutMode,
     handleGroupSelection,
     handleAutoArrange,
+    activeSelectionArchived,
+    handleToolbarArchiveToggle,
+    handleToolbarTrash,
   ])
 
   // Empty-canvas right-click menu (Stage 11) — Undo/Redo, the same actions
@@ -1035,7 +1082,18 @@ export function Board({ repo, boardId }: BoardProps) {
             onPaneContextMenu={(event) => {
               event.preventDefault()
               setNodeMenu(null)
+              setSelectionMenu(null)
               setPaneMenu({ x: event.clientX, y: event.clientY })
+            }}
+            onSelectionContextMenu={(event) => {
+              // Selection overlay right-click: stop propagation so this
+              // doesn't also fall through to the pane menu above, which
+              // would overwrite the selection menu with the empty-canvas one.
+              event.preventDefault()
+              event.stopPropagation()
+              setNodeMenu(null)
+              setPaneMenu(null)
+              setSelectionMenu({ x: event.clientX, y: event.clientY })
             }}
             onSelectionChange={handleSelectionChange}
             onEdgesDelete={handleEdgesDelete}
@@ -1130,6 +1188,14 @@ export function Board({ repo, boardId }: BoardProps) {
             y={paneMenu.y}
             items={paneMenuItems}
             onClose={() => setPaneMenu(null)}
+          />
+        )}
+        {selectionMenu && selectionMenuItems.length > 0 && (
+          <PositionedMenu
+            x={selectionMenu.x}
+            y={selectionMenu.y}
+            items={selectionMenuItems}
+            onClose={() => setSelectionMenu(null)}
           />
         )}
         {tagPickerFor && (

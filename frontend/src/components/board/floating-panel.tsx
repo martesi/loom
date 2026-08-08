@@ -102,7 +102,13 @@ export function FloatingPanel({
   return (
     <div
       className={cn(
-        'absolute top-4 bottom-4 z-10 flex w-[320px] flex-col overflow-hidden rounded-lg border border-black/8 bg-card/96 shadow-lg backdrop-blur',
+        // bg-card/96 is effectively opaque (white at 96%), so backdrop-blur
+        // had no visible effect — but per CSS a backdrop-filter on this
+        // element makes it the containing block for the panel's position:fixed
+        // descendants, clipping FloatingPanel's PositionedMenu to the panel
+        // (which is also overflow-hidden). Dropping the blur keeps the menu
+        // viewport-anchored, which fixes the clipping.
+        'absolute top-4 bottom-4 z-10 flex w-[320px] flex-col overflow-hidden rounded-lg border border-black/8 bg-card/96 shadow-lg',
         dockSide === 'left' ? 'left-4' : 'right-4',
         !visible && 'hidden'
       )}

@@ -34,3 +34,20 @@ body {
 * {
   box-sizing: border-box;
 }
+
+/* React Flow draws a persistent bounding-box overlay
+   (`.react-flow__nodesselection-rect`) around an active multi-node
+   selection, which duplicates the per-node ring each ImageNode/GroupNode
+   already renders (`selected && 'ring-2 ring-accent'`). Neutralize only its
+   fill/border here; `pointer-events: all` / `cursor: grab` (it doubles as
+   the group-drag handle in manual layout) come from a separate xyflow rule
+   and are left alone. The ancestor-qualified selector is one class more
+   specific than xyflow's own `.react-flow__nodesselection-rect,
+   .react-flow__selection { background: …; border: …; }` rule, so this wins
+   independent of stylesheet import order. `.react-flow__selection` — the
+   live marquee rectangle drawn while actively dragging a selection box — is
+   a different selector and is deliberately untouched. */
+.react-flow .react-flow__nodesselection-rect {
+  background: transparent;
+  border: none;
+}

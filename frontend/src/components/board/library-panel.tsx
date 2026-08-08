@@ -75,6 +75,12 @@ export function LibraryPanel({
     y: number
     row: LibraryRow
   } | null>(null)
+  // Right-click on a row that's already part of the checked selection acts
+  // on the whole selection instead of just that row -- see selectionMenuItems.
+  const [selectionMenu, setSelectionMenu] = useState<{
+    x: number
+    y: number
+  } | null>(null)
   const [boardPickerFor, setBoardPickerFor] = useState<{
     x: number
     y: number
@@ -240,6 +246,60 @@ export function LibraryPanel({
     onSelectionChange?.(selectedIds)
   }, [selectedIds, onSelectionChange])
 
+  // Shared by the bulk-action bar and the multi-row context menu, so both
+  // surfaces drive the same batch mutation logic.
+  const handleBulkAddToBoard = useCallback(
+    (x: number, y: number) => {
+      setBoardPickerFor({ x, y, imageIds: selectedIds })
+    },
+    [selectedIds]
+  )
+  const handleBulkArchive = useCallback(() => {
+    Promise.all(
+      selectedIds.map((id) => ImageService.SetArchived(repo.path, id, true))
+    ).then(() => {
+      setSelected(new Set())
+      refresh()
+    })
+  }, [selectedIds, repo.path, refresh])
+  const handleBulkTrash = useCallback(() => {
+    Promise.all(
+      selectedIds.map((id) => ImageService.TrashImage(repo.path, id))
+    ).then(() => {
+      setSelected(new Set())
+      refresh()
+    })
+  }, [selectedIds, repo.path, refresh])
+
+  const selectionMenuItems: MenuAction[] = useMemo(() => {
+    if (!selectionMenu || selected.size < 2) return []
+    return [
+      {
+        key: 'add-board',
+        label: t`Add to board…`,
+        onSelect: () => handleBulkAddToBoard(selectionMenu.x, selectionMenu.y),
+      },
+      {
+        key: 'archive',
+        label: t`Archive`,
+        separatorBefore: true,
+        onSelect: handleBulkArchive,
+      },
+      {
+        key: 'trash',
+        label: t`Trash`,
+        danger: true,
+        onSelect: handleBulkTrash,
+      },
+    ]
+  }, [
+    selectionMenu,
+    selected,
+    handleBulkAddToBoard,
+    handleBulkArchive,
+    handleBulkTrash,
+  ])
+
   const tagItems = useMemo(
     () => [
       { label: t`Tags: any`, value: 0 },
@@ -357,6 +417,23 @@ export function LibraryPanel({
                 ref={row.id === highlightId ? highlightRef : undefined}
                 onContextMenu={(e) => {
                   e.preventDefault()
+                  const alreadySelected = selected.has(row.id)
+                  if (!alreadySelected) {
+                    // Right-click on a row outside the current checked
+                    // selection replaces it with just that row, rather than
+                    // acting on a stale prior selection (matches
+                    // Explorer/Finder-style right-click).
+                    setSelected(new Set([row.id]))
+                  }
+                  if (alreadySelected && selected.size >= 2) {
+                    // Right-clicking a row that's already part of a
+                    // multi-selection acts on the whole selection instead of
+                    // collapsing to just this one row.
+                    setRowMenu(null)
+                    setSelectionMenu({ x: e.clientX, y: e.clientY })
+                    return
+                  }
+                  setSelectionMenu(null)
                   setRowMenu({ x: e.clientX, y: e.clientY, row })
                 }}
                 className={cn(
@@ -440,45 +517,21 @@ export function LibraryPanel({
           <div className="flex gap-3">
             <button
               type="button"
-              onClick={(e) =>
-                setBoardPickerFor({
-                  x: e.clientX,
-                  y: e.clientY - 200,
-                  imageIds: selectedIds,
-                })
-              }
+              onClick={(e) => handleBulkAddToBoard(e.clientX, e.clientY - 200)}
               className="text-[11.5px] font-semibold text-white hover:underline"
             >
               <Trans>Add to board</Trans>
             </button>
             <button
               type="button"
-              onClick={() =>
-                Promise.all(
-                  selectedIds.map((id) =>
-                    ImageService.SetArchived(repo.path, id, true)
-                  )
-                ).then(() => {
-                  setSelected(new Set())
-                  refresh()
-                })
-              }
+              onClick={handleBulkArchive}
               className="text-[11.5px] font-semibold text-white hover:underline"
             >
               <Trans>Archive</Trans>
             </button>
             <button
               type="button"
-              onClick={() =>
-                Promise.all(
-                  selectedIds.map((id) =>
-                    ImageService.TrashImage(repo.path, id)
-                  )
-                ).then(() => {
-                  setSelected(new Set())
-                  refresh()
-                })
-              }
+              onClick={handleBulkTrash}
               className="text-[11.5px] font-semibold text-[#FF9E9E] hover:underline"
             >
               <Trans>Trash</Trans>
@@ -493,6 +546,14 @@ export function LibraryPanel({
           y={rowMenu.y}
           items={rowMenuItems}
           onClose={() => setRowMenu(null)}
+        />
+      )}
+      {selectionMenu && selectionMenuItems.length > 0 && (
+        <PositionedMenu
+          x={selectionMenu.x}
+          y={selectionMenu.y}
+          items={selectionMenuItems}
+          onClose={() => setSelectionMenu(null)}
         />
       )}
       {boardPickerFor && (
