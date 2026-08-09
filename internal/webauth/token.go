@@ -12,7 +12,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 )
 
 const cookieName = "loom_token"
@@ -49,6 +51,16 @@ func (g *Gate) Token() string {
 // is rejected outright.
 func (g *Gate) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		if r.URL.Path == "/wails/events" && !sameOrigin(r) {
+			http.Error(w, "Forbidden.", http.StatusForbidden)
+			return
+		}
+
 		if cookie, err := r.Cookie(cookieName); err == nil && g.valid(cookie.Value) {
 			next.ServeHTTP(w, r)
 			return
@@ -74,6 +86,27 @@ func (g *Gate) Middleware(next http.Handler) http.Handler {
 
 		http.Error(w, "Unauthorized. Open the link printed at server startup (?token=...) to log in.", http.StatusUnauthorized)
 	})
+}
+
+// sameOrigin validates the browser Origin on Wails' event WebSocket. Native
+// and non-browser clients may omit Origin, but a supplied origin must match
+// the host serving the request so a stolen session cookie cannot be used by a
+// cross-origin page to subscribe to application events.
+func sameOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return false
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return false
+	}
+
+	return strings.EqualFold(parsed.Host, r.Host)
 }
 
 func (g *Gate) valid(candidate string) bool {

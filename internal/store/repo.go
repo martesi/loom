@@ -22,6 +22,7 @@ type Repo struct {
 // and running migrations if this is the first time this folder has been
 // opened. Safe to call repeatedly on an already-bootstrapped repo.
 func Bootstrap(rootPath string) (*Repo, error) {
+	rootPath = canonicalRepoPath(rootPath)
 	loomDir := filepath.Join(rootPath, loomDirName)
 	for _, sub := range []string{"", "thumbs", "trash"} {
 		if err := os.MkdirAll(filepath.Join(loomDir, sub), 0o755); err != nil {

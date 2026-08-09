@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	app := application.New(appOptions(nil))
+	app := application.New(appOptions())
 
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:            "Loom",

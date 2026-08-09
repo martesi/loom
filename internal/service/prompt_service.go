@@ -74,10 +74,11 @@ func attachPrompt(repo *store.Repo, imageID, promptID int64) error {
 // AttachPrompt points imageID at an existing prompt from the library
 // (the "reuse" half of the picker).
 func (s *PromptService) AttachPrompt(repoPath string, imageID, promptID int64) error {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return err
 	}
+	defer unlock()
 	defer repo.Close()
 
 	return attachPrompt(repo, imageID, promptID)
@@ -87,10 +88,11 @@ func (s *PromptService) AttachPrompt(repoPath string, imageID, promptID int64) e
 // key) and attaches it to imageID — the "manual attach" half of the
 // picker, for a prompt that isn't in the library yet.
 func (s *PromptService) CreateAndAttachPrompt(repoPath string, imageID int64, name, text, negative string) (*PromptInfo, error) {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return nil, err
 	}
+	defer unlock()
 	defer repo.Close()
 
 	promptID, err := repo.FindOrCreatePrompt(name, text, negative)
@@ -105,10 +107,11 @@ func (s *PromptService) CreateAndAttachPrompt(repoPath string, imageID int64, na
 
 // DetachPrompt clears whatever prompt imageID has attached, if any.
 func (s *PromptService) DetachPrompt(repoPath string, imageID int64) error {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return err
 	}
+	defer unlock()
 	defer repo.Close()
 
 	prev, err := repo.GetImagePromptID(imageID)

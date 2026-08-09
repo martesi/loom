@@ -90,10 +90,11 @@ func (s *BoardService) SetLayoutMode(repoPath string, boardID int64, mode string
 // AddImagesToBoard is the only board-population mechanism (see "New image
 // -> board assignment" — placement is always explicit, never inferred).
 func (s *BoardService) AddImagesToBoard(repoPath string, boardID int64, imageIDs []int64) error {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return err
 	}
+	defer unlock()
 	defer repo.Close()
 
 	added, err := repo.AddImagesToBoard(boardID, imageIDs)
@@ -112,10 +113,11 @@ func (s *BoardService) AddImagesToBoard(repoPath string, boardID int64, imageIDs
 }
 
 func (s *BoardService) RemoveImagesFromBoard(repoPath string, boardID int64, imageIDs []int64) error {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return err
 	}
+	defer unlock()
 	defer repo.Close()
 
 	removed, err := repo.RemoveImagesFromBoard(boardID, imageIDs)

@@ -63,7 +63,7 @@ interface FloatingPanelProps {
   onRescan: () => void
   // Library's checkbox multi-selection, reported up for Stage 12's
   // lastSelectionSource unification.
-  onPanelSelectionChange: (ids: number[]) => void
+  onPanelSelectionChange: (ids: number[], hasGroupedImage: boolean) => void
   // Hover-only filename overlay on image nodes (see image-node.tsx),
   // gated by this setting — surfaced in the Settings modal's Display
   // section.
@@ -204,6 +204,7 @@ export function FloatingPanel({
             repo={repo}
             onDetailRequest={onDetailRequest}
             onPreviewRequest={onPreviewRequest}
+            onSelectionChange={onPanelSelectionChange}
             refreshToken={libraryRefreshToken}
           />
         </div>

@@ -47,28 +47,26 @@ func (r *Repo) setUndoCursor(seq int64) error {
 // discarding any redo tail — standard undo/redo stack semantics: taking a
 // new action after undoing invalidates whatever redo history existed.
 func (r *Repo) RecordOperation(kind, forward, inverse string) error {
-	cursor, err := r.UndoCursor()
-	if err != nil {
+	// Prime the session boundary before taking the transaction. The cursor
+	// itself is read below inside the same transaction as the redo-tail
+	// deletion, log insert, and cursor update; service-level serialization
+	// keeps this process-local ordering coherent across short-lived DBs.
+	if _, err := r.undoSessionBoundary(); err != nil {
 		return err
 	}
-
-	// Prime the session boundary (in case this is the first touch of this
-	// repo path this process — e.g. a mutation happening without an earlier
-	// PeekUndo/PeekRedo/State call to establish it first) and cap it at
-	// cursor. The DELETE below is about to erase every row with seq >
-	// cursor and the INSERT is about to reuse those seq numbers for this
-	// brand-new operation, so the boundary can never legitimately sit above
-	// cursor once that happens — see capUndoSessionBoundary's doc comment.
-	if err := r.capUndoSessionBoundary(cursor); err != nil {
-		return err
-	}
-	newSeq := cursor + 1
 
 	tx, err := r.DB.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+
+	cursor, err := undoCursorTx(tx)
+	if err != nil {
+		return err
+	}
+	capUndoSessionBoundaryValue(r.Path, cursor)
+	newSeq := cursor + 1
 
 	if _, err := tx.Exec(`DELETE FROM operation_log WHERE seq > ?`, cursor); err != nil {
 		return err
@@ -84,6 +82,22 @@ func (r *Repo) RecordOperation(kind, forward, inverse string) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+func undoCursorTx(tx *sql.Tx) (int64, error) {
+	var v string
+	err := tx.QueryRow(`SELECT value FROM settings WHERE scope = 'repo' AND key = 'undo_cursor'`).Scan(&v)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0, nil
+	}
+	return n, nil
 }
 
 func (r *Repo) getOperation(seq int64) (*Operation, error) {

@@ -35,6 +35,7 @@ interface ExplorerPanelProps {
   // the pre-trash state. Same guarded-on-nonzero shape as library-panel.tsx's
   // refreshToken.
   refreshToken: number
+  onSelectionChange?: (ids: number[], hasGroupedImage: boolean) => void
 }
 
 // The repo root is represented by the empty relative path everywhere in
@@ -84,6 +85,7 @@ export function ExplorerPanel({
   repo,
   onDetailRequest,
   onPreviewRequest,
+  onSelectionChange,
   refreshToken,
 }: ExplorerPanelProps) {
   const capabilities = useCapabilities()
@@ -257,6 +259,17 @@ export function ExplorerPanel({
   useEffect(() => {
     if (selected.size === 1) onPreviewRequest([...selected][0])
   }, [selected, onPreviewRequest])
+
+  useEffect(() => {
+    const selectedIds = [...selected]
+    const hasGroupedImage = rows.some(
+      (row) =>
+        row.kind === 'file' &&
+        selected.has(row.image.id) &&
+        Boolean(row.image.groupId)
+    )
+    onSelectionChange?.(selectedIds, hasGroupedImage)
+  }, [selected, rows, onSelectionChange])
 
   const virtualizer = useVirtualizer({
     count: rows.length,

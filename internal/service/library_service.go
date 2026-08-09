@@ -24,6 +24,7 @@ type LibraryRow struct {
 	Archived   bool     `json:"archived"`
 	Trashed    bool     `json:"trashed"`
 	Missing    bool     `json:"missing"`
+	GroupID    int64    `json:"groupId"`
 }
 
 type LibraryQuery struct {
@@ -88,6 +89,7 @@ func (s *LibraryService) ListImages(repoPath string, query LibraryQuery) ([]Libr
 			Archived:   img.Archived,
 			Trashed:    img.Trashed,
 			Missing:    statErr != nil,
+			GroupID:    img.GroupID,
 		}
 	}
 	return rows, nil

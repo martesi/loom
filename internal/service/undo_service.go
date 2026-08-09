@@ -141,9 +141,11 @@ func step(kind string, payload any) OpStep {
 	return OpStep{Kind: kind, Payload: b}
 }
 
-// recordOp persists a forward/inverse pair to the operation log. Called by
-// every mutating service method after its store call succeeds — see each
-// step's construction site for what "inverse" means for that action.
+// recordOp persists a forward/inverse pair to the operation log. It is called
+// after the state mutation succeeds while the caller holds the repository
+// operation coordinator. If appending the log entry fails, the already-built
+// inverse is applied before returning so a successful mutation can never be
+// silently left without a matching undo entry.
 func recordOp(repo *store.Repo, kind string, forward, inverse OpStep) error {
 	fwd, err := json.Marshal(forward)
 	if err != nil {
@@ -153,7 +155,13 @@ func recordOp(repo *store.Repo, kind string, forward, inverse OpStep) error {
 	if err != nil {
 		return err
 	}
-	return repo.RecordOperation(kind, string(fwd), string(inv))
+	if err := repo.RecordOperation(kind, string(fwd), string(inv)); err != nil {
+		if rollbackErr := applyStep(repo, inverse); rollbackErr != nil {
+			return fmt.Errorf("operation log append failed: %w; compensating rollback failed: %v", err, rollbackErr)
+		}
+		return fmt.Errorf("operation log append failed: %w (mutation rolled back)", err)
+	}
+	return nil
 }
 
 // purgedErr is returned by applyStep when a step's target image no longer
@@ -346,7 +354,14 @@ func applyStep(repo *store.Repo, s OpStep) error {
 		} else if !ok {
 			return purgedErr(p.ImageID)
 		}
-		return repo.AddGroupMember(p.GroupID, p.ImageID)
+		changed, err := repo.AddGroupMemberChecked(p.GroupID, p.ImageID)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			return fmt.Errorf("can't replay group member add: image %d is already in group %d", p.ImageID, p.GroupID)
+		}
+		return nil
 
 	case stepGroupMemberRemove:
 		var p groupMemberStepPayload
@@ -358,15 +373,34 @@ func applyStep(repo *store.Repo, s OpStep) error {
 		} else if !ok {
 			return purgedErr(p.ImageID)
 		}
+		members, err := repo.GroupMemberIDs(p.GroupID)
+		if err != nil {
+			return err
+		}
+		if len(members) < 3 {
+			// RemoveGroupMemberChecked commits dissolution as part of its
+			// store transaction. Refuse before calling it when out-of-band
+			// state would make this membership-only replay dissolve the
+			// group, so a failed replay leaves the database unchanged.
+			return fmt.Errorf("can't replay group member removal: group %d would dissolve", p.GroupID)
+		}
 		// This step kind is only ever recorded (see GroupService.RemoveMember)
 		// for a removal that GroupService already confirmed, at record time,
 		// would not dissolve the group — a dissolving removal is logged as a
 		// stepGroupExistence step instead, since group existence is what's
-		// actually changing there. Whether *this* replay dissolves the group
-		// is irrelevant to applyStep either way: it just re-runs the same
-		// store call the forward action originally made.
-		_, err := repo.RemoveGroupMember(p.GroupID, p.ImageID)
-		return err
+		// actually changing there. The preflight above preserves that invariant
+		// even if the database was changed out of band before replay.
+		dissolved, changed, err := repo.RemoveGroupMemberChecked(p.GroupID, p.ImageID)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			return fmt.Errorf("can't replay group member removal: image %d is not in group %d", p.ImageID, p.GroupID)
+		}
+		if dissolved {
+			return fmt.Errorf("can't replay group member removal: group %d would dissolve", p.GroupID)
+		}
+		return nil
 
 	case stepGroupSetCover:
 		var p groupCoverStepPayload
@@ -378,7 +412,14 @@ func applyStep(repo *store.Repo, s OpStep) error {
 		} else if !ok {
 			return purgedErr(p.CoverImageID)
 		}
-		return repo.SetGroupCover(p.GroupID, p.CoverImageID)
+		changed, err := repo.SetGroupCoverChecked(p.GroupID, p.CoverImageID)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			return fmt.Errorf("can't replay group cover change: group %d already has cover %d", p.GroupID, p.CoverImageID)
+		}
+		return nil
 
 	case stepSetPrompt:
 		var p promptStepPayload
@@ -420,10 +461,11 @@ type UndoState struct {
 }
 
 func (s *UndoService) State(repoPath string) (*UndoState, error) {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return nil, err
 	}
+	defer unlock()
 	defer repo.Close()
 
 	undoOp, err := repo.PeekUndo()
@@ -438,10 +480,11 @@ func (s *UndoService) State(repoPath string) (*UndoState, error) {
 }
 
 func (s *UndoService) Undo(repoPath string) (*UndoResult, error) {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return nil, err
 	}
+	defer unlock()
 	defer repo.Close()
 
 	op, err := repo.PeekUndo()
@@ -466,10 +509,11 @@ func (s *UndoService) Undo(repoPath string) (*UndoResult, error) {
 }
 
 func (s *UndoService) Redo(repoPath string) (*UndoResult, error) {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return nil, err
 	}
+	defer unlock()
 	defer repo.Close()
 
 	op, err := repo.PeekRedo()

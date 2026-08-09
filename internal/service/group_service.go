@@ -2,8 +2,6 @@ package service
 
 import (
 	"fmt"
-
-	"loom/internal/store"
 )
 
 // GroupService manages `groups` — a generic image *set* (variants, angle
@@ -18,14 +16,29 @@ import (
 // stepGroupMemberRemove/stepGroupSetCover.
 type GroupService struct{}
 
-func (s *GroupService) CreateGroup(repoPath, name, kind string, imageIDs []int64) (*GroupInfo, error) {
-	if len(imageIDs) < 2 {
-		return nil, fmt.Errorf("a group needs at least 2 members")
+func uniqueImageIDs(ids []int64) []int64 {
+	seen := make(map[int64]struct{}, len(ids))
+	out := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
 	}
-	repo, err := store.Bootstrap(repoPath)
+	return out
+}
+
+func (s *GroupService) CreateGroup(repoPath, name, kind string, imageIDs []int64) (*GroupInfo, error) {
+	imageIDs = uniqueImageIDs(imageIDs)
+	if len(imageIDs) < 2 {
+		return nil, fmt.Errorf("a group needs at least 2 distinct members")
+	}
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return nil, err
 	}
+	defer unlock()
 	defer repo.Close()
 
 	// Cover defaults to the first selected image, per spec.
@@ -52,22 +65,15 @@ func (s *GroupService) CreateGroup(repoPath, name, kind string, imageIDs []int64
 // row (and the images.group_id links to it) won't exist to read back
 // afterward.
 func (s *GroupService) Ungroup(repoPath string, groupID int64) error {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return err
 	}
+	defer unlock()
 	defer repo.Close()
 
-	g, err := repo.GetGroup(groupID)
+	g, memberIDs, err := repo.UngroupWithSnapshot(groupID)
 	if err != nil {
-		return err
-	}
-	memberIDs, err := repo.GroupMemberIDs(groupID)
-	if err != nil {
-		return err
-	}
-
-	if err := repo.Ungroup(groupID); err != nil {
 		return err
 	}
 
@@ -80,14 +86,19 @@ func (s *GroupService) Ungroup(repoPath string, groupID int64) error {
 }
 
 func (s *GroupService) AddMember(repoPath string, groupID, imageID int64) error {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return err
 	}
+	defer unlock()
 	defer repo.Close()
 
-	if err := repo.AddGroupMember(groupID, imageID); err != nil {
+	changed, err := repo.AddGroupMemberChecked(groupID, imageID)
+	if err != nil {
 		return err
+	}
+	if !changed {
+		return nil
 	}
 	p := groupMemberStepPayload{GroupID: groupID, ImageID: imageID}
 	return recordOp(repo, stepGroupMemberAdd, step(stepGroupMemberAdd, p), step(stepGroupMemberRemove, p))
@@ -107,24 +118,19 @@ func (s *GroupService) AddMember(repoPath string, groupID, imageID int64) error 
 // same failing step forever (Undo only advances the cursor on success), so
 // every earlier undoable op in the session would become unreachable too.
 func (s *GroupService) RemoveMember(repoPath string, groupID, imageID int64) error {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return err
 	}
+	defer unlock()
 	defer repo.Close()
 
-	g, err := repo.GetGroup(groupID)
+	g, memberIDs, dissolved, changed, err := repo.RemoveGroupMemberCheckedWithSnapshot(groupID, imageID)
 	if err != nil {
 		return err
 	}
-	memberIDs, err := repo.GroupMemberIDs(groupID)
-	if err != nil {
-		return err
-	}
-
-	dissolved, err := repo.RemoveGroupMember(groupID, imageID)
-	if err != nil {
-		return err
+	if !changed {
+		return nil
 	}
 
 	if dissolved {
@@ -145,20 +151,19 @@ func (s *GroupService) RemoveMember(repoPath string, groupID, imageID int64) err
 // the way stepSetArchived's toggle can, so (like SetPosition's
 // GetCanvasPosition read) the prior value has to come from the DB.
 func (s *GroupService) SetCover(repoPath string, groupID, imageID int64) error {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return err
 	}
+	defer unlock()
 	defer repo.Close()
 
-	g, err := repo.GetGroup(groupID)
+	prevCover, changed, err := repo.SetGroupCoverCheckedWithPrevious(groupID, imageID)
 	if err != nil {
 		return err
 	}
-	prevCover := g.CoverImageID
-
-	if err := repo.SetGroupCover(groupID, imageID); err != nil {
-		return err
+	if !changed {
+		return nil
 	}
 	fwd := groupCoverStepPayload{GroupID: groupID, CoverImageID: imageID}
 	inv := groupCoverStepPayload{GroupID: groupID, CoverImageID: prevCover}

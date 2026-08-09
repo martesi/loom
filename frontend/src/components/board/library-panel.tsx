@@ -53,7 +53,7 @@ interface LibraryPanelProps {
   onPreviewRequest: (imageId: number) => void
   // Reports the checkbox multi-selection up to Board (Stage 12), so
   // toolbar actions can target it via lastSelectionSource.
-  onSelectionChange?: (ids: number[]) => void
+  onSelectionChange?: (ids: number[], hasGroupedImage: boolean) => void
   // Refreshes the parent's board data — called after any archive/trash/
   // restore mutation here, since those can affect a currently-open board's
   // canvas nodes and board.tsx has no other way to learn about a
@@ -336,10 +336,17 @@ export function LibraryPanel({
   ])
 
   const selectedIds = useMemo(() => [...selected], [selected])
+  const selectedHasGroupedImage = useMemo(
+    () =>
+      selectedIds.some((id) =>
+        Boolean(rows.find((row) => row.id === id)?.groupId)
+      ),
+    [selectedIds, rows]
+  )
 
   useEffect(() => {
-    onSelectionChange?.(selectedIds)
-  }, [selectedIds, onSelectionChange])
+    onSelectionChange?.(selectedIds, selectedHasGroupedImage)
+  }, [selectedIds, selectedHasGroupedImage, onSelectionChange])
 
   // Detail follows a single selected row, same as a single canvas
   // selection — see onPreviewRequest's doc comment on LibraryPanelProps.

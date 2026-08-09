@@ -24,3 +24,8 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
+
+// The beta.4 server mux has no outer middleware hook. This local fork keeps
+// the pinned Wails API and adds only ServerOptions.Middleware so server mode
+// can authenticate the event WebSocket as well as assets and RPC routes.
+replace github.com/wailsapp/wails/v3 => ./third_party/wails/v3

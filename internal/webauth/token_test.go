@@ -28,6 +28,18 @@ func TestMiddleware_NoCredentials_Unauthorized(t *testing.T) {
 	}
 }
 
+func TestMiddleware_HealthIsPublic(t *testing.T) {
+	g := testGate()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+
+	g.Middleware(passthrough()).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
 func TestMiddleware_WrongToken_Unauthorized(t *testing.T) {
 	g := testGate()
 	rec := httptest.NewRecorder()
@@ -92,6 +104,36 @@ func TestMiddleware_InvalidCookie_Unauthorized(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestMiddleware_EventWebSocketRejectsCrossOrigin(t *testing.T) {
+	g := testGate()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "http://localhost:8080/wails/events", nil)
+	req.Host = "localhost:8080"
+	req.Header.Set("Origin", "https://evil.example")
+	req.AddCookie(&http.Cookie{Name: cookieName, Value: "correct-token"})
+
+	g.Middleware(passthrough()).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
+func TestMiddleware_EventWebSocketAllowsSameOriginCookie(t *testing.T) {
+	g := testGate()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "http://localhost:8080/wails/events", nil)
+	req.Host = "localhost:8080"
+	req.Header.Set("Origin", "http://localhost:8080")
+	req.AddCookie(&http.Cookie{Name: cookieName, Value: "correct-token"})
+
+	g.Middleware(passthrough()).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 }
 

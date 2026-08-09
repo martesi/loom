@@ -214,6 +214,11 @@ func TestGroupServiceUndoRedo(t *testing.T) {
 	}
 
 	// --- Ungroup, then undo ---
+	// Group membership is exclusive: dissolve the restored first group before
+	// using img1 in the second group.
+	if err := groups.Ungroup(repoPath, groupID); err != nil {
+		t.Fatalf("Ungroup (free members for second group): %v", err)
+	}
 	info2, err := groups.CreateGroup(repoPath, "Set 2", "angle", []int64{img1, img3})
 	if err != nil {
 		t.Fatalf("CreateGroup (2nd): %v", err)
@@ -252,4 +257,182 @@ func containsInt64(s []int64, v int64) bool {
 		}
 	}
 	return false
+}
+
+func TestGroupServiceRejectsInvalidMembershipActions(t *testing.T) {
+	repoPath := t.TempDir()
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+
+	ids := make([]int64, 4)
+	for i := range ids {
+		res, err := repo.DB.Exec(`INSERT INTO images (file_path) VALUES (?)`, filepath.Join(repoPath, "img"+string(rune('a'+i))+".png"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids[i], err = res.LastInsertId()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	groups := &GroupService{}
+	undo := &UndoService{}
+	first, err := groups.CreateGroup(repoPath, "first", "", []int64{ids[0], ids[1]})
+	if err != nil {
+		t.Fatalf("CreateGroup(first): %v", err)
+	}
+
+	cursor := func() int64 {
+		t.Helper()
+		value, err := repo.UndoCursor()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	groupsCount := func() int {
+		t.Helper()
+		var count int
+		if err := repo.DB.QueryRow(`SELECT COUNT(*) FROM groups`).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		return count
+	}
+
+	before := cursor()
+	if _, err := groups.CreateGroup(repoPath, "duplicate", "", []int64{ids[2], ids[2]}); err == nil {
+		t.Fatal("duplicate IDs must not satisfy the two-member rule")
+	}
+	if got := cursor(); got != before {
+		t.Fatalf("duplicate-ID rejection changed undo cursor from %d to %d", before, got)
+	}
+	if got := groupsCount(); got != 1 {
+		t.Fatalf("duplicate-ID rejection changed group count to %d", got)
+	}
+
+	if _, err := groups.CreateGroup(repoPath, "regroup", "", []int64{ids[0], ids[2]}); err == nil {
+		t.Fatal("creating a group with an already-grouped image must fail")
+	}
+	if got := cursor(); got != before {
+		t.Fatalf("regroup rejection changed undo cursor from %d to %d", before, got)
+	}
+	if members, err := repo.GroupMemberIDs(first.ID); err != nil || len(members) != 2 || !containsInt64(members, ids[0]) || !containsInt64(members, ids[1]) {
+		t.Fatalf("regroup rejection changed first group: members=%v err=%v", members, err)
+	}
+
+	second, err := groups.CreateGroup(repoPath, "second", "", []int64{ids[2], ids[3]})
+	if err != nil {
+		t.Fatalf("CreateGroup(second): %v", err)
+	}
+	before = cursor()
+	if err := groups.AddMember(repoPath, first.ID, ids[0]); err != nil {
+		t.Fatalf("adding an image to its current group should be a no-op: %v", err)
+	}
+	if got := cursor(); got != before {
+		t.Fatalf("same-group add appended an undo entry: before=%d after=%d", before, got)
+	}
+	if err := groups.AddMember(repoPath, first.ID, ids[2]); err == nil {
+		t.Fatal("adding an image from another group must fail")
+	}
+	if members, err := repo.GroupMemberIDs(second.ID); err != nil || len(members) != 2 || !containsInt64(members, ids[2]) || !containsInt64(members, ids[3]) {
+		t.Fatalf("cross-group add changed second group: members=%v err=%v", members, err)
+	}
+
+	before = cursor()
+	if err := groups.RemoveMember(repoPath, second.ID, ids[0]); err != nil {
+		t.Fatalf("removing a member with the wrong group should be a no-op: %v", err)
+	}
+	if got := cursor(); got != before {
+		t.Fatalf("wrong-group removal appended an undo entry: before=%d after=%d", before, got)
+	}
+	if members, err := repo.GroupMemberIDs(first.ID); err != nil || len(members) != 2 || !containsInt64(members, ids[0]) {
+		t.Fatalf("wrong-group removal changed first group: members=%v err=%v", members, err)
+	}
+
+	if err := groups.SetCover(repoPath, first.ID, ids[2]); err == nil {
+		t.Fatal("setting a non-member as cover must fail")
+	}
+	before = cursor()
+	if err := groups.SetCover(repoPath, first.ID, ids[0]); err != nil {
+		t.Fatalf("setting the existing cover should be a no-op: %v", err)
+	}
+	if got := cursor(); got != before {
+		t.Fatalf("same-cover call appended an undo entry: before=%d after=%d", before, got)
+	}
+
+	// Leave the latest valid action undoable so this test also exercises that
+	// the rejected calls did not disturb the operation stack.
+	result, err := undo.Undo(repoPath)
+	if err != nil || !result.Applied {
+		t.Fatalf("Undo after rejected group actions: result=%+v err=%v", result, err)
+	}
+}
+
+func TestGroupMemberReplayRejectsDissolutionWithoutMutating(t *testing.T) {
+	repoPath := t.TempDir()
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+
+	ids := make([]int64, 3)
+	for i := range ids {
+		res, err := repo.DB.Exec(`INSERT INTO images (file_path) VALUES (?)`, filepath.Join(repoPath, "img"+string(rune('a'+i))+".png"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids[i], err = res.LastInsertId()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	groups := &GroupService{}
+	undo := &UndoService{}
+	group, err := groups.CreateGroup(repoPath, "set", "", ids)
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	if err := groups.RemoveMember(repoPath, group.ID, ids[2]); err != nil {
+		t.Fatalf("RemoveMember: %v", err)
+	}
+	if result, err := undo.Undo(repoPath); err != nil || result == nil || !result.Applied {
+		t.Fatalf("Undo RemoveMember: result=%+v err=%v", result, err)
+	}
+
+	// Corrupt the group out of band so replaying the membership-only removal
+	// would leave one member and trigger the store's dissolution behavior.
+	if _, err := repo.DB.Exec(`UPDATE images SET group_id = NULL WHERE id = ?`, ids[0]); err != nil {
+		t.Fatal(err)
+	}
+	cursorBefore, err := repo.UndoCursor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := undo.Redo(repoPath)
+	if err != nil {
+		t.Fatalf("Redo returned transport error: %v", err)
+	}
+	if result == nil || result.Applied || result.Error == "" {
+		t.Fatalf("Redo should reject dissolution without applying: %+v", result)
+	}
+	cursorAfter, err := repo.UndoCursor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cursorAfter != cursorBefore {
+		t.Fatalf("failed replay advanced cursor from %d to %d", cursorBefore, cursorAfter)
+	}
+	members, err := repo.GroupMemberIDs(group.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(members) != 2 || !containsInt64(members, ids[1]) || !containsInt64(members, ids[2]) {
+		t.Fatalf("failed replay mutated group membership: %v", members)
+	}
 }

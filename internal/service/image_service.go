@@ -263,10 +263,11 @@ func gridPosition(index int) (float64, float64) {
 // logs it as a single-entry undo step, capturing the prior position as the
 // inverse.
 func (s *ImageService) SetPosition(repoPath string, imageID int64, x, y float64) error {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return err
 	}
+	defer unlock()
 	defer repo.Close()
 
 	prevX, prevY, hadPos, err := repo.GetCanvasPosition(imageID)
@@ -297,10 +298,11 @@ type PositionUpdate struct {
 // so undoing a one-shot arrange action reverts the whole cluster in one
 // step rather than one step per node.
 func (s *ImageService) SetPositions(repoPath string, updates []PositionUpdate) error {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return err
 	}
+	defer unlock()
 	defer repo.Close()
 
 	before := make([]positionEntry, 0, len(updates))
@@ -329,10 +331,11 @@ func (s *ImageService) SetPositions(repoPath string, updates []PositionUpdate) e
 // logs it as a single-entry undo step, capturing the prior size as the
 // inverse. Mirrors SetPosition.
 func (s *ImageService) SetSize(repoPath string, imageID int64, w, h float64) error {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return err
 	}
+	defer unlock()
 	defer repo.Close()
 
 	prevW, prevH, hadSize, err := repo.GetCanvasSize(imageID)
@@ -353,10 +356,11 @@ func (s *ImageService) SetSize(repoPath string, imageID int64, w, h float64) err
 }
 
 func (s *ImageService) LinkSource(repoPath string, sourceID, derivedID int64) error {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return err
 	}
+	defer unlock()
 	defer repo.Close()
 
 	inserted, err := repo.LinkSource(sourceID, derivedID)
@@ -377,10 +381,11 @@ func (s *ImageService) LinkSource(repoPath string, sourceID, derivedID int64) er
 // derived (or source) end of an edge, only its members can. See the
 // edge<->group interaction rules in the spec.
 func (s *ImageService) LinkSourceToGroup(repoPath string, sourceID, groupID int64) error {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return err
 	}
+	defer unlock()
 	defer repo.Close()
 
 	memberIDs, err := repo.GroupMemberIDs(groupID)
@@ -407,10 +412,11 @@ func (s *ImageService) LinkSourceToGroup(repoPath string, sourceID, groupID int6
 }
 
 func (s *ImageService) UnlinkSource(repoPath string, relationshipID int64) error {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return err
 	}
+	defer unlock()
 	defer repo.Close()
 
 	rel, err := repo.GetRelationship(relationshipID)
@@ -425,10 +431,11 @@ func (s *ImageService) UnlinkSource(repoPath string, relationshipID int64) error
 }
 
 func (s *ImageService) SetArchived(repoPath string, imageID int64, archived bool) error {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return err
 	}
+	defer unlock()
 	defer repo.Close()
 
 	if err := repo.SetArchived(imageID, archived); err != nil {
@@ -442,10 +449,11 @@ func (s *ImageService) SetArchived(repoPath string, imageID int64, archived bool
 // TrashImage flags an image as trashed, hiding it from the board, and
 // physically moves the file into .loom/trash/ (see store.SetTrashed).
 func (s *ImageService) TrashImage(repoPath string, imageID int64) error {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return err
 	}
+	defer unlock()
 	defer repo.Close()
 
 	if err := repo.SetTrashed(imageID, true); err != nil {
@@ -458,10 +466,11 @@ func (s *ImageService) TrashImage(repoPath string, imageID int64) error {
 
 // RestoreImage un-flags a previously trashed image.
 func (s *ImageService) RestoreImage(repoPath string, imageID int64) error {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return err
 	}
+	defer unlock()
 	defer repo.Close()
 
 	if err := repo.SetTrashed(imageID, false); err != nil {
@@ -550,10 +559,11 @@ func (s *ImageService) CreateDirectory(repoPath, parentRelPath, name string) err
 // undo_service.go for how the forward/inverse pair is built by swapping
 // which relative path is the target.
 func (s *ImageService) MoveFile(repoPath string, imageID int64, newRelPath string) (oldPath, newPath string, err error) {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return "", "", err
 	}
+	defer unlock()
 	defer repo.Close()
 
 	oldPath, newPath, err = repo.MoveFile(imageID, newRelPath)

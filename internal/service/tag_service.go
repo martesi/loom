@@ -49,10 +49,11 @@ func (s *TagService) TagsForImage(repoPath string, imageID int64) ([]TagInfo, er
 // managed taxonomy — see data model docs) if this is the first time it's
 // been used.
 func (s *TagService) AddTag(repoPath string, imageID int64, tagName string) (*TagInfo, error) {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return nil, err
 	}
+	defer unlock()
 	defer repo.Close()
 
 	tagID, err := repo.FindOrCreateTag(tagName)
@@ -75,10 +76,11 @@ func (s *TagService) AddTag(repoPath string, imageID int64, tagName string) (*Ta
 }
 
 func (s *TagService) RemoveTag(repoPath string, imageID, tagID int64) error {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return err
 	}
+	defer unlock()
 	defer repo.Close()
 
 	removed, err := repo.RemoveImageTag(imageID, tagID)

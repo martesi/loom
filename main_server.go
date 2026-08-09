@@ -18,10 +18,11 @@ func main() {
 		log.Fatalf("loom-server: %v", err)
 	}
 
-	opts := appOptions(gate.Middleware)
+	opts := appOptions()
 	opts.Server = application.ServerOptions{
-		Host: serverHost(),
-		Port: serverPort(),
+		Host:       serverHost(),
+		Port:       serverPort(),
+		Middleware: gate.Middleware,
 	}
 
 	log.Printf("Open http://%s:%d/?token=%s to log in", loginHost(opts.Server.Host), opts.Server.Port, gate.Token())

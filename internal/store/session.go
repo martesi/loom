@@ -70,10 +70,14 @@ func (r *Repo) capUndoSessionBoundary(cursor int64) error {
 	if _, err := r.undoSessionBoundary(); err != nil {
 		return err
 	}
+	capUndoSessionBoundaryValue(r.Path, cursor)
+	return nil
+}
+
+func capUndoSessionBoundaryValue(path string, cursor int64) {
 	undoSessionBoundariesMu.Lock()
-	if boundary, ok := undoSessionBoundaries[r.Path]; ok && boundary > cursor {
-		undoSessionBoundaries[r.Path] = cursor
+	if boundary, ok := undoSessionBoundaries[path]; ok && boundary > cursor {
+		undoSessionBoundaries[path] = cursor
 	}
 	undoSessionBoundariesMu.Unlock()
-	return nil
 }

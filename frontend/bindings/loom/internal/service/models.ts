@@ -112,6 +112,7 @@ export interface LibraryRow {
     "archived": boolean;
     "trashed": boolean;
     "missing": boolean;
+    "groupId": number;
 }
 
 export interface PositionUpdate {

@@ -18,13 +18,9 @@ var assets embed.FS
 // appOptions builds the application.Options shared by the native desktop
 // entrypoint (main.go) and the headless server entrypoint (main_server.go),
 // so the service list and asset wiring can't drift between the two. Callers
-// pass the result to application.New, adding any mode-specific fields
-// (e.g. main_server.go's Server options) first.
-//
-// wrap, if non-nil, is layered around the thumbnail/full-image middleware —
-// the server entrypoint uses it to install the auth gate ahead of every
-// request, including RPC calls, without desktop mode paying for it.
-func appOptions(wrap func(http.Handler) http.Handler) application.Options {
+// add any mode-specific fields (e.g. main_server.go's Server options) before
+// passing the result to application.New.
+func appOptions() application.Options {
 	distFS, err := fs.Sub(assets, "frontend/dist")
 	if err != nil {
 		// Guaranteed present by the go:embed directive above; a build-time
@@ -45,13 +41,6 @@ func appOptions(wrap func(http.Handler) http.Handler) application.Options {
 		})
 	}
 
-	middleware := assetMiddleware
-	if wrap != nil {
-		middleware = func(next http.Handler) http.Handler {
-			return wrap(assetMiddleware(next))
-		}
-	}
-
 	return application.Options{
 		Name:        "Loom",
 		Description: "Local-first image derivation manager",
@@ -69,7 +58,7 @@ func appOptions(wrap func(http.Handler) http.Handler) application.Options {
 		},
 		Assets: application.AssetOptions{
 			Handler:    application.AssetFileServerFS(assets),
-			Middleware: middleware,
+			Middleware: assetMiddleware,
 		},
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: true,

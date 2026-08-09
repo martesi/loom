@@ -169,9 +169,19 @@ export function Board({ repo, boardId }: BoardProps) {
     'canvas' | 'panel'
   >('canvas')
   const [panelSelectedIds, setPanelSelectedIds] = useState<number[]>([])
+  const [panelSelectionHasGrouped, setPanelSelectionHasGrouped] =
+    useState(false)
 
   const rfInstance = useRef<ReactFlowInstance<FlowNode, Edge> | null>(null)
   const toast = useToast()
+
+  const handlePanelSelectionChange = useCallback(
+    (ids: number[], hasGroupedImage: boolean) => {
+      setPanelSelectedIds(ids)
+      setPanelSelectionHasGrouped(hasGroupedImage)
+    },
+    []
+  )
 
   // Surfaces a rejected service call (e.g. cycle rejection on link
   // creation — see the data model's acyclicity rule) as a toast rather
@@ -824,6 +834,20 @@ export function Board({ repo, boardId }: BoardProps) {
     [boardData]
   )
 
+  const canvasSelectionHasGrouped = useMemo(
+    () =>
+      activeSelectionImageIds.some(
+        (id) =>
+          Boolean(imageById.get(id)?.groupId) || Boolean(groupForImage(id))
+      ),
+    [activeSelectionImageIds, imageById, groupForImage]
+  )
+  const groupSelectionDisabled =
+    activeSelectionImageIds.length < 2 ||
+    (lastSelectionSource === 'panel'
+      ? panelSelectionHasGrouped
+      : canvasSelectionHasGrouped)
+
   const singleSelectedImage: ImageInfo | null = useMemo(() => {
     if (selectedIds.length !== 1 || selectedIds[0].startsWith('group:'))
       return null
@@ -923,16 +947,16 @@ export function Board({ repo, boardId }: BoardProps) {
   // Ctrl/Cmd+G (see useGroupShortcut below), replacing Stage 7's stopgap
   // floating action bar.
   const handleGroupSelection = useCallback(() => {
-    if (activeSelectionImageIds.length < 2) return
+    if (groupSelectionDisabled) return
     GroupService.CreateGroup(repo.path, '', '', activeSelectionImageIds).then(
       () => {
         setSelectedIds([])
         loadBoard()
       }
     )
-  }, [activeSelectionImageIds, repo.path, loadBoard])
+  }, [activeSelectionImageIds, groupSelectionDisabled, repo.path, loadBoard])
 
-  useGroupShortcut(activeSelectionImageIds.length >= 2, handleGroupSelection)
+  useGroupShortcut(!groupSelectionDisabled, handleGroupSelection)
 
   const activeSelectionArchived = useMemo(
     () =>
@@ -1166,6 +1190,7 @@ export function Board({ repo, boardId }: BoardProps) {
       {
         key: 'group-as-set',
         label: menuLabelWithShortcut(t`Group as set`, `${modKey}G`),
+        disabled: canvasSelectionHasGrouped,
         onSelect: handleGroupSelection,
       },
     ]
@@ -1201,6 +1226,7 @@ export function Board({ repo, boardId }: BoardProps) {
     return items
   }, [
     selectedImageIds,
+    canvasSelectionHasGrouped,
     boardData?.layoutMode,
     handleGroupSelection,
     handleAutoArrange,
@@ -1381,7 +1407,7 @@ export function Board({ repo, boardId }: BoardProps) {
           spaceHeld={spaceHeld}
           onToolChange={setTool}
           onGroupSelection={handleGroupSelection}
-          groupDisabled={activeSelectionImageIds.length < 2}
+          groupDisabled={groupSelectionDisabled}
           onAutoArrange={() => handleAutoArrange()}
           autoArrangeDisabled={
             !(boardData.layoutMode === 'manual' && selectedIds.length > 0)
@@ -1422,7 +1448,7 @@ export function Board({ repo, boardId }: BoardProps) {
           layoutMode={boardData.layoutMode}
           onLayoutModeChange={loadBoard}
           onRescan={loadBoard}
-          onPanelSelectionChange={setPanelSelectedIds}
+          onPanelSelectionChange={handlePanelSelectionChange}
           showFileName={showFileName}
           onShowFileNameChange={handleShowFileNameChange}
         />
