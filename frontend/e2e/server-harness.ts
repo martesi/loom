@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from 'node:child_process'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
 
@@ -8,6 +8,47 @@ const repoDir = path.resolve(frontendDir, '..')
 const port = process.env.E2E_PORT ?? '4173'
 const token =
   process.env.E2E_TOKEN ?? process.env.LOOM_TOKEN ?? 'loom-e2e-token'
+
+// Keep the browser fixtures outside the repository checkout. The files are
+// deliberately created here rather than copied from a fixture directory so
+// ignored/generated workspace assets can never affect the server-mode suite.
+// Every test gets its own repo so .loom state and settings cannot leak across
+// tests even though the Playwright web server is shared by the worker.
+const fixturePng = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64'
+)
+
+const fixtureRepos = [
+  { name: 'e2e-repo', files: ['auth-fixture.png'] },
+  {
+    name: 'canvas-fixtures',
+    files: ['canvas-alpha.png', 'canvas-beta.png'],
+  },
+  { name: 'remove-fixtures', files: ['remove-me.png'] },
+  { name: 'context-menu-fixtures', files: ['context-menu.png'] },
+  { name: 'menu-linux-fixtures', files: ['menu-alpha.png', 'menu-beta.png'] },
+  { name: 'menu-mac-fixtures', files: ['menu-alpha.png', 'menu-beta.png'] },
+  { name: 'filename-fixtures', files: ['hover-target.png'] },
+  {
+    name: 'explorer-fixtures',
+    files: ['canvas-trash.png', 'library-trash.png'],
+  },
+] as const
+
+async function seedFixtureRepos(browseRoot: string) {
+  await Promise.all(
+    fixtureRepos.map(async ({ name, files }) => {
+      const repoPath = path.join(browseRoot, name)
+      await mkdir(repoPath, { recursive: true })
+      await Promise.all(
+        files.map((fileName) =>
+          writeFile(path.join(repoPath, fileName), fixturePng)
+        )
+      )
+    })
+  )
+}
 
 function run(command: string, args: string[], cwd: string): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -71,6 +112,7 @@ async function main() {
   )
 
   await mkdir(repoPath, { recursive: true })
+  await seedFixtureRepos(browseRoot)
 
   let server: ChildProcess | undefined
   let stopping = false
