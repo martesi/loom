@@ -4,6 +4,7 @@ import (
 	"embed"
 	"io/fs"
 	"net/http"
+	"os"
 	"path"
 	"strings"
 
@@ -36,7 +37,11 @@ func appOptions() application.Options {
 			case service.IsFullRequest(r.URL.Path):
 				service.ServeFull(w, r)
 			default:
-				next.ServeHTTP(w, spaFallback(r, distFS))
+				if os.Getenv("FRONTEND_DEVSERVER_URL") != "" {
+					next.ServeHTTP(w, r)
+				} else {
+					next.ServeHTTP(w, spaFallback(r, distFS))
+				}
 			}
 		})
 	}

@@ -42,6 +42,13 @@
 
           export GIO_EXTRA_MODULES="${pkgs.glib-networking}/lib/gio/modules''${GIO_EXTRA_MODULES:+:$GIO_EXTRA_MODULES}"
 
+          # The minimal Nix environment has no /etc/fonts/fonts.conf. Without
+          # an explicit config WebKitGTK can map a white window even though
+          # the frontend server is healthy.
+          export FONTCONFIG_FILE="''${FONTCONFIG_FILE:-${pkgs.makeFontsConf {
+            fontDirectories = with pkgs; [ dejavu_fonts liberation_ttf ];
+          }}}"
+
           # GTK's file dialog reads GSettings, and GIO treats "no schemas
           # installed" as a g_error — i.e. abort(), taking the whole app down
           # the moment the picker opens. glib's setup hook collects the schema
@@ -49,14 +56,18 @@
           # GIO actually searches, so do that here.
           export XDG_DATA_DIRS="$GSETTINGS_SCHEMAS_PATH''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
 
-          # Everything below only applies when there is no DRM render node —
-          # a real GPU host keeps its own hardware drivers untouched.
-          if [ ! -e /dev/dri/renderD128 ]; then
+          # WSLg may expose a DRM render node backed by a host driver that is
+          # not usable by the NixOS WebKitGTK closure. Treat WSL as a
+          # software-rendered environment even when that node exists; without
+          # this WebKit can create a blank window after the app connects to
+          # the Vite dev server.
+          if [ -n "''${WSL_DISTRO_NAME:-}" ] || [ -n "''${WSL_INTEROP:-}" ] || [ ! -e /dev/dri/renderD128 ]; then
             # Use this shell's Mesa rather than whatever the host exposes. The
             # host ICD set can be a single unusable driver (powervr on WSL),
             # which is what makes zink fail with "failed to choose pdev" and
             # EGL fall over with "failed to get driver name for fd -1".
             export LIBGL_DRIVERS_PATH="${pkgs.mesa}/lib/dri"
+            export __EGL_VENDOR_LIBRARY_DIRS="''${__EGL_VENDOR_LIBRARY_DIRS:-${pkgs.mesa}/share/glvnd/egl_vendor.d}"
             export __EGL_VENDOR_LIBRARY_FILENAMES="${pkgs.mesa}/share/glvnd/egl_vendor.d/50_mesa.json"
 
             # Lavapipe, the software Vulkan ICD. VK_DRIVER_FILES is the current

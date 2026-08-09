@@ -10,7 +10,6 @@ import { rootRoute } from './root'
 
 function IndexPage() {
   const [repos, setRepos] = useState<RepoInfo[]>([])
-  const [loaded, setLoaded] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
   const navigate = useNavigate()
   const capabilities = useCapabilities()
@@ -19,9 +18,7 @@ function IndexPage() {
   // open straight to "/?openRepo=<path>" instead of the Landing page — a
   // window's Name is fixed at creation, so this query param is how a
   // freshly spawned window learns which repo it exists to show. When
-  // present, skip the recent-repos fetch/Landing entirely and jump to the
-  // board; `loaded` is deliberately left false in that branch so this
-  // component renders nothing while the navigation is in flight.
+  // present, skip the recent-repos fetch and jump to the board.
   useEffect(() => {
     const openRepo = new URLSearchParams(window.location.search).get('openRepo')
     if (openRepo) {
@@ -35,7 +32,12 @@ function IndexPage() {
     }
     RepoService.ListRecentRepos()
       .then((result) => setRepos(result ?? []))
-      .finally(() => setLoaded(true))
+      .catch((error) => {
+        // The landing page is still useful when the native RPC is
+        // temporarily unavailable (notably while running WebKitGTK under
+        // WSL). Keep the UI visible and let the user try opening a repo.
+        console.error('failed to load recent repositories', error)
+      })
   }, [navigate])
 
   const enterRepo = (repo: RepoInfo) => {
@@ -82,10 +84,6 @@ function IndexPage() {
     RepoService.OpenRecent(repo.id).then((opened) => {
       if (opened) enterRepo(opened)
     })
-  }
-
-  if (!loaded) {
-    return null
   }
 
   return (
