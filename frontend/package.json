@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "check": "biome check",
     "format": "biome check --write",
-    "i18n:extract": "lingui extract"
+    "i18n:extract": "lingui extract",
+    "typecheck:e2e": "tsc -p e2e/tsconfig.json --noEmit",
+    "test:e2e": "bun run typecheck:e2e && playwright test"
   },
   "dependencies": {
     "@base-ui-components/react": "^1.0.0-rc.0",
@@ -36,7 +38,9 @@
     "@lingui/babel-plugin-lingui-macro": "^6.6.0",
     "@lingui/cli": "^6.6.0",
     "@lingui/vite-plugin": "^6.6.0",
+    "@playwright/test": "^1.62.1",
     "@rolldown/plugin-babel": "^0.2.3",
+    "@types/node": "^26.2.0",
     "@types/react": "19",
     "@types/react-dom": "19",
     "@vitejs/plugin-react": "^6.0.0",

@@ -9,6 +9,8 @@ frontend/dist/*
 !frontend/dist/
 !frontend/dist/.gitkeep
 frontend/node_modules
+frontend/playwright-report
+frontend/test-results
 build/linux/appimage/build
 build/windows/nsis/MicrosoftEdgeWebview2Setup.exe
 # Mobile generated (per-machine; overlays hold absolute paths)

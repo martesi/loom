@@ -61,7 +61,7 @@ export function PanelImageRow({
 
   const handleDragStart = (event: DragEvent) => {
     const ids =
-      dragImageIds && dragImageIds.includes(image.id) && dragImageIds.length > 1
+      dragImageIds?.includes(image.id) && dragImageIds.length > 1
         ? dragImageIds
         : [image.id]
     event.dataTransfer.effectAllowed = 'copy'
