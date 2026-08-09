@@ -5,6 +5,8 @@ vars:
   BIN_DIR: "bin"
   PACKAGE_MANAGER: '{{.PACKAGE_MANAGER | default "bun"}}'
   VITE_PORT: '{{.WAILS_VITE_PORT | default 9245}}'
+  SERVER_PORT: '{{.WAILS_SERVER_PORT | default 8080}}'
+  DEV_TOKEN: '{{.LOOM_DEV_TOKEN | default .LOOM_TOKEN | default "loom-dev-token"}}'
   # Target OS for build/package/run. Defaults to the host OS, and is overridden
   # by `wails3 build GOOS=...` (or the GOOS env var) for cross-compilation. The
   # tasks below dispatch to the matching platform Taskfile via this variable.
@@ -53,6 +55,18 @@ tasks:
     summary: Runs the application in server mode
     cmds:
       - task: common:run:server
+
+  dev:server:
+    summary: Runs the server backend behind a Vite development proxy
+    cmds:
+      - task: common:dev:server
+        vars:
+          SERVER_PORT:
+            ref: .SERVER_PORT
+          VITE_PORT:
+            ref: .VITE_PORT
+          DEV_TOKEN:
+            ref: .DEV_TOKEN
 
   build:docker:
     summary: Builds a Docker image for server mode deployment

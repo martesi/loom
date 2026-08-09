@@ -265,13 +265,113 @@ tasks:
       BUILD_FLAGS: '-tags server{{if eq .DEV "true"}}{{if eq .OBFUSCATED "true"}},wails_obfuscated{{end}}{{if .EXTRA_TAGS}},{{.EXTRA_TAGS}}{{end}} -buildvcs=false -gcflags=all="-l"{{else}},production{{if eq .OBFUSCATED "true"}},wails_obfuscated{{end}}{{if .EXTRA_TAGS}},{{.EXTRA_TAGS}}{{end}} -trimpath -buildvcs=false -ldflags="-w -s"{{end}}'
 
   run:server:
-    summary: Builds and runs a development server (DEV=true)
+    summary: Builds and runs the production server
     deps:
       - task: build:server
-        vars:
-          DEV: "true"
     cmds:
       - '"./{{.BIN_DIR}}/{{.APP_NAME}}-server{{exeExt}}"'
+
+  dev:server:
+    summary: Runs the server backend with Vite HMR and a development proxy
+    desc: |
+      Builds and runs a server-tagged backend, starts Vite on port 9245, and
+      opens the Vite URL in a browser. The backend and Vite ports can be
+      overridden with WAILS_SERVER_PORT and WAILS_VITE_PORT. The development
+      session token defaults to 'loom-dev-token' and can be overridden with
+      LOOM_DEV_TOKEN (or LOOM_TOKEN).
+    deps:
+      - task: install:frontend:deps
+      - task: generate:bindings
+        vars:
+          BUILD_FLAGS: "-tags server"
+    cmds:
+      - |
+        set -euo pipefail
+
+        server_port="{{.SERVER_PORT | default "8080"}}"
+        vite_port="{{.VITE_PORT | default "9245"}}"
+        dev_token="{{.DEV_TOKEN | default "loom-dev-token"}}"
+        backend_url="http://127.0.0.1:${server_port}"
+        build_dir="$(mktemp -d "${TMPDIR:-/tmp}/loom-server-dev.XXXXXX")"
+        backend_pid=""
+        vite_pid=""
+
+        cleanup() {
+          trap - EXIT
+          if [ -n "$vite_pid" ]; then
+            kill "$vite_pid" 2>/dev/null || true
+            wait "$vite_pid" 2>/dev/null || true
+          fi
+          if [ -n "$backend_pid" ]; then
+            kill "$backend_pid" 2>/dev/null || true
+            wait "$backend_pid" 2>/dev/null || true
+          fi
+          rm -rf "$build_dir"
+        }
+        trap cleanup EXIT
+
+        echo "Building server backend..."
+        go build -tags server -buildvcs=false -o "$build_dir/loom-server" .
+
+        echo "Starting server backend on ${backend_url}..."
+        LOOM_TOKEN="$dev_token" \
+          WAILS_SERVER_HOST=127.0.0.1 \
+          WAILS_SERVER_PORT="$server_port" \
+          "$build_dir/loom-server" &
+        backend_pid=$!
+
+        backend_ready=false
+        for _ in $(seq 1 100); do
+          if curl --silent --fail "${backend_url}/health" >/dev/null 2>&1; then
+            backend_ready=true
+            break
+          fi
+          sleep 0.1
+        done
+        if [ "$backend_ready" != true ]; then
+          echo "Server backend did not become ready at ${backend_url}" >&2
+          exit 1
+        fi
+
+        echo "Starting Vite on http://127.0.0.1:${vite_port}/..."
+        (
+          cd frontend
+          case "{{.PACKAGE_MANAGER}}" in
+            bun) exec env LOOM_SERVER_DEV=1 LOOM_SERVER_URL="$backend_url" LOOM_DEV_TOKEN="$dev_token" LOOM_TOKEN="$dev_token" WAILS_VITE_PORT="$vite_port" bun run dev -- --host 127.0.0.1 --port "$vite_port" --strictPort ;;
+            npm) exec env LOOM_SERVER_DEV=1 LOOM_SERVER_URL="$backend_url" LOOM_DEV_TOKEN="$dev_token" LOOM_TOKEN="$dev_token" WAILS_VITE_PORT="$vite_port" npm run dev -- --host 127.0.0.1 --port "$vite_port" --strictPort ;;
+            pnpm) exec env LOOM_SERVER_DEV=1 LOOM_SERVER_URL="$backend_url" LOOM_DEV_TOKEN="$dev_token" LOOM_TOKEN="$dev_token" WAILS_VITE_PORT="$vite_port" pnpm dev --host 127.0.0.1 --port "$vite_port" --strictPort ;;
+            yarn) exec env LOOM_SERVER_DEV=1 LOOM_SERVER_URL="$backend_url" LOOM_DEV_TOKEN="$dev_token" LOOM_TOKEN="$dev_token" WAILS_VITE_PORT="$vite_port" yarn dev --host 127.0.0.1 --port "$vite_port" --strictPort ;;
+            *) echo "Unsupported package manager: {{.PACKAGE_MANAGER}}" >&2; exit 1 ;;
+          esac
+        ) &
+        vite_pid=$!
+
+        vite_ready=false
+        for _ in $(seq 1 100); do
+          if curl --silent --fail "http://127.0.0.1:${vite_port}/" >/dev/null 2>&1; then
+            vite_ready=true
+            break
+          fi
+          sleep 0.1
+        done
+        if [ "$vite_ready" != true ]; then
+          echo "Vite did not become ready at http://127.0.0.1:${vite_port}/" >&2
+          exit 1
+        fi
+
+        vite_url="http://127.0.0.1:${vite_port}/"
+        echo "Opening ${vite_url}"
+        if [ -n "${BROWSER:-}" ]; then
+          "$BROWSER" "$vite_url" >/dev/null 2>&1 &
+        elif command -v xdg-open >/dev/null 2>&1; then
+          xdg-open "$vite_url" >/dev/null 2>&1 &
+        elif command -v open >/dev/null 2>&1; then
+          open "$vite_url" >/dev/null 2>&1 &
+        else
+          echo "Open ${vite_url} in a browser."
+        fi
+
+        wait "$vite_pid"
 
   build:docker:
     summary: Builds a Docker image for server mode deployment
