@@ -130,5 +130,39 @@
             export DISPLAY="''${DISPLAY:-:99}"
           '';
         };
+
+        # Headless-Chromium closure for driving the server-mode build
+        # (main_server.go, `task run:server`) through a real browser via
+        # agent-browser (github.com/vercel-labs/agent-browser). Not
+        # packaged in nixpkgs, so it's installed on first shell entry into
+        # the gitignored .agent-browser/ below rather than vendored here.
+        # Split out from `default`/`e2e` for the same reason as `e2e`:
+        # nobody should pay for a Chromium closure just to enter the shell.
+        devShells.web-e2e = pkgs.mkShell {
+          buildInputs = commonBuildInputs ++ [ pkgs.chromium ];
+          shellHook = ''
+            ${commonHook}
+
+            export CHROMIUM_BIN="${pkgs.chromium}/bin/chromium"
+            # agent-browser's own bundled-Chrome download (its default) is a
+            # foreign "Chrome for Testing" binary that doesn't run against
+            # this shell's libc/libglib on NixOS — point it at the
+            # properly-linked nixpkgs build instead, and skip the download.
+            export AGENT_BROWSER_EXECUTABLE_PATH="$CHROMIUM_BIN"
+
+            export AGENT_BROWSER_DIR="$PWD/.agent-browser"
+            mkdir -p "$AGENT_BROWSER_DIR"
+            if [ ! -x "$AGENT_BROWSER_DIR/node_modules/.bin/agent-browser" ]; then
+              echo "web-e2e: installing agent-browser into .agent-browser/ (one-time)..." >&2
+              (cd "$AGENT_BROWSER_DIR" && bun add agent-browser >/dev/null)
+            fi
+            export PATH="$AGENT_BROWSER_DIR/node_modules/.bin:$PATH"
+
+            echo "web-e2e: chromium ready at \$CHROMIUM_BIN" >&2
+            echo "web-e2e: try 'agent-browser open <url>' first." >&2
+            echo "web-e2e: if it hangs/resets (seen under sandboxed CI shells)," >&2
+            echo "web-e2e:   run 'build/e2e/start-browser.sh &' then use 'agent-browser --cdp 9222 ...'" >&2
+          '';
+        };
       });
 }

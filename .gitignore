@@ -2,6 +2,7 @@
 .bin
 .task
 .test
+.agent-browser
 bin
 result
 frontend/dist
