@@ -2,6 +2,8 @@ import { createRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import type { RepoInfo } from '../../bindings/loom/internal/service'
 import { RepoService } from '../../bindings/loom/internal/service'
+import { RepoPickerModal } from '../components/repo-picker-modal'
+import { useCapabilities } from '../lib/capabilities-store'
 import { setCurrentRepo } from '../lib/repo-store'
 import { Landing } from './landing'
 import { rootRoute } from './root'
@@ -9,7 +11,9 @@ import { rootRoute } from './root'
 function IndexPage() {
   const [repos, setRepos] = useState<RepoInfo[]>([])
   const [loaded, setLoaded] = useState(false)
+  const [pickerOpen, setPickerOpen] = useState(false)
   const navigate = useNavigate()
+  const capabilities = useCapabilities()
 
   // Windows spawned by RepoService.SwitchTo (the repo-switcher, Stage 10)
   // open straight to "/?openRepo=<path>" instead of the Landing page — a
@@ -43,15 +47,34 @@ function IndexPage() {
     navigate({ to: '/board' })
   }
 
+  // Server mode has no native folder dialog (Dialog.OpenFile isn't
+  // available when built headless — see main_server.go), so both entry
+  // points open the browser-side folder-tree picker instead; desktop mode
+  // keeps calling the native dialogs unchanged.
   const handleOpenFolder = () => {
+    if (capabilities.isServerMode) {
+      setPickerOpen(true)
+      return
+    }
     RepoService.OpenFolder().then((repo) => {
       if (repo) enterRepo(repo)
     })
   }
 
   const handleCreateRepo = () => {
+    if (capabilities.isServerMode) {
+      setPickerOpen(true)
+      return
+    }
     RepoService.CreateRepo().then((repo) => {
       if (repo) enterRepo(repo)
+    })
+  }
+
+  const handlePickerSelect = (path: string) => {
+    setPickerOpen(false)
+    RepoService.OpenRecent(path).then((opened) => {
+      if (opened) enterRepo(opened)
     })
   }
 
@@ -66,18 +89,25 @@ function IndexPage() {
   }
 
   return (
-    <Landing
-      recentRepos={repos.map((r) => ({
-        id: r.id,
-        name: r.name,
-        path: r.path,
-        imageCount: r.imageCount,
-        openedAt: r.openedAt,
-      }))}
-      onOpenFolder={handleOpenFolder}
-      onCreateRepo={handleCreateRepo}
-      onSelectRepo={handleSelectRepo}
-    />
+    <>
+      <Landing
+        recentRepos={repos.map((r) => ({
+          id: r.id,
+          name: r.name,
+          path: r.path,
+          imageCount: r.imageCount,
+          openedAt: r.openedAt,
+        }))}
+        onOpenFolder={handleOpenFolder}
+        onCreateRepo={handleCreateRepo}
+        onSelectRepo={handleSelectRepo}
+      />
+      <RepoPickerModal
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        onSelect={handlePickerSelect}
+      />
+    </>
   )
 }
 

@@ -15,6 +15,17 @@
 import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wailsio/runtime";
 
 /**
+ * IsServerMode reports whether this binary is running as a headless web
+ * server rather than a native desktop app. The frontend uses it to decide
+ * between native-only affordances (folder-picker dialogs, spawning new OS
+ * windows, revealing files in the local file explorer) and their
+ * browser-appropriate substitutes.
+ */
+export function IsServerMode(): $CancellablePromise<boolean> {
+    return $Call.ByID(2538539852);
+}
+
+/**
  * RevealInFileExplorer opens the OS file browser with path selected (where
  * the platform tool supports selection) or, failing that, its containing
  * folder open.

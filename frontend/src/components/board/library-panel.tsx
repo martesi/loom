@@ -16,6 +16,7 @@ import {
   SystemService,
   TagService,
 } from '../../../bindings/loom/internal/service'
+import { useCapabilities } from '../../lib/capabilities-store'
 import { cn } from '../../lib/utils'
 import type { MenuAction } from '../menu'
 import { PositionedMenu } from '../menu'
@@ -77,6 +78,7 @@ export function LibraryPanel({
   onSelectionChange,
   onChange,
 }: LibraryPanelProps) {
+  const capabilities = useCapabilities()
   const [rows, setRows] = useState<LibraryRow[]>([])
   const [boards, setBoards] = useState<BoardSummary[]>([])
   const [tags, setTags] = useState<TagInfo[]>([])
@@ -271,11 +273,17 @@ export function LibraryPanel({
         label: t`Show on board`,
         onSelect: () => handleShowOnBoard(row),
       },
-      {
-        key: 'reveal',
-        label: t`Show in file explorer`,
-        onSelect: () => SystemService.RevealInFileExplorer(row.filePath),
-      },
+      // Meaningless (and pointed at the wrong machine) in server mode: it
+      // shells out on whatever host runs the Go process, not the browser's.
+      ...(capabilities.isServerMode
+        ? []
+        : [
+            {
+              key: 'reveal',
+              label: t`Show in file explorer`,
+              onSelect: () => SystemService.RevealInFileExplorer(row.filePath),
+            },
+          ]),
       {
         key: 'show-details',
         label: t`Show details`,
@@ -324,6 +332,7 @@ export function LibraryPanel({
     handleTrash,
     handleArchive,
     onDetailRequest,
+    capabilities.isServerMode,
   ])
 
   const selectedIds = useMemo(() => [...selected], [selected])

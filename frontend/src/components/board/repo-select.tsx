@@ -3,6 +3,7 @@ import { Trans } from '@lingui/react/macro'
 import { useMemo, useState } from 'react'
 import type { RepoInfo } from '../../../bindings/loom/internal/service'
 import { RepoService } from '../../../bindings/loom/internal/service'
+import { useCapabilities } from '../../lib/capabilities-store'
 import {
   Select,
   SelectContent,
@@ -32,6 +33,7 @@ interface RepoSelectProps {
 export function RepoSelect({ repo }: RepoSelectProps) {
   const [recent, setRecent] = useState<RepoInfo[]>([])
   const toast = useToast()
+  const capabilities = useCapabilities()
 
   // Merge the live "current repo" (always present, always up to date) with
   // whatever the last ListRecentRepos fetch returned, so the trigger can
@@ -61,6 +63,18 @@ export function RepoSelect({ repo }: RepoSelectProps) {
   const handleValueChange = (value: unknown) => {
     const path = value as string
     if (path === repo.path) return
+
+    // Server mode has no OS windows for SwitchTo to spawn (its
+    // Window.NewWithOptions call is a no-op headless — see main_server.go),
+    // so a browser tab has to open itself. The new tab self-bootstraps via
+    // the "openRepo" handling in index-route.tsx, the same way a
+    // SwitchTo-spawned native window does, so no backend call is needed
+    // first.
+    if (capabilities.isServerMode) {
+      window.open(`/?openRepo=${encodeURIComponent(path)}`, '_blank')
+      return
+    }
+
     // SwitchTo's response only carries ID/Path when OpenedElsewhere is set
     // (see repo_service.go) — grab the friendlier name from what we
     // already loaded for the popup, before it's stale.

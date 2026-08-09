@@ -29,6 +29,34 @@ export interface DirListing {
     "files": ImageInfo[] | null;
 }
 
+/**
+ * FSDirEntry describes one subdirectory returned by BrowseDirectory.
+ */
+export interface FSDirEntry {
+    "name": string;
+    "path": string;
+
+    /**
+     * already has a .loom/ — "open" rather than "create"
+     */
+    "isRepo": boolean;
+}
+
+/**
+ * FSDirListing is the response to BrowseDirectory: the resolved directory
+ * itself plus its browsable children.
+ */
+export interface FSDirListing {
+    "path": string;
+
+    /**
+     * "" if path has no browsable parent
+     */
+    "parent": string;
+    "isRepo": boolean;
+    "entries": FSDirEntry[] | null;
+}
+
 export interface GroupInfo {
     "id": number;
     "name": string;

@@ -4,7 +4,7 @@ import { createRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { BoardService } from '../../bindings/loom/internal/service'
 import { Button } from '../components/ui/button'
-import { useCurrentRepo } from '../lib/repo-store'
+import { useCurrentRepo, useHydrateRepo } from '../lib/repo-store'
 import { Board } from './board'
 import { rootRoute } from './root'
 
@@ -14,6 +14,7 @@ import { rootRoute } from './root'
 // redirect.
 function BoardIndexPage() {
   const repo = useCurrentRepo()
+  const hydrating = useHydrateRepo()
   const navigate = useNavigate()
   const [boards, setBoards] = useState<Awaited<
     ReturnType<typeof BoardService.ListBoards>
@@ -21,12 +22,14 @@ function BoardIndexPage() {
   const [creating, setCreating] = useState(false)
 
   useEffect(() => {
-    if (!repo) {
-      navigate({ to: '/' })
-      return
-    }
+    if (repo || hydrating) return
+    navigate({ to: '/' })
+  }, [repo, hydrating, navigate])
+
+  useEffect(() => {
+    if (!repo) return
     BoardService.ListBoards(repo.path).then((list) => setBoards(list ?? []))
-  }, [repo, navigate])
+  }, [repo])
 
   useEffect(() => {
     if (boards && boards.length > 0) {
@@ -79,14 +82,14 @@ export const boardIndexRoute = createRoute({
 
 function BoardPage() {
   const repo = useCurrentRepo()
+  const hydrating = useHydrateRepo()
   const navigate = useNavigate()
   const { boardId } = boardRoute.useParams()
 
   useEffect(() => {
-    if (!repo) {
-      navigate({ to: '/' })
-    }
-  }, [repo, navigate])
+    if (repo || hydrating) return
+    navigate({ to: '/' })
+  }, [repo, hydrating, navigate])
 
   if (!repo) {
     return null

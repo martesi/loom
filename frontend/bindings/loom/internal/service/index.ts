@@ -28,6 +28,8 @@ export type {
     BoardData,
     BoardSummary,
     DirListing,
+    FSDirEntry,
+    FSDirListing,
     GroupInfo,
     ImageInfo,
     LibraryQuery,

@@ -10,6 +10,24 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as $models from "./models.js";
 
 /**
+ * BrowseDirectory lists the subdirectories of path, for the folder-tree
+ * repo picker that server mode uses in place of the native folder dialog
+ * (OpenFolder/CreateRepo's Dialog.OpenFile is unavailable when built
+ * headless). path == "" resolves to the user's home directory. Each entry
+ * reports whether it's already a Loom repo so the picker can distinguish
+ * "open" from "create" without a round trip; the actual open/create still
+ * goes through OpenRecent, which already bootstraps .loom/ if it's missing.
+ * 
+ * If LOOM_BROWSE_ROOT is set, browsing is confined to that directory and
+ * its descendants — worth setting on any deployment where you don't want
+ * whoever holds the login token to browse anything the server process can
+ * read.
+ */
+export function BrowseDirectory(path: string): $CancellablePromise<$models.FSDirListing | null> {
+    return $Call.ByID(2564148082, path);
+}
+
+/**
  * CreateRepo prompts the user to pick or create a folder and opens it as a
  * repo. Functionally identical to OpenFolder — a repo is just a folder with
  * a .loom/ — the separate entry point exists for the native dialog's

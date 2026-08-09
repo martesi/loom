@@ -3,6 +3,10 @@ package service
 import (
 	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
@@ -199,5 +203,93 @@ func bootstrapAndTouch(path string) (*RepoInfo, error) {
 		Path:       path,
 		ImageCount: count,
 		OpenedAt:   "Opened just now",
+	}, nil
+}
+
+// FSDirEntry describes one subdirectory returned by BrowseDirectory.
+type FSDirEntry struct {
+	Name   string `json:"name"`
+	Path   string `json:"path"`
+	IsRepo bool   `json:"isRepo"` // already has a .loom/ — "open" rather than "create"
+}
+
+// FSDirListing is the response to BrowseDirectory: the resolved directory
+// itself plus its browsable children.
+type FSDirListing struct {
+	Path    string       `json:"path"`
+	Parent  string       `json:"parent"` // "" if path has no browsable parent
+	IsRepo  bool         `json:"isRepo"`
+	Entries []FSDirEntry `json:"entries"`
+}
+
+// BrowseDirectory lists the subdirectories of path, for the folder-tree
+// repo picker that server mode uses in place of the native folder dialog
+// (OpenFolder/CreateRepo's Dialog.OpenFile is unavailable when built
+// headless). path == "" resolves to the user's home directory. Each entry
+// reports whether it's already a Loom repo so the picker can distinguish
+// "open" from "create" without a round trip; the actual open/create still
+// goes through OpenRecent, which already bootstraps .loom/ if it's missing.
+//
+// If LOOM_BROWSE_ROOT is set, browsing is confined to that directory and
+// its descendants — worth setting on any deployment where you don't want
+// whoever holds the login token to browse anything the server process can
+// read.
+func (s *RepoService) BrowseDirectory(path string) (*FSDirListing, error) {
+	resolved := path
+	if resolved == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("resolve home directory: %w", err)
+		}
+		resolved = home
+	}
+
+	resolved, err := filepath.Abs(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("resolve path: %w", err)
+	}
+
+	var root string
+	if raw := os.Getenv("LOOM_BROWSE_ROOT"); raw != "" {
+		root, err = filepath.Abs(raw)
+		if err != nil {
+			return nil, fmt.Errorf("resolve LOOM_BROWSE_ROOT: %w", err)
+		}
+		if resolved != root && !strings.HasPrefix(resolved, root+string(filepath.Separator)) {
+			resolved = root
+		}
+	}
+
+	items, err := os.ReadDir(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("browse %s: %w", resolved, err)
+	}
+
+	entries := make([]FSDirEntry, 0, len(items))
+	for _, item := range items {
+		if !item.IsDir() || strings.HasPrefix(item.Name(), ".") {
+			continue
+		}
+		entryPath := filepath.Join(resolved, item.Name())
+		entries = append(entries, FSDirEntry{
+			Name:   item.Name(),
+			Path:   entryPath,
+			IsRepo: store.IsRepo(entryPath),
+		})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return strings.ToLower(entries[i].Name) < strings.ToLower(entries[j].Name)
+	})
+
+	parent := filepath.Dir(resolved)
+	if parent == resolved || (root != "" && resolved == root) {
+		parent = ""
+	}
+
+	return &FSDirListing{
+		Path:    resolved,
+		Parent:  parent,
+		IsRepo:  store.IsRepo(resolved),
+		Entries: entries,
 	}, nil
 }

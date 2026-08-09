@@ -13,6 +13,7 @@ import {
   ImageService,
   SystemService,
 } from '../../../bindings/loom/internal/service'
+import { useCapabilities } from '../../lib/capabilities-store'
 import { cn } from '../../lib/utils'
 import type { MenuAction } from '../menu'
 import { PositionedMenu } from '../menu'
@@ -85,6 +86,7 @@ export function ExplorerPanel({
   onPreviewRequest,
   refreshToken,
 }: ExplorerPanelProps) {
+  const capabilities = useCapabilities()
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(() => new Set())
   const [dirCache, setDirCache] = useState<Map<string, DirListing>>(
     () => new Map()
@@ -367,11 +369,18 @@ export function ExplorerPanel({
             value: row.image.fileName,
           }),
       },
-      {
-        key: 'reveal',
-        label: t`Show in file explorer`,
-        onSelect: () => SystemService.RevealInFileExplorer(row.image.filePath),
-      },
+      // Meaningless (and pointed at the wrong machine) in server mode: it
+      // shells out on whatever host runs the Go process, not the browser's.
+      ...(capabilities.isServerMode
+        ? []
+        : [
+            {
+              key: 'reveal',
+              label: t`Show in file explorer`,
+              onSelect: () =>
+                SystemService.RevealInFileExplorer(row.image.filePath),
+            },
+          ]),
       {
         key: 'show-details',
         label: t`Show details`,
@@ -392,6 +401,7 @@ export function ExplorerPanel({
     selected,
     rows,
     onDetailRequest,
+    capabilities.isServerMode,
   ])
 
   const [folderMenu, setFolderMenu] = useState<{

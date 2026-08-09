@@ -55,6 +55,7 @@ import type { MenuAction } from '../components/menu'
 import { PositionedMenu } from '../components/menu'
 import { Kbd } from '../components/ui/kbd'
 import { useToast } from '../components/ui/toast'
+import { useCapabilities } from '../lib/capabilities-store'
 import { computeSubgraphLayout, placeCluster } from '../lib/layout'
 import { DEFAULT_NODE_HEIGHT, DEFAULT_NODE_WIDTH } from '../lib/node-size'
 import { useGroupShortcut, useUndoShortcuts } from '../lib/use-undo'
@@ -99,6 +100,7 @@ function menuLabelWithShortcut(label: string, shortcut: string) {
 }
 
 export function Board({ repo, boardId }: BoardProps) {
+  const capabilities = useCapabilities()
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
   const [boardData, setBoardData] = useState<BoardData | null>(null)
@@ -1064,11 +1066,17 @@ export function Board({ repo, boardId }: BoardProps) {
     const group = groupForImage(imageId)
 
     const items: MenuAction[] = [
-      {
-        key: 'reveal',
-        label: t`Show in file explorer`,
-        onSelect: () => SystemService.RevealInFileExplorer(img.filePath),
-      },
+      // Meaningless (and pointed at the wrong machine) in server mode: it
+      // shells out on whatever host runs the Go process, not the browser's.
+      ...(capabilities.isServerMode
+        ? []
+        : [
+            {
+              key: 'reveal',
+              label: t`Show in file explorer`,
+              onSelect: () => SystemService.RevealInFileExplorer(img.filePath),
+            },
+          ]),
       {
         key: 'find-in-list',
         label: t`Find in list`,
@@ -1144,6 +1152,7 @@ export function Board({ repo, boardId }: BoardProps) {
     handleTrash,
     handleArchiveToggle,
     handleRemoveFromBoard,
+    capabilities.isServerMode,
   ])
 
   // Right-click menu for a multi-select (marquee/drag-box). Reuses the same
