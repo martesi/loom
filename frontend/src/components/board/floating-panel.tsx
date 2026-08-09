@@ -46,6 +46,10 @@ interface FloatingPanelProps {
   // their own selection narrows to one row — sets detailImageId without
   // switching tabs, same as canvas's plain-click selection sync.
   detailImageId: number | null
+  // 2+ canvas-selected image ids, in selection order — when non-empty,
+  // Detail shows a multi-select list instead of detailImageId's single
+  // image (see board.tsx's selectionOrder/orderedSelectedImageIds).
+  multiSelectedImageIds: number[]
   boardImages: ImageInfo[]
   onDetailRequest: (imageId: number) => void
   onPreviewRequest: (imageId: number) => void
@@ -83,6 +87,7 @@ export function FloatingPanel({
   libraryRevealRequest,
   libraryRefreshToken,
   detailImageId,
+  multiSelectedImageIds,
   boardImages,
   onDetailRequest,
   onPreviewRequest,
@@ -179,6 +184,7 @@ export function FloatingPanel({
             onDetailRequest={onDetailRequest}
             onPreviewRequest={onPreviewRequest}
             onSelectionChange={onPanelSelectionChange}
+            onChange={onBoardsChanged}
           />
         </div>
         <div
@@ -202,6 +208,7 @@ export function FloatingPanel({
           <DetailPanel
             repo={repo}
             detailImageId={detailImageId}
+            multiSelectedImageIds={multiSelectedImageIds}
             boardImages={boardImages}
             boards={boards}
             onChange={onBoardsChanged}

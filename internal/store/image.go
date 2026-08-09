@@ -11,20 +11,23 @@ import (
 )
 
 type Image struct {
-	ID           int64
-	FilePath     string
-	ThumbPath    string
-	Width        int
-	Height       int
-	FileSize     int64
-	Archived     bool
-	Trashed      bool
-	CanvasX      float64
-	CanvasY      float64
-	HasCanvasPos bool
-	PromptText   string
-	GroupID      int64
-	CreatedAt    string
+	ID            int64
+	FilePath      string
+	ThumbPath     string
+	Width         int
+	Height        int
+	FileSize      int64
+	Archived      bool
+	Trashed       bool
+	CanvasX       float64
+	CanvasY       float64
+	HasCanvasPos  bool
+	CanvasW       float64
+	CanvasH       float64
+	HasCanvasSize bool
+	PromptText    string
+	GroupID       int64
+	CreatedAt     string
 }
 
 type Relationship struct {
@@ -212,6 +215,7 @@ func (r *Repo) imagesByFilePaths(paths []string) ([]Image, error) {
 const imageSelectCols = `
 	images.id, file_path, COALESCE(thumb_path, ''), COALESCE(width, 0),
 	COALESCE(height, 0), COALESCE(file_size, 0), archived, trashed, canvas_x, canvas_y,
+	canvas_w, canvas_h,
 	COALESCE((SELECT p.text FROM prompts p WHERE p.id = images.prompt_id), ''),
 	COALESCE(group_id, 0), created_at`
 
@@ -219,14 +223,17 @@ func scanImage(scanner interface {
 	Scan(dest ...any) error
 }) (Image, error) {
 	var img Image
-	var cx, cy sql.NullFloat64
+	var cx, cy, cw, ch sql.NullFloat64
 	err := scanner.Scan(&img.ID, &img.FilePath, &img.ThumbPath, &img.Width, &img.Height,
-		&img.FileSize, &img.Archived, &img.Trashed, &cx, &cy, &img.PromptText, &img.GroupID, &img.CreatedAt)
+		&img.FileSize, &img.Archived, &img.Trashed, &cx, &cy, &cw, &ch, &img.PromptText, &img.GroupID, &img.CreatedAt)
 	if err != nil {
 		return img, err
 	}
 	if cx.Valid && cy.Valid {
 		img.CanvasX, img.CanvasY, img.HasCanvasPos = cx.Float64, cy.Float64, true
+	}
+	if cw.Valid && ch.Valid {
+		img.CanvasW, img.CanvasH, img.HasCanvasSize = cw.Float64, ch.Float64, true
 	}
 	return img, nil
 }
@@ -280,6 +287,15 @@ func (r *Repo) SetCanvasPosition(imageID int64, x, y float64) error {
 	_, err := r.DB.Exec(`
 		UPDATE images SET canvas_x = ?, canvas_y = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 		WHERE id = ?`, x, y, imageID)
+	return err
+}
+
+// SetCanvasSize persists a node's resized width/height on the canvas,
+// mirroring SetCanvasPosition.
+func (r *Repo) SetCanvasSize(imageID int64, w, h float64) error {
+	_, err := r.DB.Exec(`
+		UPDATE images SET canvas_w = ?, canvas_h = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+		WHERE id = ?`, w, h, imageID)
 	return err
 }
 
@@ -542,6 +558,23 @@ func (r *Repo) GetCanvasPosition(imageID int64) (x, y float64, ok bool, err erro
 	}
 	if cx.Valid && cy.Valid {
 		return cx.Float64, cy.Float64, true, nil
+	}
+	return 0, 0, false, nil
+}
+
+// GetCanvasSize returns an image's currently stored size, so a size-change
+// can be logged with enough information to invert. Mirrors GetCanvasPosition.
+func (r *Repo) GetCanvasSize(imageID int64) (w, h float64, ok bool, err error) {
+	var cw, ch sql.NullFloat64
+	err = r.DB.QueryRow(`SELECT canvas_w, canvas_h FROM images WHERE id = ?`, imageID).Scan(&cw, &ch)
+	if err == sql.ErrNoRows {
+		return 0, 0, false, nil
+	}
+	if err != nil {
+		return 0, 0, false, err
+	}
+	if cw.Valid && ch.Valid {
+		return cw.Float64, ch.Float64, true, nil
 	}
 	return 0, 0, false, nil
 }

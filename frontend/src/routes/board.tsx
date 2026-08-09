@@ -5,6 +5,7 @@ import {
   BackgroundVariant,
   type Connection,
   type Edge,
+  MarkerType,
   type Node,
   type NodeMouseHandler,
   type NodeTypes,
@@ -15,6 +16,7 @@ import {
   ReactFlow,
   type ReactFlowInstance,
   ReactFlowProvider,
+  SelectionMode,
   useEdgesState,
   useNodesState,
 } from '@xyflow/react'
@@ -53,6 +55,7 @@ import { PositionedMenu } from '../components/menu'
 import { useToast } from '../components/ui/toast'
 import { computeSubgraphLayout, placeCluster } from '../lib/layout'
 import { useGroupShortcut, useUndoShortcuts } from '../lib/use-undo'
+import { cn } from '../lib/utils'
 
 const nodeTypes: NodeTypes = { image: ImageNode, group: GroupNode }
 
@@ -82,12 +85,21 @@ export function Board({ repo, boardId }: BoardProps) {
   const [boards, setBoards] = useState<BoardSummary[]>([])
   const [allTags, setAllTags] = useState<TagInfo[]>([])
   const [selectedIds, setSelectedIds] = useState<string[]>([])
+  // Selection order (node ids), for the Detail panel's multi-select list —
+  // see handleSelectionChange, which is the only place this is written.
+  const [selectionOrder, setSelectionOrder] = useState<string[]>([])
   const [expandedGroups, setExpandedGroups] = useState<Set<number>>(new Set())
   const [focusedMemberId, setFocusedMemberId] = useState<number | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [zoomPercent, setZoomPercent] = useState(100)
   const [tool, setTool] = useState<CanvasTool>('select')
   const [spaceHeld, setSpaceHeld] = useState(false)
+  // Tracks an in-progress middle-mouse pan so the pane/node cursor can be
+  // forced to "grabbing" for its duration — xyflow's stock cursor CSS only
+  // reacts to a left-button (0) drag being enabled, and a node's own
+  // `cursor` rule otherwise wins over the pane's while the pointer is over
+  // one, so middle-mouse panning shows no grab affordance without this.
+  const [middlePanning, setMiddlePanning] = useState(false)
   const [lightboxIndex, setLightboxIndex] = useState(-1)
   const [panelTab, setPanelTab] = useState<PanelTab>('library')
   const [detailImageId, setDetailImageId] = useState<number | null>(null)
@@ -247,6 +259,17 @@ export function Board({ repo, boardId }: BoardProps) {
     }
   }, [])
 
+  // Ends a middle-mouse pan (see the canvas wrapper's onMouseDown) on
+  // mouseup anywhere in the window, not just over the canvas — the button
+  // can be released after the cursor has drifted off it mid-drag.
+  useEffect(() => {
+    const onMouseUp = (event: MouseEvent) => {
+      if (event.button === 1) setMiddlePanning(false)
+    }
+    window.addEventListener('mouseup', onMouseUp)
+    return () => window.removeEventListener('mouseup', onMouseUp)
+  }, [])
+
   const groupForImage = useCallback(
     (imageId: number) =>
       boardData?.groups?.find((g) => g.memberIds?.includes(imageId)) ?? null,
@@ -299,6 +322,21 @@ export function Board({ repo, boardId }: BoardProps) {
     }
   }, [loaded, focusImage])
 
+  // NodeResizer reports the node's post-resize x/y/width/height as a single
+  // event — resizing from a top/left handle moves the origin too, not just
+  // the size, so both are persisted together to avoid the node snapping
+  // back to its pre-resize position on the next reload (same reasoning as
+  // handleNodeDragStop's persistAll).
+  const handleResizeEnd = useCallback(
+    (imageId: number, x: number, y: number, w: number, h: number) => {
+      Promise.all([
+        ImageService.SetPosition(repo.path, imageId, x, y),
+        ImageService.SetSize(repo.path, imageId, w, h),
+      ]).then(loadBoard)
+    },
+    [repo.path, loadBoard]
+  )
+
   // Rebuild xyflow nodes/edges whenever the loaded board or local
   // expand/select UI state changes. Auto layout mode computes positions
   // fresh from the graph every time (see lib/layout.ts) rather than
@@ -324,13 +362,16 @@ export function Board({ repo, boardId }: BoardProps) {
         id: nodeIdFor(img.id),
         type: 'image',
         position: { x: img.canvasX, y: img.canvasY },
-        selected: selectedIds.includes(nodeIdFor(img.id)),
+        width: img.canvasW || undefined,
+        height: img.canvasH || undefined,
         data: {
           fileName: img.fileName,
           promptText: img.promptText,
           thumbUrl: img.thumbUrl,
           missing: img.missing,
           archived: img.archived,
+          onResizeEnd: (x: number, y: number, w: number, h: number) =>
+            handleResizeEnd(img.id, x, y, w, h),
         },
       }))
 
@@ -342,11 +383,16 @@ export function Board({ repo, boardId }: BoardProps) {
         id,
         type: 'group',
         position: { x: cover?.canvasX ?? 0, y: cover?.canvasY ?? 0 },
-        selected: selectedIds.includes(id),
+        width: cover?.canvasW || undefined,
+        height: cover?.canvasH || undefined,
         data: {
           name: g.name,
           kind: g.kind,
           coverThumbUrl: cover?.thumbUrl ?? '',
+          onResizeEnd: cover
+            ? (x: number, y: number, w: number, h: number) =>
+                handleResizeEnd(cover.id, x, y, w, h)
+            : undefined,
           members: (g.memberIds ?? []).map((id2) => {
             const m = imageById.get(id2)
             return {
@@ -421,10 +467,31 @@ export function Board({ repo, boardId }: BoardProps) {
     resolveNodeId,
     repo.path,
     loadBoard,
-    selectedIds,
+    handleResizeEnd,
     setEdges,
     setNodes,
   ])
+
+  // Applying `selected` here as a targeted patch (rather than folding
+  // selectedIds into the rebuild effect above) means a selection change —
+  // e.g. right-clicking a node, see openNodeMenu's setSelectedIds — only
+  // creates new object identities for the nodes whose selected state
+  // actually flipped. Previously every node/edge in the whole board got a
+  // brand-new object on every selection change (selectedIds was a dep of
+  // the full rebuild), which visibly re-rendered the entire canvas as a
+  // "flash" on each right-click.
+  useEffect(() => {
+    setNodes((prev) => {
+      let changed = false
+      const next = prev.map((n) => {
+        const sel = selectedIds.includes(n.id)
+        if (n.selected === sel) return n
+        changed = true
+        return { ...n, selected: sel }
+      })
+      return changed ? next : prev
+    })
+  }, [selectedIds, setNodes])
 
   const handleConnect: OnConnect = useCallback(
     (connection: Connection) => {
@@ -458,23 +525,34 @@ export function Board({ repo, boardId }: BoardProps) {
   )
 
   const handleNodeDragStop: OnNodeDrag<FlowNode> = useCallback(
-    (_event, node) => {
+    (_event, node, draggedNodes) => {
       if (boardData?.layoutMode !== 'manual') return
 
-      const persistPosition = () => {
-        const imageId = nodeIdToImageId(node.id)
-        if (imageId == null) return
-        // Must refresh boardData after persisting: the node-rebuild effect
-        // above is keyed on selectedIds (among other things), so the next
-        // selection change (e.g. clicking empty canvas to deselect) would
-        // otherwise rebuild this node from boardData's still-stale
-        // canvasX/Y and snap the just-dragged node back to its old spot.
-        ImageService.SetPosition(
-          repo.path,
-          imageId,
-          node.position.x,
-          node.position.y
-        ).then(loadBoard)
+      // A multi-selection drag moves every selected node together, but
+      // xyflow only reports the grabbed one as `node` — `draggedNodes` is
+      // the full set that actually moved. Persisting only `node` left the
+      // rest snapping back to their stale canvasX/Y on the next reload.
+      const positionUpdates = (source: FlowNode[]) =>
+        source
+          .map((n) => {
+            const imageId = nodeIdToImageId(n.id)
+            return imageId == null
+              ? null
+              : { imageId, x: n.position.x, y: n.position.y }
+          })
+          .filter(
+            (u): u is { imageId: number; x: number; y: number } => u !== null
+          )
+
+      // Must refresh boardData after persisting: the node-rebuild effect
+      // above is keyed on selectedIds (among other things), so the next
+      // selection change (e.g. clicking empty canvas to deselect) would
+      // otherwise rebuild these nodes from boardData's still-stale
+      // canvasX/Y and snap them back to their old spot.
+      const persistAll = () => {
+        const updates = positionUpdates(draggedNodes)
+        if (updates.length === 0) return
+        ImageService.SetPositions(repo.path, updates).then(loadBoard)
       }
 
       // Groups can't be a relationship source (handleConnect guards the
@@ -482,7 +560,7 @@ export function Board({ repo, boardId }: BoardProps) {
       // expanded member instead), so a dragged group node only ever
       // repositions.
       if (node.id.startsWith('group:')) {
-        persistPosition()
+        persistAll()
         return
       }
 
@@ -511,25 +589,41 @@ export function Board({ repo, boardId }: BoardProps) {
       })
 
       if (!target) {
-        persistPosition()
+        persistAll()
         return
       }
 
       // Dropped onto another node: the dragged image becomes the relationship
-      // source (matches handleConnect's argument order). Position is
-      // deliberately not persisted — the loadBoard() refresh below rebuilds
-      // nodes from boardData's unchanged canvas_x/y, snapping the dragged
-      // node back to where it started, since the drop is a connect gesture,
-      // not a move.
+      // source (matches handleConnect's argument order). The grabbed node's
+      // own position is deliberately not persisted — the loadBoard() refresh
+      // below rebuilds it from boardData's unchanged canvas_x/y, snapping it
+      // back to where it started, since the drop is a connect gesture, not a
+      // move. Any other nodes that were co-dragged along with it (a
+      // multi-selection drag) did genuinely move, though, so their positions
+      // are persisted alongside the link.
+      const siblingUpdates = positionUpdates(
+        draggedNodes.filter((n) => n.id !== node.id)
+      )
+      const persistSiblings = () =>
+        siblingUpdates.length > 0
+          ? ImageService.SetPositions(repo.path, siblingUpdates)
+          : Promise.resolve()
+
       const draggedImageId = Number(node.id)
       if (target.id.startsWith('group:')) {
         const groupId = Number(target.id.slice('group:'.length))
-        ImageService.LinkSourceToGroup(repo.path, draggedImageId, groupId)
+        Promise.all([
+          persistSiblings(),
+          ImageService.LinkSourceToGroup(repo.path, draggedImageId, groupId),
+        ])
           .then(loadBoard)
           .catch(reportError(t`Couldn't link`))
         return
       }
-      ImageService.LinkSource(repo.path, draggedImageId, Number(target.id))
+      Promise.all([
+        persistSiblings(),
+        ImageService.LinkSource(repo.path, draggedImageId, Number(target.id)),
+      ])
         .then(loadBoard)
         .catch(reportError(t`Couldn't link`))
     },
@@ -588,13 +682,15 @@ export function Board({ repo, boardId }: BoardProps) {
     setPanelTab('detail')
   }, [])
 
-  // Plain click only selects (React Flow's own click-to-select handles
-  // that) — it must not also jump the panel to Detail, matching
+  // Plain/shift/ctrl/cmd click only select (Ctrl/Cmd is now an additive
+  // multi-select modifier alongside Shift, see multiSelectionKeyCode below)
+  // — they must not also jump the panel to Detail, matching
   // panel-image-row.tsx's existing ctrl/cmd+click-only convention for
-  // Library/Explorer rows.
+  // Library/Explorer rows. Alt+click is the one modifier that jumps to
+  // Detail (previously ctrl/cmd+click's role).
   const handleNodeClick: NodeMouseHandler<FlowNode> = useCallback(
     (event, node) => {
-      if (!(event.ctrlKey || event.metaKey)) return
+      if (!event.altKey) return
       const imageId = nodeIdToImageId(node.id)
       if (imageId != null) handleDetailRequest(imageId)
     },
@@ -603,7 +699,21 @@ export function Board({ repo, boardId }: BoardProps) {
 
   const handleSelectionChange: OnSelectionChangeFunc = useCallback(
     ({ nodes: sel }) => {
-      setSelectedIds(sel.map((n) => n.id))
+      const ids = sel.map((n) => n.id)
+      setSelectedIds(ids)
+      // Tracks the order nodes joined the selection in (for the Detail
+      // panel's multi-select list), which xyflow's own `sel` array doesn't
+      // preserve — it reflects internal node-array order, not click order.
+      // Ids still selected keep their existing relative order; newly-added
+      // ids (in whatever order xyflow reports them — a marquee-select has
+      // no click sequence to preserve) are appended at the end; ids no
+      // longer selected are dropped.
+      setSelectionOrder((prev) => {
+        const idSet = new Set(ids)
+        const kept = prev.filter((id) => idSet.has(id))
+        const added = ids.filter((id) => !prev.includes(id))
+        return [...kept, ...added]
+      })
     },
     []
   )
@@ -627,6 +737,17 @@ export function Board({ repo, boardId }: BoardProps) {
         .map((id) => Number(id))
         .filter((id) => Number.isFinite(id)),
     [selectedIds]
+  )
+
+  // Same as selectedImageIds, but in selection order — for the Detail
+  // panel's multi-select list (see selectionOrder/handleSelectionChange).
+  const orderedSelectedImageIds = useMemo(
+    () =>
+      selectionOrder
+        .filter((id) => !id.startsWith('group:'))
+        .map((id) => Number(id))
+        .filter((id) => Number.isFinite(id)),
+    [selectionOrder]
   )
 
   useEffect(() => {
@@ -1072,9 +1193,16 @@ export function Board({ repo, boardId }: BoardProps) {
           pane, full-width/relative flex-1, with FloatingPanel and the
           canvas toolbars layered on top as absolute-positioned siblings
           rather than flex siblings, so the canvas stays fully interactive
-          underneath (see Stage 12's drag-and-drop). */}
+          underneath (see Stage 12's drag-and-drop). onMouseDown here only
+          tracks middle-mouse-button pan state for the cursor override
+          below, not a real interaction target. */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: see comment above */}
       <div
-        className="relative flex-1"
+        className={cn(
+          'relative flex-1',
+          middlePanning &&
+            'cursor-grabbing [&_.react-flow__node]:!cursor-grabbing [&_.react-flow__pane]:!cursor-grabbing'
+        )}
         onDragOver={(event) => {
           if (
             event.dataTransfer.types.includes('application/x-loom-image-id')
@@ -1083,6 +1211,9 @@ export function Board({ repo, boardId }: BoardProps) {
           }
         }}
         onDrop={handleDropImages}
+        onMouseDown={(event) => {
+          if (event.button === 1) setMiddlePanning(true)
+        }}
       >
         <ReactFlowProvider>
           <ReactFlow
@@ -1094,6 +1225,14 @@ export function Board({ repo, boardId }: BoardProps) {
             onConnect={handleConnect}
             onNodeDragStop={handleNodeDragStop}
             onNodeClick={handleNodeClick}
+            onNodeDoubleClick={(_event, node) => {
+              const imageId = nodeIdToImageId(node.id)
+              if (imageId == null) return
+              const idx = (boardData.images ?? []).findIndex(
+                (i) => i.id === imageId
+              )
+              if (idx >= 0) setLightboxIndex(idx)
+            }}
             onNodeContextMenu={(event, node) => openNodeMenu(event, node.id)}
             onPaneContextMenu={(event) => {
               event.preventDefault()
@@ -1113,6 +1252,7 @@ export function Board({ repo, boardId }: BoardProps) {
             }}
             onSelectionChange={handleSelectionChange}
             onEdgesDelete={handleEdgesDelete}
+            onNodesDelete={() => handleToolbarTrash()}
             onPaneClick={() => {
               setSelectedIds([])
               // Clicking empty canvas to deselect should also drop Detail
@@ -1130,10 +1270,12 @@ export function Board({ repo, boardId }: BoardProps) {
             nodesDraggable={boardData.layoutMode === 'manual'}
             panOnDrag={panOnDrag}
             selectionOnDrag={selectionOnDrag}
+            selectionMode={SelectionMode.Partial}
             defaultEdgeOptions={{
               style: { stroke: 'rgba(0,0,0,.22)', strokeWidth: 1.6 },
+              markerEnd: { type: MarkerType.ArrowClosed },
             }}
-            multiSelectionKeyCode="Shift"
+            multiSelectionKeyCode={['Shift', 'Control', 'Meta']}
             deleteKeyCode={['Backspace', 'Delete']}
             fitView
             proOptions={{ hideAttribution: true }}
@@ -1149,6 +1291,7 @@ export function Board({ repo, boardId }: BoardProps) {
 
         <CanvasToolbar
           tool={tool}
+          spaceHeld={spaceHeld}
           onToolChange={setTool}
           onGroupSelection={handleGroupSelection}
           groupDisabled={activeSelectionImageIds.length < 2}
@@ -1182,6 +1325,7 @@ export function Board({ repo, boardId }: BoardProps) {
           libraryRevealRequest={libraryRevealRequest}
           libraryRefreshToken={libraryRefreshToken}
           detailImageId={detailImageId}
+          multiSelectedImageIds={orderedSelectedImageIds}
           boardImages={boardData.images ?? []}
           onDetailRequest={handleDetailRequest}
           onPreviewRequest={setDetailImageId}

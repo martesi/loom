@@ -1,7 +1,46 @@
+import { t } from '@lingui/core/macro'
 import { Trans } from '@lingui/react/macro'
-import Lightbox from 'yet-another-react-lightbox'
+import { ChevronRight, X } from 'lucide-react'
+import Lightbox, { useController } from 'yet-another-react-lightbox'
 import 'yet-another-react-lightbox/styles.css'
 import type { ImageInfo } from '../../../bindings/loom/internal/service'
+
+// The library's own toolbar close button and next-nav arrow are both
+// right-anchored (`right: 0`) inside the slide area — LightboxViewer's
+// `paddingRight: 300px` only shrinks where the slide itself centers, it
+// doesn't move those absolutely-positioned controls, so they end up sitting
+// directly under (and unclickable beneath) the metadata sidebar's
+// `controls` slot. Prev's arrow is left-anchored and unaffected, so only
+// these two need replacing, shifted left by the sidebar's width so they
+// land in the open area instead of behind it. Real components (not inline
+// closures) so useController can be called at each one's own top level.
+function LightboxCloseButton() {
+  const { close } = useController()
+  return (
+    <button
+      type="button"
+      onClick={close}
+      title={t`Close`}
+      className="fixed right-[316px] top-4 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white/90 transition-colors hover:bg-white/20"
+    >
+      <X className="h-4 w-4" />
+    </button>
+  )
+}
+
+function LightboxNextButton() {
+  const { next } = useController()
+  return (
+    <button
+      type="button"
+      onClick={() => next()}
+      title={t`Next`}
+      className="fixed right-[316px] top-1/2 z-10 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-white/90 transition-colors hover:bg-white/20"
+    >
+      <ChevronRight className="h-5 w-5" />
+    </button>
+  )
+}
 
 interface LightboxViewerProps {
   images: ImageInfo[]
@@ -49,6 +88,8 @@ export function LightboxViewer({
         container: { backgroundColor: '#151414', paddingRight: '300px' },
       }}
       render={{
+        buttonClose: () => <LightboxCloseButton />,
+        buttonNext: () => <LightboxNextButton />,
         controls: () =>
           current ? (
             <div className="pointer-events-auto fixed right-0 top-0 flex h-full w-[300px] flex-col gap-5 border-l border-white/8 bg-white/4 p-6">

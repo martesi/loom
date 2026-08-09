@@ -1,4 +1,4 @@
-import { Handle, type NodeProps, Position } from '@xyflow/react'
+import { Handle, type NodeProps, NodeResizer, Position } from '@xyflow/react'
 import { useState } from 'react'
 import { cn } from '../../lib/utils'
 
@@ -8,11 +8,12 @@ export interface ImageNodeData {
   thumbUrl: string
   missing: boolean
   archived: boolean
+  onResizeEnd?: (x: number, y: number, w: number, h: number) => void
   [key: string]: unknown
 }
 
-export function ImageNode({ data, selected }: NodeProps) {
-  const { fileName, promptText, thumbUrl, missing, archived } =
+export function ImageNode({ data, selected, width, height }: NodeProps) {
+  const { fileName, promptText, thumbUrl, missing, archived, onResizeEnd } =
     data as unknown as ImageNodeData
   const [imgFailed, setImgFailed] = useState(false)
 
@@ -23,14 +24,25 @@ export function ImageNode({ data, selected }: NodeProps) {
 
   return (
     <div
+      style={{ width: width ?? 150, height: height ?? 110 }}
       className={cn(
-        'group flex h-[110px] w-[150px] flex-col overflow-hidden rounded-lg border bg-card shadow-sm',
+        'group flex flex-col overflow-hidden rounded-lg border bg-card shadow-sm',
         missing
           ? 'border-[1.5px] border-dashed border-danger opacity-90'
           : 'border-black/8',
         selected && 'ring-2 ring-accent'
       )}
     >
+      <NodeResizer
+        minWidth={100}
+        minHeight={80}
+        isVisible={selected}
+        handleClassName="!h-2.5 !w-2.5 !rounded-sm !border !border-accent !bg-white"
+        lineClassName="!border-accent"
+        onResizeEnd={(_event, params) =>
+          onResizeEnd?.(params.x, params.y, params.width, params.height)
+        }
+      />
       <Handle
         type="target"
         position={Position.Left}

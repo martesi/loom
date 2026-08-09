@@ -24,6 +24,8 @@ type ImageInfo struct {
 	Missing    bool    `json:"missing"`
 	CanvasX    float64 `json:"canvasX"`
 	CanvasY    float64 `json:"canvasY"`
+	CanvasW    float64 `json:"canvasW"`
+	CanvasH    float64 `json:"canvasH"`
 	PromptText string  `json:"promptText"`
 	GroupID    int64   `json:"groupId"`
 	CreatedAt  string  `json:"createdAt"`
@@ -182,6 +184,8 @@ func (s *ImageService) LoadBoard(repoPath string, boardID int64) (*BoardData, er
 			Missing:    missingByID[img.ID],
 			CanvasX:    img.CanvasX,
 			CanvasY:    img.CanvasY,
+			CanvasW:    img.CanvasW,
+			CanvasH:    img.CanvasH,
 			PromptText: img.PromptText,
 			GroupID:    img.GroupID,
 			CreatedAt:  img.CreatedAt,
@@ -237,6 +241,8 @@ func (s *ImageService) GetImage(repoPath string, imageID int64) (*ImageInfo, err
 		Missing:    missing,
 		CanvasX:    img.CanvasX,
 		CanvasY:    img.CanvasY,
+		CanvasW:    img.CanvasW,
+		CanvasH:    img.CanvasH,
 		PromptText: img.PromptText,
 		GroupID:    img.GroupID,
 		CreatedAt:  img.CreatedAt,
@@ -317,6 +323,33 @@ func (s *ImageService) SetPositions(repoPath string, updates []PositionUpdate) e
 	fwd := step(stepPositions, positionsStepPayload{Entries: after})
 	inv := step(stepPositions, positionsStepPayload{Entries: before})
 	return recordOp(repo, stepPositions, fwd, inv)
+}
+
+// SetSize persists one node's resized width/height (manual-layout mode) and
+// logs it as a single-entry undo step, capturing the prior size as the
+// inverse. Mirrors SetPosition.
+func (s *ImageService) SetSize(repoPath string, imageID int64, w, h float64) error {
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		return err
+	}
+	defer repo.Close()
+
+	prevW, prevH, hadSize, err := repo.GetCanvasSize(imageID)
+	if err != nil {
+		return err
+	}
+	if !hadSize {
+		prevW, prevH = w, h
+	}
+
+	if err := repo.SetCanvasSize(imageID, w, h); err != nil {
+		return err
+	}
+
+	fwd := step(stepSizes, sizesStepPayload{Entries: []sizeEntry{{ImageID: imageID, W: w, H: h}}})
+	inv := step(stepSizes, sizesStepPayload{Entries: []sizeEntry{{ImageID: imageID, W: prevW, H: prevH}}})
+	return recordOp(repo, stepSizes, fwd, inv)
 }
 
 func (s *ImageService) LinkSource(repoPath string, sourceID, derivedID int64) error {
@@ -486,6 +519,8 @@ func (s *ImageService) ListDirectory(repoPath, relPath string) (*DirListing, err
 			Missing:    statErr != nil,
 			CanvasX:    img.CanvasX,
 			CanvasY:    img.CanvasY,
+			CanvasW:    img.CanvasW,
+			CanvasH:    img.CanvasH,
 			PromptText: img.PromptText,
 			GroupID:    img.GroupID,
 			CreatedAt:  img.CreatedAt,

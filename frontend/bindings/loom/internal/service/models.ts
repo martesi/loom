@@ -50,6 +50,8 @@ export interface ImageInfo {
     "missing": boolean;
     "canvasX": number;
     "canvasY": number;
+    "canvasW": number;
+    "canvasH": number;
     "promptText": string;
     "groupId": number;
     "createdAt": string;

@@ -1,5 +1,5 @@
 import { Trans } from '@lingui/react/macro'
-import { Handle, type NodeProps, Position } from '@xyflow/react'
+import { Handle, type NodeProps, NodeResizer, Position } from '@xyflow/react'
 import { Layers, Star } from 'lucide-react'
 import { cn } from '../../lib/utils'
 
@@ -21,6 +21,11 @@ export interface GroupNodeData {
   onSetCover: (imageId: number) => void
   onRemoveMember: (imageId: number) => void
   onUngroup: () => void
+  // Resizing a collapsed group card persists onto its cover image, the
+  // same way the card's position is already derived from the cover's
+  // canvasX/canvasY (see board.tsx's groupNodes builder) — undefined when
+  // the group has no resolvable cover.
+  onResizeEnd?: (x: number, y: number, w: number, h: number) => void
   [key: string]: unknown
 }
 
@@ -29,7 +34,7 @@ export interface GroupNodeData {
 // A group node deliberately has no source Handle — it can never be the
 // source of an edge (the edge<->group interaction rules require dragging
 // from a specific expanded member instead).
-export function GroupNode({ data, selected }: NodeProps) {
+export function GroupNode({ data, selected, width, height }: NodeProps) {
   const {
     name,
     kind,
@@ -41,6 +46,7 @@ export function GroupNode({ data, selected }: NodeProps) {
     onSetCover,
     onRemoveMember,
     onUngroup,
+    onResizeEnd,
   } = data as unknown as GroupNodeData
 
   const handleClassName = cn(
@@ -82,6 +88,7 @@ export function GroupNode({ data, selected }: NodeProps) {
                   <img
                     src={m.thumbUrl}
                     alt=""
+                    draggable={false}
                     className="h-full w-full object-cover"
                   />
                 ) : (
@@ -132,12 +139,23 @@ export function GroupNode({ data, selected }: NodeProps) {
     <button
       type="button"
       onClick={onToggleExpand}
+      style={{ width: width ?? 150, height: height ?? 110 }}
       className={cn(
-        'group relative flex h-[110px] w-[150px] flex-col overflow-hidden rounded-lg border bg-card text-left shadow-sm',
+        'group relative flex flex-col overflow-hidden rounded-lg border bg-card text-left shadow-sm',
         'border-black/8',
         selected && 'ring-2 ring-accent'
       )}
     >
+      <NodeResizer
+        minWidth={100}
+        minHeight={80}
+        isVisible={selected}
+        handleClassName="!h-2.5 !w-2.5 !rounded-sm !border !border-accent !bg-white"
+        lineClassName="!border-accent"
+        onResizeEnd={(_event, params) =>
+          onResizeEnd?.(params.x, params.y, params.width, params.height)
+        }
+      />
       <Handle
         type="target"
         position={Position.Left}

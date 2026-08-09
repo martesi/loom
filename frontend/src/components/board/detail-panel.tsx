@@ -20,8 +20,14 @@ interface DetailPanelProps {
   repo: RepoInfo
   // Which image to show, or null when nothing's been selected/requested
   // yet. Owned by board.tsx (see its detailImageId state + the
-  // singleSelectedImage-keyed effect that drives it).
+  // singleSelectedImage-keyed effect that drives it). Ignored (in favor of
+  // the multi-select list below) whenever multiSelectedImageIds has 2+
+  // entries.
   detailImageId: number | null
+  // 2+ canvas-selected image ids, in selection order — when non-empty,
+  // renders a compact per-image list instead of the single-image view
+  // below (see board.tsx's selectionOrder/orderedSelectedImageIds).
+  multiSelectedImageIds: number[]
   // The currently-loaded board's images, so an image that's a member of
   // this board can be shown without a redundant round-trip — only images
   // reached via a Library/Explorer ctrl/cmd+click on something NOT on this
@@ -45,6 +51,7 @@ interface DetailPanelProps {
 export function DetailPanel({
   repo,
   detailImageId,
+  multiSelectedImageIds,
   boardImages,
   boards,
   onChange,
@@ -155,12 +162,50 @@ export function DetailPanel({
     )
   }, [repo.path, image])
 
+  if (multiSelectedImageIds.length >= 2) {
+    const selectedImages = multiSelectedImageIds
+      .map((id) => boardImages.find((img) => img.id === id))
+      .filter((img): img is ImageInfo => img != null)
+    return (
+      <div className="flex h-full flex-col gap-3 overflow-y-auto p-4">
+        <div className="text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">
+          {selectedImages.length} <Trans>images selected</Trans>
+        </div>
+        {selectedImages.map((img) => (
+          <div
+            key={img.id}
+            className="flex items-center gap-2.5 rounded-md bg-surface p-2"
+          >
+            <div className="h-10 w-10 flex-none overflow-hidden rounded border border-black/8 bg-card">
+              {img.thumbUrl && (
+                <img
+                  src={img.thumbUrl}
+                  alt=""
+                  draggable={false}
+                  className="h-full w-full object-cover"
+                />
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-[11.5px] font-semibold text-ink">
+                {img.fileName}
+              </div>
+              <div className="truncate text-[10.5px] text-ink-subtle">
+                {img.promptText || <Trans>No prompt attached</Trans>}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
   if (!image) {
     return (
       <div className="p-4 text-[12.5px] text-ink-subtle">
         <Trans>
-          Select a single image on the canvas, or ctrl/cmd+click a row in
-          Library or Explorer, to see its details here.
+          Select a single image on the canvas, alt+click a canvas image, or
+          ctrl/cmd+click a row in Library or Explorer, to see its details here.
         </Trans>
       </div>
     )

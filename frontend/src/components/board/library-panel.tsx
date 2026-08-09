@@ -53,6 +53,11 @@ interface LibraryPanelProps {
   // Reports the checkbox multi-selection up to Board (Stage 12), so
   // toolbar actions can target it via lastSelectionSource.
   onSelectionChange?: (ids: number[]) => void
+  // Refreshes the parent's board data — called after any archive/trash/
+  // restore mutation here, since those can affect a currently-open board's
+  // canvas nodes and board.tsx has no other way to learn about a
+  // Library-driven mutation (mirrors DetailPanel's onChange).
+  onChange?: () => void
 }
 
 // Ported from the old /library route (Stage 4) into a FloatingPanel tab
@@ -70,6 +75,7 @@ export function LibraryPanel({
   onDetailRequest,
   onPreviewRequest,
   onSelectionChange,
+  onChange,
 }: LibraryPanelProps) {
   const [rows, setRows] = useState<LibraryRow[]>([])
   const [boards, setBoards] = useState<BoardSummary[]>([])
@@ -214,26 +220,46 @@ export function LibraryPanel({
     [repo.path, currentBoardId, onRevealOnCanvas, navigate]
   )
 
+  // Dropping a row's id from `selected` after a mutation keeps the bulk
+  // action bar (which is visible purely off `selected.size > 0`) from
+  // lingering with a stale count/state once the row it referred to no
+  // longer matches — e.g. a restored row falling out of a "Trashed" status
+  // filter.
+  const dropFromSelection = useCallback((id: number) => {
+    setSelected((prev) => {
+      if (!prev.has(id)) return prev
+      const next = new Set(prev)
+      next.delete(id)
+      return next
+    })
+  }, [])
+
   const handleArchive = useCallback(
     async (row: LibraryRow) => {
       await ImageService.SetArchived(repo.path, row.id, !row.archived)
+      dropFromSelection(row.id)
       refresh()
+      onChange?.()
     },
-    [repo.path, refresh]
+    [repo.path, refresh, onChange, dropFromSelection]
   )
   const handleTrash = useCallback(
     async (row: LibraryRow) => {
       await ImageService.TrashImage(repo.path, row.id)
+      dropFromSelection(row.id)
       refresh()
+      onChange?.()
     },
-    [repo.path, refresh]
+    [repo.path, refresh, onChange, dropFromSelection]
   )
   const handleRestore = useCallback(
     async (row: LibraryRow) => {
       await ImageService.RestoreImage(repo.path, row.id)
+      dropFromSelection(row.id)
       refresh()
+      onChange?.()
     },
-    [repo.path, refresh]
+    [repo.path, refresh, onChange, dropFromSelection]
   )
 
   const rowMenuItems: MenuAction[] = useMemo(() => {
@@ -326,19 +352,51 @@ export function LibraryPanel({
     ).then(() => {
       setSelected(new Set())
       refresh()
+      onChange?.()
     })
-  }, [selectedIds, repo.path, refresh])
+  }, [selectedIds, repo.path, refresh, onChange])
   const handleBulkTrash = useCallback(() => {
     Promise.all(
       selectedIds.map((id) => ImageService.TrashImage(repo.path, id))
     ).then(() => {
       setSelected(new Set())
       refresh()
+      onChange?.()
     })
-  }, [selectedIds, repo.path, refresh])
+  }, [selectedIds, repo.path, refresh, onChange])
+  const handleBulkRestore = useCallback(() => {
+    Promise.all(
+      selectedIds.map((id) => ImageService.RestoreImage(repo.path, id))
+    ).then(() => {
+      setSelected(new Set())
+      refresh()
+      onChange?.()
+    })
+  }, [selectedIds, repo.path, refresh, onChange])
+
+  // Whether the bulk bar/menu's Trash action should really read "Restore" —
+  // matches the per-row menu's row.trashed branch (rowMenuItems above), just
+  // applied to the whole checked selection instead of one row.
+  const allSelectedTrashed = useMemo(
+    () =>
+      selectedIds.length > 0 &&
+      selectedIds.every(
+        (id) => rows.find((r) => r.id === id)?.trashed ?? false
+      ),
+    [selectedIds, rows]
+  )
 
   const selectionMenuItems: MenuAction[] = useMemo(() => {
     if (!selectionMenu || selected.size < 2) return []
+    if (allSelectedTrashed) {
+      return [
+        {
+          key: 'restore',
+          label: t`Restore from trash`,
+          onSelect: handleBulkRestore,
+        },
+      ]
+    }
     return [
       {
         key: 'add-board',
@@ -361,9 +419,11 @@ export function LibraryPanel({
   }, [
     selectionMenu,
     selected,
+    allSelectedTrashed,
     handleBulkAddToBoard,
     handleBulkArchive,
     handleBulkTrash,
+    handleBulkRestore,
   ])
 
   const tagItems = useMemo(
@@ -576,32 +636,46 @@ export function LibraryPanel({
       </div>
 
       {selected.size > 0 && (
-        <div className="flex h-10 flex-none items-center justify-between gap-3 border-t border-black/6 bg-ink px-3">
-          <span className="text-[11.5px] font-semibold text-white">
+        <div className="flex h-10 flex-none items-center justify-between gap-3 border-t border-black/8 bg-white/92 px-3 backdrop-blur-sm">
+          <span className="text-[11.5px] font-semibold text-ink">
             {selected.size} <Trans>selected</Trans>
           </span>
           <div className="flex gap-3">
-            <button
-              type="button"
-              onClick={(e) => handleBulkAddToBoard(e.clientX, e.clientY - 200)}
-              className="text-[11.5px] font-semibold text-white hover:underline"
-            >
-              <Trans>Add to board</Trans>
-            </button>
-            <button
-              type="button"
-              onClick={handleBulkArchive}
-              className="text-[11.5px] font-semibold text-white hover:underline"
-            >
-              <Trans>Archive</Trans>
-            </button>
-            <button
-              type="button"
-              onClick={handleBulkTrash}
-              className="text-[11.5px] font-semibold text-[#FF9E9E] hover:underline"
-            >
-              <Trans>Trash</Trans>
-            </button>
+            {allSelectedTrashed ? (
+              <button
+                type="button"
+                onClick={handleBulkRestore}
+                className="text-[11.5px] font-semibold text-accent hover:underline"
+              >
+                <Trans>Restore from trash</Trans>
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={(e) =>
+                    handleBulkAddToBoard(e.clientX, e.clientY - 200)
+                  }
+                  className="text-[11.5px] font-semibold text-ink-muted hover:text-ink hover:underline"
+                >
+                  <Trans>Add to board</Trans>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBulkArchive}
+                  className="text-[11.5px] font-semibold text-ink-muted hover:text-ink hover:underline"
+                >
+                  <Trans>Archive</Trans>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBulkTrash}
+                  className="text-[11.5px] font-semibold text-danger hover:underline"
+                >
+                  <Trans>Trash</Trans>
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}

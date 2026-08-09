@@ -110,6 +110,15 @@ export function SetPositions(repoPath: string, updates: $models.PositionUpdate[]
 }
 
 /**
+ * SetSize persists one node's resized width/height (manual-layout mode) and
+ * logs it as a single-entry undo step, capturing the prior size as the
+ * inverse. Mirrors SetPosition.
+ */
+export function SetSize(repoPath: string, imageID: number, w: number, h: number): $CancellablePromise<void> {
+    return $Call.ByID(3469376493, repoPath, imageID, w, h);
+}
+
+/**
  * TrashImage flags an image as trashed, hiding it from the board, and
  * physically moves the file into .loom/trash/ (see store.SetTrashed).
  */

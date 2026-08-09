@@ -27,6 +27,7 @@ const (
 	stepBoardAdd    = "board_add"
 	stepBoardRemove = "board_remove"
 	stepPositions   = "set_positions"
+	stepSizes       = "set_sizes"
 	stepMoveFile    = "move_file"
 
 	// stepGroupExistence covers both CreateGroup and Ungroup — mirroring the
@@ -76,6 +77,16 @@ type positionEntry struct {
 
 type positionsStepPayload struct {
 	Entries []positionEntry `json:"entries"`
+}
+
+type sizeEntry struct {
+	ImageID int64   `json:"imageId"`
+	W       float64 `json:"w"`
+	H       float64 `json:"h"`
+}
+
+type sizesStepPayload struct {
+	Entries []sizeEntry `json:"entries"`
 }
 
 // moveFileStepPayload is shared by MoveFile's forward and inverse steps —
@@ -267,6 +278,25 @@ func applyStep(repo *store.Repo, s OpStep) error {
 		}
 		for _, e := range p.Entries {
 			if err := repo.SetCanvasPosition(e.ImageID, e.X, e.Y); err != nil {
+				return err
+			}
+		}
+		return nil
+
+	case stepSizes:
+		var p sizesStepPayload
+		if err := json.Unmarshal(s.Payload, &p); err != nil {
+			return err
+		}
+		for _, e := range p.Entries {
+			if ok, err := repo.ImageExists(e.ImageID); err != nil {
+				return err
+			} else if !ok {
+				return purgedErr(e.ImageID)
+			}
+		}
+		for _, e := range p.Entries {
+			if err := repo.SetCanvasSize(e.ImageID, e.W, e.H); err != nil {
 				return err
 			}
 		}

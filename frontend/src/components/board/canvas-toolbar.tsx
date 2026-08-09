@@ -14,6 +14,11 @@ import type { CanvasTool } from '../../routes/board'
 
 interface CanvasToolbarProps {
   tool: CanvasTool
+  // Space is held, temporarily forcing pan-on-left-drag regardless of
+  // `tool` (see board.tsx's panOnDrag computation) — reflected here as a
+  // transient Move-icon highlight so the toolbar doesn't silently disagree
+  // with what dragging the canvas actually does right now.
+  spaceHeld?: boolean
   onToolChange: (tool: CanvasTool) => void
   onGroupSelection: () => void
   groupDisabled: boolean
@@ -28,6 +33,7 @@ interface CanvasToolbarProps {
 
 export function CanvasToolbar({
   tool,
+  spaceHeld,
   onToolChange,
   onGroupSelection,
   groupDisabled,
@@ -45,14 +51,14 @@ export function CanvasToolbar({
   return (
     <div className="absolute right-4 top-4 z-10 flex w-[52px] flex-col gap-1.5 rounded-lg border border-black/8 bg-white/92 p-2 shadow-md backdrop-blur-sm">
       <ToolbarButton
-        active={tool === 'select'}
+        active={tool === 'select' && !spaceHeld}
         title={t`Select — left-drag to box-select, middle-mouse or Space to pan`}
         onClick={() => onToolChange('select')}
       >
         <MousePointer2 className="h-4 w-4" />
       </ToolbarButton>
       <ToolbarButton
-        active={tool === 'move'}
+        active={tool === 'move' || spaceHeld}
         title={t`Move — left-drag to pan the canvas`}
         onClick={() => onToolChange('move')}
       >
@@ -128,7 +134,9 @@ function ToolbarButton({
         disabled && 'cursor-default opacity-40',
         !active &&
           !disabled &&
-          (danger ? 'hover:bg-danger-soft' : 'hover:bg-black/[0.04] hover:text-ink')
+          (danger
+            ? 'hover:bg-danger-soft'
+            : 'hover:bg-black/[0.04] hover:text-ink')
       )}
     >
       {children}
