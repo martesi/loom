@@ -130,7 +130,7 @@ function ToolbarButton({
       className={cn(
         'flex h-9 w-9 items-center justify-center rounded-md transition-colors',
         danger ? 'text-danger' : 'text-ink-muted',
-        active && 'bg-accent text-white',
+        active && 'bg-primary text-white',
         disabled && 'cursor-default opacity-40',
         !active &&
           !disabled &&

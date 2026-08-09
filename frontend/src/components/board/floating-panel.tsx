@@ -64,6 +64,11 @@ interface FloatingPanelProps {
   // Library's checkbox multi-selection, reported up for Stage 12's
   // lastSelectionSource unification.
   onPanelSelectionChange: (ids: number[]) => void
+  // Hover-only filename overlay on image nodes (see image-node.tsx),
+  // gated by this setting — surfaced in the Settings modal's Display
+  // section.
+  showFileName: boolean
+  onShowFileNameChange: (value: boolean) => void
 }
 
 // Dockable/hideable `absolute`-positioned overlay (same treatment as
@@ -95,6 +100,8 @@ export function FloatingPanel({
   onLayoutModeChange,
   onRescan,
   onPanelSelectionChange,
+  showFileName,
+  onShowFileNameChange,
 }: FloatingPanelProps) {
   const [visible, setVisible] = useState(true)
   const [dockSide, setDockSide] = useState<'left' | 'right'>('left')
@@ -197,6 +204,7 @@ export function FloatingPanel({
             repo={repo}
             onDetailRequest={onDetailRequest}
             onPreviewRequest={onPreviewRequest}
+            refreshToken={libraryRefreshToken}
           />
         </div>
         <div
@@ -239,6 +247,8 @@ export function FloatingPanel({
         layoutMode={layoutMode}
         onLayoutModeChange={onLayoutModeChange}
         onRescan={onRescan}
+        showFileName={showFileName}
+        onShowFileNameChange={onShowFileNameChange}
       />
     </div>
   )

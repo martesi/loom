@@ -34,6 +34,7 @@ import {
   BoardService,
   GroupService,
   ImageService,
+  SettingsService,
   SystemService,
   TagService,
   UndoService,
@@ -52,12 +53,19 @@ import { TagPicker } from '../components/board/tag-picker'
 import { ZoomControls } from '../components/board/zoom-controls'
 import type { MenuAction } from '../components/menu'
 import { PositionedMenu } from '../components/menu'
+import { Kbd } from '../components/ui/kbd'
 import { useToast } from '../components/ui/toast'
 import { computeSubgraphLayout, placeCluster } from '../lib/layout'
+import { DEFAULT_NODE_HEIGHT, DEFAULT_NODE_WIDTH } from '../lib/node-size'
 import { useGroupShortcut, useUndoShortcuts } from '../lib/use-undo'
-import { cn } from '../lib/utils'
+import { cn, isMac } from '../lib/utils'
 
 const nodeTypes: NodeTypes = { image: ImageNode, group: GroupNode }
+
+// Settings key gating the hover-only filename overlay on image nodes
+// (default off — see SettingsService's key/value convention, same one
+// floating-panel.tsx uses for panel_visible/panel_dock_side).
+const SHOW_FILE_NAMES_KEY = 'show_file_names'
 
 interface BoardProps {
   repo: RepoInfo
@@ -76,6 +84,18 @@ function nodeIdFor(imageId: number) {
 }
 function groupNodeId(groupId: number) {
   return `group:${groupId}`
+}
+
+// Context-menu items with a bound shortcut show it as a <Kbd> hint aligned
+// to the right of the label (see docs/canvas-node-fixes-plan.md section 4).
+const modKey = isMac ? '⌘' : 'Ctrl'
+function menuLabelWithShortcut(label: string, shortcut: string) {
+  return (
+    <span className="flex items-center justify-between gap-2">
+      <span>{label}</span>
+      <Kbd>{shortcut}</Kbd>
+    </span>
+  )
 }
 
 export function Board({ repo, boardId }: BoardProps) {
@@ -106,6 +126,7 @@ export function Board({ repo, boardId }: BoardProps) {
   const [libraryRevealRequest, setLibraryRevealRequest] =
     useState<LibraryRevealRequest | null>(null)
   const [libraryRefreshToken, setLibraryRefreshToken] = useState(0)
+  const [showFileName, setShowFileName] = useState(false)
   const [nodeMenu, setNodeMenu] = useState<{
     x: number
     y: number
@@ -187,6 +208,20 @@ export function Board({ repo, boardId }: BoardProps) {
     setLoaded(false)
     loadBoard()
   }, [loadBoard])
+
+  useEffect(() => {
+    SettingsService.Get(repo.path, SHOW_FILE_NAMES_KEY).then((v) => {
+      setShowFileName(v === 'true')
+    })
+  }, [repo.path])
+
+  const handleShowFileNameChange = useCallback(
+    (value: boolean) => {
+      setShowFileName(value)
+      SettingsService.Set(repo.path, SHOW_FILE_NAMES_KEY, String(value))
+    },
+    [repo.path]
+  )
 
   // The library panel tab is mounted alongside the canvas now (not a
   // separate route), so undo/redo also needs to refresh its table — done
@@ -362,14 +397,13 @@ export function Board({ repo, boardId }: BoardProps) {
         id: nodeIdFor(img.id),
         type: 'image',
         position: { x: img.canvasX, y: img.canvasY },
-        width: img.canvasW || undefined,
-        height: img.canvasH || undefined,
+        width: img.canvasW || DEFAULT_NODE_WIDTH,
+        height: img.canvasH || DEFAULT_NODE_HEIGHT,
         data: {
           fileName: img.fileName,
-          promptText: img.promptText,
           thumbUrl: img.thumbUrl,
           missing: img.missing,
-          archived: img.archived,
+          showFileName,
           onResizeEnd: (x: number, y: number, w: number, h: number) =>
             handleResizeEnd(img.id, x, y, w, h),
         },
@@ -383,8 +417,8 @@ export function Board({ repo, boardId }: BoardProps) {
         id,
         type: 'group',
         position: { x: cover?.canvasX ?? 0, y: cover?.canvasY ?? 0 },
-        width: cover?.canvasW || undefined,
-        height: cover?.canvasH || undefined,
+        width: cover?.canvasW || DEFAULT_NODE_WIDTH,
+        height: cover?.canvasH || DEFAULT_NODE_HEIGHT,
         data: {
           name: g.name,
           kind: g.kind,
@@ -468,6 +502,7 @@ export function Board({ repo, boardId }: BoardProps) {
     repo.path,
     loadBoard,
     handleResizeEnd,
+    showFileName,
     setEdges,
     setNodes,
   ])
@@ -570,16 +605,16 @@ export function Board({ repo, boardId }: BoardProps) {
       // (set after first paint); the 150x110 fallback matches image-node.tsx
       // and group-node.tsx's collapsed size for the first render or two
       // before xyflow has measured anything.
-      const draggedW = node.measured?.width ?? 150
-      const draggedH = node.measured?.height ?? 110
+      const draggedW = node.measured?.width ?? DEFAULT_NODE_WIDTH
+      const draggedH = node.measured?.height ?? DEFAULT_NODE_HEIGHT
       const center = {
         x: node.position.x + draggedW / 2,
         y: node.position.y + draggedH / 2,
       }
       const target = nodes.find((n) => {
         if (n.id === node.id) return false
-        const w = n.measured?.width ?? 150
-        const h = n.measured?.height ?? 110
+        const w = n.measured?.width ?? DEFAULT_NODE_WIDTH
+        const h = n.measured?.height ?? DEFAULT_NODE_HEIGHT
         return (
           center.x >= n.position.x &&
           center.x <= n.position.x + w &&
@@ -843,7 +878,10 @@ export function Board({ repo, boardId }: BoardProps) {
 
   const handleArchiveToggle = useCallback(
     (img: ImageInfo) => {
-      ImageService.SetArchived(repo.path, img.id, !img.archived).then(loadBoard)
+      ImageService.SetArchived(repo.path, img.id, !img.archived).then(() => {
+        loadBoard()
+        setLibraryRefreshToken((v) => v + 1)
+      })
     },
     [repo.path, loadBoard]
   )
@@ -853,9 +891,28 @@ export function Board({ repo, boardId }: BoardProps) {
         setSelectedIds([])
         setDetailImageId((prev) => (prev === imageId ? null : prev))
         loadBoard()
+        setLibraryRefreshToken((v) => v + 1)
       })
     },
     [repo.path, loadBoard]
+  )
+
+  // Detach from this board only — leaves the image/file untouched, unlike
+  // Trash. Mirrors handleTrash's shape but calls RemoveImagesFromBoard.
+  const handleRemoveFromBoard = useCallback(
+    (imageIds: number[]) => {
+      if (imageIds.length === 0) return
+      BoardService.RemoveImagesFromBoard(repo.path, boardId, imageIds).then(
+        () => {
+          setSelectedIds([])
+          setDetailImageId((prev) =>
+            prev != null && imageIds.includes(prev) ? null : prev
+          )
+          loadBoard()
+        }
+      )
+    },
+    [repo.path, boardId, loadBoard]
   )
 
   // Undo-covered as of Stage 2 (GroupService.CreateGroup logs to the
@@ -894,6 +951,10 @@ export function Board({ repo, boardId }: BoardProps) {
       setLibraryRefreshToken((v) => v + 1)
     })
   }, [activeSelectionImageIds, activeSelectionArchived, repo.path, loadBoard])
+
+  const handleToolbarRemoveFromBoard = useCallback(() => {
+    handleRemoveFromBoard(activeSelectionImageIds)
+  }, [activeSelectionImageIds, handleRemoveFromBoard])
 
   const handleToolbarTrash = useCallback(() => {
     if (activeSelectionImageIds.length === 0) return
@@ -1054,6 +1115,12 @@ export function Board({ repo, boardId }: BoardProps) {
     }
     items.push(
       {
+        key: 'remove-from-board',
+        label: menuLabelWithShortcut(t`Remove from board`, isMac ? '⌫' : 'Del'),
+        separatorBefore: true,
+        onSelect: () => handleRemoveFromBoard([imageId]),
+      },
+      {
         key: 'archive',
         label: img.archived ? t`Unarchive` : t`Archive`,
         separatorBefore: true,
@@ -1076,6 +1143,7 @@ export function Board({ repo, boardId }: BoardProps) {
     loadBoard,
     handleTrash,
     handleArchiveToggle,
+    handleRemoveFromBoard,
   ])
 
   // Right-click menu for a multi-select (marquee/drag-box). Reuses the same
@@ -1088,7 +1156,7 @@ export function Board({ repo, boardId }: BoardProps) {
     const items: MenuAction[] = [
       {
         key: 'group-as-set',
-        label: t`Group as set`,
+        label: menuLabelWithShortcut(t`Group as set`, `${modKey}G`),
         onSelect: handleGroupSelection,
       },
     ]
@@ -1100,6 +1168,12 @@ export function Board({ repo, boardId }: BoardProps) {
       })
     }
     items.push(
+      {
+        key: 'remove-from-board',
+        label: menuLabelWithShortcut(t`Remove from board`, isMac ? '⌫' : 'Del'),
+        separatorBefore: true,
+        onSelect: handleToolbarRemoveFromBoard,
+      },
       {
         key: 'archive',
         label: activeSelectionArchived
@@ -1124,6 +1198,7 @@ export function Board({ repo, boardId }: BoardProps) {
     activeSelectionArchived,
     handleToolbarArchiveToggle,
     handleToolbarTrash,
+    handleToolbarRemoveFromBoard,
   ])
 
   // Empty-canvas right-click menu (Stage 11) — Undo/Redo, the same actions
@@ -1146,14 +1221,17 @@ export function Board({ repo, boardId }: BoardProps) {
       },
       {
         key: 'undo',
-        label: t`Undo`,
+        label: menuLabelWithShortcut(t`Undo`, `${modKey}Z`),
         separatorBefore: true,
         disabled: !undoState.canUndo,
         onSelect: handleUndo,
       },
       {
         key: 'redo',
-        label: t`Redo`,
+        label: menuLabelWithShortcut(
+          t`Redo`,
+          isMac ? `${modKey}⇧Z` : 'Ctrl+Shift+Z'
+        ),
         disabled: !undoState.canRedo,
         onSelect: handleRedo,
       },
@@ -1252,7 +1330,7 @@ export function Board({ repo, boardId }: BoardProps) {
             }}
             onSelectionChange={handleSelectionChange}
             onEdgesDelete={handleEdgesDelete}
-            onNodesDelete={() => handleToolbarTrash()}
+            onNodesDelete={() => handleToolbarRemoveFromBoard()}
             onPaneClick={() => {
               setSelectedIds([])
               // Clicking empty canvas to deselect should also drop Detail
@@ -1318,7 +1396,10 @@ export function Board({ repo, boardId }: BoardProps) {
           boards={boards}
           currentBoardId={boardId}
           currentBoardName={boardData.boardName}
-          onBoardsChanged={loadBoard}
+          onBoardsChanged={() => {
+            loadBoard()
+            setLibraryRefreshToken((v) => v + 1)
+          }}
           onRevealOnCanvas={focusImage}
           activeTab={panelTab}
           onActiveTabChange={setPanelTab}
@@ -1333,6 +1414,8 @@ export function Board({ repo, boardId }: BoardProps) {
           onLayoutModeChange={loadBoard}
           onRescan={loadBoard}
           onPanelSelectionChange={setPanelSelectedIds}
+          showFileName={showFileName}
+          onShowFileNameChange={handleShowFileNameChange}
         />
 
         {/* Stage 7's stopgap floating action bar (Auto-arrange/Group-as-set

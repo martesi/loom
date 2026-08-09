@@ -111,7 +111,7 @@ export function RepoSelect({ repo }: RepoSelectProps) {
               <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
                 <span className="min-w-0 truncate">{r.name || r.path}</span>
                 {r.isOpen ? (
-                  <span className="flex-none rounded-full bg-accent-soft px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent">
+                  <span className="flex-none rounded-full bg-primary-soft px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
                     <Trans>Open</Trans>
                   </span>
                 ) : null}

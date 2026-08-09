@@ -26,7 +26,7 @@ export function Landing({
     return (
       <div className="flex h-screen items-center justify-center bg-surface">
         <div className="flex w-[420px] flex-col items-center gap-5 rounded-lg border border-black/8 bg-card p-10 shadow-lg">
-          <div className="relative h-14 w-14 rounded-[12px] bg-accent">
+          <div className="relative h-14 w-14 rounded-[12px] bg-primary">
             <div className="absolute left-[10px] top-[14px] h-[18px] w-[18px] rounded-full border-[3px] border-white" />
             <div className="absolute left-[28px] top-[24px] h-[18px] w-[18px] rounded-full border-[3px] border-white/55" />
           </div>
@@ -56,7 +56,7 @@ export function Landing({
     <div className="flex h-screen flex-col bg-surface">
       <div className="flex items-center justify-between border-b border-black/6 px-7 py-5">
         <div className="flex items-center gap-2.5">
-          <div className="h-[26px] w-[26px] rounded-[7px] bg-accent" />
+          <div className="h-[26px] w-[26px] rounded-[7px] bg-primary" />
           <span className="text-[15px] font-semibold text-ink">
             <Trans>Loom</Trans>
           </span>

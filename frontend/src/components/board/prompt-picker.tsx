@@ -83,7 +83,7 @@ export function PromptPicker({
                 key={p.id}
                 type="button"
                 onClick={() => attach(p.id)}
-                className="flex flex-col items-start rounded-sm px-2 py-1 text-left hover:bg-accent-soft"
+                className="flex flex-col items-start rounded-sm px-2 py-1 text-left hover:bg-primary-soft"
               >
                 <span className="truncate text-[11.5px] font-medium text-ink">
                   {p.name || p.text}
@@ -108,7 +108,7 @@ export function PromptPicker({
             onChange={(e) => setName(e.target.value)}
             placeholder={t`Name (optional)`}
             className={cn(
-              'w-full rounded-md border border-black/12 px-2.5 py-1.5 text-[12px] text-ink outline-none focus:border-accent'
+              'w-full rounded-md border border-black/12 px-2.5 py-1.5 text-[12px] text-ink outline-none focus:border-primary'
             )}
           />
           <textarea
@@ -117,7 +117,7 @@ export function PromptPicker({
             placeholder={t`Prompt text…`}
             rows={3}
             className={cn(
-              'w-full resize-none rounded-md border border-black/12 px-2.5 py-1.5 text-[12px] text-ink outline-none focus:border-accent'
+              'w-full resize-none rounded-md border border-black/12 px-2.5 py-1.5 text-[12px] text-ink outline-none focus:border-primary'
             )}
           />
           <input
@@ -125,14 +125,14 @@ export function PromptPicker({
             onChange={(e) => setNegative(e.target.value)}
             placeholder={t`Negative prompt (optional)`}
             className={cn(
-              'w-full rounded-md border border-black/12 px-2.5 py-1.5 text-[12px] text-ink outline-none focus:border-accent'
+              'w-full rounded-md border border-black/12 px-2.5 py-1.5 text-[12px] text-ink outline-none focus:border-primary'
             )}
           />
           <button
             type="button"
             onClick={createAndAttach}
             disabled={!text.trim()}
-            className="rounded-md bg-accent px-2.5 py-1.5 text-[12px] font-semibold text-white disabled:opacity-40"
+            className="rounded-md bg-primary px-2.5 py-1.5 text-[12px] font-semibold text-white disabled:opacity-40"
           >
             <Trans>Attach</Trans>
           </button>

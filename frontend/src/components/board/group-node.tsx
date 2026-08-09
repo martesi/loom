@@ -1,6 +1,7 @@
 import { Trans } from '@lingui/react/macro'
 import { Handle, type NodeProps, NodeResizer, Position } from '@xyflow/react'
 import { Layers, Star } from 'lucide-react'
+import { DEFAULT_NODE_HEIGHT, DEFAULT_NODE_WIDTH } from '../../lib/node-size'
 import { cn } from '../../lib/utils'
 
 export interface GroupMember {
@@ -50,7 +51,7 @@ export function GroupNode({ data, selected, width, height }: NodeProps) {
   } = data as unknown as GroupNodeData
 
   const handleClassName = cn(
-    '!bg-accent opacity-0 transition-opacity group-hover:opacity-100',
+    '!bg-primary opacity-0 transition-opacity group-hover:opacity-100',
     selected && 'opacity-100'
   )
 
@@ -69,7 +70,7 @@ export function GroupNode({ data, selected, width, height }: NodeProps) {
           <button
             type="button"
             onClick={onUngroup}
-            className="shrink-0 text-[11px] font-semibold text-accent hover:underline"
+            className="shrink-0 text-[11px] font-semibold text-primary hover:underline"
           >
             <Trans>Ungroup</Trans>
           </button>
@@ -80,7 +81,7 @@ export function GroupNode({ data, selected, width, height }: NodeProps) {
               key={m.id}
               className={cn(
                 'flex w-[84px] flex-col gap-1',
-                focusedMemberId === m.id && 'rounded-md ring-2 ring-accent'
+                focusedMemberId === m.id && 'rounded-md ring-2 ring-primary'
               )}
             >
               <div className="relative h-[64px] w-[84px] overflow-hidden rounded-md border border-black/8">
@@ -95,7 +96,7 @@ export function GroupNode({ data, selected, width, height }: NodeProps) {
                   <div className="h-full w-full bg-[repeating-linear-gradient(45deg,#EDEBE9_0px,#EDEBE9_8px,#E1DFDD_8px,#E1DFDD_16px)]" />
                 )}
                 {m.isCover && (
-                  <div className="absolute left-1 top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-accent text-white">
+                  <div className="absolute left-1 top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-primary text-white">
                     <Star className="h-2 w-2 fill-current" />
                   </div>
                 )}
@@ -108,7 +109,7 @@ export function GroupNode({ data, selected, width, height }: NodeProps) {
                   <button
                     type="button"
                     onClick={() => onSetCover(m.id)}
-                    className="text-[9.5px] font-semibold text-accent hover:underline"
+                    className="text-[9.5px] font-semibold text-primary hover:underline"
                   >
                     <Trans>Cover</Trans>
                   </button>
@@ -127,7 +128,7 @@ export function GroupNode({ data, selected, width, height }: NodeProps) {
         <button
           type="button"
           onClick={onToggleExpand}
-          className="mt-3 border-t border-black/6 pt-2.5 text-[11.5px] font-semibold text-accent hover:underline"
+          className="mt-3 border-t border-black/6 pt-2.5 text-[11.5px] font-semibold text-primary hover:underline"
         >
           <Trans>Collapse</Trans>
         </button>
@@ -139,19 +140,22 @@ export function GroupNode({ data, selected, width, height }: NodeProps) {
     <button
       type="button"
       onClick={onToggleExpand}
-      style={{ width: width ?? 150, height: height ?? 110 }}
+      style={{
+        width: width ?? DEFAULT_NODE_WIDTH,
+        height: height ?? DEFAULT_NODE_HEIGHT,
+      }}
       className={cn(
         'group relative flex flex-col overflow-hidden rounded-lg border bg-card text-left shadow-sm',
         'border-black/8',
-        selected && 'ring-2 ring-accent'
+        selected && 'ring-2 ring-primary'
       )}
     >
       <NodeResizer
         minWidth={100}
         minHeight={80}
         isVisible={selected}
-        handleClassName="!h-2.5 !w-2.5 !rounded-sm !border !border-accent !bg-white"
-        lineClassName="!border-accent"
+        handleClassName="!h-2.5 !w-2.5 !rounded-sm !border !border-primary !bg-white"
+        lineClassName="!border-primary"
         onResizeEnd={(_event, params) =>
           onResizeEnd?.(params.x, params.y, params.width, params.height)
         }
@@ -175,7 +179,7 @@ export function GroupNode({ data, selected, width, height }: NodeProps) {
         ) : (
           <div className="h-full w-full bg-[repeating-linear-gradient(45deg,#EDEBE9_0px,#EDEBE9_10px,#E1DFDD_10px,#E1DFDD_20px)]" />
         )}
-        <div className="absolute right-1.5 top-1.5 flex h-[22px] min-w-[22px] items-center justify-center rounded-full bg-accent px-1 text-[11px] font-bold text-white">
+        <div className="absolute right-1.5 top-1.5 flex h-[22px] min-w-[22px] items-center justify-center rounded-full bg-primary px-1 text-[11px] font-bold text-white">
           {members.length}
         </div>
         <div className="absolute bottom-1.5 right-1.5 text-white drop-shadow">

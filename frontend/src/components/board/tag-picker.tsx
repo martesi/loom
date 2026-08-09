@@ -100,7 +100,7 @@ export function TagPicker({
         }}
         placeholder={t`Add a tag…`}
         className={cn(
-          'w-full rounded-md border border-black/12 px-2.5 py-1.5 text-[12px] text-ink outline-none focus:border-accent'
+          'w-full rounded-md border border-black/12 px-2.5 py-1.5 text-[12px] text-ink outline-none focus:border-primary'
         )}
       />
       <datalist id="loom-tag-suggestions">

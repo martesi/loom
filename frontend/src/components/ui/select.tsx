@@ -10,7 +10,7 @@ import { cn } from '../../lib/utils'
 export const Select = SelectPrimitive.Root
 
 const selectTriggerVariants = cva(
-  'inline-flex items-center justify-between gap-1.5 rounded-full border border-black/12 px-3 py-1.5 text-[12px] font-medium text-ink-muted outline-none transition-colors hover:bg-black/[0.03] focus-visible:ring-2 focus-visible:ring-accent/40 disabled:pointer-events-none disabled:opacity-50 data-[popup-open]:bg-black/[0.03]',
+  'inline-flex items-center justify-between gap-1.5 rounded-full border border-black/12 px-3 py-1.5 text-[12px] font-medium text-ink-muted outline-none transition-colors hover:bg-black/[0.03] focus-visible:ring-2 focus-visible:ring-primary/40 disabled:pointer-events-none disabled:opacity-50 data-[popup-open]:bg-black/[0.03]',
   {
     variants: {
       variant: {
@@ -120,7 +120,7 @@ export function SelectContent({
 }
 
 const selectItemVariants = cva(
-  'relative flex cursor-default select-none items-center gap-2 rounded-sm px-2.5 py-1.5 text-[12.5px] text-ink outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[highlighted]:bg-accent-soft'
+  'relative flex cursor-default select-none items-center gap-2 rounded-sm px-2.5 py-1.5 text-[12.5px] text-ink outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[highlighted]:bg-primary-soft'
 )
 
 interface SelectItemProps
@@ -146,7 +146,7 @@ export function SelectItem({
       className: cn(selectItemVariants({ className })),
       children: (
         <>
-          <SelectPrimitive.ItemIndicator className="flex w-3.5 shrink-0 items-center justify-center text-accent">
+          <SelectPrimitive.ItemIndicator className="flex w-3.5 shrink-0 items-center justify-center text-primary">
             <Check className="h-3.5 w-3.5" />
           </SelectPrimitive.ItemIndicator>
           <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>

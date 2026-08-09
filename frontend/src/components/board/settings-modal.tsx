@@ -14,6 +14,8 @@ interface SettingsModalProps {
   layoutMode: string
   onLayoutModeChange: () => void
   onRescan: () => void
+  showFileName: boolean
+  onShowFileNameChange: (value: boolean) => void
 }
 
 // Settings modal (Stage 11), opened from the gear icon in FloatingPanel's
@@ -35,6 +37,8 @@ export function SettingsModal({
   layoutMode,
   onLayoutModeChange,
   onRescan,
+  showFileName,
+  onShowFileNameChange,
 }: SettingsModalProps) {
   const setLayoutMode = (mode: 'manual' | 'auto') => {
     if (mode === layoutMode) return
@@ -73,6 +77,20 @@ export function SettingsModal({
                 <Trans>Auto</Trans>
               </ModeButton>
             </div>
+          </section>
+
+          <section className="mt-3">
+            <h3 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">
+              <Trans>Display</Trans>
+            </h3>
+            <label className="flex items-center gap-2 text-[12.5px] text-ink">
+              <input
+                type="checkbox"
+                checked={showFileName}
+                onChange={(e) => onShowFileNameChange(e.target.checked)}
+              />
+              <Trans>Show file names on hover</Trans>
+            </label>
           </section>
 
           <section className="mt-3">

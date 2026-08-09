@@ -18,11 +18,11 @@ msgstr ""
 msgid "{0} images"
 msgstr "{0} images"
 
-#: src/components/board/detail-panel.tsx:204
+#: src/components/board/detail-panel.tsx:295
 msgid "+ add"
 msgstr "+ add"
 
-#: src/components/board/library-panel.tsx:260
+#: src/components/board/library-panel.tsx:446
 msgid "Active"
 msgstr "Active"
 
@@ -30,42 +30,56 @@ msgstr "Active"
 msgid "Add a tag…"
 msgstr "Add a tag…"
 
-#: src/routes/board.tsx:888
+#: src/components/board/detail-panel.tsx:249
+msgid "Add prompt…"
+msgstr "Add prompt…"
+
+#: src/routes/board.tsx:1103
 msgid "Add tag…"
 msgstr "Add tag…"
 
-#: src/components/board/detail-panel.tsx:237
-#: src/components/board/library-panel.tsx:452
+#: src/components/board/detail-panel.tsx:328
+#: src/components/board/library-panel.tsx:661
 msgid "Add to board"
 msgstr "Add to board"
 
-#: src/components/board/library-panel.tsx:211
-#: src/routes/board.tsx:877
+#: src/components/board/library-panel.tsx:296
+#: src/components/board/library-panel.tsx:403
+#: src/routes/board.tsx:1092
 msgid "Add to board…"
 msgstr "Add to board…"
 
-#: src/components/board/library-panel.tsx:263
+#: src/components/board/library-panel.tsx:449
 msgid "All"
 msgstr "All"
 
-#: src/components/board/library-panel.tsx:222
-#: src/components/board/library-panel.tsx:468
-#: src/routes/board.tsx:923
+#: src/components/board/library-panel.tsx:307
+#: src/components/board/library-panel.tsx:408
+#: src/components/board/library-panel.tsx:668
+#: src/routes/board.tsx:1125
 msgid "Archive"
 msgstr "Archive"
 
-#: src/components/board/canvas-toolbar.tsx:84
-#: src/routes/board.tsx:975
+#: src/components/board/canvas-toolbar.tsx:90
+#: src/routes/board.tsx:1181
 msgid "Archive selection"
 msgstr "Archive selection"
 
-#: src/components/board/library-panel.tsx:261
-#: src/components/board/library-panel.tsx:415
-#: src/components/board/panel-image-row.tsx:128
+#: src/components/board/library-panel.tsx:447
+#: src/components/board/library-panel.tsx:618
+#: src/components/board/panel-image-row.tsx:122
 msgid "Archived"
 msgstr "Archived"
 
-#: src/components/board/settings-modal.tsx:73
+#: src/components/board/prompt-picker.tsx:137
+msgid "Attach"
+msgstr "Attach"
+
+#: src/components/board/prompt-picker.tsx:103
+msgid "Attach new prompt"
+msgstr "Attach new prompt"
+
+#: src/components/board/settings-modal.tsx:77
 msgid "Auto"
 msgstr "Auto"
 
@@ -73,18 +87,17 @@ msgstr "Auto"
 #~ msgid "Auto layout arrives in a later stage"
 #~ msgstr "Auto layout arrives in a later stage"
 
-#: src/routes/board.tsx:1011
+#: src/routes/board.tsx:1218
 msgid "Auto-arrange board"
 msgstr "Auto-arrange board"
 
-#: src/components/board/canvas-toolbar.tsx:76
-#: src/routes/board.tsx:915
-#: src/routes/board.tsx:966
+#: src/components/board/canvas-toolbar.tsx:82
+#: src/routes/board.tsx:1166
 msgid "Auto-arrange selection"
 msgstr "Auto-arrange selection"
 
-#: src/components/board/library-panel.tsx:343
-#: src/components/board/lightbox.tsx:112
+#: src/components/board/library-panel.tsx:529
+#: src/components/board/lightbox.tsx:153
 msgid "Board"
 msgstr "Board"
 
@@ -96,11 +109,11 @@ msgstr "Board 1"
 msgid "Board name…"
 msgstr "Board name…"
 
-#: src/components/board/library-panel.tsx:252
+#: src/components/board/library-panel.tsx:438
 msgid "Board: any"
 msgstr "Board: any"
 
-#: src/components/board/detail-panel.tsx:212
+#: src/components/board/detail-panel.tsx:303
 msgid "Boards"
 msgstr "Boards"
 
@@ -116,36 +129,44 @@ msgstr "Boards are scoped canvases you place images onto explicitly. Create one 
 #~ msgid "Canvas"
 #~ msgstr "Canvas"
 
+#: src/components/board/detail-panel.tsx:247
+msgid "Change…"
+msgstr "Change…"
+
 #: src/routes/board.tsx:874
 #~ msgid "Click a node to set as source — Esc to cancel"
 #~ msgstr "Click a node to set as source — Esc to cancel"
 
-#: src/components/board/group-node.tsx:125
+#: src/components/board/lightbox.tsx:23
+msgid "Close"
+msgstr "Close"
+
+#: src/components/board/group-node.tsx:133
 msgid "Collapse"
 msgstr "Collapse"
 
-#: src/routes/board.tsx:438
-#: src/routes/board.tsx:443
-#: src/routes/board.tsx:524
-#: src/routes/board.tsx:529
+#: src/routes/board.tsx:540
+#: src/routes/board.tsx:545
+#: src/routes/board.tsx:655
+#: src/routes/board.tsx:663
 msgid "Couldn't link"
 msgstr "Couldn't link"
 
-#: src/components/board/detail-panel.tsx:114
+#: src/components/board/detail-panel.tsx:123
 msgid "Couldn't load image"
 msgstr "Couldn't load image"
 
 #: src/lib/use-undo.ts:36
-#: src/routes/board.tsx:211
+#: src/routes/board.tsx:258
 msgid "Couldn't redo"
 msgstr "Couldn't redo"
 
 #: src/lib/use-undo.ts:36
-#: src/routes/board.tsx:197
+#: src/routes/board.tsx:244
 msgid "Couldn't undo"
 msgstr "Couldn't undo"
 
-#: src/components/board/group-node.tsx:106
+#: src/components/board/group-node.tsx:114
 msgid "Cover"
 msgstr "Cover"
 
@@ -161,7 +182,7 @@ msgstr "Create New Repo"
 msgid "Current"
 msgstr "Current"
 
-#: src/components/board/library-panel.tsx:346
+#: src/components/board/library-panel.tsx:532
 msgid "Date"
 msgstr "Date"
 
@@ -169,35 +190,39 @@ msgstr "Date"
 msgid "Delete board"
 msgstr "Delete board"
 
-#: src/components/board/lightbox.tsx:87
+#: src/components/board/lightbox.tsx:128
 msgid "Derived from"
 msgstr "Derived from"
 
-#: src/components/board/floating-panel.tsx:138
+#: src/components/board/floating-panel.tsx:173
 msgid "Detail"
 msgstr "Detail"
 
-#: src/components/board/canvas-toolbar.tsx:63
+#: src/components/board/settings-modal.tsx:84
+msgid "Display"
+msgstr "Display"
+
+#: src/components/board/canvas-toolbar.tsx:69
 msgid "Drag from a node's edge to link images — a dedicated link tool arrives in a later stage"
 msgstr "Drag from a node's edge to link images — a dedicated link tool arrives in a later stage"
 
-#: src/components/board/floating-panel.tsx:132
+#: src/components/board/floating-panel.tsx:167
 msgid "Explorer"
 msgstr "Explorer"
 
-#: src/components/board/library-panel.tsx:337
+#: src/components/board/library-panel.tsx:523
 msgid "File"
 msgstr "File"
 
-#: src/components/board/explorer-panel.tsx:248
+#: src/components/board/explorer-panel.tsx:425
 msgid "File explorer"
 msgstr "File explorer"
 
-#: src/components/board/detail-panel.tsx:167
+#: src/components/board/detail-panel.tsx:231
 msgid "File not found on disk"
 msgstr "File not found on disk"
 
-#: src/routes/board.tsx:859
+#: src/routes/board.tsx:1074
 msgid "Find in list"
 msgstr "Find in list"
 
@@ -209,16 +234,19 @@ msgstr "Fit"
 msgid "Focused the window showing \"{targetName}\"."
 msgstr "Focused the window showing \"{targetName}\"."
 
+#: src/components/board/explorer-panel.tsx:784
+msgid "Folder name…"
+msgstr "Folder name…"
+
 #: src/routes/board-route.tsx:74
 #~ msgid "Go to library"
 #~ msgstr "Go to library"
 
-#: src/routes/board.tsx:908
-#: src/routes/board.tsx:959
+#: src/routes/board.tsx:1159
 msgid "Group as set"
 msgstr "Group as set"
 
-#: src/components/board/canvas-toolbar.tsx:69
+#: src/components/board/canvas-toolbar.tsx:75
 msgid "Group selected images as a set"
 msgstr "Group selected images as a set"
 
@@ -226,12 +254,16 @@ msgstr "Group selected images as a set"
 #~ msgid "Grouping arrives in a later stage"
 #~ msgstr "Grouping arrives in a later stage"
 
-#: src/components/board/settings-modal.tsx:60
+#: src/components/board/detail-panel.tsx:172
+msgid "images selected"
+msgstr "images selected"
+
+#: src/components/board/settings-modal.tsx:64
 msgid "Layout"
 msgstr "Layout"
 
-#: src/components/board/floating-panel.tsx:126
-#: src/components/board/settings-modal.tsx:80
+#: src/components/board/floating-panel.tsx:161
+#: src/components/board/settings-modal.tsx:98
 msgid "Library"
 msgstr "Library"
 
@@ -239,7 +271,7 @@ msgstr "Library"
 #~ msgid "Link source…"
 #~ msgstr "Link source…"
 
-#: src/routes/board.tsx:1053
+#: src/routes/board.tsx:1263
 msgid "Loading board…"
 msgstr "Loading board…"
 
@@ -251,22 +283,30 @@ msgstr "Loom"
 msgid "Loom keeps every derived-image relationship on a canvas that stays fast — even at thousands of images."
 msgstr "Loom keeps every derived-image relationship on a canvas that stays fast — even at thousands of images."
 
-#: src/components/board/settings-modal.tsx:67
+#: src/components/board/settings-modal.tsx:71
 msgid "Manual"
 msgstr "Manual"
 
-#: src/components/board/group-node.tsx:172
+#: src/components/board/group-node.tsx:194
 msgid "members"
 msgstr "members"
 
-#: src/components/board/library-panel.tsx:405
-#: src/components/board/panel-image-row.tsx:118
+#: src/components/board/library-panel.tsx:608
+#: src/components/board/panel-image-row.tsx:112
 msgid "Missing"
 msgstr "Missing"
 
-#: src/components/board/canvas-toolbar.tsx:56
+#: src/components/board/canvas-toolbar.tsx:62
 msgid "Move — left-drag to pan the canvas"
 msgstr "Move — left-drag to pan the canvas"
+
+#: src/components/board/prompt-picker.tsx:109
+msgid "Name (optional)"
+msgstr "Name (optional)"
+
+#: src/components/board/prompt-picker.tsx:126
+msgid "Negative prompt (optional)"
+msgstr "Negative prompt (optional)"
 
 #: src/components/board/board-switcher.tsx:165
 msgid "New board"
@@ -280,21 +320,26 @@ msgstr "New board…"
 msgid "New Repo"
 msgstr "New Repo"
 
+#: src/components/board/lightbox.tsx:37
+msgid "Next"
+msgstr "Next"
+
 #: src/components/board/board-picker.tsx:102
 #: src/routes/board-route.tsx:57
 msgid "No boards yet"
 msgstr "No boards yet"
 
-#: src/components/board/explorer-panel.tsx:260
+#: src/components/board/explorer-panel.tsx:446
 msgid "No files yet."
 msgstr "No files yet."
 
-#: src/components/board/library-panel.tsx:427
+#: src/components/board/library-panel.tsx:630
 msgid "No images match."
 msgstr "No images match."
 
-#: src/components/board/detail-panel.tsx:176
-#: src/components/board/lightbox.tsx:63
+#: src/components/board/detail-panel.tsx:194
+#: src/components/board/detail-panel.tsx:267
+#: src/components/board/lightbox.tsx:104
 msgid "No prompt attached"
 msgstr "No prompt attached"
 
@@ -311,53 +356,66 @@ msgstr "Open"
 msgid "Open Folder"
 msgstr "Open Folder"
 
-#: src/routes/board.tsx:867
+#: src/routes/board.tsx:1082
 msgid "Open preview"
 msgstr "Open preview"
 
-#: src/components/board/detail-panel.tsx:173
-#: src/components/board/lightbox.tsx:60
+#: src/components/board/detail-panel.tsx:238
+#: src/components/board/lightbox.tsx:101
 msgid "Prompt"
 msgstr "Prompt"
+
+#: src/components/board/prompt-picker.tsx:117
+msgid "Prompt text…"
+msgstr "Prompt text…"
 
 #: src/routes/landing.tsx:75
 msgid "Recent"
 msgstr "Recent"
 
-#: src/routes/board.tsx:1024
+#: src/routes/board.tsx:1232
 msgid "Redo"
 msgstr "Redo"
 
-#: src/components/board/group-node.tsx:114
+#: src/components/board/detail-panel.tsx:261
+#: src/components/board/group-node.tsx:122
 msgid "Remove"
 msgstr "Remove"
 
-#: src/components/board/detail-panel.tsx:219
+#: src/components/board/detail-panel.tsx:310
+#: src/routes/board.tsx:1119
+#: src/routes/board.tsx:1173
 msgid "Remove from board"
 msgstr "Remove from board"
 
-#: src/components/board/detail-panel.tsx:194
+#: src/components/board/detail-panel.tsx:285
 msgid "Remove tag"
 msgstr "Remove tag"
 
 #: src/components/board/board-switcher.tsx:128
-#: src/components/board/explorer-panel.tsx:227
+#: src/components/board/explorer-panel.tsx:363
 msgid "Rename"
 msgstr "Rename"
 
-#: src/components/board/settings-modal.tsx:83
+#: src/components/board/settings-modal.tsx:101
 msgid "Rescan folder for new images"
 msgstr "Rescan folder for new images"
 
-#: src/components/board/library-panel.tsx:203
+#: src/components/board/library-panel.tsx:288
+#: src/components/board/library-panel.tsx:395
+#: src/components/board/library-panel.tsx:650
 msgid "Restore from trash"
 msgstr "Restore from trash"
 
-#: src/components/board/library-panel.tsx:275
+#: src/components/board/prompt-picker.tsx:78
+msgid "Reuse a prompt"
+msgstr "Reuse a prompt"
+
+#: src/components/board/library-panel.tsx:461
 msgid "Search prompts, filenames, tags…"
 msgstr "Search prompts, filenames, tags…"
 
-#: src/components/board/canvas-toolbar.tsx:49
+#: src/components/board/canvas-toolbar.tsx:55
 msgid "Select — left-drag to box-select, middle-mouse or Space to pan"
 msgstr "Select — left-drag to box-select, middle-mouse or Space to pan"
 
@@ -369,38 +427,51 @@ msgstr "Select — left-drag to box-select, middle-mouse or Space to pan"
 #~ msgid "Select a single image on the canvas to see its details — the detail tab itself is still a placeholder."
 #~ msgstr "Select a single image on the canvas to see its details — the detail tab itself is still a placeholder."
 
-#: src/components/board/detail-panel.tsx:142
-msgid "Select a single image on the canvas, or ctrl/cmd+click a row in Library or Explorer, to see its details here."
-msgstr "Select a single image on the canvas, or ctrl/cmd+click a row in Library or Explorer, to see its details here."
+#: src/components/board/detail-panel.tsx:206
+msgid "Select a single image on the canvas, alt+click a canvas image, or ctrl/cmd+click a row in Library or Explorer, to see its details here."
+msgstr "Select a single image on the canvas, alt+click a canvas image, or ctrl/cmd+click a row in Library or Explorer, to see its details here."
 
-#: src/routes/board.tsx:1005
+#: src/components/board/detail-panel.tsx:142
+#~ msgid "Select a single image on the canvas, or ctrl/cmd+click a row in Library or Explorer, to see its details here."
+#~ msgstr "Select a single image on the canvas, or ctrl/cmd+click a row in Library or Explorer, to see its details here."
+
+#: src/routes/board.tsx:1212
 msgid "Select all"
 msgstr "Select all"
 
-#: src/components/board/library-panel.tsx:438
+#: src/components/board/library-panel.tsx:641
 msgid "selected"
 msgstr "selected"
 
-#: src/routes/board.tsx:896
+#: src/routes/board.tsx:1111
 msgid "Set as cover"
 msgstr "Set as cover"
 
-#: src/components/board/floating-panel.tsx:191
-#: src/components/board/settings-modal.tsx:51
+#: src/components/board/floating-panel.tsx:234
+#: src/components/board/settings-modal.tsx:55
 msgid "Settings"
 msgstr "Settings"
 
-#: src/components/board/explorer-panel.tsx:237
-#: src/components/board/library-panel.tsx:196
-#: src/routes/board.tsx:854
+#: src/components/board/explorer-panel.tsx:378
+#: src/components/board/library-panel.tsx:281
+msgid "Show details"
+msgstr "Show details"
+
+#: src/components/board/settings-modal.tsx:92
+msgid "Show file names on hover"
+msgstr "Show file names on hover"
+
+#: src/components/board/explorer-panel.tsx:373
+#: src/components/board/library-panel.tsx:276
+#: src/routes/board.tsx:1069
 msgid "Show in file explorer"
 msgstr "Show in file explorer"
 
-#: src/components/board/library-panel.tsx:191
+#: src/components/board/library-panel.tsx:271
 msgid "Show on board"
 msgstr "Show on board"
 
-#: src/components/board/library-panel.tsx:349
+#: src/components/board/library-panel.tsx:535
 msgid "Status"
 msgstr "Status"
 
@@ -408,59 +479,66 @@ msgstr "Status"
 msgid "Switched to existing window"
 msgstr "Switched to existing window"
 
-#: src/components/board/detail-panel.tsx:182
-#: src/components/board/library-panel.tsx:340
-#: src/components/board/lightbox.tsx:68
+#: src/components/board/detail-panel.tsx:273
+#: src/components/board/library-panel.tsx:526
+#: src/components/board/lightbox.tsx:109
 msgid "Tags"
 msgstr "Tags"
 
-#: src/components/board/library-panel.tsx:245
+#: src/components/board/library-panel.tsx:431
 msgid "Tags: any"
 msgstr "Tags: any"
 
-#: src/components/board/library-panel.tsx:227
-#: src/components/board/library-panel.tsx:484
-#: src/routes/board.tsx:929
+#: src/components/board/explorer-panel.tsx:383
+#: src/components/board/library-panel.tsx:312
+#: src/components/board/library-panel.tsx:414
+#: src/components/board/library-panel.tsx:675
+#: src/routes/board.tsx:1131
 msgid "Trash"
 msgstr "Trash"
 
-#: src/components/board/canvas-toolbar.tsx:92
-#: src/routes/board.tsx:981
+#. placeholder {0}: selectedRows.length
+#: src/components/board/explorer-panel.tsx:354
+msgid "Trash {0} files"
+msgstr "Trash {0} files"
+
+#: src/components/board/canvas-toolbar.tsx:98
+#: src/routes/board.tsx:1187
 msgid "Trash selection"
 msgstr "Trash selection"
 
-#: src/components/board/library-panel.tsx:262
-#: src/components/board/library-panel.tsx:410
-#: src/components/board/panel-image-row.tsx:123
+#: src/components/board/library-panel.tsx:448
+#: src/components/board/library-panel.tsx:613
+#: src/components/board/panel-image-row.tsx:117
 msgid "Trashed"
 msgstr "Trashed"
 
-#: src/components/board/library-panel.tsx:222
-#: src/routes/board.tsx:923
+#: src/components/board/library-panel.tsx:307
+#: src/routes/board.tsx:1125
 msgid "Unarchive"
 msgstr "Unarchive"
 
-#: src/components/board/canvas-toolbar.tsx:84
-#: src/routes/board.tsx:974
+#: src/components/board/canvas-toolbar.tsx:90
+#: src/routes/board.tsx:1180
 msgid "Unarchive selection"
 msgstr "Unarchive selection"
 
-#: src/components/board/library-panel.tsx:253
-#: src/components/board/lightbox.tsx:115
+#: src/components/board/library-panel.tsx:439
+#: src/components/board/lightbox.tsx:156
 msgid "Unassigned"
 msgstr "Unassigned"
 
-#: src/routes/board.tsx:1017
+#: src/routes/board.tsx:1224
 msgid "Undo"
 msgstr "Undo"
 
-#: src/components/board/group-node.tsx:68
-#: src/routes/board.tsx:840
+#: src/components/board/group-node.tsx:75
+#: src/routes/board.tsx:1055
 msgid "Ungroup"
 msgstr "Ungroup"
 
-#: src/components/board/group-node.tsx:61
-#: src/components/board/group-node.tsx:169
+#: src/components/board/group-node.tsx:68
+#: src/components/board/group-node.tsx:191
 msgid "Untitled set"
 msgstr "Untitled set"
 

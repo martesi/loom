@@ -39,7 +39,7 @@ export function ZoomControls({
       <button
         type="button"
         onClick={onFitView}
-        className="px-1 text-[11px] font-semibold text-accent hover:underline"
+        className="px-1 text-[11px] font-semibold text-primary hover:underline"
       >
         {t`Fit`}
       </button>

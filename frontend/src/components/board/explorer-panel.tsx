@@ -27,6 +27,13 @@ interface ExplorerPanelProps {
   // one file, so Detail's content follows selection the way it already
   // does for a single canvas selection, without forcing a tab switch.
   onPreviewRequest: (imageId: number) => void
+  // Bumped by board.tsx after any archive/trash/restore mutation, from the
+  // canvas, Library, or Detail — Explorer's dirCache is otherwise only
+  // invalidated by moves/trashes/renames it triggers itself (see loadDir),
+  // so a trash from elsewhere would otherwise leave a stale row showing
+  // the pre-trash state. Same guarded-on-nonzero shape as library-panel.tsx's
+  // refreshToken.
+  refreshToken: number
 }
 
 // The repo root is represented by the empty relative path everywhere in
@@ -76,11 +83,14 @@ export function ExplorerPanel({
   repo,
   onDetailRequest,
   onPreviewRequest,
+  refreshToken,
 }: ExplorerPanelProps) {
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(() => new Set())
   const [dirCache, setDirCache] = useState<Map<string, DirListing>>(
     () => new Map()
   )
+  const dirCacheRef = useRef(dirCache)
+  dirCacheRef.current = dirCache
   const pendingRef = useRef<Set<string>>(new Set())
   const dragRef = useRef<DragPayload | null>(null)
   const parentRef = useRef<HTMLDivElement>(null)
@@ -139,6 +149,16 @@ export function ExplorerPanel({
   useEffect(() => {
     loadDir(ROOT)
   }, [loadDir])
+
+  // Refetches every already-expanded directory when a mutation happens
+  // elsewhere (canvas/Library/Detail archive/trash/restore) — see
+  // ExplorerPanelProps.refreshToken. The ref keeps this effect from
+  // capturing the initial empty cache without making cache updates
+  // themselves trigger repeated refetches.
+  useEffect(() => {
+    if (refreshToken === 0) return
+    for (const relPath of dirCacheRef.current.keys()) loadDir(relPath)
+  }, [refreshToken, loadDir])
 
   const toggleDir = useCallback(
     (relPath: string) => {
@@ -586,7 +606,7 @@ function DirRow({
       onContextMenu={onContextMenu}
       className={cn(
         'flex h-[34px] w-full items-center gap-1.5 border-b border-black/4 px-1.5 text-left text-[11.5px] font-semibold text-ink hover:bg-black/[0.03]',
-        dragOver && 'bg-accent-soft ring-2 ring-inset ring-accent'
+        dragOver && 'bg-primary-soft ring-2 ring-inset ring-primary'
       )}
       style={{ paddingLeft: 8 + row.depth * 16 }}
     >
@@ -662,7 +682,7 @@ function FileRow({
       onContextMenu={onContextMenu}
       className={cn(
         'flex h-[40px] w-full items-center gap-1.5 border-b border-black/4 px-1.5 text-[11.5px]',
-        selected && 'bg-accent-soft',
+        selected && 'bg-primary-soft',
         dragging && 'opacity-40'
       )}
       style={{ paddingLeft: 8 + row.depth * 16 + 16.5 }}
@@ -691,7 +711,7 @@ function FileRow({
               onKeyDown={handleKeyDown}
               onBlur={onRenameCommit}
               onClick={(e) => e.stopPropagation()}
-              className="w-full rounded-sm border border-accent px-1 text-[11.5px] text-ink outline-none"
+              className="w-full rounded-sm border border-primary px-1 text-[11.5px] text-ink outline-none"
             />
             {image.promptText && (
               <div className="truncate text-[10.5px] text-ink-subtle">
@@ -761,7 +781,7 @@ function NewFolderPopover({ x, y, onSubmit, onClose }: NewFolderPopoverProps) {
           e.stopPropagation()
         }}
         placeholder={t`Folder name…`}
-        className="w-full rounded-md border border-black/12 px-2.5 py-1.5 text-[12px] text-ink outline-none focus:border-accent"
+        className="w-full rounded-md border border-black/12 px-2.5 py-1.5 text-[12px] text-ink outline-none focus:border-primary"
       />
     </div>
   )

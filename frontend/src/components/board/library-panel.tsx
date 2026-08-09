@@ -564,9 +564,9 @@ export function LibraryPanel({
                 }}
                 className={cn(
                   'border-b border-black/4 text-[11.5px]',
-                  selected.has(row.id) && 'bg-accent-soft',
+                  selected.has(row.id) && 'bg-primary-soft',
                   row.id === highlightId &&
-                    'bg-accent-soft ring-2 ring-inset ring-accent'
+                    'bg-primary-soft ring-2 ring-inset ring-primary'
                 )}
               >
                 <td className="px-2.5 py-1.5">
@@ -645,7 +645,7 @@ export function LibraryPanel({
               <button
                 type="button"
                 onClick={handleBulkRestore}
-                className="text-[11.5px] font-semibold text-accent hover:underline"
+                className="text-[11.5px] font-semibold text-primary hover:underline"
               >
                 <Trans>Restore from trash</Trans>
               </button>

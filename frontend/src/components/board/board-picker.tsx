@@ -90,7 +90,7 @@ export function BoardPicker({
               <span
                 className={cn(
                   'flex h-3.5 w-3.5 items-center justify-center rounded-[3px] border',
-                  member ? 'border-accent bg-accent' : 'border-black/20'
+                  member ? 'border-primary bg-primary' : 'border-black/20'
                 )}
               />
               {b.name}
@@ -112,7 +112,7 @@ export function BoardPicker({
             e.stopPropagation()
           }}
           placeholder={t`New board…`}
-          className="min-w-0 flex-1 rounded-md border border-black/12 px-2 py-1 text-[11.5px] outline-none focus:border-accent"
+          className="min-w-0 flex-1 rounded-md border border-black/12 px-2 py-1 text-[11.5px] outline-none focus:border-primary"
         />
       </div>
     </div>

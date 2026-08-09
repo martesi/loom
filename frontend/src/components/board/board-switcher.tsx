@@ -85,7 +85,7 @@ export function BoardSwitcher({
               className={cn(
                 'group flex items-center gap-1 rounded-md px-2 py-1.5',
                 b.id === currentBoardId
-                  ? 'bg-accent-soft'
+                  ? 'bg-primary-soft'
                   : 'hover:bg-black/[0.04]'
               )}
             >
@@ -105,7 +105,7 @@ export function BoardSwitcher({
                     }
                   }}
                   onBlur={() => setRenamingId(null)}
-                  className="min-w-0 flex-1 rounded border border-accent px-1 py-0.5 text-[12.5px] outline-none"
+                  className="min-w-0 flex-1 rounded border border-primary px-1 py-0.5 text-[12.5px] outline-none"
                 />
               ) : (
                 <button
@@ -153,13 +153,13 @@ export function BoardSwitcher({
                 onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
                 onBlur={handleCreate}
                 placeholder={t`Board name…`}
-                className="w-full rounded-md border border-accent px-2 py-1 text-[12.5px] outline-none"
+                className="w-full rounded-md border border-primary px-2 py-1 text-[12.5px] outline-none"
               />
             ) : (
               <Button
                 variant="ghost"
                 onClick={() => setCreating(true)}
-                className="h-auto w-full justify-start gap-1.5 rounded-md px-2 py-1.5 text-[12.5px] font-semibold text-accent"
+                className="h-auto w-full justify-start gap-1.5 rounded-md px-2 py-1.5 text-[12.5px] font-semibold text-primary"
               >
                 <Plus className="h-3.5 w-3.5" />
                 <Trans>New board</Trans>

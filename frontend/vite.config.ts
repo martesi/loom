@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { lingui, linguiTransformerBabelPreset } from '@lingui/vite-plugin'
 import babel from '@rolldown/plugin-babel'
 import tailwindcss from '@tailwindcss/vite'
@@ -7,6 +8,11 @@ import { defineConfig } from 'vite'
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  resolve: {
+    alias: {
+      '@': path.resolve(import.meta.dirname, './src'),
+    },
+  },
   server: {
     host: '127.0.0.1',
     port: Number(process.env.WAILS_VITE_PORT) || 9245,

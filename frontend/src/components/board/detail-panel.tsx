@@ -241,7 +241,7 @@ export function DetailPanel({
             <button
               type="button"
               onClick={(e) => setPromptPickerAt({ x: e.clientX, y: e.clientY })}
-              className="text-[11px] font-semibold text-accent hover:underline"
+              className="text-[11px] font-semibold text-primary hover:underline"
             >
               {image.promptText ? (
                 <Trans>Change…</Trans>
@@ -293,7 +293,7 @@ export function DetailPanel({
             onChange={(e) => setTagInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && addTag()}
             placeholder={t`+ add`}
-            className="w-16 rounded-full border border-dashed border-black/18 bg-transparent px-2.5 py-0.5 text-[11px] text-ink-subtle outline-none focus:border-accent"
+            className="w-16 rounded-full border border-dashed border-black/18 bg-transparent px-2.5 py-0.5 text-[11px] text-ink-subtle outline-none focus:border-primary"
           />
         </div>
       </div>
@@ -314,7 +314,7 @@ export function DetailPanel({
                 ])
                 onChange()
               }}
-              className="rounded-full bg-accent-soft px-2.5 py-0.5 text-[11px] text-accent hover:bg-danger-soft hover:text-danger"
+              className="rounded-full bg-primary-soft px-2.5 py-0.5 text-[11px] text-primary hover:bg-danger-soft hover:text-danger"
             >
               {b.name}
             </button>
@@ -332,7 +332,7 @@ export function DetailPanel({
                   ])
                   onChange()
                 }}
-                className="rounded-full border border-dashed border-black/18 px-2.5 py-0.5 text-[11px] text-ink-subtle hover:border-accent hover:text-accent"
+                className="rounded-full border border-dashed border-black/18 px-2.5 py-0.5 text-[11px] text-ink-subtle hover:border-primary hover:text-primary"
               >
                 + {b.name}
               </button>

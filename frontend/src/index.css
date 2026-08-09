@@ -12,15 +12,44 @@
   --color-ink-muted: #605e5c;
   --color-ink-subtle: #8a8886;
 
-  /* Single accent blue */
-  --color-accent: #0067c6;
-  --color-accent-soft: #eaf3fc;
+  /* Single brand blue — named --color-primary (not --color-accent) since
+     shadcn/ui's generated components reserve `accent`/`accent-foreground`
+     for a neutral hover-highlight fill, a different concept from this
+     brand color. See the shadcn semantic slots below. */
+  --color-primary: #0067c6;
+  --color-primary-soft: #eaf3fc;
   --color-danger: #c42b1c;
   --color-danger-soft: #fde7e4;
 
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 8px;
+
+  /* shadcn/ui semantic slots (added when adopting the shadcn CLI as the
+     standard way to add UI components — see docs/canvas-node-fixes-plan.md
+     section 4b), mapped onto the palette above so generated components
+     (Kbd, and anything `shadcn add`'d in the future) pick up this app's
+     existing look instead of shadcn's own default theme. No `.dark`
+     variant — this app is light-only today. */
+  --color-background: var(--color-surface);
+  --color-foreground: var(--color-ink);
+  --color-card-foreground: var(--color-ink);
+  --color-popover: var(--color-card);
+  --color-popover-foreground: var(--color-ink);
+  --color-primary-foreground: #ffffff;
+  --color-secondary: var(--color-surface);
+  --color-secondary-foreground: var(--color-ink-subtle);
+  --color-muted: var(--color-surface);
+  --color-muted-foreground: var(--color-ink-subtle);
+  --color-destructive: var(--color-danger);
+  --color-destructive-foreground: #ffffff;
+  --color-border: rgba(0, 0, 0, 0.08);
+  --color-input: rgba(0, 0, 0, 0.08);
+  --color-ring: var(--color-primary);
+  /* Neutral hover-highlight fill (e.g. data-[highlighted]:bg-accent in a
+     generated menu/select) — deliberately NOT the brand blue, see above. */
+  --color-accent: var(--color-surface);
+  --color-accent-foreground: var(--color-ink);
 }
 
 body {
