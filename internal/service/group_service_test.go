@@ -164,54 +164,25 @@ func TestGroupServiceUndoRedo(t *testing.T) {
 	}
 	assertMembers(img1, img2)
 
-	// --- RemoveMember, dissolving case (exactly 2 members before removal) ---
-	// This is the bug the coordinator flagged: removing down to <2 members
-	// dissolves the whole group row (store.RemoveGroupMember), not just
-	// imageID's membership. GroupService.RemoveMember must detect that and
-	// record a full stepGroupExistence step instead of a
-	// stepGroupMemberRemove/Add pair — otherwise undo's inverse
-	// (stepGroupMemberAdd) would try to re-attach an image to a group row
-	// that's gone, fail on the FK constraint, and — because Undo() only
-	// advances its cursor on success — get stuck replaying that same
-	// failing step forever, making every earlier op in the session
-	// permanently unreachable via Undo.
+	// A singleton set persists; only removing the last member dissolves it.
 	if err := groups.RemoveMember(repoPath, groupID, img1); err != nil {
-		t.Fatalf("RemoveMember (dissolving): %v", err)
-	}
-	assertGroupExists(false)
-
-	// The actual regression: before the fix, undoing this op replayed a
-	// stepGroupMemberAdd inverse that hit an FK-constraint failure (the
-	// group row was gone), Undo() returned Applied:false without ever
-	// calling MarkUndone, and the cursor stayed pointed at this same
-	// failing op forever — so PeekUndo/CanUndo kept dangling it in front of
-	// the UI with no way past it. Capture the cursor before/after to prove
-	// undo both succeeds *and* actually advances, not just "doesn't crash".
-	cursorBefore, err := repo.UndoCursor()
-	if err != nil {
 		t.Fatal(err)
-	}
-
-	res, err = undo.Undo(repoPath)
-	if err != nil || !res.Applied {
-		t.Fatalf("Undo RemoveMember (dissolving): applied=%v err=%v — this must fully succeed, not just fail without crashing", res, err)
-	}
-	if res.Kind != stepGroupExistence {
-		t.Fatalf("expected dissolving remove to log stepGroupExistence, got %q", res.Kind)
 	}
 	assertGroupExists(true)
-	assertMembers(img1, img2)
-	if g, err := repo.GetGroup(groupID); err != nil || g.Name != "My Set" || g.Kind != "variant" || g.CoverImageID != img1 {
-		t.Fatalf("expected fully restored group fields after undoing dissolution, got %+v err=%v", g, err)
-	}
-
-	cursorAfter, err := repo.UndoCursor()
-	if err != nil {
+	assertMembers(img2)
+	if err := groups.RemoveMember(repoPath, groupID, img2); err != nil {
 		t.Fatal(err)
 	}
-	if cursorAfter != cursorBefore-1 {
-		t.Fatalf("undo cursor did not advance past the dissolving-remove op (stuck cursor bug): before=%d after=%d", cursorBefore, cursorAfter)
+	assertGroupExists(false)
+	if result, err := undo.Undo(repoPath); err != nil || !result.Applied {
+		t.Fatalf("undo singleton dissolution: %+v %v", result, err)
 	}
+	assertGroupExists(true)
+	assertMembers(img2)
+	if result, err := undo.Undo(repoPath); err != nil || !result.Applied {
+		t.Fatalf("undo removal: %+v %v", result, err)
+	}
+	assertMembers(img1, img2)
 
 	// --- Ungroup, then undo ---
 	// Group membership is exclusive: dissolve the restored first group before
@@ -335,10 +306,10 @@ func TestGroupServiceRejectsInvalidMembershipActions(t *testing.T) {
 	if got := cursor(); got != before {
 		t.Fatalf("same-group add appended an undo entry: before=%d after=%d", before, got)
 	}
-	if err := groups.AddMember(repoPath, first.ID, ids[2]); err == nil {
-		t.Fatal("adding an image from another group must fail")
+	if err := groups.AddMember(repoPath, first.ID, ids[2]); err != nil {
+		t.Fatal(err)
 	}
-	if members, err := repo.GroupMemberIDs(second.ID); err != nil || len(members) != 2 || !containsInt64(members, ids[2]) || !containsInt64(members, ids[3]) {
+	if members, err := repo.GroupMemberIDs(second.ID); err != nil || len(members) != 1 || !containsInt64(members, ids[3]) {
 		t.Fatalf("cross-group add changed second group: members=%v err=%v", members, err)
 	}
 
@@ -349,11 +320,11 @@ func TestGroupServiceRejectsInvalidMembershipActions(t *testing.T) {
 	if got := cursor(); got != before {
 		t.Fatalf("wrong-group removal appended an undo entry: before=%d after=%d", before, got)
 	}
-	if members, err := repo.GroupMemberIDs(first.ID); err != nil || len(members) != 2 || !containsInt64(members, ids[0]) {
+	if members, err := repo.GroupMemberIDs(first.ID); err != nil || len(members) != 3 || !containsInt64(members, ids[0]) {
 		t.Fatalf("wrong-group removal changed first group: members=%v err=%v", members, err)
 	}
 
-	if err := groups.SetCover(repoPath, first.ID, ids[2]); err == nil {
+	if err := groups.SetCover(repoPath, first.ID, ids[3]); err == nil {
 		t.Fatal("setting a non-member as cover must fail")
 	}
 	before = cursor()
@@ -407,7 +378,7 @@ func TestGroupMemberReplayRejectsDissolutionWithoutMutating(t *testing.T) {
 
 	// Corrupt the group out of band so replaying the membership-only removal
 	// would leave one member and trigger the store's dissolution behavior.
-	if _, err := repo.DB.Exec(`UPDATE images SET group_id = NULL WHERE id = ?`, ids[0]); err != nil {
+	if _, err := repo.DB.Exec(`UPDATE images SET group_id = NULL WHERE id IN (?, ?)`, ids[0], ids[1]); err != nil {
 		t.Fatal(err)
 	}
 	cursorBefore, err := repo.UndoCursor()
@@ -432,7 +403,7 @@ func TestGroupMemberReplayRejectsDissolutionWithoutMutating(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(members) != 2 || !containsInt64(members, ids[1]) || !containsInt64(members, ids[2]) {
+	if len(members) != 1 || !containsInt64(members, ids[2]) {
 		t.Fatalf("failed replay mutated group membership: %v", members)
 	}
 }

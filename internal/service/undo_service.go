@@ -24,8 +24,6 @@ const (
 	stepSetTrashed  = "set_trashed"
 	stepTagAdd      = "tag_add"
 	stepTagRemove   = "tag_remove"
-	stepBoardAdd    = "board_add"
-	stepBoardRemove = "board_remove"
 	stepPositions   = "set_positions"
 	stepSizes       = "set_sizes"
 	stepMoveFile    = "move_file"
@@ -62,11 +60,6 @@ type trashedStepPayload struct {
 type tagStepPayload struct {
 	ImageID int64 `json:"imageId"`
 	TagID   int64 `json:"tagId"`
-}
-
-type boardStepPayload struct {
-	BoardID  int64   `json:"boardId"`
-	ImageIDs []int64 `json:"imageIds"`
 }
 
 type positionEntry struct {
@@ -249,29 +242,6 @@ func applyStep(repo *store.Repo, s OpStep) error {
 		_, err := repo.RemoveImageTag(p.ImageID, p.TagID)
 		return err
 
-	case stepBoardAdd:
-		var p boardStepPayload
-		if err := json.Unmarshal(s.Payload, &p); err != nil {
-			return err
-		}
-		for _, id := range p.ImageIDs {
-			if ok, err := repo.ImageExists(id); err != nil {
-				return err
-			} else if !ok {
-				return purgedErr(id)
-			}
-		}
-		_, err := repo.AddImagesToBoard(p.BoardID, p.ImageIDs)
-		return err
-
-	case stepBoardRemove:
-		var p boardStepPayload
-		if err := json.Unmarshal(s.Payload, &p); err != nil {
-			return err
-		}
-		_, err := repo.RemoveImagesFromBoard(p.BoardID, p.ImageIDs)
-		return err
-
 	case stepPositions:
 		var p positionsStepPayload
 		if err := json.Unmarshal(s.Payload, &p); err != nil {
@@ -377,7 +347,7 @@ func applyStep(repo *store.Repo, s OpStep) error {
 		if err != nil {
 			return err
 		}
-		if len(members) < 3 {
+		if len(members) < 2 {
 			// RemoveGroupMemberChecked commits dissolution as part of its
 			// store transaction. Refuse before calling it when out-of-band
 			// state would make this membership-only replay dissolve the

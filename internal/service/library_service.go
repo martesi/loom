@@ -19,7 +19,7 @@ type LibraryRow struct {
 	ThumbURL   string   `json:"thumbUrl"`
 	PromptText string   `json:"promptText"`
 	Tags       []string `json:"tags"`
-	Boards     []string `json:"boards"`
+	Placed     bool     `json:"placed"`
 	CreatedAt  string   `json:"createdAt"`
 	Archived   bool     `json:"archived"`
 	Trashed    bool     `json:"trashed"`
@@ -28,10 +28,10 @@ type LibraryRow struct {
 }
 
 type LibraryQuery struct {
-	Search  string `json:"search"`
-	BoardID int64  `json:"boardId"` // 0 = any, -1 = unassigned
-	Status  string `json:"status"`  // "" / "active" / "archived" / "trashed" / "all"
-	TagID   int64  `json:"tagId"`
+	Search    string `json:"search"`
+	Placement string `json:"placement"`
+	Status    string `json:"status"` // "" / "active" / "archived" / "trashed" / "all"
+	TagID     int64  `json:"tagId"`
 }
 
 // ListImages runs query against the repo and returns display-ready rows —
@@ -45,7 +45,7 @@ func (s *LibraryService) ListImages(repoPath string, query LibraryQuery) ([]Libr
 	defer repo.Close()
 
 	images, err := repo.ListImagesFiltered(store.LibraryQuery{
-		Search: query.Search, BoardID: query.BoardID, Status: query.Status, TagID: query.TagID,
+		Search: query.Search, Placement: query.Placement, Status: query.Status, TagID: query.TagID,
 	})
 	if err != nil {
 		return nil, err
@@ -59,18 +59,9 @@ func (s *LibraryService) ListImages(repoPath string, query LibraryQuery) ([]Libr
 	if err != nil {
 		return nil, err
 	}
-	boardsByImage, err := repo.BoardsForImages(ids)
-	if err != nil {
-		return nil, err
-	}
 
 	rows := make([]LibraryRow, len(images))
 	for i, img := range images {
-		boards := boardsByImage[img.ID]
-		boardNames := make([]string, len(boards))
-		for j, b := range boards {
-			boardNames[j] = b.Name
-		}
 		tagNames := make([]string, 0, len(tagsByImage[img.ID]))
 		for _, t := range tagsByImage[img.ID] {
 			tagNames = append(tagNames, t.Name)
@@ -84,7 +75,7 @@ func (s *LibraryService) ListImages(repoPath string, query LibraryQuery) ([]Libr
 			ThumbURL:   thumbURL(repoPath, img.ID),
 			PromptText: img.PromptText,
 			Tags:       tagNames,
-			Boards:     boardNames,
+			Placed:     img.HasCanvasPos,
 			CreatedAt:  img.CreatedAt,
 			Archived:   img.Archived,
 			Trashed:    img.Trashed,

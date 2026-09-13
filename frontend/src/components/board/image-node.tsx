@@ -18,8 +18,8 @@ export function ImageNode({ data, selected, width, height }: NodeProps) {
   const [imgFailed, setImgFailed] = useState(false)
 
   const handleClassName = cn(
-    '!bg-primary opacity-0 transition-opacity group-hover:opacity-100',
-    selected && 'opacity-100'
+    '!opacity-0 !pointer-events-none',
+    false && 'opacity-100'
   )
 
   return (

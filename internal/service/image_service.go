@@ -5,11 +5,12 @@ import (
 	"os"
 	"path/filepath"
 
+	"loom/internal/convert"
 	"loom/internal/store"
 	"loom/internal/thumbnail"
 )
 
-type ImageService struct{}
+type ImageService struct{ Converter convert.Converter }
 
 type ImageInfo struct {
 	ID         int64   `json:"id"`
@@ -22,6 +23,7 @@ type ImageInfo struct {
 	Archived   bool    `json:"archived"`
 	Trashed    bool    `json:"trashed"`
 	Missing    bool    `json:"missing"`
+	Placed     bool    `json:"placed"`
 	CanvasX    float64 `json:"canvasX"`
 	CanvasY    float64 `json:"canvasY"`
 	CanvasW    float64 `json:"canvasW"`
@@ -45,21 +47,14 @@ type GroupInfo struct {
 	MemberIDs    []int64 `json:"memberIds"`
 }
 
-type BoardData struct {
-	BoardID       int64              `json:"boardId"`
-	BoardName     string             `json:"boardName"`
-	LayoutMode    string             `json:"layoutMode"`
+type CanvasData struct {
 	Images        []ImageInfo        `json:"images"`
 	Relationships []RelationshipInfo `json:"relationships"`
 	Groups        []GroupInfo        `json:"groups"`
 }
 
-// LoadBoard scans repoPath for newly discovered media, generates thumbnails
-// for anything missing one, flags files no longer found on disk, and
-// returns everything needed to render one board's canvas — only images
-// explicitly placed on boardID (see "New image -> board assignment": scan
-// discovery never auto-places an image on any board).
-func (s *ImageService) LoadBoard(repoPath string, boardID int64) (*BoardData, error) {
+// LoadCanvas discovers assets without implicitly placing them.
+func (s *ImageService) LoadCanvas(repoPath string) (*CanvasData, error) {
 	repo, err := store.Bootstrap(repoPath)
 	if err != nil {
 		return nil, err
@@ -70,15 +65,6 @@ func (s *ImageService) LoadBoard(repoPath string, boardID int64) (*BoardData, er
 		return nil, err
 	}
 
-	board, err := repo.GetBoard(boardID)
-	if err != nil {
-		return nil, fmt.Errorf("load board %d: %w", boardID, err)
-	}
-
-	// Discovery/thumbnailing/fallback-position assignment runs over every
-	// non-trashed image in the repo, not just this board's members — a
-	// brand-new file needs a thumbnail regardless of which board (if any)
-	// someone eventually places it on.
 	allImages, err := repo.ListImages()
 	if err != nil {
 		return nil, err
@@ -90,7 +76,6 @@ func (s *ImageService) LoadBoard(repoPath string, boardID int64) (*BoardData, er
 	}
 
 	missingByID := make(map[int64]bool, len(allImages))
-	placed := 0
 	for i := range allImages {
 		img := &allImages[i]
 
@@ -108,20 +93,13 @@ func (s *ImageService) LoadBoard(repoPath string, boardID int64) (*BoardData, er
 			// without a preview until the next load retries it.
 		}
 
-		if !img.HasCanvasPos {
-			x, y := gridPosition(placed)
-			placed++
-			if err := repo.SetCanvasPosition(img.ID, x, y); err != nil {
-				return nil, err
-			}
-		}
 	}
 
 	// Thumbnail generation writes thumb_path/width/height via SetThumbInfo
 	// as a side effect above; re-read from the DB rather than threading
 	// those values back through allImages, so board-scoped and repo-wide
 	// callers share one code path.
-	boardImages, err := repo.ListImagesForBoard(boardID)
+	boardImages, err := repo.ListImages()
 	if err != nil {
 		return nil, err
 	}
@@ -162,10 +140,7 @@ func (s *ImageService) LoadBoard(repoPath string, boardID int64) (*BoardData, er
 		})
 	}
 
-	data := &BoardData{
-		BoardID:       board.ID,
-		BoardName:     board.Name,
-		LayoutMode:    board.LayoutMode,
+	data := &CanvasData{
 		Images:        make([]ImageInfo, len(boardImages)),
 		Relationships: make([]RelationshipInfo, len(rels)),
 		Groups:        groups,
@@ -182,6 +157,7 @@ func (s *ImageService) LoadBoard(repoPath string, boardID int64) (*BoardData, er
 			Archived:   img.Archived,
 			Trashed:    img.Trashed,
 			Missing:    missingByID[img.ID],
+			Placed:     img.HasCanvasPos,
 			CanvasX:    img.CanvasX,
 			CanvasY:    img.CanvasY,
 			CanvasW:    img.CanvasW,
@@ -239,6 +215,7 @@ func (s *ImageService) GetImage(repoPath string, imageID int64) (*ImageInfo, err
 		Archived:   img.Archived,
 		Trashed:    img.Trashed,
 		Missing:    missing,
+		Placed:     img.HasCanvasPos,
 		CanvasX:    img.CanvasX,
 		CanvasY:    img.CanvasY,
 		CanvasW:    img.CanvasW,
@@ -526,6 +503,7 @@ func (s *ImageService) ListDirectory(repoPath, relPath string) (*DirListing, err
 			Archived:   img.Archived,
 			Trashed:    img.Trashed,
 			Missing:    statErr != nil,
+			Placed:     img.HasCanvasPos,
 			CanvasX:    img.CanvasX,
 			CanvasY:    img.CanvasY,
 			CanvasW:    img.CanvasW,

@@ -10,6 +10,17 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as $models from "./models.js";
 
 /**
+ * CopyMedia transports original bytes rather than preview thumbnails or paths.
+ */
+export function CopyMedia(repoPath: string, ids: number[] | null, converted: boolean): $CancellablePromise<$models.ClipboardMedia[] | null> {
+    return $Call.ByID(1558474607, repoPath, ids, converted);
+}
+
+export function CopyNative(repoPath: string, ids: number[] | null, converted: boolean): $CancellablePromise<void> {
+    return $Call.ByID(3195825510, repoPath, ids, converted);
+}
+
+/**
  * CreateDirectory creates a new folder named name inside parentRelPath
  * (relative to repoPath; "" for the repo root) — Explorer's "New folder"
  * action, reached from its empty-space context menu. Not undo-logged: a
@@ -30,6 +41,17 @@ export function CreateDirectory(repoPath: string, parentRelPath: string, name: s
  */
 export function GetImage(repoPath: string, imageID: number): $CancellablePromise<$models.ImageInfo | null> {
     return $Call.ByID(1073816885, repoPath, imageID);
+}
+
+export function GetViewport(repoPath: string): $CancellablePromise<$models.Viewport | null> {
+    return $Call.ByID(2365893626, repoPath);
+}
+
+/**
+ * ImportMedia always creates fresh files and identities, with no copied metadata.
+ */
+export function ImportMedia(repoPath: string, media: $models.ClipboardMedia[] | null, place: boolean, x: number, y: number): $CancellablePromise<number[] | null> {
+    return $Call.ByID(484462463, repoPath, media, place, x, y);
 }
 
 export function LinkSource(repoPath: string, sourceID: number, derivedID: number): $CancellablePromise<void> {
@@ -58,14 +80,10 @@ export function ListDirectory(repoPath: string, relPath: string): $CancellablePr
 }
 
 /**
- * LoadBoard scans repoPath for newly discovered media, generates thumbnails
- * for anything missing one, flags files no longer found on disk, and
- * returns everything needed to render one board's canvas — only images
- * explicitly placed on boardID (see "New image -> board assignment": scan
- * discovery never auto-places an image on any board).
+ * LoadCanvas discovers assets without implicitly placing them.
  */
-export function LoadBoard(repoPath: string, boardID: number): $CancellablePromise<$models.BoardData | null> {
-    return $Call.ByID(3370418912, repoPath, boardID);
+export function LoadCanvas(repoPath: string): $CancellablePromise<$models.CanvasData | null> {
+    return $Call.ByID(1741196780, repoPath);
 }
 
 /**
@@ -77,6 +95,22 @@ export function LoadBoard(repoPath: string, boardID: number): $CancellablePromis
  */
 export function MoveFile(repoPath: string, imageID: number, newRelPath: string): $CancellablePromise<[string, string]> {
     return $Call.ByID(2053037199, repoPath, imageID, newRelPath);
+}
+
+/**
+ * PlaceImages preserves existing placements and commits placement and optional
+ * set membership together, including membership moves and empty-set cleanup.
+ */
+export function PlaceImages(repoPath: string, ids: number[] | null, x: number, y: number, groupID: number): $CancellablePromise<void> {
+    return $Call.ByID(1503519949, repoPath, ids, x, y, groupID);
+}
+
+export function PurgeImages(repoPath: string, ids: number[] | null): $CancellablePromise<void> {
+    return $Call.ByID(1657169049, repoPath, ids);
+}
+
+export function ReadNative(): $CancellablePromise<$models.ClipboardMedia[] | null> {
+    return $Call.ByID(1926547403);
 }
 
 /**
@@ -118,6 +152,10 @@ export function SetSize(repoPath: string, imageID: number, w: number, h: number)
     return $Call.ByID(3469376493, repoPath, imageID, w, h);
 }
 
+export function SetViewport(repoPath: string, v: $models.Viewport): $CancellablePromise<void> {
+    return $Call.ByID(248266558, repoPath, v);
+}
+
 /**
  * TrashImage flags an image as trashed, hiding it from the board, and
  * physically moves the file into .loom/trash/ (see store.SetTrashed).
@@ -128,4 +166,8 @@ export function TrashImage(repoPath: string, imageID: number): $CancellablePromi
 
 export function UnlinkSource(repoPath: string, relationshipID: number): $CancellablePromise<void> {
     return $Call.ByID(1877800166, repoPath, relationshipID);
+}
+
+export function UnplaceImages(repoPath: string, ids: number[] | null): $CancellablePromise<void> {
+    return $Call.ByID(2779434480, repoPath, ids);
 }

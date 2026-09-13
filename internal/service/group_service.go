@@ -93,6 +93,13 @@ func (s *GroupService) AddMember(repoPath string, groupID, imageID int64) error 
 	defer unlock()
 	defer repo.Close()
 
+	images, err := repo.ListImagesByIDs([]int64{imageID})
+	if err != nil {
+		return err
+	}
+	if len(images) == 1 && images[0].GroupID != 0 && images[0].GroupID != groupID {
+		return repo.MoveGroupMember(groupID, imageID)
+	}
 	changed, err := repo.AddGroupMemberChecked(groupID, imageID)
 	if err != nil {
 		return err

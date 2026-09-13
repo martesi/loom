@@ -30,23 +30,17 @@ func TestImageServiceEndToEnd(t *testing.T) {
 	generateFixture(t, derivedPath, "green")
 
 	s := &ImageService{}
-	boards := &BoardService{}
 	undo := &UndoService{}
-
-	board, err := boards.CreateBoard(repoPath, "Test board")
-	if err != nil {
-		t.Fatalf("CreateBoard: %v", err)
-	}
 
 	// Discovery (triggered by LoadBoard's scan) must not auto-place new
 	// images on any board — see "New image -> board assignment (resolved)"
 	// in the spec. A freshly scanned repo's board should come back empty
 	// even though two images now exist in the repo.
-	emptyBoard, err := s.LoadBoard(repoPath, board.ID)
+	emptyBoard, err := s.LoadCanvas(repoPath)
 	if err != nil {
 		t.Fatalf("LoadBoard (pre-assignment): %v", err)
 	}
-	if len(emptyBoard.Images) != 0 {
+	if len(emptyBoard.Images) != 2 || emptyBoard.Images[0].Placed || emptyBoard.Images[1].Placed {
 		t.Fatalf("newly scanned images must not auto-join a board, got %d on it", len(emptyBoard.Images))
 	}
 
@@ -74,11 +68,11 @@ func TestImageServiceEndToEnd(t *testing.T) {
 		t.Fatalf("could not resolve both fixture image IDs: %+v", all)
 	}
 
-	if err := boards.AddImagesToBoard(repoPath, board.ID, []int64{seedID, derivedID}); err != nil {
+	if err := s.PlaceImages(repoPath, []int64{seedID, derivedID}, 0, 0, 0); err != nil {
 		t.Fatalf("AddImagesToBoard: %v", err)
 	}
 
-	loaded, err := s.LoadBoard(repoPath, board.ID)
+	loaded, err := s.LoadCanvas(repoPath)
 	if err != nil {
 		t.Fatalf("LoadBoard: %v", err)
 	}
@@ -131,7 +125,7 @@ func TestImageServiceEndToEnd(t *testing.T) {
 		t.Fatalf("LinkSource: expected cycle rejection, got nil error")
 	}
 
-	board2, err := s.LoadBoard(repoPath, board.ID)
+	board2, err := s.LoadCanvas(repoPath)
 	if err != nil {
 		t.Fatalf("LoadBoard (reload): %v", err)
 	}
@@ -164,7 +158,7 @@ func TestImageServiceEndToEnd(t *testing.T) {
 	if !undoResult.Applied {
 		t.Fatalf("Undo: expected the link to be undoable, got %+v", undoResult)
 	}
-	afterUndo, err := s.LoadBoard(repoPath, board.ID)
+	afterUndo, err := s.LoadCanvas(repoPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +172,7 @@ func TestImageServiceEndToEnd(t *testing.T) {
 	if !redoResult.Applied {
 		t.Fatalf("Redo: expected the link to be redoable, got %+v", redoResult)
 	}
-	afterRedo, err := s.LoadBoard(repoPath, board.ID)
+	afterRedo, err := s.LoadCanvas(repoPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +187,7 @@ func TestImageServiceEndToEnd(t *testing.T) {
 	if err := s.TrashImage(repoPath, derivedID); err != nil {
 		t.Fatalf("TrashImage: %v", err)
 	}
-	board3, err := s.LoadBoard(repoPath, board.ID)
+	board3, err := s.LoadCanvas(repoPath)
 	if err != nil {
 		t.Fatalf("LoadBoard (post-trash): %v", err)
 	}
@@ -208,7 +202,7 @@ func TestImageServiceEndToEnd(t *testing.T) {
 	if err := s.RestoreImage(repoPath, derivedID); err != nil {
 		t.Fatalf("RestoreImage: %v", err)
 	}
-	board3b, err := s.LoadBoard(repoPath, board.ID)
+	board3b, err := s.LoadCanvas(repoPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +215,7 @@ func TestImageServiceEndToEnd(t *testing.T) {
 		t.Fatalf("rename: %v", err)
 	}
 
-	board4, err := s.LoadBoard(repoPath, board.ID)
+	board4, err := s.LoadCanvas(repoPath)
 	if err != nil {
 		t.Fatalf("LoadBoard (post-missing): %v", err)
 	}
@@ -243,78 +237,6 @@ func TestImageServiceEndToEnd(t *testing.T) {
 // would then strip state that predated the action entirely. Board
 // membership and tags don't need real files/thumbnails, so this seeds image
 // rows directly rather than going through LoadBoard's scan.
-func TestUndoSymmetryOnPartialNoOp(t *testing.T) {
-	repoPath := t.TempDir()
-	repo, err := store.Bootstrap(repoPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer repo.Close()
-
-	var img1, img2 int64
-	for i, id := range []*int64{&img1, &img2} {
-		res, err := repo.DB.Exec(`INSERT INTO images (file_path) VALUES (?)`, filepath.Join(repoPath, "img"+string(rune('a'+i))+".png"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		*id, err = res.LastInsertId()
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	boards := &BoardService{}
-	undo := &UndoService{}
-	board, err := boards.CreateBoard(repoPath, "Board")
-	if err != nil {
-		t.Fatalf("CreateBoard: %v", err)
-	}
-
-	// img1 is placed on the board *before* the batch action under test —
-	// this membership must survive an undo of that later batch action.
-	if err := boards.AddImagesToBoard(repoPath, board.ID, []int64{img1}); err != nil {
-		t.Fatalf("AddImagesToBoard (pre-existing membership): %v", err)
-	}
-
-	// A batch "add to board" over [img1, img2] — img1 is already a member,
-	// img2 is not. Only img2's membership is new.
-	if err := boards.AddImagesToBoard(repoPath, board.ID, []int64{img1, img2}); err != nil {
-		t.Fatalf("AddImagesToBoard (batch): %v", err)
-	}
-
-	memberIDs := func() map[int64]bool {
-		imgs, err := repo.ListImagesForBoard(board.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		m := make(map[int64]bool, len(imgs))
-		for _, img := range imgs {
-			m[img.ID] = true
-		}
-		return m
-	}
-
-	if m := memberIDs(); !m[img1] || !m[img2] {
-		t.Fatalf("expected both images on board after batch add, got %+v", m)
-	}
-
-	// Undo should only undo the batch add (img2's membership) — img1 was
-	// already a member before that action and must stay a member.
-	result, err := undo.Undo(repoPath)
-	if err != nil {
-		t.Fatalf("Undo: %v", err)
-	}
-	if !result.Applied {
-		t.Fatalf("Undo: expected the batch add to be undoable, got %+v", result)
-	}
-	if m := memberIDs(); !m[img1] {
-		t.Fatalf("undo incorrectly removed pre-existing board membership: %+v", m)
-	}
-	if m := memberIDs(); m[img2] {
-		t.Fatalf("undo failed to remove the membership it actually added: %+v", m)
-	}
-}
-
 // TestImageServiceMoveFileUndoRedo exercises ImageService.MoveFile end to
 // end: the file actually relocates, file_path follows it, and the move is
 // undoable/redoable via the same op-log machinery every other mutation

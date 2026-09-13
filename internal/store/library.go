@@ -2,16 +2,12 @@ package store
 
 import "strings"
 
-// LibraryQuery filters the list/library view. BoardID: 0 means "any board"
-// (no filter), -1 means "unassigned" (the image sits on no board at all —
-// see "New image -> board assignment" in the spec), a positive id scopes to
-// one board. Status: "" or "active" (default — not archived, not trashed),
-// "archived", "trashed", or "all" (no archive/trash filtering at all).
+// LibraryQuery filters repository assets by metadata and placement.
 type LibraryQuery struct {
-	Search  string
-	BoardID int64
-	Status  string
-	TagID   int64
+	Search    string
+	Placement string
+	Status    string
+	TagID     int64
 }
 
 // ListImagesFiltered is the backing query for the Stage 4 list/library
@@ -33,12 +29,11 @@ func (r *Repo) ListImagesFiltered(q LibraryQuery) ([]Image, error) {
 		conditions = append(conditions, "trashed = 0 AND archived = 0")
 	}
 
-	switch {
-	case q.BoardID < 0:
-		conditions = append(conditions, "NOT EXISTS (SELECT 1 FROM board_images bi WHERE bi.image_id = images.id)")
-	case q.BoardID > 0:
-		conditions = append(conditions, "EXISTS (SELECT 1 FROM board_images bi WHERE bi.image_id = images.id AND bi.board_id = ?)")
-		args = append(args, q.BoardID)
+	switch q.Placement {
+	case "placed":
+		conditions = append(conditions, "canvas_x IS NOT NULL AND canvas_y IS NOT NULL")
+	case "unplaced":
+		conditions = append(conditions, "canvas_x IS NULL OR canvas_y IS NULL")
 	}
 
 	if q.TagID > 0 {
@@ -52,9 +47,8 @@ func (r *Repo) ListImagesFiltered(q LibraryQuery) ([]Image, error) {
 			file_path LIKE ? ESCAPE '\'
 			OR COALESCE((SELECT p.text FROM prompts p WHERE p.id = images.prompt_id), '') LIKE ? ESCAPE '\'
 			OR EXISTS (SELECT 1 FROM image_tags it JOIN tags t ON t.id = it.tag_id WHERE it.image_id = images.id AND t.name LIKE ? ESCAPE '\')
-			OR EXISTS (SELECT 1 FROM board_images bi JOIN boards b ON b.id = bi.board_id WHERE bi.image_id = images.id AND b.name LIKE ? ESCAPE '\')
 		)`)
-		args = append(args, like, like, like, like)
+		args = append(args, like, like, like)
 	}
 
 	query := `SELECT ` + imageSelectCols + ` FROM images`

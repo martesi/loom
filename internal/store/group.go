@@ -85,7 +85,7 @@ func groupMemberIDsTx(tx *sql.Tx, groupID int64) ([]int64, error) {
 // as set" on a multi-selection defaults it to the first selected image).
 func (r *Repo) CreateGroup(name, kind string, coverImageID int64, memberIDs []int64) (int64, error) {
 	memberIDs = uniqueGroupMemberIDs(memberIDs)
-	if len(memberIDs) < 2 {
+	if len(memberIDs) < 1 {
 		return 0, fmt.Errorf("a group needs at least 2 distinct members")
 	}
 	if !groupHasMember(memberIDs, coverImageID) {
@@ -163,7 +163,7 @@ func (r *Repo) GetGroup(groupID int64) (*Group, error) {
 // making a new group.
 func (r *Repo) RecreateGroup(id int64, name, kind string, coverImageID int64, memberIDs []int64) error {
 	memberIDs = uniqueGroupMemberIDs(memberIDs)
-	if len(memberIDs) < 2 {
+	if len(memberIDs) < 1 {
 		return fmt.Errorf("cannot recreate group %d with fewer than 2 distinct members", id)
 	}
 	if coverImageID != 0 && !groupHasMember(memberIDs, coverImageID) {
@@ -368,7 +368,7 @@ func (r *Repo) RemoveGroupMemberCheckedWithSnapshot(groupID, imageID int64) (*Gr
 	if err := tx.QueryRow(`SELECT COUNT(*) FROM images WHERE group_id = ?`, groupID).Scan(&remaining); err != nil {
 		return nil, nil, false, false, err
 	}
-	if remaining < 2 {
+	if remaining == 0 {
 		dissolved = true
 		if _, err := tx.Exec(`UPDATE images SET group_id = NULL WHERE group_id = ?`, groupID); err != nil {
 			return nil, nil, false, false, err
@@ -384,6 +384,9 @@ func (r *Repo) RemoveGroupMemberCheckedWithSnapshot(groupID, imageID int64) (*Gr
 		if deletedRows != 1 {
 			return nil, nil, false, false, fmt.Errorf("group %d disappeared while removing member", groupID)
 		}
+	}
+	if _, err := tx.Exec(`UPDATE groups SET cover_image_id = (SELECT MIN(id) FROM images WHERE group_id = groups.id) WHERE id = ? AND NOT EXISTS (SELECT 1 FROM images WHERE id = groups.cover_image_id AND group_id = groups.id)`, groupID); err != nil {
+		return nil, nil, false, false, err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, nil, false, false, err
@@ -485,4 +488,35 @@ func (r *Repo) GroupMemberIDs(groupID int64) ([]int64, error) {
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// MoveGroupMember changes exclusive membership and removes only empty sets.
+func (r *Repo) MoveGroupMember(groupID, imageID int64) error {
+	tx, err := r.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var exists int
+	if err := tx.QueryRow("SELECT 1 FROM groups WHERE id = ?", groupID).Scan(&exists); err != nil {
+		return err
+	}
+	result, err := tx.Exec("UPDATE images SET group_id = ? WHERE id = ?", groupID, imageID)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return fmt.Errorf("asset %d does not exist", imageID)
+	}
+	if _, err := tx.Exec("DELETE FROM groups WHERE NOT EXISTS (SELECT 1 FROM images WHERE group_id = groups.id)"); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE groups SET cover_image_id = (SELECT MIN(id) FROM images WHERE group_id = groups.id) WHERE NOT EXISTS (SELECT 1 FROM images WHERE id = groups.cover_image_id AND group_id = groups.id)`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

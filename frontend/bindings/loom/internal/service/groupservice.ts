@@ -69,3 +69,7 @@ export function SetCover(repoPath: string, groupID: number, imageID: number): $C
 export function Ungroup(repoPath: string, groupID: number): $CancellablePromise<void> {
     return $Call.ByID(2201106324, repoPath, groupID);
 }
+
+export function UpdateMetadata(repoPath: string, id: number, name: string, kind: string): $CancellablePromise<void> {
+    return $Call.ByID(3397644602, repoPath, id, name, kind);
+}
