@@ -17,11 +17,6 @@ export function ImageNode({ data, selected, width, height }: NodeProps) {
     data as unknown as ImageNodeData
   const [imgFailed, setImgFailed] = useState(false)
 
-  const handleClassName = cn(
-    '!opacity-0 !pointer-events-none',
-    false && 'opacity-100'
-  )
-
   return (
     <div
       style={{
@@ -36,6 +31,11 @@ export function ImageNode({ data, selected, width, height }: NodeProps) {
         selected && 'ring-2 ring-primary'
       )}
     >
+      <Handle
+        type="target"
+        position={Position.Left}
+        style={{ display: 'none' }}
+      />
       <NodeResizer
         minWidth={100}
         minHeight={80}
@@ -45,11 +45,6 @@ export function ImageNode({ data, selected, width, height }: NodeProps) {
         onResizeEnd={(_event, params) =>
           onResizeEnd?.(params.x, params.y, params.width, params.height)
         }
-      />
-      <Handle
-        type="target"
-        position={Position.Left}
-        className={handleClassName}
       />
       <div className={cn('relative flex-1', missing && 'grayscale')}>
         {thumbUrl && !imgFailed ? (
@@ -80,7 +75,7 @@ export function ImageNode({ data, selected, width, height }: NodeProps) {
       <Handle
         type="source"
         position={Position.Right}
-        className={handleClassName}
+        style={{ display: 'none' }}
       />
     </div>
   )

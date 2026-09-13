@@ -222,10 +222,13 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       zoom: flow.getZoom(),
     })
   }
-  async function paste(media?: Awaited<ReturnType<typeof readMedia>>) {
+  async function paste(
+    media?: Awaited<ReturnType<typeof readMedia>>,
+    surface = selection.surface
+  ) {
     const point = center()
     const assets = media ?? (await readMedia())
-    const canvas = selection.surface === 'canvas'
+    const canvas = surface === 'canvas'
     const ids = await ImageService.ImportMedia(
       repo.path,
       assets,
@@ -390,7 +393,9 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             className="hidden"
             onChange={(e) => {
               const files = Array.from(e.target.files ?? [])
-              void filesToMedia(files).then(paste).catch(report)
+              void filesToMedia(files)
+                .then((media) => paste(media, 'assets'))
+                .catch(report)
               e.target.value = ''
             }}
           />
@@ -525,7 +530,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
               }
             } else
               void filesToMedia(Array.from(e.dataTransfer.files))
-                .then(paste)
+                .then((media) => paste(media, 'canvas'))
                 .catch(report)
           }}
         >
@@ -654,16 +659,21 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             <Background />
           </ReactFlow>
           <div className="absolute bottom-3 left-3 right-3 flex flex-wrap gap-1 text-xs">
-            {toolbar('Fit all', () => flow.fitView({ padding: 0.2 }))}
-            {toolbar('Fit selection', () =>
-              flow.fitView({
+            {toolbar('Fit all', async () => {
+              await flow.fitView({ padding: 0.2 })
+              await ImageService.SetViewport(repo.path, flow.getViewport())
+            })}
+            {toolbar('Fit selection', async () => {
+              await flow.fitView({
                 nodes: displayNodes.filter((n) => n.selected),
                 padding: 0.2,
               })
-            )}
+              await ImageService.SetViewport(repo.path, flow.getViewport())
+            })}
             {toolbar('Reset 100%', async () => {
               const p = center()
               await flow.setCenter(p.x, p.y, { zoom: 1 })
+              await ImageService.SetViewport(repo.path, flow.getViewport())
             })}
             {toolbar('Auto-arrange', arrange)}
             {toolbar('Create set', async () => {

@@ -30,6 +30,11 @@ const fixtureRepos = [
   { name: 'menu-linux-fixtures', files: ['menu-alpha.png', 'menu-beta.png'] },
   { name: 'menu-mac-fixtures', files: ['menu-alpha.png', 'menu-beta.png'] },
   { name: 'filename-fixtures', files: ['hover-target.png'] },
+  { name: 'clipboard-fixtures', files: ['hover-target.png'] },
+  {
+    name: 'set-fixtures',
+    files: ['set-alpha.png', 'set-beta.png', 'set-gamma.png'],
+  },
   {
     name: 'explorer-fixtures',
     files: ['canvas-trash.png', 'library-trash.png'],
