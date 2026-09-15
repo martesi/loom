@@ -54,10 +54,15 @@ test('Assets selection, placement, unplace, trash and viewport persistence', asy
   await expect(rows).toHaveCount(1)
   await drop(page, await rows.first().innerText(), 90, 90)
   await expect(page.locator('.react-flow__node')).toHaveCount(1)
+  const viewport = page.locator('.react-flow__viewport')
+  const viewportSaved = page.waitForResponse(
+    (response) =>
+      response.url().endsWith('/wails/runtime') &&
+      response.request().postData()?.includes('"methodID":248266558') === true
+  )
   await page.getByRole('button', { name: 'Fit all', exact: true }).click()
-  const transform = await page
-    .locator('.react-flow__viewport')
-    .getAttribute('style')
+  await viewportSaved
+  const transform = await viewport.getAttribute('style')
   await page.reload()
   await expect(page.locator('.react-flow__node')).toHaveCount(1)
   await expect(page.locator('.react-flow__viewport')).toHaveAttribute(
