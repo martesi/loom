@@ -4,9 +4,13 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    llm-agents = {
+      url = "github:numtide/llm-agents.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils, llm-agents }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
@@ -145,13 +149,15 @@
 
         # Headless-Chromium closure for driving the server-mode build
         # (main_server.go, `task run:server`) through a real browser via
-        # agent-browser (github.com/vercel-labs/agent-browser). Not
-        # packaged in nixpkgs, so it's installed on first shell entry into
-        # the gitignored .agent-browser/ below rather than vendored here.
+        # agent-browser comes from llm-agents.nix, built against this flake's
+        # nixpkgs input.
         # Split out from `default`/`e2e` for the same reason as `e2e`:
         # nobody should pay for a Chromium closure just to enter the shell.
         devShells.web-e2e = pkgs.mkShell {
-          buildInputs = commonBuildInputs ++ [ pkgs.chromium ];
+          buildInputs = commonBuildInputs ++ [
+            pkgs.chromium
+            llm-agents.packages.${system}.agent-browser
+          ];
           shellHook = ''
             ${commonHook}
 
@@ -162,13 +168,7 @@
             # properly-linked nixpkgs build instead, and skip the download.
             export AGENT_BROWSER_EXECUTABLE_PATH="$CHROMIUM_BIN"
 
-            export AGENT_BROWSER_DIR="$PWD/.agent-browser"
-            mkdir -p "$AGENT_BROWSER_DIR"
-            if [ ! -x "$AGENT_BROWSER_DIR/node_modules/.bin/agent-browser" ]; then
-              echo "web-e2e: installing agent-browser into .agent-browser/ (one-time)..." >&2
-              (cd "$AGENT_BROWSER_DIR" && bun add agent-browser >/dev/null)
-            fi
-            export PATH="$AGENT_BROWSER_DIR/node_modules/.bin:$PATH"
+            source "$(git rev-parse --show-toplevel)/build/e2e/setup-workspace.sh"
 
             echo "web-e2e: chromium ready at \$CHROMIUM_BIN" >&2
             echo "web-e2e: try 'agent-browser open <url>' first." >&2

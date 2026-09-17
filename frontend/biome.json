@@ -8,13 +8,7 @@
   },
   "files": {
     "ignoreUnknown": false,
-    "includes": [
-      "**",
-      "!bindings",
-      "!dist",
-      "!playwright-report",
-      "!test-results"
-    ]
+    "includes": ["**", "!bindings", "!dist"]
   },
   "formatter": {
     "enabled": true,

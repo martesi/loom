@@ -1,10 +1,10 @@
 import { type ChildProcess, spawn } from 'node:child_process'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import * as os from 'node:os'
 import * as path from 'node:path'
 
 const frontendDir = path.resolve(import.meta.dirname, '..')
 const repoDir = path.resolve(frontendDir, '..')
+const cacheDir = path.join(repoDir, '.cache', 'e2e')
 const port = process.env.E2E_PORT ?? '4173'
 
 // Keep the browser fixtures outside the repository checkout. The files are
@@ -106,7 +106,9 @@ function waitForExit(child: ChildProcess): Promise<{
 }
 
 async function main() {
-  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'loom-e2e-'))
+  const tempDir = path.join(cacheDir, 'tmp')
+  await mkdir(tempDir, { recursive: true })
+  const tempRoot = await mkdtemp(path.join(tempDir, 'run-'))
   const browseRoot = path.join(tempRoot, 'browse-root')
   const repoPath = path.join(browseRoot, 'e2e-repo')
   const binaryPath = path.join(
@@ -128,6 +130,19 @@ async function main() {
   process.once('SIGTERM', stop)
 
   try {
+    await run(
+      'wails3',
+      [
+        'generate',
+        'bindings',
+        '-f',
+        '-tags server,production',
+        '-clean=true',
+        '-ts',
+        '-i',
+      ],
+      repoDir
+    )
     await run('bun', ['run', 'build'], frontendDir)
     await run(
       'go',

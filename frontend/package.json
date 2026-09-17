@@ -12,7 +12,7 @@
     "format": "biome check --write",
     "i18n:extract": "lingui extract",
     "typecheck:e2e": "tsc -p e2e/tsconfig.json --noEmit",
-    "test:e2e": "bun run typecheck:e2e && playwright test"
+    "test:e2e": "bash ../build/e2e/setup-workspace.sh && bun run typecheck:e2e && playwright test"
   },
   "dependencies": {
     "@base-ui-components/react": "^1.0.0-rc.0",

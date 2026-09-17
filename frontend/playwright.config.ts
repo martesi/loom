@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { defineConfig } from '@playwright/test'
 
 const port = Number(process.env.E2E_PORT ?? process.env.PLAYWRIGHT_PORT ?? 4173)
@@ -7,6 +8,7 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 
 const baseURL = `http://127.0.0.1:${port}`
 const chromiumBin = process.env.CHROMIUM_BIN
+const cacheDir = path.resolve(import.meta.dirname, '../.cache/e2e')
 
 export default defineConfig({
   testDir: './e2e',
@@ -21,13 +23,15 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   reporter: [
     ['list'],
-    ['html', { outputFolder: 'playwright-report', open: 'never' }],
+    [
+      'html',
+      { outputFolder: path.join(cacheDir, 'playwright-report'), open: 'never' },
+    ],
   ],
-  outputDir: 'test-results',
+  outputDir: path.join(cacheDir, 'test-results'),
   use: {
     baseURL,
     screenshot: 'only-on-failure',
-    video: 'retain-on-failure',
     trace: 'retain-on-failure',
     launchOptions: chromiumBin
       ? {
