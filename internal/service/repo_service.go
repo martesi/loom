@@ -232,8 +232,7 @@ type FSDirListing struct {
 //
 // If LOOM_BROWSE_ROOT is set, browsing is confined to that directory and
 // its descendants — worth setting on any deployment where you don't want
-// whoever holds the login token to browse anything the server process can
-// read.
+// remote clients to browse anything the server process can read.
 func (s *RepoService) BrowseDirectory(path string) (*FSDirListing, error) {
 	resolved := path
 	if resolved == "" {

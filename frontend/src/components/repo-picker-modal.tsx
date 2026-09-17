@@ -14,7 +14,7 @@ interface RepoPickerModalProps {
 
 // Server mode's substitute for the native folder dialog (RepoService's
 // OpenFolder/CreateRepo, whose Dialog.OpenFile is unavailable when built
-// headless — see internal/webauth's neighbor, main_server.go). Walks
+// headless — see main_server.go). Walks
 // RepoService.BrowseDirectory starting from the server's home directory;
 // "Open this folder" hands the resolved path to RepoService.OpenRecent via
 // onSelect exactly like clicking a recent-repo entry does, since that

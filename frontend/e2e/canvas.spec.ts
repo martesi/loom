@@ -1,7 +1,7 @@
 import { expect, type Page, test } from '@playwright/test'
 
 async function open(page: Page, name: string) {
-  await page.goto('/?token=loom-e2e-token')
+  await page.goto('/')
   await page.getByRole('button', { name: /^(Create )?New Repo$/ }).click()
   const dialog = page.getByRole('dialog')
   await dialog.getByRole('button').filter({ hasText: name }).first().click()

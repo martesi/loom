@@ -1,10 +1,7 @@
 import { expect, type Locator, type Page } from '@playwright/test'
 
-const token =
-  process.env.E2E_TOKEN ?? process.env.LOOM_TOKEN ?? 'loom-e2e-token'
-
 export async function openFixtureRepo(page: Page, repoName: string) {
-  await page.goto(`/?token=${encodeURIComponent(token)}`)
+  await page.goto('/')
   await expect(page).toHaveTitle('Loom')
 
   const newRepo = page

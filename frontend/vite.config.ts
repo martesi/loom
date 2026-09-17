@@ -15,8 +15,6 @@ const serverDevelopment = ['1', 'true'].includes(
 const backendURL =
   process.env.LOOM_SERVER_URL ||
   `http://127.0.0.1:${Number(process.env.WAILS_SERVER_PORT) || 8080}`
-const developmentToken =
-  process.env.LOOM_DEV_TOKEN || process.env.LOOM_TOKEN || ''
 const distDirectory = path.resolve(import.meta.dirname, './dist')
 
 // The native Wails asset server can proxy HTTP, but beta.4 deliberately
@@ -29,47 +27,11 @@ const hmr = {
   clientPort: vitePort,
 }
 
-function withDevelopmentCookie(cookieHeader: string | undefined) {
-  if (!developmentToken) return cookieHeader
-
-  const cookies = (cookieHeader ?? '')
-    .split(';')
-    .map((cookie) => cookie.trim())
-    .filter(Boolean)
-    .filter((cookie) => cookie.split('=', 1)[0].trim() !== 'loom_token')
-
-  cookies.push(`loom_token=${developmentToken}`)
-  return cookies.join('; ')
-}
-
-const configureBackendProxy: NonNullable<ProxyOptions['configure']> = (
-  proxy
-) => {
-  const authenticate = (
-    proxyRequest: { setHeader: (name: string, value: string) => void },
-    request: { headers: { cookie?: string } }
-  ) => {
-    const cookie = withDevelopmentCookie(request.headers.cookie)
-    if (cookie) proxyRequest.setHeader('cookie', cookie)
-  }
-
-  proxy.on('proxyReq', (proxyRequest, request) =>
-    authenticate(proxyRequest, request)
-  )
-  proxy.on('proxyReqWs', (proxyRequest, request) =>
-    authenticate(proxyRequest, request)
-  )
-}
-
 function backendProxy(ws: boolean): ProxyOptions {
   return {
     target: backendURL,
     ws,
-    // Keep the browser's Host and Origin intact. The server auth gate uses
-    // them to verify that /wails/events is a same-origin WebSocket, while
-    // http-proxy preserves the original path, query, cookies, and upgrades.
     changeOrigin: false,
-    configure: configureBackendProxy,
   }
 }
 

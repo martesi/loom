@@ -276,9 +276,7 @@ tasks:
     desc: |
       Builds and runs a server-tagged backend, starts Vite on port 9245, and
       opens the Vite URL in a browser. The backend and Vite ports can be
-      overridden with WAILS_SERVER_PORT and WAILS_VITE_PORT. The development
-      session token defaults to 'loom-dev-token' and can be overridden with
-      LOOM_DEV_TOKEN (or LOOM_TOKEN).
+      overridden with WAILS_SERVER_PORT and WAILS_VITE_PORT.
     deps:
       - task: install:frontend:deps
       - task: generate:bindings
@@ -290,7 +288,6 @@ tasks:
 
         server_port="{{.SERVER_PORT | default "8080"}}"
         vite_port="{{.VITE_PORT | default "9245"}}"
-        dev_token="{{.DEV_TOKEN | default "loom-dev-token"}}"
         backend_url="http://127.0.0.1:${server_port}"
         build_dir="$(mktemp -d "${TMPDIR:-/tmp}/loom-server-dev.XXXXXX")"
         backend_pid=""
@@ -314,8 +311,7 @@ tasks:
         go build -tags server -buildvcs=false -o "$build_dir/loom-server" .
 
         echo "Starting server backend on ${backend_url}..."
-        LOOM_TOKEN="$dev_token" \
-          WAILS_SERVER_HOST=127.0.0.1 \
+        WAILS_SERVER_HOST=127.0.0.1 \
           WAILS_SERVER_PORT="$server_port" \
           "$build_dir/loom-server" &
         backend_pid=$!
@@ -337,10 +333,10 @@ tasks:
         (
           cd frontend
           case "{{.PACKAGE_MANAGER}}" in
-            bun) exec env LOOM_SERVER_DEV=1 LOOM_SERVER_URL="$backend_url" LOOM_DEV_TOKEN="$dev_token" LOOM_TOKEN="$dev_token" WAILS_VITE_PORT="$vite_port" bun run dev -- --host 127.0.0.1 --port "$vite_port" --strictPort ;;
-            npm) exec env LOOM_SERVER_DEV=1 LOOM_SERVER_URL="$backend_url" LOOM_DEV_TOKEN="$dev_token" LOOM_TOKEN="$dev_token" WAILS_VITE_PORT="$vite_port" npm run dev -- --host 127.0.0.1 --port "$vite_port" --strictPort ;;
-            pnpm) exec env LOOM_SERVER_DEV=1 LOOM_SERVER_URL="$backend_url" LOOM_DEV_TOKEN="$dev_token" LOOM_TOKEN="$dev_token" WAILS_VITE_PORT="$vite_port" pnpm dev --host 127.0.0.1 --port "$vite_port" --strictPort ;;
-            yarn) exec env LOOM_SERVER_DEV=1 LOOM_SERVER_URL="$backend_url" LOOM_DEV_TOKEN="$dev_token" LOOM_TOKEN="$dev_token" WAILS_VITE_PORT="$vite_port" yarn dev --host 127.0.0.1 --port "$vite_port" --strictPort ;;
+            bun) exec env LOOM_SERVER_DEV=1 LOOM_SERVER_URL="$backend_url" WAILS_VITE_PORT="$vite_port" bun run dev -- --host 127.0.0.1 --port "$vite_port" --strictPort ;;
+            npm) exec env LOOM_SERVER_DEV=1 LOOM_SERVER_URL="$backend_url" WAILS_VITE_PORT="$vite_port" npm run dev -- --host 127.0.0.1 --port "$vite_port" --strictPort ;;
+            pnpm) exec env LOOM_SERVER_DEV=1 LOOM_SERVER_URL="$backend_url" WAILS_VITE_PORT="$vite_port" pnpm dev --host 127.0.0.1 --port "$vite_port" --strictPort ;;
+            yarn) exec env LOOM_SERVER_DEV=1 LOOM_SERVER_URL="$backend_url" WAILS_VITE_PORT="$vite_port" yarn dev --host 127.0.0.1 --port "$vite_port" --strictPort ;;
             *) echo "Unsupported package manager: {{.PACKAGE_MANAGER}}" >&2; exit 1 ;;
           esac
         ) &

@@ -5,8 +5,6 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
   throw new Error(`E2E_PORT must be a valid TCP port, got ${port}`)
 }
 
-const token =
-  process.env.E2E_TOKEN ?? process.env.LOOM_TOKEN ?? 'loom-e2e-token'
 const baseURL = `http://127.0.0.1:${port}`
 const chromiumBin = process.env.CHROMIUM_BIN
 
@@ -46,7 +44,6 @@ export default defineConfig({
     reuseExistingServer: false,
     env: {
       E2E_PORT: String(port),
-      E2E_TOKEN: token,
     },
   },
 })

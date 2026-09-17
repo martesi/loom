@@ -92,6 +92,7 @@
         commonBuildInputs = [
           wails3
           pkgs.go
+          pkgs.go-task
           pkgs.gcc
           pkgs.pkg-config
           pkgs.gtk4

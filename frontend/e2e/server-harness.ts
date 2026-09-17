@@ -6,8 +6,6 @@ import * as path from 'node:path'
 const frontendDir = path.resolve(import.meta.dirname, '..')
 const repoDir = path.resolve(frontendDir, '..')
 const port = process.env.E2E_PORT ?? '4173'
-const token =
-  process.env.E2E_TOKEN ?? process.env.LOOM_TOKEN ?? 'loom-e2e-token'
 
 // Keep the browser fixtures outside the repository checkout. The files are
 // deliberately created here rather than copied from a fixture directory so
@@ -151,7 +149,6 @@ async function main() {
       cwd: repoDir,
       env: {
         ...process.env,
-        LOOM_TOKEN: token,
         LOOM_BROWSE_ROOT: browseRoot,
         ...(process.platform === 'win32'
           ? { APPDATA: path.join(tempRoot, 'config') }
