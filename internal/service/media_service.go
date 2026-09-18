@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/base64"
 	"fmt"
+	"loom/internal/media"
 	"loom/internal/store"
 	"os"
 	"path/filepath"
@@ -12,6 +13,55 @@ import (
 type ClipboardMedia struct {
 	Name string `json:"name"`
 	Data string `json:"data"`
+}
+
+type MediaService struct{ Processor media.Processor }
+
+func (s *MediaService) processor() media.Processor {
+	if s.Processor != nil {
+		return s.Processor
+	}
+	return media.FFmpegProcessor{}
+}
+
+// Transcode converts one repository asset and returns the resulting bytes.
+func (s *MediaService) Transcode(repoPath string, imageID int64, targetExt string) (*ClipboardMedia, error) {
+	targetExt = strings.ToLower(targetExt)
+	switch targetExt {
+	case ".avif", ".png", ".webp", ".jpg", ".jpeg":
+	default:
+		return nil, fmt.Errorf("unsupported target extension %q", targetExt)
+	}
+
+	r, err := store.Bootstrap(repoPath)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	image, err := r.GetImageByID(imageID)
+	if err != nil {
+		return nil, err
+	}
+	if image.Trashed {
+		return nil, fmt.Errorf("asset %d is trashed", imageID)
+	}
+
+	dir, err := os.MkdirTemp("", "loom-media-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
+
+	name := strings.TrimSuffix(filepath.Base(image.FilePath), filepath.Ext(image.FilePath)) + targetExt
+	dest := filepath.Join(dir, name)
+	if err := s.processor().Transcode(image.FilePath, dest); err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(dest)
+	if err != nil {
+		return nil, err
+	}
+	return &ClipboardMedia{Name: name, Data: base64.StdEncoding.EncodeToString(data)}, nil
 }
 
 // CopyMedia transports original bytes rather than preview thumbnails or paths.
@@ -25,7 +75,7 @@ func (s *ImageService) CopyMedia(repoPath string, ids []int64, converted bool) (
 	if err != nil {
 		return nil, err
 	}
-	if converted && s.Converter == nil {
+	if converted && s.Media == nil {
 		return nil, fmt.Errorf("converted copy is unavailable: no converter is installed")
 	}
 	out := make([]ClipboardMedia, 0, len(images))
@@ -38,9 +88,9 @@ func (s *ImageService) CopyMedia(repoPath string, ids []int64, converted bool) (
 				return nil, err
 			}
 			defer os.RemoveAll(dir)
-			name = strings.TrimSuffix(name, filepath.Ext(name)) + s.Converter.TargetExt()
+			name = strings.TrimSuffix(name, filepath.Ext(name)) + ".avif"
 			path = filepath.Join(dir, filepath.Base(name))
-			if err := s.Converter.Convert(img.FilePath, path); err != nil {
+			if err := s.Media.Transcode(img.FilePath, path); err != nil {
 				return nil, err
 			}
 		}

@@ -7,6 +7,7 @@ import type {
 import {
   ImageService,
   LibraryService,
+  MediaService as WailsMediaService,
   SettingsService as WailsSettingsService,
 } from '../../bindings/loom/internal/service'
 import type { Selection } from './selection'
@@ -72,6 +73,15 @@ export interface SettingsService {
   set(key: string, value: string): Promise<void>
 }
 
+export interface ProcessedMedia {
+  name: string
+  data: string
+}
+
+export interface MediaService {
+  transcode(assetId: number, targetExt: string): Promise<ProcessedMedia>
+}
+
 export interface UISlotProps {
   'assets.itemMenu': { assetId: number }
   'operation.workspace': { operationId: string }
@@ -98,6 +108,7 @@ declare module '@cordisjs/core' {
     selection: SelectionService
     operations: OperationsService
     settings: SettingsService
+    media: MediaService
     ui: UIService
   }
 }
@@ -207,6 +218,25 @@ class SettingsServiceImpl extends Service implements SettingsService {
   }
 }
 
+class MediaServiceImpl extends Service implements MediaService {
+  constructor(
+    ctx: Context,
+    private state: HostState
+  ) {
+    super(ctx, 'media', true)
+  }
+
+  async transcode(assetId: number, targetExt: string) {
+    const result = await WailsMediaService.Transcode(
+      requireRepo(this.state),
+      assetId,
+      targetExt
+    )
+    if (!result) throw new Error('Media transcode returned no result')
+    return result
+  }
+}
+
 class UIServiceImpl extends Service implements UIService {
   private contributions = new Map<UISlot, Map<string, unknown>>()
 
@@ -256,6 +286,7 @@ export function createPluginHost() {
   context.plugin(SelectionServiceImpl, state)
   context.plugin(OperationsServiceImpl)
   context.plugin(SettingsServiceImpl, state)
+  context.plugin(MediaServiceImpl, state)
   context.plugin(UIServiceImpl)
 
   return {

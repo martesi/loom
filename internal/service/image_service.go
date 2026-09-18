@@ -7,12 +7,18 @@ import (
 	"os"
 	"path/filepath"
 
-	"loom/internal/convert"
+	"loom/internal/media"
 	"loom/internal/store"
-	"loom/internal/thumbnail"
 )
 
-type ImageService struct{ Converter convert.Converter }
+type ImageService struct{ Media media.Processor }
+
+func (s *ImageService) mediaProcessor() media.Processor {
+	if s.Media != nil {
+		return s.Media
+	}
+	return media.FFmpegProcessor{}
+}
 
 type ImageInfo struct {
 	ID         int64   `json:"id"`
@@ -85,8 +91,8 @@ func (s *ImageService) LoadCanvas(repoPath string) (*CanvasData, error) {
 			missingByID[img.ID] = true
 		} else if img.ThumbPath == "" {
 			dest := filepath.Join(thumbsDir, fmt.Sprintf("%d.avif", img.ID))
-			if w, h, genErr := thumbnail.Generate(img.FilePath, dest, store.IsVideoFile(img.FilePath)); genErr == nil {
-				if err := repo.SetThumbInfo(img.ID, dest, w, h); err != nil {
+			if dimensions, genErr := s.mediaProcessor().Thumbnail(img.FilePath, dest, store.IsVideoFile(img.FilePath)); genErr == nil {
+				if err := repo.SetThumbInfo(img.ID, dest, dimensions.Width, dimensions.Height); err != nil {
 					return nil, err
 				}
 			}
