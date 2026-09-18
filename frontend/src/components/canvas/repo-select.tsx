@@ -26,7 +26,7 @@ interface RepoSelectProps {
 // this window. Picking a different entry fires SwitchTo (Stage 5) as a
 // side-effecting action rather than a real selection — SwitchTo always
 // opens/focuses a *different* window (never reuses this one, see
-// repo_service.go), so this window's own repo/board view must never
+// repo_service.go), so this window's own repo/canvas view must never
 // navigate as a result. Leaving `value` untouched after the call keeps the
 // trigger correctly showing this window's own repo regardless of what was
 // clicked.

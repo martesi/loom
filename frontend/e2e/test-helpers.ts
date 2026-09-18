@@ -28,7 +28,7 @@ export async function openFixtureRepo(page: Page, repoName: string) {
     .getByRole('button', { name: /^(Create repo here|Open this folder)$/ })
     .click()
 
-  await expect(page).toHaveURL(/\/board$/)
+  await expect(page).toHaveURL(/\/canvas$/)
   await expect(page.getByRole('heading', { name: 'Canvas' })).toBeVisible()
   await expect(page.locator('.react-flow')).toBeVisible()
 }

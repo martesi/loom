@@ -27,7 +27,7 @@ test('server health, folder picker navigation, recent repos, and reload restorat
 
   await openFixtureRepo(page, 'recent-fixtures')
   await page.reload()
-  await expect(page).toHaveURL(/\/board$/)
+  await expect(page).toHaveURL(/\/canvas$/)
   await expect(page.getByRole('heading', { name: 'Canvas' })).toBeVisible()
 
   await page.goto('/')
@@ -35,16 +35,16 @@ test('server health, folder picker navigation, recent repos, and reload restorat
   await expect(recent).toBeVisible()
   await expect(recent).toContainText('1 images')
   await recent.click()
-  await expect(page).toHaveURL(/\/board$/)
+  await expect(page).toHaveURL(/\/canvas$/)
 })
 
-test('direct openRepo bootstraps a board and naked board route redirects', async ({
+test('direct openRepo bootstraps a canvas and naked canvas route redirects', async ({
   page,
   browser,
 }) => {
   const directPath = await fixturePath('direct-fixtures')
   await page.goto(`/?openRepo=${encodeURIComponent(directPath)}`)
-  await expect(page).toHaveURL(/\/board$/)
+  await expect(page).toHaveURL(/\/canvas$/)
   await expect(page.getByRole('heading', { name: 'Canvas' })).toBeVisible()
   await expect(
     page.getByRole('option', { name: 'direct-alpha.png' })
@@ -52,7 +52,7 @@ test('direct openRepo bootstraps a board and naked board route redirects', async
 
   const context = await browser.newContext()
   const freshPage = await context.newPage()
-  await freshPage.goto('/board')
+  await freshPage.goto('/canvas')
   await expect(freshPage).toHaveURL('/')
   await expect(
     freshPage.getByRole('button', {
@@ -77,11 +77,11 @@ test('server repo switcher opens another recent repo in a new tab', async ({
   const newPage = await newPagePromise
   await newPage.waitForLoadState('domcontentloaded')
 
-  await expect(page).toHaveURL(/\/board$/)
+  await expect(page).toHaveURL(/\/canvas$/)
   await expect(
     page.getByRole('combobox', { name: 'Switch repository' })
   ).toContainText('switch-a-fixtures')
-  await expect(newPage).toHaveURL(/\/board$/)
+  await expect(newPage).toHaveURL(/\/canvas$/)
   await expect(
     newPage.getByRole('combobox', { name: 'Switch repository' })
   ).toContainText('switch-b-fixtures')

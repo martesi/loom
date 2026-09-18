@@ -18,14 +18,14 @@ function IndexPage() {
   // open straight to "/?openRepo=<path>" instead of the Landing page — a
   // window's Name is fixed at creation, so this query param is how a
   // freshly spawned window learns which repo it exists to show. When
-  // present, skip the recent-repos fetch and jump to the board.
+  // present, skip the recent-repos fetch and jump to the canvas.
   useEffect(() => {
     const openRepo = new URLSearchParams(window.location.search).get('openRepo')
     if (openRepo) {
       RepoService.OpenRecent(openRepo).then((repo) => {
         if (repo && !repo.openedElsewhere) {
           setCurrentRepo(repo)
-          navigate({ to: '/board' })
+          navigate({ to: '/canvas' })
         }
       })
       return
@@ -46,7 +46,7 @@ function IndexPage() {
     // into a repo it isn't actually showing.
     if (repo.openedElsewhere) return
     setCurrentRepo(repo)
-    navigate({ to: '/board' })
+    navigate({ to: '/canvas' })
   }
 
   // Server mode has no native folder dialog (Dialog.OpenFile isn't

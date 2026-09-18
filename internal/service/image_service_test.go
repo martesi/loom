@@ -11,8 +11,8 @@ import (
 )
 
 // TestImageServiceEndToEnd drives the services exactly the way the
-// frontend does: scan/register (via LoadBoard's discovery side effect),
-// explicit board placement, drag-reposition, link, undo/redo, and re-load
+// frontend does: scan/register (via LoadCanvas's discovery side effect),
+// explicit canvas placement, drag-reposition, link, undo/redo, and re-load
 // to confirm persistence — the same call sequence the Canvas + list views
 // make, without needing a webview.
 func TestImageServiceEndToEnd(t *testing.T) {
@@ -32,16 +32,15 @@ func TestImageServiceEndToEnd(t *testing.T) {
 	s := &ImageService{}
 	undo := &UndoService{}
 
-	// Discovery (triggered by LoadBoard's scan) must not auto-place new
-	// images on any board — see "New image -> board assignment (resolved)"
-	// in the spec. A freshly scanned repo's board should come back empty
+	// Discovery (triggered by LoadCanvas's scan) must not auto-place new
+	// images on the canvas. A freshly scanned repository's canvas should come back empty
 	// even though two images now exist in the repo.
 	emptyBoard, err := s.LoadCanvas(repoPath)
 	if err != nil {
-		t.Fatalf("LoadBoard (pre-assignment): %v", err)
+		t.Fatalf("LoadCanvas (pre-assignment): %v", err)
 	}
 	if len(emptyBoard.Images) != 2 || emptyBoard.Images[0].Placed || emptyBoard.Images[1].Placed {
-		t.Fatalf("newly scanned images must not auto-join a board, got %d on it", len(emptyBoard.Images))
+		t.Fatalf("newly scanned images must not auto-place on the canvas, got %d on it", len(emptyBoard.Images))
 	}
 
 	repo, err := store.Bootstrap(repoPath)
@@ -69,12 +68,12 @@ func TestImageServiceEndToEnd(t *testing.T) {
 	}
 
 	if err := s.PlaceImages(repoPath, []int64{seedID, derivedID}, 0, 0, 0); err != nil {
-		t.Fatalf("AddImagesToBoard: %v", err)
+		t.Fatalf("PlaceImages: %v", err)
 	}
 
 	loaded, err := s.LoadCanvas(repoPath)
 	if err != nil {
-		t.Fatalf("LoadBoard: %v", err)
+		t.Fatalf("LoadCanvas: %v", err)
 	}
 	if len(loaded.Images) != 2 {
 		t.Fatalf("expected 2 images after explicit placement, got %d: %+v", len(loaded.Images), loaded.Images)
@@ -127,7 +126,7 @@ func TestImageServiceEndToEnd(t *testing.T) {
 
 	board2, err := s.LoadCanvas(repoPath)
 	if err != nil {
-		t.Fatalf("LoadBoard (reload): %v", err)
+		t.Fatalf("LoadCanvas (reload): %v", err)
 	}
 	var reloadedSeed *ImageInfo
 	for i := range board2.Images {
@@ -180,7 +179,7 @@ func TestImageServiceEndToEnd(t *testing.T) {
 		t.Fatalf("expected redo to restore the relationship, got %d", len(afterRedo.Relationships))
 	}
 
-	// Archive + trash must round-trip and hide from the board.
+	// Archive + trash must round-trip and hide from the active canvas.
 	if err := s.SetArchived(repoPath, derivedID, true); err != nil {
 		t.Fatalf("SetArchived: %v", err)
 	}
@@ -189,7 +188,7 @@ func TestImageServiceEndToEnd(t *testing.T) {
 	}
 	board3, err := s.LoadCanvas(repoPath)
 	if err != nil {
-		t.Fatalf("LoadBoard (post-trash): %v", err)
+		t.Fatalf("LoadCanvas (post-trash): %v", err)
 	}
 	if len(board3.Images) != 1 {
 		t.Fatalf("expected 1 image after trashing, got %d", len(board3.Images))
@@ -224,7 +223,7 @@ func TestImageServiceEndToEnd(t *testing.T) {
 
 	board4, err := s.LoadCanvas(repoPath)
 	if err != nil {
-		t.Fatalf("LoadBoard (post-missing): %v", err)
+		t.Fatalf("LoadCanvas (post-missing): %v", err)
 	}
 	var seedRow *ImageInfo
 	for i := range board4.Images {
@@ -241,9 +240,9 @@ func TestImageServiceEndToEnd(t *testing.T) {
 // a mutating call that's a partial no-op (some of its targets already had
 // the effect applied) used to unconditionally log an undo step covering
 // *everything requested*, not just what actually changed. Undoing that step
-// would then strip state that predated the action entirely. Board
-// membership and tags don't need real files/thumbnails, so this seeds image
-// rows directly rather than going through LoadBoard's scan.
+// would then strip state that predated the action entirely. Canvas placement
+// and tags don't need real files/thumbnails, so this seeds image
+// rows directly rather than going through LoadCanvas's scan.
 // TestImageServiceMoveFileUndoRedo exercises ImageService.MoveFile end to
 // end: the file actually relocates, file_path follows it, and the move is
 // undoable/redoable via the same op-log machinery every other mutation

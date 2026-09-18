@@ -461,7 +461,7 @@ func (s *ImageService) RestoreImage(repoPath string, imageID int64) error {
 
 // DirListing is Explorer's non-recursive view of one directory under the
 // repo root: subdirectory names plus every media file in it, reusing
-// ImageInfo's shape (same fields LoadBoard and Library return) so Explorer
+// ImageInfo's shape (same fields LoadCanvas and Assets return) so Explorer
 // can share their row rendering rather than needing its own shape.
 type DirListing struct {
 	RelPath string      `json:"relPath"`

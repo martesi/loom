@@ -48,7 +48,7 @@ interface LightboxViewerProps {
   onClose: () => void
   onIndexChange: (index: number) => void
   tagsForImage: (imageId: number) => string[]
-  boardName: string
+  placementLabel: string
   sourcesFor: (
     imageId: number
   ) => { id: number; fileName: string; thumbUrl: string }[]
@@ -65,7 +65,7 @@ export function LightboxViewer({
   onClose,
   onIndexChange,
   tagsForImage,
-  boardName,
+  placementLabel,
   sourcesFor,
   onJumpTo,
 }: LightboxViewerProps) {
@@ -150,10 +150,10 @@ export function LightboxViewer({
               )}
               <div>
                 <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-white/45">
-                  <Trans>Board</Trans>
+                  <Trans>Placement</Trans>
                 </div>
                 <div className="text-[12px] text-white/85">
-                  {boardName || <Trans>Unassigned</Trans>}
+                  {placementLabel || <Trans>Unplaced</Trans>}
                 </div>
               </div>
             </div>

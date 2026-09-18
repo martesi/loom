@@ -10,10 +10,7 @@ type LibraryQuery struct {
 	TagID     int64
 }
 
-// ListImagesFiltered is the backing query for the Stage 4 list/library
-// view: search across filename/prompt text/tag/board name, plus board and
-// status filters. LIKE-based search is adequate at the scale this app
-// targets (hundreds of images) — see spec, Stage 4.
+// ListImagesFiltered backs the Assets view with metadata, placement, and status filters.
 func (r *Repo) ListImagesFiltered(q LibraryQuery) ([]Image, error) {
 	var conditions []string
 	var args []any

@@ -1,7 +1,7 @@
 import { createRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect } from 'react'
 import { useCurrentRepo, useHydrateRepo } from '../lib/repo-store'
-import { Board } from './board'
+import { CanvasWorkspace } from './canvas'
 import { rootRoute } from './root'
 
 function CanvasPage() {
@@ -11,10 +11,10 @@ function CanvasPage() {
   useEffect(() => {
     if (!repo && !hydrating) void navigate({ to: '/' })
   }, [repo, hydrating, navigate])
-  return repo ? <Board key={repo.path} repo={repo} /> : null
+  return repo ? <CanvasWorkspace key={repo.path} repo={repo} /> : null
 }
-export const boardIndexRoute = createRoute({
+export const canvasRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/board',
+  path: '/canvas',
   component: CanvasPage,
 })

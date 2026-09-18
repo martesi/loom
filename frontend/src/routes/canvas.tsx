@@ -17,19 +17,19 @@ import {
   ImageService,
   type RepoInfo,
 } from '../../bindings/loom/internal/service'
-import { DetailPanel } from '../components/board/detail-panel'
-import { FloatingPanel } from '../components/board/floating-panel'
-import { GroupNode } from '../components/board/group-node'
-import { ImageNode } from '../components/board/image-node'
-import { LibraryPanel } from '../components/board/library-panel'
-import { RepoSelect } from '../components/board/repo-select'
+import { DetailPanel } from '../components/canvas/detail-panel'
+import { FloatingPanel } from '../components/canvas/floating-panel'
+import { GroupNode } from '../components/canvas/group-node'
+import { ImageNode } from '../components/canvas/image-node'
+import { LibraryPanel } from '../components/canvas/library-panel'
+import { RepoSelect } from '../components/canvas/repo-select'
 import { Button } from '../components/ui/button'
 import { copyMedia, filesToMedia, readMedia } from '../lib/clipboard'
 import { computeSubgraphLayout } from '../lib/layout'
 import { emptySelection, type Selection } from '../lib/selection'
 
 const nodeTypes = { image: ImageNode, group: GroupNode }
-export function Board({ repo }: { repo: RepoInfo }) {
+export function CanvasWorkspace({ repo }: { repo: RepoInfo }) {
   return (
     <ReactFlowProvider>
       <Canvas repo={repo} />

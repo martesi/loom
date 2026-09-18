@@ -7,9 +7,7 @@ import (
 	"loom/internal/store"
 )
 
-// LibraryService backs the Stage 4 list/library view — the same underlying
-// image rows as the canvas, queried without board scoping and enriched
-// with tags/boards for table display.
+// LibraryService backs the Assets list over the same image rows as the canvas.
 type LibraryService struct{}
 
 type LibraryRow struct {
@@ -34,9 +32,7 @@ type LibraryQuery struct {
 	TagID     int64  `json:"tagId"`
 }
 
-// ListImages runs query against the repo and returns display-ready rows —
-// search targets prompt text, filename, tag names, and board names (all
-// via SQL LIKE, adequate at this app's scale — see spec, Stage 4).
+// ListImages queries repository assets by prompt text, filename, tag, placement, and status.
 func (s *LibraryService) ListImages(repoPath string, query LibraryQuery) ([]LibraryRow, error) {
 	repo, err := store.Bootstrap(repoPath)
 	if err != nil {

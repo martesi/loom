@@ -5,7 +5,6 @@ import "loom/internal/store"
 // SettingsService is a thin key/value wrapper over the repo-scoped settings
 // table, used by panel visibility/dock-side (Stage 7) and the Settings
 // screen (Stage 11). Layout mode does NOT go through here — it keeps using
-// boards.layout_mode via BoardService.SetLayoutMode.
 type SettingsService struct{}
 
 // Get returns the value stored under key, or "" if it has never been set

@@ -72,7 +72,7 @@ func appOptions() application.Options {
 
 // spaFallback rewrites requests for paths that don't correspond to a real
 // embedded file to "/" instead, so a hard navigation to a client-side route
-// (e.g. /board/42 — a browser reload, a bookmark, a link opened in a new
+// (e.g. /canvas — a browser reload, a bookmark, a link opened in a new
 // tab) resolves to index.html the same way "/" itself does, letting the
 // in-page router take over from there. Wails' asset server has no such
 // fallback built in — an unmatched path is just a 404 — which is invisible

@@ -103,7 +103,7 @@ func (r *Repo) ScanAndRegisterImages() (int, error) {
 // DirListing is a non-recursive view of one directory under the repo root:
 // subdirectory names plus every media file found in it, already registered
 // in the images table (see ListDirectory) so every entry has a real row —
-// the service layer maps Files onto the same ImageInfo shape LoadBoard and
+// the service layer maps Files onto the same ImageInfo shape LoadCanvas and
 // the Library view use, so Explorer never needs a separate "not yet
 // imported" case.
 type DirListing struct {
@@ -291,7 +291,7 @@ func (r *Repo) ListRelationships() ([]Relationship, error) {
 }
 
 // SetCanvasPosition persists a node's dragged position on the (currently
-// single, implicit) board.
+// repository canvas.
 func (r *Repo) SetCanvasPosition(imageID int64, x, y float64) error {
 	_, err := r.DB.Exec(`
 		UPDATE images SET canvas_x = ?, canvas_y = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
@@ -323,7 +323,7 @@ func (r *Repo) SetArchived(imageID int64, archived bool) error {
 	return err
 }
 
-// SetTrashed flags an image as trashed (hidden from the board) and
+// SetTrashed flags an image as trashed (hidden from the canvas) and
 // physically moves its file between its current location and
 // .loom/trash/<relative-path-from-repo-root>, mirroring the directory
 // structure so a restore can always reconstruct the original path. Auto-

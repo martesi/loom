@@ -21,7 +21,7 @@ interface PanelImageRowProps {
   // Library and Explorer both implement plain-click-selects,
   // shift-click-range, and ctrl/cmd-click-toggles selection themselves —
   // ctrl/cmd is reserved for that here, not for jumping to Detail (that's
-  // the canvas node click's gesture, via board.tsx's handleNodeClick; lists
+  // the canvas node click's gesture, via canvas.tsx's node selection; lists
   // reach Detail by narrowing selection to one row, or the row context
   // menu's "Show details").
   onRowClick?: (image: RowImage, event: MouseEvent) => void
@@ -29,7 +29,7 @@ interface PanelImageRowProps {
   showStatusBadges?: boolean
   className?: string
   // Extra content appended after the standard filename/prompt block (e.g.
-  // Library's tags/board/date columns render outside this component, but a
+  // Extra catalog columns render outside this component, but a
   // panel can still tack something onto the same flex row via children).
   children?: ReactNode
   // Drag source onto the canvas (Stage 12). Explorer opts out (its own
