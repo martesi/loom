@@ -1,6 +1,8 @@
 package service
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -190,14 +192,13 @@ func (s *ImageService) GetImage(repoPath string, imageID int64) (*ImageInfo, err
 	}
 	defer repo.Close()
 
-	images, err := repo.ListImagesByIDs([]int64{imageID})
+	img, err := repo.GetImageByID(imageID)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("image %d not found", imageID)
+		}
 		return nil, err
 	}
-	if len(images) == 0 {
-		return nil, fmt.Errorf("image %d not found", imageID)
-	}
-	img := images[0]
 
 	missing := false
 	if _, statErr := os.Stat(img.FilePath); statErr != nil {

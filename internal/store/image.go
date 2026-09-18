@@ -257,6 +257,15 @@ func (r *Repo) ListImages() ([]Image, error) {
 	return images, rows.Err()
 }
 
+// GetImageByID returns an image regardless of trash state. Detail views need
+// this so a trashed row can still be inspected and restored.
+func (r *Repo) GetImageByID(imageID int64) (Image, error) {
+	return scanImage(r.DB.QueryRow(
+		`SELECT `+imageSelectCols+` FROM images WHERE id = ?`,
+		imageID,
+	))
+}
+
 // ListRelationships returns edges between two non-trashed images.
 func (r *Repo) ListRelationships() ([]Relationship, error) {
 	rows, err := r.DB.Query(`

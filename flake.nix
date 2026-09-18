@@ -137,6 +137,7 @@
         # the only thing that needs this shell.
         devShells.e2e = pkgs.mkShell {
           buildInputs = commonBuildInputs ++ [
+            pkgs.chromium
             pkgs.xvfb
             pkgs.xdpyinfo
             pkgs.xdotool
@@ -144,6 +145,7 @@
           shellHook = ''
             ${commonHook}
             export DISPLAY="''${DISPLAY:-:99}"
+            export CHROMIUM_BIN="${pkgs.chromium}/bin/chromium"
           '';
         };
 

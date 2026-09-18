@@ -5,6 +5,7 @@ import * as path from 'node:path'
 const frontendDir = path.resolve(import.meta.dirname, '..')
 const repoDir = path.resolve(frontendDir, '..')
 const cacheDir = path.join(repoDir, '.cache', 'e2e')
+const fixtureRootFile = path.join(cacheDir, 'fixture-root.txt')
 const port = process.env.E2E_PORT ?? '4173'
 
 // Keep the browser fixtures outside the repository checkout. The files are
@@ -37,6 +38,43 @@ const fixtureRepos = [
     name: 'explorer-fixtures',
     files: ['canvas-trash.png', 'library-trash.png'],
   },
+  {
+    name: 'library-fixtures',
+    files: [
+      'root-alpha.png',
+      'root-beta.png',
+      'nested/folder-gamma.png',
+      'nested/deeper/folder-delta.png',
+    ],
+  },
+  {
+    name: 'folders-fixtures',
+    files: ['nested/deeper/folder-delta.png'],
+  },
+  {
+    name: 'inspector-fixtures',
+    files: ['inspect-alpha.png', 'inspect-beta.png'],
+  },
+  {
+    name: 'relationship-fixtures',
+    files: ['relation-alpha.png', 'relation-beta.png', 'relation-gamma.png'],
+  },
+  {
+    name: 'group-fixtures',
+    files: ['group-alpha.png', 'group-beta.png', 'group-gamma.png'],
+  },
+  { name: 'resize-fixtures', files: ['resize-alpha.png'] },
+  { name: 'rescan-fixtures', files: ['rescan-alpha.png'] },
+  { name: 'recent-fixtures', files: ['recent-alpha.png'] },
+  { name: 'switch-a-fixtures', files: ['switch-a.png'] },
+  { name: 'switch-b-fixtures', files: ['switch-b.png'] },
+  { name: 'direct-fixtures', files: ['direct-alpha.png'] },
+  { name: 'responsive-fixtures', files: ['responsive-alpha.png'] },
+  {
+    name: 'shortcut-fixtures',
+    files: ['shortcut-alpha.png', 'shortcut-beta.png'],
+  },
+  { name: 'media-fixtures', files: ['media-alpha.png'] },
 ] as const
 
 async function seedFixtureRepos(browseRoot: string) {
@@ -45,9 +83,11 @@ async function seedFixtureRepos(browseRoot: string) {
       const repoPath = path.join(browseRoot, name)
       await mkdir(repoPath, { recursive: true })
       await Promise.all(
-        files.map((fileName) =>
-          writeFile(path.join(repoPath, fileName), fixturePng)
-        )
+        files.map(async (fileName) => {
+          const filePath = path.join(repoPath, fileName)
+          await mkdir(path.dirname(filePath), { recursive: true })
+          await writeFile(filePath, fixturePng)
+        })
       )
     })
   )
@@ -118,6 +158,7 @@ async function main() {
 
   await mkdir(repoPath, { recursive: true })
   await seedFixtureRepos(browseRoot)
+  await writeFile(fixtureRootFile, browseRoot)
 
   let server: ChildProcess | undefined
   let stopping = false
@@ -189,6 +230,7 @@ async function main() {
       server.kill('SIGTERM')
       await waitForExit(server).catch(() => undefined)
     }
+    await rm(fixtureRootFile, { force: true })
     await rm(tempRoot, { recursive: true, force: true })
   }
 }

@@ -197,6 +197,13 @@ func TestImageServiceEndToEnd(t *testing.T) {
 	if len(board3.Relationships) != 0 {
 		t.Errorf("expected trashing an endpoint to hide its relationship, got %d", len(board3.Relationships))
 	}
+	trashed, err := s.GetImage(repoPath, derivedID)
+	if err != nil {
+		t.Fatalf("GetImage (trashed): %v", err)
+	}
+	if !trashed.Trashed {
+		t.Fatal("GetImage should return trashed images for the inspector")
+	}
 
 	// Restoring must undo the trash flag.
 	if err := s.RestoreImage(repoPath, derivedID); err != nil {

@@ -560,6 +560,11 @@ function Canvas({ repo }: { repo: RepoInfo }) {
               const selected = changes.filter((c) => c.type === 'select')
               if (selected.length)
                 setSelection((s) => {
+                  const hasNodeSelection =
+                    s.surface === 'canvas' &&
+                    (s.ids.length > 0 || s.group !== null)
+                  if (!selected.some((c) => c.selected) && !hasNodeSelection)
+                    return s
                   let ids = s.surface === 'canvas' ? [...s.ids] : [],
                     group = s.surface === 'canvas' ? s.group : null
                   for (const c of selected) {
@@ -577,14 +582,23 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             onEdgesChange={(changes) => {
               setEdges((e) => applyEdgeChanges(changes, e))
               const selected = changes.filter((c) => c.type === 'select')
-              if (selected.some((c) => c.selected) || selection.edges.length)
-                setSelection({
-                  surface: 'canvas',
-                  ids: [],
-                  group: null,
-                  edges: selected
-                    .filter((c) => c.selected)
-                    .map((c) => Number(c.id)),
+              if (selected.length)
+                setSelection((s) => {
+                  const hasEdgeSelection =
+                    s.surface === 'canvas' && s.edges.length > 0
+                  if (!selected.some((c) => c.selected) && !hasEdgeSelection)
+                    return s
+                  let edgeIds = s.surface === 'canvas' ? [...s.edges] : []
+                  for (const c of selected)
+                    edgeIds = c.selected
+                      ? [...new Set([...edgeIds, Number(c.id)])]
+                      : edgeIds.filter((id) => id !== Number(c.id))
+                  return {
+                    surface: 'canvas',
+                    ids: [],
+                    group: null,
+                    edges: edgeIds,
+                  }
                 })
             }}
             onPaneClick={() => {
