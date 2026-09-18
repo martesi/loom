@@ -155,6 +155,37 @@ test('node resize and movement persist while Space drag pans instead of moving n
   await expect(viewport).not.toHaveAttribute('style', viewportTransform ?? '')
 })
 
+test('set shortcut and undo/redo work without stealing text-input undo', async ({
+  page,
+}) => {
+  await openFixtureRepo(page, 'shortcut-fixtures')
+  await placeAssets(page, ['shortcut-alpha.png'])
+  await imageNodes(page).first().click()
+  await expect(page.getByRole('button', { name: 'Create set' })).toBeDisabled()
+
+  await placeAssets(page, ['shortcut-beta.png'], { x: 360, y: 180 })
+  await page.getByRole('button', { name: 'Auto-arrange' }).click()
+  await page.getByRole('button', { name: 'Reset 100%' }).click()
+  await selectImageNodes(page, [0, 1])
+  await expect(page.getByRole('button', { name: 'Create set' })).toBeEnabled()
+
+  await page.keyboard.press('Control+g')
+  await expect(page.locator('.react-flow__node-group')).toHaveCount(1)
+  await expect(imageNodes(page)).toHaveCount(0)
+
+  await page.keyboard.press('Control+z')
+  await expect(page.locator('.react-flow__node-group')).toHaveCount(0)
+  await expect(imageNodes(page)).toHaveCount(2)
+
+  await page.keyboard.press('Control+y')
+  await expect(page.locator('.react-flow__node-group')).toHaveCount(1)
+
+  const search = page.getByRole('textbox', { name: 'Search assets' })
+  await search.fill('shortcut')
+  await search.press('Control+z')
+  await expect(page.locator('.react-flow__node-group')).toHaveCount(1)
+})
+
 test('file drop and canvas clipboard paste create placed assets and errors are dismissible', async ({
   page,
   context,

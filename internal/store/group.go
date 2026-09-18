@@ -85,7 +85,7 @@ func groupMemberIDsTx(tx *sql.Tx, groupID int64) ([]int64, error) {
 // as set" on a multi-selection defaults it to the first selected image).
 func (r *Repo) CreateGroup(name, kind string, coverImageID int64, memberIDs []int64) (int64, error) {
 	memberIDs = uniqueGroupMemberIDs(memberIDs)
-	if len(memberIDs) < 1 {
+	if len(memberIDs) < 2 {
 		return 0, fmt.Errorf("a group needs at least 2 distinct members")
 	}
 	if !groupHasMember(memberIDs, coverImageID) {

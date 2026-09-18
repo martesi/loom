@@ -3,7 +3,6 @@ version: '3'
 vars:
   APP_NAME: "loom"
   BIN_DIR: "bin"
-  PACKAGE_MANAGER: '{{.PACKAGE_MANAGER | default "bun"}}'
   VITE_PORT: '{{.WAILS_VITE_PORT | default 9245}}'
   SERVER_PORT: '{{.WAILS_SERVER_PORT | default 8080}}'
   # Target OS for build/package/run. Defaults to the host OS, and is overridden
@@ -16,8 +15,6 @@ includes:
   windows: ./build/windows/Taskfile.yml
   darwin: ./build/darwin/Taskfile.yml
   linux: ./build/linux/Taskfile.yml
-  ios: ./build/ios/Taskfile.yml
-  android: ./build/android/Taskfile.yml
 
 tasks:
   build:

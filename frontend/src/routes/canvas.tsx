@@ -23,16 +23,15 @@ import { GroupNode } from '../components/canvas/group-node'
 import { ImageNode } from '../components/canvas/image-node'
 import { LibraryPanel } from '../components/canvas/library-panel'
 import { RepoSelect } from '../components/canvas/repo-select'
-import { OperationWorkspace } from '../components/operation-workspace'
+import { CompressionDialog } from '../components/compression-dialog'
 import { Button } from '../components/ui/button'
 import { copyMedia, filesToMedia, readMedia } from '../lib/clipboard'
 import { computeSubgraphLayout } from '../lib/layout'
-import { pluginHost } from '../lib/plugin-host'
 import { emptySelection, type Selection } from '../lib/selection'
+import { useGroupShortcut, useUndoShortcuts } from '../lib/use-undo'
 
 const nodeTypes = { image: ImageNode, group: GroupNode }
 export function CanvasWorkspace({ repo }: { repo: RepoInfo }) {
-  useEffect(() => pluginHost.activateRepository(repo.path), [repo.path])
   return (
     <ReactFlowProvider>
       <Canvas repo={repo} />
@@ -51,11 +50,11 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     [edges, setEdges] = useState<Edge[]>([])
   const [selection, setSelection] = useState<Selection>(emptySelection),
     [expanded, setExpanded] = useState<number | null>(null)
-  useEffect(() => pluginHost.setSelection(selection), [selection])
   const [refresh, setRefresh] = useState(0),
     [error, setError] = useState(''),
     [space, setSpace] = useState(false),
     [ready, setReady] = useState(false)
+  const [compressIds, setCompressIds] = useState<number[] | null>(null)
   const [reveal, setReveal] = useState<{
     id: number
     folder: string | null
@@ -79,14 +78,6 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   function run(action: () => Promise<unknown>) {
     void action().then(reload).catch(report)
   }
-  // biome-ignore lint/correctness/useExhaustiveDependencies: plugin mutations invalidate the current repository snapshot.
-  useEffect(
-    () =>
-      pluginHost.context.assets.subscribe(() => {
-        void reload().catch(callbacks.current.report)
-      }),
-    [repo.path]
-  )
   useEffect(() => {
     void Promise.all([
       ImageService.LoadCanvas(repo.path),
@@ -212,6 +203,22 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       ]),
     ]
   }
+  const canCreateSet =
+    selection.surface === 'canvas' &&
+    selection.group === null &&
+    selection.ids.length >= 2 &&
+    selection.ids.every(
+      (id) => !(data.images ?? []).find((image) => image.id === id)?.groupId
+    )
+  async function createSet() {
+    if (!canCreateSet) return
+    await GroupService.CreateGroup(repo.path, '', '', selection.ids)
+    await reload()
+  }
+  useUndoShortcuts(repo.path, reload)
+  useGroupShortcut(canCreateSet, () => {
+    void createSet().catch(report)
+  })
   async function go(id: number, folder = false) {
     const image = await ImageService.GetImage(repo.path, id)
     if (!image) return
@@ -439,6 +446,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
               visible.current = ids
             }}
             reveal={reveal}
+            compress={setCompressIds}
           />
         </FloatingPanel>
         <main
@@ -716,14 +724,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
               await ImageService.SetViewport(repo.path, flow.getViewport())
             })}
             {toolbar('Auto-arrange', arrange, displayNodes.length < 2)}
-            {toolbar(
-              'Create set',
-              async () => {
-                await GroupService.CreateGroup(repo.path, '', '', selectedIds())
-                await reload()
-              },
-              selectedIds().length === 0
-            )}
+            {toolbar('Create set', createSet, !canCreateSet)}
           </div>
         </main>
         <FloatingPanel title="Inspector" side="right">
@@ -737,7 +738,14 @@ function Canvas({ repo }: { repo: RepoInfo }) {
           />
         </FloatingPanel>
       </div>
-      <OperationWorkspace />
+      {compressIds && (
+        <CompressionDialog
+          path={repo.path}
+          assetIds={compressIds}
+          onClose={() => setCompressIds(null)}
+          onChange={reload}
+        />
+      )}
     </div>
   )
 }

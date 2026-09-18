@@ -12,6 +12,7 @@ export function useUndoShortcuts(repoPath: string, onChange: () => void) {
 
   useEffect(() => {
     const handler = async (event: KeyboardEvent) => {
+      if (isEditableTarget(event.target)) return
       const mod = event.ctrlKey || event.metaKey
       if (!mod) return
 
@@ -57,6 +58,7 @@ export function useUndoShortcuts(repoPath: string, onChange: () => void) {
 export function useGroupShortcut(canGroup: boolean, onGroup: () => void) {
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
+      if (isEditableTarget(event.target)) return
       const mod = event.ctrlKey || event.metaKey
       if (!mod || event.key.toLowerCase() !== 'g') return
       if (!canGroup) return
@@ -67,4 +69,11 @@ export function useGroupShortcut(canGroup: boolean, onGroup: () => void) {
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [canGroup, onGroup])
+}
+
+function isEditableTarget(target: EventTarget | null) {
+  return (
+    target instanceof HTMLElement &&
+    !!target.closest('input,textarea,select,[contenteditable=true]')
+  )
 }

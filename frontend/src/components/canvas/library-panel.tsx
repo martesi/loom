@@ -5,7 +5,6 @@ import {
   LibraryService,
   TagService,
 } from '../../../bindings/loom/internal/service'
-import { pluginHost } from '../../lib/plugin-host'
 import { type Selection, selectAsset } from '../../lib/selection'
 
 const fieldClass =
@@ -19,6 +18,7 @@ interface Props {
   onError: (e: unknown) => void
   visible: (ids: number[]) => void
   reveal: { id: number; folder: string | null } | null
+  compress: (ids: number[]) => void
 }
 export function LibraryPanel({
   path,
@@ -28,6 +28,7 @@ export function LibraryPanel({
   onError,
   visible,
   reveal,
+  compress,
 }: Props) {
   const [mode, setMode] = useState('all'),
     [folder, setFolder] = useState(''),
@@ -41,7 +42,7 @@ export function LibraryPanel({
   const [itemMenu, setItemMenu] = useState<{
     x: number
     y: number
-    assetId: number
+    assetIds: number[]
   } | null>(null)
   const anchor = useRef<number | null>(null)
   const callbacks = useRef({ onError, visible })
@@ -226,7 +227,7 @@ export function LibraryPanel({
               setItemMenu({
                 x: event.clientX,
                 y: event.clientY,
-                assetId: row.id,
+                assetIds: selected.includes(row.id) ? selected : [row.id],
               })
             }}
             onDragStart={(e) => {
@@ -255,11 +256,13 @@ export function LibraryPanel({
           className="fixed z-50 min-w-44 rounded-lg border border-black/8 bg-white p-1.5 shadow-lg"
           style={{ left: itemMenu.x, top: itemMenu.y }}
         >
-          {pluginHost.context.ui.list('assets.itemMenu').map((contribution) => (
-            <div key={contribution.id}>
-              {contribution.render({ assetId: itemMenu.assetId })}
-            </div>
-          ))}
+          <button
+            type="button"
+            className="block w-full rounded-md px-3 py-2 text-left text-[12.5px] text-ink hover:bg-black/[0.04]"
+            onClick={() => compress(itemMenu.assetIds)}
+          >
+            Compress…
+          </button>
         </div>
       )}
     </div>
