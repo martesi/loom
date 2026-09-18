@@ -17,6 +17,13 @@ type ClipboardMedia struct {
 
 type MediaService struct{ Processor media.Processor }
 
+type MediaTranscodeRequest struct {
+	TargetExt string `json:"targetExt"`
+	Quality   int    `json:"quality"`
+	MaxWidth  int    `json:"maxWidth"`
+	MaxHeight int    `json:"maxHeight"`
+}
+
 func (s *MediaService) processor() media.Processor {
 	if s.Processor != nil {
 		return s.Processor
@@ -24,9 +31,9 @@ func (s *MediaService) processor() media.Processor {
 	return media.FFmpegProcessor{}
 }
 
-// Transcode converts one repository asset and returns the resulting bytes.
-func (s *MediaService) Transcode(repoPath string, imageID int64, targetExt string) (*ClipboardMedia, error) {
-	targetExt = strings.ToLower(targetExt)
+// Transcode converts one repository image and returns the resulting bytes.
+func (s *MediaService) Transcode(repoPath string, imageID int64, request MediaTranscodeRequest) (*ClipboardMedia, error) {
+	targetExt := strings.ToLower(request.TargetExt)
 	switch targetExt {
 	case ".avif", ".png", ".webp", ".jpg", ".jpeg":
 	default:
@@ -45,6 +52,9 @@ func (s *MediaService) Transcode(repoPath string, imageID int64, targetExt strin
 	if image.Trashed {
 		return nil, fmt.Errorf("asset %d is trashed", imageID)
 	}
+	if store.IsVideoFile(image.FilePath) {
+		return nil, fmt.Errorf("image compression does not support video assets")
+	}
 
 	dir, err := os.MkdirTemp("", "loom-media-")
 	if err != nil {
@@ -54,7 +64,9 @@ func (s *MediaService) Transcode(repoPath string, imageID int64, targetExt strin
 
 	name := strings.TrimSuffix(filepath.Base(image.FilePath), filepath.Ext(image.FilePath)) + targetExt
 	dest := filepath.Join(dir, name)
-	if err := s.processor().Transcode(image.FilePath, dest); err != nil {
+	if err := s.processor().Transcode(image.FilePath, dest, media.TranscodeOptions{
+		Quality: request.Quality, MaxWidth: request.MaxWidth, MaxHeight: request.MaxHeight,
+	}); err != nil {
 		return nil, err
 	}
 	data, err := os.ReadFile(dest)
@@ -90,7 +102,7 @@ func (s *ImageService) CopyMedia(repoPath string, ids []int64, converted bool) (
 			defer os.RemoveAll(dir)
 			name = strings.TrimSuffix(name, filepath.Ext(name)) + ".avif"
 			path = filepath.Join(dir, filepath.Base(name))
-			if err := s.Media.Transcode(img.FilePath, path); err != nil {
+			if err := s.Media.Transcode(img.FilePath, path, media.TranscodeOptions{}); err != nil {
 				return nil, err
 			}
 		}
@@ -184,6 +196,81 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 	return ids, nil
 }
 
+// ReplaceMedia swaps an asset's stored representation while preserving its
+// identity and retaining both representations for undo/redo.
+func (s *ImageService) ReplaceMedia(repoPath string, imageID int64, item ClipboardMedia) error {
+	r, unlock, err := openOperationRepo(repoPath)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	defer r.Close()
+
+	image, err := r.GetImageByID(imageID)
+	if err != nil {
+		return err
+	}
+	if image.Trashed {
+		return fmt.Errorf("asset %d is trashed", imageID)
+	}
+	name := filepath.Base(strings.ReplaceAll(item.Name, "\\", "/"))
+	if !store.IsMediaFile(name) || store.IsVideoFile(name) {
+		return fmt.Errorf("unsupported replacement media name %q", name)
+	}
+	data, err := base64.StdEncoding.DecodeString(item.Data)
+	if err != nil {
+		return fmt.Errorf("decode replacement media: %w", err)
+	}
+
+	stashDir := filepath.Join(repoPath, ".loom", "trash", "replacements", fmt.Sprint(imageID))
+	if err := os.MkdirAll(stashDir, 0o755); err != nil {
+		return err
+	}
+	incoming, err := os.CreateTemp(stashDir, "incoming-*"+filepath.Ext(name))
+	if err != nil {
+		return err
+	}
+	incomingPath := incoming.Name()
+	if _, err := incoming.Write(data); err != nil {
+		incoming.Close()
+		os.Remove(incomingPath)
+		return err
+	}
+	if err := incoming.Close(); err != nil {
+		os.Remove(incomingPath)
+		return err
+	}
+
+	outgoing, err := os.CreateTemp(stashDir, "original-*"+filepath.Ext(image.FilePath))
+	if err != nil {
+		os.Remove(incomingPath)
+		return err
+	}
+	outgoingPath := outgoing.Name()
+	outgoing.Close()
+	os.Remove(outgoingPath)
+
+	activePath := filepath.Join(filepath.Dir(image.FilePath), name)
+	if activePath != image.FilePath {
+		activePath = availableMediaPath(activePath)
+	}
+	forward := representationStepPayload{
+		ImageID: imageID, OutgoingStash: outgoingPath, IncomingPath: incomingPath, ActivePath: activePath,
+	}
+	inverse := representationStepPayload{
+		ImageID: imageID, OutgoingStash: incomingPath, IncomingPath: outgoingPath, ActivePath: image.FilePath,
+	}
+	if err := r.SwapRepresentation(imageID, forward.OutgoingStash, forward.IncomingPath, forward.ActivePath); err != nil {
+		os.Remove(incomingPath)
+		return err
+	}
+	if err := recordOp(r, stepRepresentation, step(stepRepresentation, forward), step(stepRepresentation, inverse)); err != nil {
+		os.Remove(incomingPath)
+		return err
+	}
+	return nil
+}
+
 func (s *ImageService) PurgeImages(repoPath string, ids []int64) error {
 	r, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
@@ -216,4 +303,19 @@ func (s *ImageService) PurgeImages(repoPath string, ids []int64) error {
 	}
 	_, err = r.DB.Exec("DELETE FROM groups WHERE NOT EXISTS (SELECT 1 FROM images WHERE group_id = groups.id)")
 	return err
+}
+
+func availableMediaPath(path string) string {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return path
+	}
+	dir := filepath.Dir(path)
+	ext := filepath.Ext(path)
+	base := strings.TrimSuffix(filepath.Base(path), ext)
+	for i := 1; ; i++ {
+		candidate := filepath.Join(dir, fmt.Sprintf("%s (%d)%s", base, i, ext))
+		if _, err := os.Stat(candidate); os.IsNotExist(err) {
+			return candidate
+		}
+	}
 }

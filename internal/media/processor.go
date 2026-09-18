@@ -14,9 +14,15 @@ type Dimensions struct {
 	Height int
 }
 
+type TranscodeOptions struct {
+	Quality   int
+	MaxWidth  int
+	MaxHeight int
+}
+
 type Processor interface {
 	Thumbnail(srcPath, destPath string, isVideo bool) (Dimensions, error)
-	Transcode(srcPath, destPath string) error
+	Transcode(srcPath, destPath string, options TranscodeOptions) error
 }
 
 type FFmpegProcessor struct{}
@@ -51,19 +57,51 @@ func (FFmpegProcessor) Thumbnail(srcPath, destPath string, isVideo bool) (Dimens
 	return dimensions, nil
 }
 
-func (FFmpegProcessor) Transcode(srcPath, destPath string) error {
+func (FFmpegProcessor) Transcode(srcPath, destPath string, options TranscodeOptions) error {
 	args := []string{"-y", "-i", srcPath, "-map_metadata", "0"}
-	if strings.EqualFold(filepath.Ext(destPath), ".avif") {
+	if filter := scaleFilter(options.MaxWidth, options.MaxHeight); filter != "" {
+		args = append(args, "-vf", filter)
+	}
+	quality := options.Quality
+	if quality <= 0 {
+		quality = 60
+	}
+	if quality > 100 {
+		quality = 100
+	}
+	switch strings.ToLower(filepath.Ext(destPath)) {
+	case ".avif":
+		crf := 63 - quality*63/100
 		args = append(args,
 			"-frames:v", "1",
 			"-c:v", "libaom-av1",
-			"-crf", "30",
+			"-crf", strconv.Itoa(crf),
 			"-b:v", "0",
 			"-still-picture", "1",
 		)
+	case ".webp":
+		args = append(args, "-frames:v", "1", "-quality", strconv.Itoa(quality))
+	case ".jpg", ".jpeg":
+		qscale := 31 - quality*29/100
+		args = append(args, "-frames:v", "1", "-q:v", strconv.Itoa(qscale))
+	case ".png":
+		args = append(args, "-frames:v", "1", "-compression_level", "9")
 	}
 	args = append(args, destPath)
 	return runFFmpeg(args...)
+}
+
+func scaleFilter(maxWidth, maxHeight int) string {
+	switch {
+	case maxWidth > 0 && maxHeight > 0:
+		return fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease", maxWidth, maxHeight)
+	case maxWidth > 0:
+		return fmt.Sprintf("scale=%d:-2:force_original_aspect_ratio=decrease", maxWidth)
+	case maxHeight > 0:
+		return fmt.Sprintf("scale=-2:%d:force_original_aspect_ratio=decrease", maxHeight)
+	default:
+		return ""
+	}
 }
 
 func runFFmpeg(args ...string) error {

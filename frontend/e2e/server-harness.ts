@@ -75,6 +75,7 @@ const fixtureRepos = [
     files: ['shortcut-alpha.png', 'shortcut-beta.png'],
   },
   { name: 'media-fixtures', files: ['media-alpha.png'] },
+  { name: 'image-tools-fixtures', files: ['image-tools-alpha.png'] },
 ] as const
 
 async function seedFixtureRepos(browseRoot: string) {

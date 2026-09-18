@@ -23,6 +23,7 @@ import { GroupNode } from '../components/canvas/group-node'
 import { ImageNode } from '../components/canvas/image-node'
 import { LibraryPanel } from '../components/canvas/library-panel'
 import { RepoSelect } from '../components/canvas/repo-select'
+import { OperationWorkspace } from '../components/operation-workspace'
 import { Button } from '../components/ui/button'
 import { copyMedia, filesToMedia, readMedia } from '../lib/clipboard'
 import { computeSubgraphLayout } from '../lib/layout'
@@ -78,6 +79,14 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   function run(action: () => Promise<unknown>) {
     void action().then(reload).catch(report)
   }
+  // biome-ignore lint/correctness/useExhaustiveDependencies: plugin mutations invalidate the current repository snapshot.
+  useEffect(
+    () =>
+      pluginHost.context.assets.subscribe(() => {
+        void reload().catch(callbacks.current.report)
+      }),
+    [repo.path]
+  )
   useEffect(() => {
     void Promise.all([
       ImageService.LoadCanvas(repo.path),
@@ -728,6 +737,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
           />
         </FloatingPanel>
       </div>
+      <OperationWorkspace />
     </div>
   )
 }

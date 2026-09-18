@@ -20,6 +20,7 @@
     "@cordisjs/core": "3.18.1",
     "@lingui/core": "^6.6.0",
     "@lingui/react": "^6.6.0",
+    "@loom/image-tools-core": "file:../packages/image-tools-core",
     "@tailwindcss/vite": "^4.3.3",
     "@tanstack/react-router": "^1.170.21",
     "@tanstack/react-virtual": "^3.14.9",

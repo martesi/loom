@@ -1,4 +1,5 @@
 import { Context, Service } from '@cordisjs/core'
+import type { MediaTransform } from '@loom/image-tools-core'
 import type { ReactNode } from 'react'
 import type {
   ImageInfo,
@@ -41,6 +42,9 @@ export interface AssetQuery {
 export interface AssetsService {
   get(id: number): Promise<AssetInfo | null>
   list(query?: AssetQuery): Promise<readonly AssetListItem[]>
+  create(media: ProcessedMedia): Promise<AssetInfo>
+  replace(id: number, media: ProcessedMedia): Promise<AssetInfo>
+  subscribe(listener: () => void): () => void
 }
 
 export interface SelectionSnapshot {
@@ -58,14 +62,18 @@ export interface SelectionService {
 export interface LoomOperation {
   id: string
   title: string
-  run(): void | Promise<void>
+  run(input?: unknown): unknown | Promise<unknown>
 }
 
 export interface OperationsService {
   register(operation: LoomOperation): () => void
   list(): readonly LoomOperation[]
   get(id: string): LoomOperation | undefined
-  run(id: string): Promise<void>
+  run(id: string, input?: unknown): Promise<unknown>
+  readonly activeId: string | null
+  open(id: string): void
+  close(): void
+  subscribe(listener: (activeId: string | null) => void): () => void
 }
 
 export interface SettingsService {
@@ -79,7 +87,7 @@ export interface ProcessedMedia {
 }
 
 export interface MediaService {
-  transcode(assetId: number, targetExt: string): Promise<ProcessedMedia>
+  transcode(assetId: number, transform: MediaTransform): Promise<ProcessedMedia>
 }
 
 export interface UISlotProps {
@@ -117,6 +125,7 @@ interface HostState {
   repoPath: string | null
   selection: SelectionSnapshot
   selectionListeners: Set<(selection: SelectionSnapshot) => void>
+  assetListeners: Set<() => void>
 }
 
 class AssetsServiceImpl extends Service implements AssetsService {
@@ -141,6 +150,37 @@ class AssetsServiceImpl extends Service implements AssetsService {
         tagId: query.tagId ?? 0,
       })) ?? []
     return rows.map(fromLibraryRow)
+  }
+
+  async create(media: ProcessedMedia) {
+    const ids = await ImageService.ImportMedia(
+      requireRepo(this.state),
+      [media],
+      false,
+      0,
+      0
+    )
+    const id = ids?.[0]
+    if (!id) throw new Error('Media import returned no asset')
+    const asset = await this.get(id)
+    if (!asset) throw new Error(`Imported asset ${id} was not found`)
+    notifyAssets(this.state)
+    return asset
+  }
+
+  async replace(id: number, media: ProcessedMedia) {
+    await ImageService.ReplaceMedia(requireRepo(this.state), id, media)
+    const asset = await this.get(id)
+    if (!asset) throw new Error(`Replaced asset ${id} was not found`)
+    notifyAssets(this.state)
+    return asset
+  }
+
+  subscribe(listener: () => void) {
+    return this.ctx.effect(() => {
+      this.state.assetListeners.add(listener)
+      return () => this.state.assetListeners.delete(listener)
+    })
   }
 }
 
@@ -167,6 +207,8 @@ class SelectionServiceImpl extends Service implements SelectionService {
 
 class OperationsServiceImpl extends Service implements OperationsService {
   private operations = new Map<string, LoomOperation>()
+  private active: string | null = null
+  private listeners = new Set<(activeId: string | null) => void>()
 
   constructor(ctx: Context) {
     super(ctx, 'operations', true)
@@ -180,8 +222,10 @@ class OperationsServiceImpl extends Service implements OperationsService {
     return this.ctx.effect(() => {
       this.operations.set(operation.id, operation)
       return () => {
-        if (this.operations.get(operation.id) === operation)
+        if (this.operations.get(operation.id) === operation) {
           this.operations.delete(operation.id)
+          if (this.active === operation.id) this.close()
+        }
       }
     })
   }
@@ -194,10 +238,39 @@ class OperationsServiceImpl extends Service implements OperationsService {
     return this.operations.get(id)
   }
 
-  async run(id: string) {
+  async run(id: string, input?: unknown) {
     const operation = this.operations.get(id)
     if (!operation) throw new Error(`Unknown operation "${id}"`)
-    await operation.run()
+    return await operation.run(input)
+  }
+
+  get activeId() {
+    return this.active
+  }
+
+  open(id: string) {
+    if (!this.operations.has(id)) throw new Error(`Unknown operation "${id}"`)
+    if (this.active === id) return
+    this.active = id
+    this.notify()
+  }
+
+  close() {
+    if (this.active === null) return
+    this.active = null
+    this.notify()
+  }
+
+  subscribe(listener: (activeId: string | null) => void) {
+    return this.ctx.effect(() => {
+      this.listeners.add(listener)
+      listener(this.active)
+      return () => this.listeners.delete(listener)
+    })
+  }
+
+  private notify() {
+    for (const listener of this.listeners) listener(this.active)
   }
 }
 
@@ -226,11 +299,17 @@ class MediaServiceImpl extends Service implements MediaService {
     super(ctx, 'media', true)
   }
 
-  async transcode(assetId: number, targetExt: string) {
+  async transcode(assetId: number, transform: MediaTransform) {
     const result = await WailsMediaService.Transcode(
       requireRepo(this.state),
       assetId,
-      targetExt
+      {
+        targetExt:
+          transform.format === 'jpeg' ? '.jpg' : `.${transform.format}`,
+        quality: transform.quality ?? 0,
+        maxWidth: transform.maxWidth ?? 0,
+        maxHeight: transform.maxHeight ?? 0,
+      }
     )
     if (!result) throw new Error('Media transcode returned no result')
     return result
@@ -280,6 +359,7 @@ export function createPluginHost() {
       setId: null,
     },
     selectionListeners: new Set(),
+    assetListeners: new Set(),
   }
 
   context.plugin(AssetsServiceImpl, state)
@@ -315,6 +395,10 @@ export const pluginHost = createPluginHost()
 function requireRepo(state: HostState) {
   if (!state.repoPath) throw new Error('No repository is active')
   return state.repoPath
+}
+
+function notifyAssets(state: HostState) {
+  for (const listener of state.assetListeners) listener()
 }
 
 function syncSelection(state: HostState, selection: Selection) {

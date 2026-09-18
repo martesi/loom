@@ -24,7 +24,7 @@ func (p *recordingMediaProcessor) Thumbnail(_, destPath string, _ bool) (media.D
 	return media.Dimensions{Width: 12, Height: 34}, nil
 }
 
-func (p *recordingMediaProcessor) Transcode(_, _ string) error {
+func (p *recordingMediaProcessor) Transcode(_, _ string, _ media.TranscodeOptions) error {
 	return nil
 }
 
@@ -76,7 +76,7 @@ func TestMediaServiceTranscode(t *testing.T) {
 		t.Fatalf("images = %d, want 1", len(images))
 	}
 
-	result, err := (&MediaService{}).Transcode(repoPath, images[0].ID, ".avif")
+	result, err := (&MediaService{}).Transcode(repoPath, images[0].ID, MediaTranscodeRequest{TargetExt: ".avif", Quality: 60})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,90 @@ func TestMediaServiceTranscode(t *testing.T) {
 		t.Fatal("transcode returned empty media")
 	}
 
-	if _, err := (&MediaService{}).Transcode(repoPath, images[0].ID, ".exe"); err == nil {
+	if _, err := (&MediaService{}).Transcode(repoPath, images[0].ID, MediaTranscodeRequest{TargetExt: ".exe"}); err == nil {
 		t.Fatal("unsupported target extension should fail")
+	}
+}
+
+func TestReplaceMediaPreservesIdentityAndUndoRedo(t *testing.T) {
+	repoPath := t.TempDir()
+	originalPath := filepath.Join(repoPath, "asset.png")
+	if err := os.WriteFile(originalPath, []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := repo.DB.Exec("INSERT INTO images(file_path) VALUES (?)", originalPath)
+	if err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	imageID, err := result.LastInsertId()
+	repo.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	images := &ImageService{}
+	if err := images.ReplaceMedia(repoPath, imageID, ClipboardMedia{
+		Name: "asset.avif",
+		Data: base64.StdEncoding.EncodeToString([]byte("compressed")),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	repo, err = store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replaced, err := repo.GetImageByID(imageID)
+	repo.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replaced.ID != imageID || filepath.Ext(replaced.FilePath) != ".avif" {
+		t.Fatalf("replacement changed identity/path incorrectly: %+v", replaced)
+	}
+	if data, err := os.ReadFile(replaced.FilePath); err != nil || string(data) != "compressed" {
+		t.Fatalf("replacement bytes = %q, err = %v", data, err)
+	}
+
+	undo := &UndoService{}
+	if result, err := undo.Undo(repoPath); err != nil || !result.Applied {
+		t.Fatalf("undo replace: result=%+v err=%v", result, err)
+	}
+	repo, err = store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := repo.GetImageByID(imageID)
+	repo.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.FilePath != originalPath {
+		t.Fatalf("undo path = %q, want %q", restored.FilePath, originalPath)
+	}
+	if data, err := os.ReadFile(restored.FilePath); err != nil || string(data) != "original" {
+		t.Fatalf("undo bytes = %q, err = %v", data, err)
+	}
+
+	if result, err := undo.Redo(repoPath); err != nil || !result.Applied {
+		t.Fatalf("redo replace: result=%+v err=%v", result, err)
+	}
+	repo, err = store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	redone, err := repo.GetImageByID(imageID)
+	repo.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if redone.ID != imageID || filepath.Ext(redone.FilePath) != ".avif" {
+		t.Fatalf("redo changed identity/path incorrectly: %+v", redone)
 	}
 }

@@ -443,6 +443,68 @@ func (r *Repo) MoveFile(imageID int64, newRelPath string) (oldPath, newPath stri
 	return oldPath, newAbs, nil
 }
 
+// SwapRepresentation replaces the active file for an image while keeping the
+// outgoing and incoming representations on disk so undo/redo can swap them
+// back without duplicating media bytes in the operation log.
+func (r *Repo) SwapRepresentation(imageID int64, outgoingStash, incomingPath, activePath string) error {
+	image, err := r.GetImageByID(imageID)
+	if err != nil {
+		return err
+	}
+	currentPath := image.FilePath
+	for _, path := range []string{outgoingStash, incomingPath, activePath} {
+		if _, ok := relUnder(r.Path, path); !ok {
+			return fmt.Errorf("representation path is outside repository: %s", path)
+		}
+	}
+	if _, err := os.Stat(incomingPath); err != nil {
+		return fmt.Errorf("incoming representation: %w", err)
+	}
+	if activePath != currentPath {
+		if _, err := os.Stat(activePath); err == nil {
+			return fmt.Errorf("active representation already exists: %s", activePath)
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+	}
+	if _, err := os.Stat(outgoingStash); err == nil {
+		return fmt.Errorf("representation stash already exists: %s", outgoingStash)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	if err := moveFileOnDisk(currentPath, outgoingStash); err != nil {
+		return fmt.Errorf("stash current representation: %w", err)
+	}
+	if err := moveFileOnDisk(incomingPath, activePath); err != nil {
+		_ = moveFileOnDisk(outgoingStash, currentPath)
+		return fmt.Errorf("activate replacement representation: %w", err)
+	}
+
+	info, err := os.Stat(activePath)
+	if err != nil {
+		_ = moveFileOnDisk(activePath, incomingPath)
+		_ = moveFileOnDisk(outgoingStash, currentPath)
+		return err
+	}
+	if _, err := r.DB.Exec(`
+		UPDATE images
+		SET file_path = ?, file_size = ?, thumb_path = NULL, width = NULL, height = NULL,
+		    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+		WHERE id = ?`, activePath, info.Size(), imageID); err != nil {
+		rollbackIncoming := moveFileOnDisk(activePath, incomingPath)
+		rollbackCurrent := moveFileOnDisk(outgoingStash, currentPath)
+		if rollbackIncoming != nil || rollbackCurrent != nil {
+			return fmt.Errorf("update representation path: %w; rollback failed: incoming=%v current=%v", err, rollbackIncoming, rollbackCurrent)
+		}
+		return err
+	}
+	if image.ThumbPath != "" {
+		_ = os.Remove(image.ThumbPath)
+	}
+	return nil
+}
+
 // LinkSource creates a source -> derived edge, rejecting self-links and any
 // edge that would introduce a cycle. inserted reports whether a new row was
 // actually created — false when the edge already existed (INSERT OR IGNORE

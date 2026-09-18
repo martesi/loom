@@ -18,15 +18,16 @@ type OpStep struct {
 }
 
 const (
-	stepLink        = "link"
-	stepUnlink      = "unlink"
-	stepSetArchived = "set_archived"
-	stepSetTrashed  = "set_trashed"
-	stepTagAdd      = "tag_add"
-	stepTagRemove   = "tag_remove"
-	stepPositions   = "set_positions"
-	stepSizes       = "set_sizes"
-	stepMoveFile    = "move_file"
+	stepLink           = "link"
+	stepUnlink         = "unlink"
+	stepSetArchived    = "set_archived"
+	stepSetTrashed     = "set_trashed"
+	stepTagAdd         = "tag_add"
+	stepTagRemove      = "tag_remove"
+	stepPositions      = "set_positions"
+	stepSizes          = "set_sizes"
+	stepMoveFile       = "move_file"
+	stepRepresentation = "swap_representation"
 
 	// stepGroupExistence covers both CreateGroup and Ungroup — mirroring the
 	// boolean-toggle idiom of stepSetArchived/stepSetTrashed, but for a
@@ -93,6 +94,13 @@ type moveFileStepPayload struct {
 	ImageID int64  `json:"imageId"`
 	OldPath string `json:"oldPath"`
 	NewPath string `json:"newPath"`
+}
+
+type representationStepPayload struct {
+	ImageID       int64  `json:"imageId"`
+	OutgoingStash string `json:"outgoingStash"`
+	IncomingPath  string `json:"incomingPath"`
+	ActivePath    string `json:"activePath"`
 }
 
 // groupExistenceStepPayload is shared by CreateGroup and Ungroup — see
@@ -292,6 +300,18 @@ func applyStep(repo *store.Repo, s OpStep) error {
 		}
 		_, _, err := repo.MoveFile(p.ImageID, p.NewPath)
 		return err
+
+	case stepRepresentation:
+		var p representationStepPayload
+		if err := json.Unmarshal(s.Payload, &p); err != nil {
+			return err
+		}
+		if ok, err := repo.ImageExists(p.ImageID); err != nil {
+			return err
+		} else if !ok {
+			return purgedErr(p.ImageID)
+		}
+		return repo.SwapRepresentation(p.ImageID, p.OutgoingStash, p.IncomingPath, p.ActivePath)
 
 	case stepGroupExistence:
 		var p groupExistenceStepPayload

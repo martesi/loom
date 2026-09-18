@@ -5,6 +5,7 @@ import {
   LibraryService,
   TagService,
 } from '../../../bindings/loom/internal/service'
+import { pluginHost } from '../../lib/plugin-host'
 import { type Selection, selectAsset } from '../../lib/selection'
 
 const fieldClass =
@@ -37,6 +38,11 @@ export function LibraryPanel({
   const [rows, setRows] = useState<LibraryRow[]>([]),
     [dirs, setDirs] = useState<string[]>([]),
     [tags, setTags] = useState<{ id: number; name: string }[]>([])
+  const [itemMenu, setItemMenu] = useState<{
+    x: number
+    y: number
+    assetId: number
+  } | null>(null)
   const anchor = useRef<number | null>(null)
   const callbacks = useRef({ onError, visible })
   callbacks.current = { onError, visible }
@@ -85,6 +91,19 @@ export function LibraryPanel({
       cancelled = true
     }
   }, [path, mode, folder, search, status, placement, tagId, refresh])
+  useEffect(() => {
+    if (!itemMenu) return
+    const close = () => setItemMenu(null)
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') close()
+    }
+    window.addEventListener('click', close)
+    window.addEventListener('keydown', keydown)
+    return () => {
+      window.removeEventListener('click', close)
+      window.removeEventListener('keydown', keydown)
+    }
+  }, [itemMenu])
   const selected = selection.surface === 'assets' ? selection.ids : []
   return (
     <div
@@ -198,6 +217,18 @@ export function LibraryPanel({
               )
               if (!e.shiftKey) anchor.current = row.id
             }}
+            onContextMenu={(event) => {
+              event.preventDefault()
+              if (!selected.includes(row.id)) {
+                select([row.id])
+                anchor.current = row.id
+              }
+              setItemMenu({
+                x: event.clientX,
+                y: event.clientY,
+                assetId: row.id,
+              })
+            }}
             onDragStart={(e) => {
               const ids = selected.includes(row.id) ? selected : [row.id]
               select(ids)
@@ -218,6 +249,19 @@ export function LibraryPanel({
           </button>
         ))}
       </div>
+      {itemMenu && (
+        <div
+          role="menu"
+          className="fixed z-50 min-w-44 rounded-lg border border-black/8 bg-white p-1.5 shadow-lg"
+          style={{ left: itemMenu.x, top: itemMenu.y }}
+        >
+          {pluginHost.context.ui.list('assets.itemMenu').map((contribution) => (
+            <div key={contribution.id}>
+              {contribution.render({ assetId: itemMenu.assetId })}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

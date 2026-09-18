@@ -9,6 +9,7 @@
         "@cordisjs/core": "3.18.1",
         "@lingui/core": "^6.6.0",
         "@lingui/react": "^6.6.0",
+        "@loom/image-tools-core": "file:../packages/image-tools-core",
         "@tailwindcss/vite": "^4.3.3",
         "@tanstack/react-router": "^1.170.21",
         "@tanstack/react-virtual": "^3.14.9",
@@ -171,6 +172,8 @@
     "@lingui/react": ["@lingui/react@6.6.0", "", { "dependencies": { "@lingui/babel-plugin-lingui-macro": "6.6.0", "@lingui/core": "6.6.0", "use-sync-external-store": "^1.6.0" }, "peerDependencies": { "babel-plugin-macros": "2 || 3", "react": "^16.14.0 || ^17.0.0 || ^18.0.0 || ^19.0.0" }, "optionalPeers": ["babel-plugin-macros"] }, "sha512-oRZvm8nx47wQB7Y4tQ4K78Ba0Ta0wJLRpT7125zW3J1wq++hMfc9XMqemCau2IDVtCMHGHdlLPiBeyFSIq/0Rw=="],
 
     "@lingui/vite-plugin": ["@lingui/vite-plugin@6.6.0", "", { "dependencies": { "@lingui/cli": "6.6.0", "@lingui/conf": "6.6.0" }, "peerDependencies": { "@babel/core": "^7.29.0 || ^8.0.0", "@lingui/babel-plugin-lingui-macro": "^5 || ^6", "@rolldown/plugin-babel": "^0.1.7 || ^0.2.0", "rolldown": "^1.0.0-rc.5", "vite": "^6.3.0 || ^7 || ^8" }, "optionalPeers": ["@babel/core", "@lingui/babel-plugin-lingui-macro", "@rolldown/plugin-babel", "rolldown"] }, "sha512-1kZMeGNk5hYQzrEPA3RcXQKb106VC26GqxpXpjVIhS4r2sT4c4gztk70T65VSwyZ7Uyc1pIpXxys3uY2DTfHKw=="],
+
+    "@loom/image-tools-core": ["@loom/image-tools-core@file:../packages/image-tools-core", {}],
 
     "@messageformat/date-skeleton": ["@messageformat/date-skeleton@1.1.0", "", {}, "sha512-rmGAfB1tIPER+gh3p/RgA+PVeRE/gxuQ2w4snFWPF5xtb5mbWR7Cbw7wCOftcUypbD6HVoxrVdyyghPm3WzP5A=="],
 

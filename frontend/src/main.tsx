@@ -3,6 +3,8 @@ import { RouterProvider } from '@tanstack/react-router'
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { i18n } from './i18n'
+import { pluginHost } from './lib/plugin-host'
+import { imageToolsPlugin } from './plugins/image-tools'
 import { router } from './router'
 import './index.css'
 
@@ -14,6 +16,7 @@ import './index.css'
 // it here, once, ahead of every listener the app attaches, is the only
 // lever that actually works on this platform.
 window.addEventListener('contextmenu', (event) => event.preventDefault())
+pluginHost.context.plugin(imageToolsPlugin)
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
