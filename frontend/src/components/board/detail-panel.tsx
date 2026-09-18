@@ -77,7 +77,7 @@ export function DetailPanel({
   const group = data.groups?.find((g) => g.id === selection.group)
   if (group)
     return (
-      <div className="grid gap-3 p-3 text-xs">
+      <div className="loom-detail-panel grid gap-3 p-3 text-xs">
         <label>
           Set name
           <input
@@ -123,7 +123,7 @@ export function DetailPanel({
     )
   if (selection.edges.length)
     return (
-      <div className="p-3 text-xs">
+      <div className="loom-detail-panel p-3 text-xs">
         <p>{selection.edges.length} relationships</p>
         {(data.relationships ?? [])
           .filter((r) => selection.edges.includes(r.id))
@@ -147,7 +147,7 @@ export function DetailPanel({
     )
   if (!images.length)
     return (
-      <p className="p-3 text-xs text-ink-subtle">
+      <p className="p-3 text-xs text-ink-muted">
         Select an asset, set, or relationship.
       </p>
     )
@@ -159,7 +159,7 @@ export function DetailPanel({
     ? (data.relationships ?? []).filter((r) => r.sourceImageId === image.id)
     : []
   return (
-    <div className="grid gap-3 overflow-auto p-3 text-xs">
+    <div className="loom-detail-panel grid gap-3 overflow-auto p-3 text-xs">
       {image ? (
         <>
           <img

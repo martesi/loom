@@ -17,9 +17,9 @@ const backendURL =
   `http://127.0.0.1:${Number(process.env.WAILS_SERVER_PORT) || 8080}`
 const distDirectory = path.resolve(import.meta.dirname, './dist')
 
-// The native Wails asset server can proxy HTTP, but beta.4 deliberately
-// rejects WebSocket requests. Tell Vite's client to connect to the real Vite
-// server so native development keeps HMR without requiring a Wails fork.
+// The native Wails AssetServer proxies HTTP but rejects WebSocket upgrades.
+// Tell Vite's client to connect to the real Vite server so native development
+// keeps HMR without requiring a Wails fork.
 const hmr = {
   protocol: 'ws' as const,
   host: viteHost,

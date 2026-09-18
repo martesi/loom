@@ -23,6 +23,7 @@ import { GroupNode } from '../components/board/group-node'
 import { ImageNode } from '../components/board/image-node'
 import { LibraryPanel } from '../components/board/library-panel'
 import { RepoSelect } from '../components/board/repo-select'
+import { Button } from '../components/ui/button'
 import { copyMedia, filesToMedia, readMedia } from '../lib/clipboard'
 import { computeSubgraphLayout } from '../lib/layout'
 import { emptySelection, type Selection } from '../lib/selection'
@@ -369,22 +370,27 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     )
     await reload()
   }
-  const toolbar = (label: string, action: () => Promise<unknown>) => (
-    <button
-      type="button"
+  const toolbar = (
+    label: string,
+    action: () => Promise<unknown>,
+    disabled = false
+  ) => (
+    <Button
+      variant="secondary"
+      size="sm"
+      disabled={disabled}
       onClick={() => void action().catch(report)}
-      className="rounded border border-black/10 bg-card px-2 py-1"
     >
       {label}
-    </button>
+    </Button>
   )
   return (
     <div className="flex h-screen flex-col bg-surface-canvas text-ink">
       <header className="flex items-center gap-2 border-b border-black/10 bg-card px-3 py-2 text-xs">
         <RepoSelect repo={repo} />
-        <strong>Canvas</strong>
+        <h1 className="text-xs font-semibold">Canvas</h1>
         {toolbar('Rescan', reload)}
-        <label className="cursor-pointer">
+        <label className="inline-flex h-8 cursor-pointer items-center justify-center rounded-sm border border-black/16 px-3 text-xs font-semibold text-ink transition-colors hover:bg-black/[0.03] focus-within:ring-2 focus-within:ring-primary/40">
           Import
           <input
             type="file"
@@ -409,8 +415,8 @@ function Canvas({ repo }: { repo: RepoInfo }) {
           </button>
         </div>
       )}
-      <div className="flex min-h-0 flex-1">
-        <FloatingPanel title="Assets">
+      <div className="relative flex min-h-0 flex-1">
+        <FloatingPanel title="Assets" side="left">
           <LibraryPanel
             path={repo.path}
             selection={selection}
@@ -659,30 +665,42 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             <Background />
           </ReactFlow>
           <div className="absolute bottom-3 left-3 right-3 flex flex-wrap gap-1 text-xs">
-            {toolbar('Fit all', async () => {
-              await flow.fitView({ padding: 0.2 })
-              await ImageService.SetViewport(repo.path, flow.getViewport())
-            })}
-            {toolbar('Fit selection', async () => {
-              await flow.fitView({
-                nodes: displayNodes.filter((n) => n.selected),
-                padding: 0.2,
-              })
-              await ImageService.SetViewport(repo.path, flow.getViewport())
-            })}
+            {toolbar(
+              'Fit all',
+              async () => {
+                await flow.fitView({ padding: 0.2 })
+                await ImageService.SetViewport(repo.path, flow.getViewport())
+              },
+              displayNodes.length === 0
+            )}
+            {toolbar(
+              'Fit selection',
+              async () => {
+                await flow.fitView({
+                  nodes: displayNodes.filter((n) => n.selected),
+                  padding: 0.2,
+                })
+                await ImageService.SetViewport(repo.path, flow.getViewport())
+              },
+              !displayNodes.some((n) => n.selected)
+            )}
             {toolbar('Reset 100%', async () => {
               const p = center()
               await flow.setCenter(p.x, p.y, { zoom: 1 })
               await ImageService.SetViewport(repo.path, flow.getViewport())
             })}
-            {toolbar('Auto-arrange', arrange)}
-            {toolbar('Create set', async () => {
-              await GroupService.CreateGroup(repo.path, '', '', selectedIds())
-              await reload()
-            })}
+            {toolbar('Auto-arrange', arrange, displayNodes.length < 2)}
+            {toolbar(
+              'Create set',
+              async () => {
+                await GroupService.CreateGroup(repo.path, '', '', selectedIds())
+                await reload()
+              },
+              selectedIds().length === 0
+            )}
           </div>
         </main>
-        <FloatingPanel title="Inspector">
+        <FloatingPanel title="Inspector" side="right">
           <DetailPanel
             path={repo.path}
             data={data}

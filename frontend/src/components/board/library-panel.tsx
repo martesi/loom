@@ -7,6 +7,9 @@ import {
 } from '../../../bindings/loom/internal/service'
 import { type Selection, selectAsset } from '../../lib/selection'
 
+const fieldClass =
+  'h-8 w-full rounded-sm border border-black/12 bg-card px-2 text-xs text-ink outline-none focus-visible:ring-2 focus-visible:ring-primary/40'
+
 interface Props {
   path: string
   selection: Selection
@@ -97,7 +100,7 @@ export function LibraryPanel({
             key={m}
             aria-pressed={mode === m}
             onClick={() => setMode(m)}
-            className="flex-1 rounded p-2 aria-pressed:bg-primary/15"
+            className="h-8 flex-1 rounded-sm px-2 font-semibold text-ink-muted outline-none transition-colors hover:bg-black/[0.03] focus-visible:ring-2 focus-visible:ring-primary/40 aria-pressed:bg-primary-soft aria-pressed:text-ink"
           >
             {m === 'all' ? 'All Assets' : 'Folders'}
           </button>
@@ -106,12 +109,14 @@ export function LibraryPanel({
       {mode === 'all' ? (
         <div className="grid gap-2 p-2">
           <input
+            className={fieldClass}
             aria-label="Search assets"
             placeholder="Search assets"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
           <select
+            className={fieldClass}
             aria-label="Asset state"
             value={status}
             onChange={(e) => setStatus(e.target.value)}
@@ -121,6 +126,7 @@ export function LibraryPanel({
             ))}
           </select>
           <select
+            className={fieldClass}
             aria-label="Placement"
             value={placement}
             onChange={(e) => setPlacement(e.target.value)}
@@ -130,6 +136,7 @@ export function LibraryPanel({
             <option>unplaced</option>
           </select>
           <select
+            className={fieldClass}
             aria-label="Tag filter"
             value={tagId}
             onChange={(e) => setTagId(Number(e.target.value))}
@@ -146,13 +153,14 @@ export function LibraryPanel({
         <div className="p-2">
           <button
             type="button"
+            className="max-w-full rounded-sm px-2 py-1.5 text-left font-medium text-ink-muted outline-none hover:bg-black/[0.03] focus-visible:ring-2 focus-visible:ring-primary/40"
             onClick={() => setFolder(folder.split('/').slice(0, -1).join('/'))}
           >
             ↑ Repository / {folder}
           </button>
           {dirs.map((d) => (
             <button
-              className="block p-2"
+              className="block w-full rounded-sm px-2 py-1.5 text-left text-ink outline-none hover:bg-black/[0.03] focus-visible:ring-2 focus-visible:ring-primary/40"
               type="button"
               key={d}
               onClick={() => setFolder([folder, d].filter(Boolean).join('/'))}
@@ -176,7 +184,7 @@ export function LibraryPanel({
             data-asset-id={row.id}
             key={row.id}
             draggable
-            className="flex w-full items-center gap-2 px-2 py-1 text-left aria-selected:bg-primary/20"
+            className="flex w-full items-center gap-2 px-2 py-1.5 text-left outline-none hover:bg-black/[0.03] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40 aria-selected:bg-primary/15"
             onClick={(e) => {
               select(
                 selectAsset(
