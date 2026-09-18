@@ -1,3 +1,4 @@
+import { Dialog } from '@base-ui-components/react/dialog'
 import {
   applyEdgeChanges,
   applyNodeChanges,
@@ -55,6 +56,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     [space, setSpace] = useState(false),
     [ready, setReady] = useState(false)
   const [compressIds, setCompressIds] = useState<number[] | null>(null)
+  const [purgeIds, setPurgeIds] = useState<number[] | null>(null)
   const [reveal, setReveal] = useState<{
     id: number
     folder: string | null
@@ -270,14 +272,8 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   async function remove(purge: boolean) {
     const ids = selectedIds()
     if (purge) {
-      if (
-        !ids.length ||
-        !window.confirm(
-          `Permanently purge ${ids.length} assets? This cannot be undone.`
-        )
-      )
-        return
-      await ImageService.PurgeImages(repo.path, ids)
+      if (ids.length) setPurgeIds(ids)
+      return
     } else if (selection.surface === 'assets') {
       for (const id of ids) await ImageService.TrashImage(repo.path, id)
     } else {
@@ -285,6 +281,13 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       for (const id of selection.edges)
         await ImageService.UnlinkSource(repo.path, id)
     }
+    setSelection({ ...selection, ids: [], edges: [], group: null })
+    await reload()
+  }
+  async function confirmPurge() {
+    if (!purgeIds?.length) return
+    await ImageService.PurgeImages(repo.path, purgeIds)
+    setPurgeIds(null)
     setSelection({ ...selection, ids: [], edges: [], group: null })
     await reload()
   }
@@ -795,6 +798,38 @@ function Canvas({ repo }: { repo: RepoInfo }) {
           onChange={reload}
         />
       )}
+      <Dialog.Root
+        open={purgeIds !== null}
+        onOpenChange={(open) => {
+          if (!open) setPurgeIds(null)
+        }}
+      >
+        <Dialog.Portal>
+          <Dialog.Backdrop className="fixed inset-0 z-50 bg-black/20 backdrop-blur-[1px]" />
+          <Dialog.Popup className="fixed left-1/2 top-1/2 z-50 w-[min(420px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-black/8 bg-card p-5 shadow-lg outline-none">
+            <Dialog.Title className="text-sm font-semibold text-ink">
+              Permanently delete {purgeIds?.length ?? 0} asset
+              {purgeIds?.length === 1 ? '' : 's'}?
+            </Dialog.Title>
+            <Dialog.Description className="mt-2 text-xs leading-relaxed text-ink-muted">
+              This removes the files and Loom metadata immediately. Trash
+              retention does not apply, and this action cannot be undone.
+            </Dialog.Description>
+            <div className="mt-5 flex justify-end gap-2">
+              <Dialog.Close render={<Button variant="secondary" size="sm" />}>
+                Cancel
+              </Dialog.Close>
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={() => void confirmPurge().catch(report)}
+              >
+                Permanently delete
+              </Button>
+            </div>
+          </Dialog.Popup>
+        </Dialog.Portal>
+      </Dialog.Root>
     </div>
   )
 }

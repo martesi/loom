@@ -201,13 +201,17 @@ test('browser clipboard copies original media and paste creates fresh unplaced a
   await expect(page.locator('[data-asset-id]')).toHaveCount(2)
   await expect(page.locator('.react-flow__node')).toHaveCount(0)
   await expect(page.locator('[aria-selected=true]')).toHaveCount(1)
-  page.once('dialog', (dialog) => {
-    expect(dialog.message()).toContain('1 assets')
-    void dialog.dismiss()
+  await page.keyboard.press('Shift+Delete')
+  const purgeDialog = page.getByRole('dialog', {
+    name: 'Permanently delete 1 asset?',
   })
-  await page.keyboard.press('Shift+Delete')
+  await expect(purgeDialog).toBeVisible()
+  await purgeDialog.getByRole('button', { name: 'Cancel' }).click()
   await expect(page.locator('[data-asset-id]')).toHaveCount(2)
-  page.once('dialog', (dialog) => void dialog.accept())
   await page.keyboard.press('Shift+Delete')
+  await page
+    .getByRole('dialog', { name: 'Permanently delete 1 asset?' })
+    .getByRole('button', { name: 'Permanently delete' })
+    .click()
   await expect(page.locator('[data-asset-id]')).toHaveCount(1)
 })

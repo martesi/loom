@@ -37,7 +37,8 @@ export function LibraryPanel({
     [search, setSearch] = useState(''),
     [status, setStatus] = useState('active'),
     [placement, setPlacement] = useState(''),
-    [tagId, setTagId] = useState(0)
+    [tagId, setTagId] = useState(0),
+    [filtersOpen, setFiltersOpen] = useState(false)
   const [rows, setRows] = useState<LibraryRow[]>([]),
     [dirs, setDirs] = useState<string[]>([]),
     [tags, setTags] = useState<{ id: number; name: string }[]>([])
@@ -46,6 +47,9 @@ export function LibraryPanel({
     y: number
     assetIds: number[]
   } | null>(null)
+  const [renaming, setRenaming] = useState<{ id: number; name: string } | null>(
+    null
+  )
   const anchor = useRef<number | null>(null)
   const callbacks = useRef({ onError, visible })
   callbacks.current = { onError, visible }
@@ -97,17 +101,32 @@ export function LibraryPanel({
   useEffect(() => {
     if (!itemMenu) return
     const close = () => setItemMenu(null)
+    const clickOutside = (event: MouseEvent) => {
+      if (
+        event
+          .composedPath()
+          .some(
+            (node) =>
+              node instanceof Element && node.getAttribute('role') === 'menu'
+          )
+      )
+        return
+      close()
+    }
     const keydown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') close()
     }
-    window.addEventListener('click', close)
+    window.addEventListener('click', clickOutside)
     window.addEventListener('keydown', keydown)
     return () => {
-      window.removeEventListener('click', close)
+      window.removeEventListener('click', clickOutside)
       window.removeEventListener('keydown', keydown)
     }
   }, [itemMenu])
   const selected = selection.surface === 'assets' ? selection.ids : []
+  const activeFilterCount =
+    Number(status !== 'active') + Number(Boolean(placement)) + Number(tagId > 0)
+  const tagName = tags.find((tag) => tag.id === tagId)?.name
   async function moveAssets(ids: number[], targetFolder: string) {
     await Promise.all(
       ids.map((id) => {
@@ -136,10 +155,9 @@ export function LibraryPanel({
       onError(error)
     }
   }
-  function renameAsset(id: number) {
+  function renameAsset(id: number, name: string) {
     const row = rows.find((item) => item.id === id)
     if (!row) return
-    const name = window.prompt('Rename file', row.fileName)
     if (!name || name === row.fileName) return
     if (/[\\/]/.test(name)) {
       onError(new Error('File name cannot contain / or \\'))
@@ -175,68 +193,129 @@ export function LibraryPanel({
       </div>
       {mode === 'all' ? (
         <div className="grid gap-2 p-2">
-          <input
-            className={fieldClass}
-            aria-label="Search assets"
-            placeholder="Search assets"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-          <select
-            className={fieldClass}
-            aria-label="Asset state"
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-          >
-            {['active', 'all', 'archived', 'trashed', 'missing'].map((s) => (
-              <option key={s}>{s}</option>
-            ))}
-          </select>
-          <select
-            className={fieldClass}
-            aria-label="Placement"
-            value={placement}
-            onChange={(e) => setPlacement(e.target.value)}
-          >
-            <option value="">All placements</option>
-            <option>placed</option>
-            <option>unplaced</option>
-          </select>
-          <select
-            className={fieldClass}
-            aria-label="Tag filter"
-            value={tagId}
-            onChange={(e) => setTagId(Number(e.target.value))}
-          >
-            <option value={0}>All tags</option>
-            {tags.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </select>
+          <div className="flex gap-1.5">
+            <input
+              className={fieldClass}
+              aria-label="Search assets"
+              placeholder="Search assets"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <button
+              type="button"
+              aria-expanded={filtersOpen}
+              onClick={() => setFiltersOpen((open) => !open)}
+              className="h-8 shrink-0 rounded-sm border border-black/12 px-2.5 font-semibold text-ink-muted outline-none hover:bg-black/[0.03] focus-visible:ring-2 focus-visible:ring-primary/40"
+            >
+              Filters{activeFilterCount ? ` ${activeFilterCount}` : ''}
+            </button>
+          </div>
+          {filtersOpen && (
+            <div className="grid gap-1.5 rounded-md border border-black/6 bg-black/[0.015] p-2">
+              <select
+                className={fieldClass}
+                aria-label="Asset state"
+                value={status}
+                onChange={(e) => setStatus(e.target.value)}
+              >
+                {['active', 'all', 'archived', 'trashed', 'missing'].map(
+                  (s) => (
+                    <option key={s}>{s}</option>
+                  )
+                )}
+              </select>
+              <select
+                className={fieldClass}
+                aria-label="Placement"
+                value={placement}
+                onChange={(e) => setPlacement(e.target.value)}
+              >
+                <option value="">All placements</option>
+                <option>placed</option>
+                <option>unplaced</option>
+              </select>
+              <select
+                className={fieldClass}
+                aria-label="Tag filter"
+                value={tagId}
+                onChange={(e) => setTagId(Number(e.target.value))}
+              >
+                <option value={0}>All tags</option>
+                {tags.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          {activeFilterCount > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {status !== 'active' && (
+                <button
+                  type="button"
+                  onClick={() => setStatus('active')}
+                  className="rounded-full bg-primary-soft px-2 py-1 text-[11px] text-ink"
+                >
+                  {status} ×
+                </button>
+              )}
+              {placement && (
+                <button
+                  type="button"
+                  onClick={() => setPlacement('')}
+                  className="rounded-full bg-primary-soft px-2 py-1 text-[11px] text-ink"
+                >
+                  {placement} ×
+                </button>
+              )}
+              {tagId > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setTagId(0)}
+                  className="rounded-full bg-primary-soft px-2 py-1 text-[11px] text-ink"
+                >
+                  {tagName ?? 'tag'} ×
+                </button>
+              )}
+            </div>
+          )}
         </div>
       ) : (
         <div className="p-2">
-          <button
-            type="button"
-            className="max-w-full rounded-sm px-2 py-1.5 text-left font-medium text-ink-muted outline-none hover:bg-black/[0.03] focus-visible:ring-2 focus-visible:ring-primary/40"
-            onClick={() => setFolder(folder.split('/').slice(0, -1).join('/'))}
-            onDragOver={(event) => {
-              if (
-                !folder ||
-                !event.dataTransfer.types.includes('application/x-loom-assets')
-              )
-                return
-              event.preventDefault()
-              event.dataTransfer.dropEffect = 'move'
-            }}
-            onDrop={(event) =>
-              dropInto(event, folder.split('/').slice(0, -1).join('/'))
-            }
-          >
-            ↑ Repository / {folder}
-          </button>
+          <div className="mb-1 flex flex-wrap items-center gap-0.5 text-ink-muted">
+            {['Repository', ...folder.split('/').filter(Boolean)].map(
+              (part, index, parts) => {
+                const target = parts.slice(1, index + 1).join('/')
+                return (
+                  <span
+                    key={target || 'repository'}
+                    className="flex items-center"
+                  >
+                    {index > 0 && <span className="text-ink-subtle">/</span>}
+                    <button
+                      type="button"
+                      className="rounded-sm px-1.5 py-1 font-medium outline-none hover:bg-black/[0.03] focus-visible:ring-2 focus-visible:ring-primary/40"
+                      onClick={() => setFolder(target)}
+                      onDragOver={(event) => {
+                        if (
+                          !event.dataTransfer.types.includes(
+                            'application/x-loom-assets'
+                          )
+                        )
+                          return
+                        event.preventDefault()
+                        event.dataTransfer.dropEffect = 'move'
+                      }}
+                      onDrop={(event) => dropInto(event, target)}
+                    >
+                      {part}
+                    </button>
+                  </span>
+                )
+              }
+            )}
+          </div>
           {dirs.map((d) => (
             <button
               className="block w-full rounded-sm px-2 py-1.5 text-left text-ink outline-none hover:bg-black/[0.03] focus-visible:ring-2 focus-visible:ring-primary/40"
@@ -262,12 +341,24 @@ export function LibraryPanel({
           ))}
         </div>
       )}
+      <div className="px-2 pb-1 text-[11px] text-ink-subtle">
+        {rows.length} asset{rows.length === 1 ? '' : 's'}
+      </div>
       <div
         role="listbox"
         aria-label="Assets"
         aria-multiselectable="true"
         className="min-h-0 flex-1 overflow-auto"
       >
+        {rows.length === 0 && (
+          <div className="px-3 py-6 text-center text-[11.5px] leading-relaxed text-ink-muted">
+            {mode === 'folders'
+              ? 'No assets in this folder.'
+              : search || status !== 'active' || placement || tagId
+                ? 'No assets match these filters.'
+                : 'No assets yet. Import files or rescan the repository.'}
+          </div>
+        )}
         {rows.map((row) => (
           <button
             type="button"
@@ -328,26 +419,78 @@ export function LibraryPanel({
           className="fixed z-50 min-w-44 rounded-lg border border-black/8 bg-white p-1.5 shadow-lg"
           style={{ left: itemMenu.x, top: itemMenu.y }}
         >
-          {mode === 'folders' && itemMenu.assetIds.length === 1 && (
-            <button
-              type="button"
-              className="block w-full rounded-md px-3 py-2 text-left text-[12.5px] text-ink hover:bg-black/[0.04]"
-              onClick={() => {
-                const [id] = itemMenu.assetIds
+          {renaming ? (
+            <form
+              className="grid w-56 gap-1.5 p-1"
+              onSubmit={(event) => {
+                event.preventDefault()
+                const input = event.currentTarget.elements.namedItem(
+                  'rename-file'
+                ) as HTMLInputElement
+                renameAsset(renaming.id, input.value.trim())
+                setRenaming(null)
                 setItemMenu(null)
-                renameAsset(id)
               }}
             >
-              Rename…
-            </button>
+              <label
+                htmlFor="rename-file"
+                className="text-[11px] font-semibold text-ink-muted"
+              >
+                Rename file
+              </label>
+              <input
+                id="rename-file"
+                name="rename-file"
+                aria-label="Rename file"
+                defaultValue={renaming.name}
+                className={fieldClass}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') {
+                    event.preventDefault()
+                    setRenaming(null)
+                  }
+                }}
+              />
+              <div className="flex justify-end gap-1">
+                <button
+                  type="button"
+                  className="rounded-sm px-2 py-1.5 text-[12px] text-ink-muted hover:bg-black/[0.04]"
+                  onClick={() => setRenaming(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="rounded-sm bg-primary px-2 py-1.5 text-[12px] font-semibold text-white"
+                >
+                  Rename
+                </button>
+              </div>
+            </form>
+          ) : (
+            <>
+              {mode === 'folders' && itemMenu.assetIds.length === 1 && (
+                <button
+                  type="button"
+                  className="block w-full rounded-md px-3 py-2 text-left text-[12.5px] text-ink hover:bg-black/[0.04]"
+                  onClick={() => {
+                    const [id] = itemMenu.assetIds
+                    const row = rows.find((item) => item.id === id)
+                    if (row) setRenaming({ id, name: row.fileName })
+                  }}
+                >
+                  Rename…
+                </button>
+              )}
+              <button
+                type="button"
+                className="block w-full rounded-md px-3 py-2 text-left text-[12.5px] text-ink hover:bg-black/[0.04]"
+                onClick={() => compress(itemMenu.assetIds)}
+              >
+                Compress…
+              </button>
+            </>
           )}
-          <button
-            type="button"
-            className="block w-full rounded-md px-3 py-2 text-left text-[12.5px] text-ink hover:bg-black/[0.04]"
-            onClick={() => compress(itemMenu.assetIds)}
-          >
-            Compress…
-          </button>
         </div>
       )}
     </div>

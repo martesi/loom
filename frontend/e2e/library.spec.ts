@@ -18,6 +18,9 @@ test('library selection, search, placement filters, and folder navigation', asyn
 }) => {
   await openFixtureRepo(page, 'library-fixtures')
   await expect(assets(page)).toHaveCount(4)
+  await expect(page.getByText('4 assets', { exact: true })).toBeVisible()
+  const filters = page.getByRole('button', { name: /^Filters/ })
+  await expect(filters).toHaveAttribute('aria-expanded', 'false')
 
   await page
     .getByRole('textbox', { name: 'Search assets' })
@@ -35,6 +38,7 @@ test('library selection, search, placement filters, and folder navigation', asyn
 
   await page.locator('.react-flow__pane').click({ position: { x: 20, y: 20 } })
   await placeAssets(page, ['root-alpha.png'])
+  await filters.click()
   await page.getByRole('combobox', { name: 'Placement' }).selectOption('placed')
   await expect(assets(page)).toHaveCount(1)
   await expect(asset(page, 'root-alpha.png')).toBeVisible()
@@ -62,8 +66,15 @@ test('library selection, search, placement filters, and folder navigation', asyn
   await expect(asset(page, 'folder-gamma.png')).toBeVisible()
 
   await asset(page, 'folder-gamma.png').click({ button: 'right' })
-  page.once('dialog', (dialog) => dialog.accept('renamed-gamma.png'))
   await page.getByRole('menu').getByRole('button', { name: 'Rename…' }).click()
+  await page
+    .getByRole('menu')
+    .getByLabel('Rename file')
+    .fill('renamed-gamma.png')
+  await page
+    .getByRole('menu')
+    .getByRole('button', { name: 'Rename', exact: true })
+    .click()
   await expect(asset(page, 'renamed-gamma.png')).toBeVisible()
   await expect(asset(page, 'folder-gamma.png')).toHaveCount(0)
 
@@ -79,19 +90,19 @@ test('inspector edits metadata and library filters follow tag/archive/trash stat
   await expect(
     page.getByLabel('Inspector').getByText('inspect-alpha.png', { exact: true })
   ).toBeVisible()
+  const inspector = page.getByLabel('Inspector')
+  await page.getByRole('button', { name: /^Filters/ }).click()
 
-  page.once('dialog', (dialog) => dialog.accept('portrait'))
-  await page.getByRole('button', { name: 'Add tag' }).click()
-  await expect(page.getByText('Common tags: portrait')).toBeVisible()
+  await inspector.getByLabel('Add tag').fill('portrait')
+  await inspector.getByRole('button', { name: 'Add', exact: true }).click()
+  await expect(inspector.getByText('Common: portrait')).toBeVisible()
 
-  page.once('dialog', (dialog) => dialog.accept('soft studio light'))
-  await page.getByRole('button', { name: 'Edit prompt' }).click()
-  await expect(
-    page.getByText('soft studio light', { exact: true })
-  ).toBeVisible()
+  await inspector.getByLabel('Prompt').fill('soft studio light')
+  await inspector.getByRole('button', { name: 'Save prompt' }).click()
+  await expect(inspector.getByLabel('Prompt')).toHaveValue('soft studio light')
 
-  page.once('dialog', (dialog) => dialog.accept('renamed-alpha.png'))
-  await page.getByRole('button', { name: 'Move / rename' }).click()
+  await inspector.getByLabel('File path').fill('renamed-alpha.png')
+  await inspector.getByRole('button', { name: 'Move', exact: true }).click()
   await expect(asset(page, 'renamed-alpha.png')).toBeVisible()
   await expect(asset(page, 'inspect-alpha.png')).toHaveCount(0)
 
@@ -146,6 +157,7 @@ test('rescan discovers new files and exposes missing files', async ({
   await placeAssets(page, ['rescan-alpha.png'])
   await rm(await fixturePath('rescan-fixtures', 'rescan-alpha.png'))
   await page.getByRole('button', { name: 'Rescan' }).click()
+  await page.getByRole('button', { name: /^Filters/ }).click()
   await page
     .getByRole('combobox', { name: 'Asset state' })
     .selectOption('missing')
@@ -164,7 +176,13 @@ test('show in folders reveals the selected asset location', async ({
     page.getByRole('button', { name: 'Folders', exact: true })
   ).toHaveAttribute('aria-pressed', 'true')
   await expect(asset(page, 'folder-delta.png')).toBeVisible()
-  await expect(page.getByRole('button', { name: /Repository/ })).toContainText(
-    'nested/deeper'
-  )
+  await expect(
+    page.getByRole('button', { name: 'Repository', exact: true })
+  ).toBeVisible()
+  await expect(
+    page.getByRole('button', { name: 'nested', exact: true })
+  ).toBeVisible()
+  await expect(
+    page.getByRole('button', { name: 'deeper', exact: true })
+  ).toBeVisible()
 })

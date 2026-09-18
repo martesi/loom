@@ -35,10 +35,26 @@ export function Landing({
           </h1>
           <p className="max-w-[340px] text-center text-[13px] leading-relaxed text-ink-muted">
             <Trans>
-              Loom keeps every derived-image relationship on a canvas that stays
-              fast — even at thousands of images.
+              Open an image folder as a local Loom repository. Assets stay on
+              disk, and only the images you place appear on the Canvas.
             </Trans>
           </p>
+          <div className="grid w-full gap-2 rounded-md border border-black/6 bg-surface p-3 text-[11.5px] leading-relaxed text-ink-muted">
+            <p>
+              <strong className="text-ink">Assets</strong>{' '}
+              <Trans>browse every file, including unplaced images.</Trans>
+            </p>
+            <p>
+              <strong className="text-ink">Canvas</strong>{' '}
+              <Trans>
+                organizes selected images and source → derived links.
+              </Trans>
+            </p>
+            <p>
+              <strong className="text-ink">Inspector</strong>{' '}
+              <Trans>edits metadata for the current selection.</Trans>
+            </p>
+          </div>
           <div className="mt-2 flex gap-2.5">
             <Button variant="primary" onClick={onOpenFolder}>
               <Trans>Open Folder</Trans>
