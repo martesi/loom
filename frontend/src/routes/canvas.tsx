@@ -26,10 +26,12 @@ import { RepoSelect } from '../components/canvas/repo-select'
 import { Button } from '../components/ui/button'
 import { copyMedia, filesToMedia, readMedia } from '../lib/clipboard'
 import { computeSubgraphLayout } from '../lib/layout'
+import { pluginHost } from '../lib/plugin-host'
 import { emptySelection, type Selection } from '../lib/selection'
 
 const nodeTypes = { image: ImageNode, group: GroupNode }
 export function CanvasWorkspace({ repo }: { repo: RepoInfo }) {
+  useEffect(() => pluginHost.activateRepository(repo.path), [repo.path])
   return (
     <ReactFlowProvider>
       <Canvas repo={repo} />
@@ -48,6 +50,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     [edges, setEdges] = useState<Edge[]>([])
   const [selection, setSelection] = useState<Selection>(emptySelection),
     [expanded, setExpanded] = useState<number | null>(null)
+  useEffect(() => pluginHost.setSelection(selection), [selection])
   const [refresh, setRefresh] = useState(0),
     [error, setError] = useState(''),
     [space, setSpace] = useState(false),

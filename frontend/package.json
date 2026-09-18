@@ -10,12 +10,14 @@
     "preview": "vite preview",
     "check": "biome check",
     "format": "biome check --write",
+    "test:unit": "bun test src",
     "i18n:extract": "lingui extract",
     "typecheck:e2e": "tsc -p e2e/tsconfig.json --noEmit",
     "test:e2e": "bash ../build/e2e/setup-workspace.sh && bun run typecheck:e2e && playwright test"
   },
   "dependencies": {
     "@base-ui-components/react": "^1.0.0-rc.0",
+    "@cordisjs/core": "3.18.1",
     "@lingui/core": "^6.6.0",
     "@lingui/react": "^6.6.0",
     "@tailwindcss/vite": "^4.3.3",
