@@ -1,59 +1,58 @@
-# Welcome to Your New Wails3 Project!
+# Loom
 
-Congratulations on generating your Wails3 application! This README will guide you through the next steps to get your project up and running.
+Loom is a local-first desktop workspace for image collections and derivation graphs. It keeps original media on disk, stores Loom metadata in `.loom/`, and renders cached thumbnails on one infinite Canvas so large repositories stay responsive.
 
-## Getting Started
+**Status:** active development. The current product model is one repository with three surfaces: Assets, Canvas, and Inspector.
 
-1. Navigate to your project directory in the terminal.
+## Core workflow
 
-2. To run your application in development mode, use the following command:
+- **Assets** is the searchable catalog and filesystem view. Assets may stay unplaced.
+- **Canvas** is one infinite relationship workspace per repository. Drag assets onto it to place them.
+- **Relationships** record source → derived provenance. Ctrl/Cmd-drag an image onto another image or set to create one. Cycles are rejected.
+- **Sets** group sibling images such as variants or turnarounds. Select 2+ Canvas images and use **Create set** or `Ctrl/Cmd+G`.
+- **Inspector** edits metadata and exposes Sources / Derived navigation for the active selection.
 
-   ```
-   wails3 dev
-   ```
+Trash, restore, rename, move, import, clipboard operations, placement, sets, relationships, viewport state, and core metadata are persisted per repository. Trash is retained for 30 days, then permanently purged automatically.
 
-   This will start your application and enable hot-reloading for both frontend and backend changes.
+## Development
 
-3. To build your application for production, use:
+The project uses Go + Wails v3 for the desktop/backend layer and React + TypeScript + Vite for the frontend. Nix provides the development toolchain.
 
-   ```
-   wails3 build
-   ```
+```sh
+nix develop
+task dev
+```
 
-   This will create a production-ready executable in the `build` directory.
+Server mode is useful for browser-driven development and E2E work:
 
-## Exploring Wails3 Features
+```sh
+task dev:server
+```
 
-Now that you have your project set up, it's time to explore the features that Wails3 offers:
+Build the desktop app with:
 
-1. **Check out the examples**: The best way to learn is by example. Visit the `examples` directory in the `v3/examples` directory to see various sample applications.
+```sh
+task build
+```
 
-2. **Run an example**: To run any of the examples, navigate to the example's directory and use:
+## Checks
 
-   ```
-   go run .
-   ```
+```sh
+nix develop --command go test ./...
+nix develop --command bash -lc 'cd frontend && bun run build'
+nix develop .#e2e --command bash -lc 'cd frontend && bun run test:e2e'
+```
 
-   Note: Some examples may be under development during the alpha phase.
+Focused Playwright specs live under `frontend/e2e/`. Test runtime artifacts stay under `.cache/`.
 
-3. **Explore the documentation**: Visit the [Wails3 documentation](https://v3.wails.io/) for in-depth guides and API references.
+## Repository layout
 
-4. **Join the community**: Have questions or want to share your progress? Join the [Wails Discord](https://discord.gg/JDdSxwjhGf) or visit the [Wails discussions on GitHub](https://github.com/wailsapp/wails/discussions).
+```text
+frontend/        React UI and Playwright tests
+internal/        Go store, services, media, and domain logic
+build/           Wails/task build and E2E helpers
+r/               current product/design decisions
+docs/            older design context and migration notes
+```
 
-## Project Structure
-
-Take a moment to familiarize yourself with your project structure:
-
-- `frontend/`: Contains your frontend code (HTML, CSS, JavaScript/TypeScript)
-- `main.go`: The entry point of your Go backend
-- `app.go`: Define your application structure and methods here
-- `wails.json`: Configuration file for your Wails project
-
-## Next Steps
-
-1. Modify the frontend in the `frontend/` directory to create your desired UI.
-2. Add backend functionality in `main.go`.
-3. Use `wails3 dev` to see your changes in real-time.
-4. When ready, build your application with `wails3 build`.
-
-Happy coding with Wails3! If you encounter any issues or have questions, don't hesitate to consult the documentation or reach out to the Wails community.
+`r/ui.md` describes the current Assets / Canvas / Inspector interaction model. Older documents under `docs/` may describe superseded board-era decisions.

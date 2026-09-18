@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"loom/internal/media"
 	"loom/internal/store"
@@ -68,6 +69,10 @@ func (s *ImageService) LoadCanvas(repoPath string) (*CanvasData, error) {
 		return nil, err
 	}
 	defer repo.Close()
+
+	if err := purgeExpiredTrash(repo, time.Now()); err != nil {
+		return nil, err
+	}
 
 	if _, err := repo.ScanAndRegisterImages(); err != nil {
 		return nil, err

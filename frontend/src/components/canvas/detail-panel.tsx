@@ -75,41 +75,36 @@ export function DetailPanel({
   const run = (action: () => Promise<unknown>) =>
     void action().then(change).catch(errors.current)
   const group = data.groups?.find((g) => g.id === selection.group)
-  if (group)
+  if (group) {
+    const saveMetadata = (form: HTMLFormElement) => {
+      const name = form.elements.namedItem('set-name') as HTMLInputElement
+      const kind = form.elements.namedItem('set-kind') as HTMLInputElement
+      run(() =>
+        GroupService.UpdateMetadata(path, group.id, name.value, kind.value)
+      )
+    }
     return (
-      <div className="loom-detail-panel grid gap-3 p-3 text-xs">
+      <form
+        className="loom-detail-panel grid gap-3 p-3 text-xs"
+        onBlur={(event) => {
+          if (event.target instanceof HTMLInputElement)
+            saveMetadata(event.currentTarget)
+        }}
+      >
         <label>
           Set name
           <input
+            name="set-name"
             key={`${group.id}-name-${group.name}`}
             defaultValue={group.name}
-            onBlur={(e) =>
-              run(() =>
-                GroupService.UpdateMetadata(
-                  path,
-                  group.id,
-                  e.target.value,
-                  group.kind
-                )
-              )
-            }
           />
         </label>
         <label>
           Kind
           <input
+            name="set-kind"
             key={`${group.id}-kind-${group.kind}`}
             defaultValue={group.kind}
-            onBlur={(e) =>
-              run(() =>
-                GroupService.UpdateMetadata(
-                  path,
-                  group.id,
-                  group.name,
-                  e.target.value
-                )
-              )
-            }
           />
         </label>
         <p>{(group.memberIds ?? []).length} assets</p>
@@ -119,8 +114,9 @@ export function DetailPanel({
         >
           Dissolve set
         </button>
-      </div>
+      </form>
     )
+  }
   if (selection.edges.length)
     return (
       <div className="loom-detail-panel p-3 text-xs">
@@ -181,6 +177,12 @@ export function DetailPanel({
                   : 'Unplaced'}
           </p>
           <p className="break-all">{image.filePath}</p>
+          {selection.surface === 'canvas' && (
+            <p className="rounded-md bg-black/[0.035] px-2 py-1.5 text-ink-muted">
+              Ctrl/Cmd-drag this image onto another image or set to create a
+              relationship.
+            </p>
+          )}
           <button type="button" onClick={() => go(image.id, true)}>
             Show in Folders
           </button>

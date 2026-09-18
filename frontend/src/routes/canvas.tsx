@@ -61,9 +61,11 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   } | null>(null)
   const visible = useRef<number[]>([]),
     relation = useRef<{ source: number; x: number; y: number } | null>(null)
-  const [target, setTarget] = useState<{ id: string; valid: boolean } | null>(
-    null
-  )
+  const [target, setTarget] = useState<{
+    id: string
+    valid: boolean
+    kind: 'relationship' | 'set'
+  } | null>(null)
   const report = (e: unknown) => {
     console.error('canvas operation failed', e)
     setError(e instanceof Error ? e.message : String(e))
@@ -446,6 +448,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
               visible.current = ids
             }}
             reveal={reveal}
+            change={reload}
             compress={setCompressIds}
           />
         </FloatingPanel>
@@ -475,7 +478,11 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             const id = targetAt(e.clientX, e.clientY)
             setTarget(
               id
-                ? { id, valid: validTarget(relation.current.source, id) }
+                ? {
+                    id,
+                    valid: validTarget(relation.current.source, id),
+                    kind: 'relationship',
+                  }
                 : null
             )
           }}
@@ -560,6 +567,26 @@ function Canvas({ repo }: { repo: RepoInfo }) {
                 .catch(report)
           }}
         >
+          {displayNodes.length === 0 && (
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center px-8">
+              <div className="w-full max-w-sm rounded-xl border border-black/8 bg-card/90 p-5 shadow-sm backdrop-blur-sm">
+                <h2 className="text-sm font-semibold text-ink">
+                  Start with an asset
+                </h2>
+                <p className="mt-1 text-xs leading-relaxed text-ink-muted">
+                  {(data.images ?? []).length
+                    ? 'Drag an asset from Assets onto the canvas.'
+                    : 'Import media or drop files onto the canvas.'}
+                </p>
+                <div className="mt-4 grid gap-2 text-xs text-ink-muted">
+                  <p>
+                    Ctrl/Cmd-drag image → image or set to create a relationship.
+                  </p>
+                  <p>Select 2+ images, then Create set or press Ctrl/Cmd+G.</p>
+                </div>
+              </div>
+            </div>
+          )}
           <ReactFlow
             nodes={displayNodes}
             edges={displayEdges}
@@ -644,7 +671,17 @@ function Canvas({ repo }: { repo: RepoInfo }) {
                 })
               }
             }}
+            onNodeDrag={(_, node) => {
+              if (relation.current || node.type !== 'image') return
+              const group = flow
+                .getIntersectingNodes(node)
+                .find((candidate) => candidate.type === 'group')
+              setTarget(
+                group ? { id: group.id, valid: true, kind: 'set' } : null
+              )
+            }}
             onNodeDragStop={(_, node, moved) => {
+              setTarget(null)
               run(async () => {
                 if (node.type === 'group') {
                   const group = (data.groups ?? []).find(
@@ -698,6 +735,18 @@ function Canvas({ repo }: { repo: RepoInfo }) {
           >
             <Background />
           </ReactFlow>
+          {target && (
+            <div
+              role="status"
+              className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 rounded-md border border-black/10 bg-card/95 px-3 py-1.5 text-xs font-medium text-ink shadow-sm"
+            >
+              {target.kind === 'set'
+                ? 'Release to add or move into this set'
+                : target.valid
+                  ? 'Release to create relationship'
+                  : 'Cannot create this relationship'}
+            </div>
+          )}
           <div className="absolute bottom-3 left-3 right-3 flex flex-wrap gap-1 text-xs">
             {toolbar(
               'Fit all',

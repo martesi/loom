@@ -1,6 +1,7 @@
 package service
 
 import (
+	"database/sql"
 	"encoding/base64"
 	"fmt"
 	"loom/internal/media"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type ClipboardMedia struct {
@@ -271,6 +273,8 @@ func (s *ImageService) ReplaceMedia(repoPath string, imageID int64, item Clipboa
 	return nil
 }
 
+const trashRetention = 30 * 24 * time.Hour
+
 func (s *ImageService) PurgeImages(repoPath string, ids []int64) error {
 	r, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
@@ -278,9 +282,47 @@ func (s *ImageService) PurgeImages(repoPath string, ids []int64) error {
 	}
 	defer unlock()
 	defer r.Close()
-	images, err := r.ListImagesByIDs(uniqueImageIDs(ids))
+	return purgeImages(r, ids)
+}
+
+func purgeExpiredTrash(r *store.Repo, now time.Time) error {
+	cutoff := now.Add(-trashRetention).UTC().Format("2006-01-02T15:04:05.000Z")
+	rows, err := r.DB.Query(`
+		SELECT id FROM images
+		WHERE trashed = 1 AND trashed_at IS NOT NULL AND trashed_at <= ?`, cutoff)
 	if err != nil {
 		return err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	return purgeImages(r, ids)
+}
+
+func purgeImages(r *store.Repo, ids []int64) error {
+	images := make([]store.Image, 0, len(ids))
+	for _, id := range uniqueImageIDs(ids) {
+		img, err := r.GetImageByID(id)
+		if err == sql.ErrNoRows {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		images = append(images, img)
 	}
 	for _, img := range images {
 		rel, err := filepath.Rel(r.Path, img.FilePath)
@@ -301,7 +343,7 @@ func (s *ImageService) PurgeImages(repoPath string, ids []int64) error {
 			}
 		}
 	}
-	_, err = r.DB.Exec("DELETE FROM groups WHERE NOT EXISTS (SELECT 1 FROM images WHERE group_id = groups.id)")
+	_, err := r.DB.Exec("DELETE FROM groups WHERE NOT EXISTS (SELECT 1 FROM images WHERE group_id = groups.id)")
 	return err
 }
 

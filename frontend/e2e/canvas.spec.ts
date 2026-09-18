@@ -28,6 +28,12 @@ test('Assets selection, placement, unplace, trash and viewport persistence', asy
   await open(page, 'canvas-fixtures')
   await expect(page.getByRole('checkbox')).toHaveCount(0)
   await expect(page.locator('.react-flow__node')).toHaveCount(0)
+  await expect(
+    page.getByRole('heading', { name: 'Start with an asset' })
+  ).toBeVisible()
+  await expect(
+    page.getByText('Drag an asset from Assets onto the canvas.')
+  ).toBeVisible()
   const rows = assets(page)
   await rows.first().click()
   await rows.last().click({ modifiers: ['Shift'] })
@@ -37,6 +43,9 @@ test('Assets selection, placement, unplace, trash and viewport persistence', asy
   await page.getByRole('button', { name: 'All Assets', exact: true }).click()
   await drop(page, 'canvas-alpha.png', 80, 100)
   await expect(page.locator('.react-flow__node')).toHaveCount(2)
+  await expect(
+    page.getByRole('heading', { name: 'Start with an asset' })
+  ).toHaveCount(0)
   await expect(page.locator('[role=option][aria-selected=true]')).toHaveCount(0)
   await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
   await page.getByRole('button', { name: 'Fit selection', exact: true }).click()

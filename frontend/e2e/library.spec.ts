@@ -51,10 +51,24 @@ test('library selection, search, placement filters, and folder navigation', asyn
   await page.getByRole('button', { name: /nested/ }).click()
   await expect(asset(page, 'folder-gamma.png')).toBeVisible()
   await expect(asset(page, 'root-alpha.png')).toHaveCount(0)
+
+  await asset(page, 'folder-gamma.png').dragTo(
+    page.getByRole('button', { name: /deeper/ })
+  )
+  await expect(asset(page, 'folder-gamma.png')).toHaveCount(0)
+
   await page.getByRole('button', { name: /deeper/ }).click()
   await expect(asset(page, 'folder-delta.png')).toBeVisible()
-  await page.getByRole('button', { name: /Repository/ }).click()
   await expect(asset(page, 'folder-gamma.png')).toBeVisible()
+
+  await asset(page, 'folder-gamma.png').click({ button: 'right' })
+  page.once('dialog', (dialog) => dialog.accept('renamed-gamma.png'))
+  await page.getByRole('menu').getByRole('button', { name: 'Rename…' }).click()
+  await expect(asset(page, 'renamed-gamma.png')).toBeVisible()
+  await expect(asset(page, 'folder-gamma.png')).toHaveCount(0)
+
+  await page.getByRole('button', { name: /Repository/ }).click()
+  await expect(asset(page, 'renamed-gamma.png')).toBeVisible()
 })
 
 test('inspector edits metadata and library filters follow tag/archive/trash state', async ({

@@ -34,10 +34,33 @@ test('relationships reject cycles, support ctrl-click selection, and delete as e
   await page.getByRole('button', { name: 'Reset 100%' }).click()
 
   const nodes = imageNodes(page)
-  await ctrlDrag(page, nodes.nth(0), nodes.nth(1))
+  await nodes.nth(0).click()
+  await expect(page.getByText(/Ctrl\/Cmd-drag this image/)).toBeVisible()
+
+  const first = await nodeBox(nodes.nth(0))
+  const second = await nodeBox(nodes.nth(1))
+  await page.keyboard.down('Control')
+  await page.mouse.move(first.x + 30, first.y + 30)
+  await page.mouse.down()
+  await page.mouse.move(second.x + 30, second.y + 30, { steps: 8 })
+  await expect(page.getByRole('status')).toHaveText(
+    'Release to create relationship'
+  )
+  await expect(nodes.nth(1)).toHaveClass(/ring-green-500/)
+  await page.mouse.up()
+  await page.keyboard.up('Control')
   await expect(page.locator('.react-flow__edge')).toHaveCount(1)
 
-  await ctrlDrag(page, nodes.nth(1), nodes.nth(0))
+  await page.keyboard.down('Control')
+  await page.mouse.move(second.x + 30, second.y + 30)
+  await page.mouse.down()
+  await page.mouse.move(first.x + 30, first.y + 30, { steps: 8 })
+  await expect(page.getByRole('status')).toHaveText(
+    'Cannot create this relationship'
+  )
+  await expect(nodes.nth(0)).toHaveClass(/ring-red-500/)
+  await page.mouse.up()
+  await page.keyboard.up('Control')
   await expect(page.locator('.react-flow__edge')).toHaveCount(1)
 
   const third = await nodeBox(nodes.nth(2))
@@ -88,6 +111,19 @@ test('sets persist metadata and movement, accept source links, expand, and disso
 
   await ctrlDrag(page, imageNodes(page).first(), group)
   await expect(page.locator('.react-flow__edge')).toHaveCount(2)
+
+  const loose = await nodeBox(imageNodes(page).first())
+  const setBox = await nodeBox(group)
+  await page.mouse.move(loose.x + 30, loose.y + 30)
+  await page.mouse.down()
+  await page.mouse.move(setBox.x + 40, setBox.y + 40, { steps: 8 })
+  await expect(page.getByRole('status')).toHaveText(
+    'Release to add or move into this set'
+  )
+  await expect(group).toHaveClass(/ring-green-500/)
+  await page.mouse.up()
+  await expect(imageNodes(page)).toHaveCount(0)
+  await expect(group).toContainText('Pair · 3')
 
   const before = await nodeBox(group)
   await dragBy(page, group, 120, 70)

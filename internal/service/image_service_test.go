@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"loom/internal/store"
 )
@@ -368,5 +369,96 @@ func generateFixture(t *testing.T, path, color string) {
 		"-frames:v", "1", "-loglevel", "error", path)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("generate fixture %s: %v: %s", path, err, out)
+	}
+}
+
+func TestTrashRetentionPurgesExpiredAndKeepsRecent(t *testing.T) {
+	repoPath := t.TempDir()
+	oldOriginal := filepath.Join(repoPath, "old.png")
+	recentOriginal := filepath.Join(repoPath, "recent.png")
+	for _, path := range []string{oldOriginal, recentOriginal} {
+		if err := os.WriteFile(path, []byte("fixture"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []int64
+	for _, path := range []string{oldOriginal, recentOriginal} {
+		res, err := repo.DB.Exec(`INSERT INTO images (file_path) VALUES (?)`, path)
+		if err != nil {
+			repo.Close()
+			t.Fatal(err)
+		}
+		id, err := res.LastInsertId()
+		if err != nil {
+			repo.Close()
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	repo.Close()
+
+	s := &ImageService{}
+	for _, id := range ids {
+		if err := s.TrashImage(repoPath, id); err != nil {
+			t.Fatalf("TrashImage(%d): %v", id, err)
+		}
+	}
+
+	repo, err = store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldTrash, err := repo.GetFilePath(ids[0])
+	if err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	recentTrash, err := repo.GetFilePath(ids[1])
+	if err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	format := "2006-01-02T15:04:05.000Z"
+	if _, err := repo.DB.Exec(`UPDATE images SET trashed_at = ? WHERE id = ?`, now.Add(-trashRetention-time.Hour).Format(format), ids[0]); err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	if _, err := repo.DB.Exec(`UPDATE images SET trashed_at = ? WHERE id = ?`, now.Add(-trashRetention+time.Hour).Format(format), ids[1]); err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	repo.Close()
+
+	if _, err := s.LoadCanvas(repoPath); err != nil {
+		t.Fatalf("LoadCanvas: %v", err)
+	}
+	if _, err := os.Stat(oldTrash); !os.IsNotExist(err) {
+		t.Fatalf("expired trash file still exists: %v", err)
+	}
+	if _, err := os.Stat(recentTrash); err != nil {
+		t.Fatalf("recent trash file was removed: %v", err)
+	}
+	if _, err := s.GetImage(repoPath, ids[0]); err == nil {
+		t.Fatal("expired trashed asset still exists in database")
+	}
+	recent, err := s.GetImage(repoPath, ids[1])
+	if err != nil {
+		t.Fatalf("recent trashed asset missing: %v", err)
+	}
+	if !recent.Trashed {
+		t.Fatal("recent asset should remain trashed")
+	}
+
+	if err := s.RestoreImage(repoPath, ids[1]); err != nil {
+		t.Fatalf("RestoreImage(recent): %v", err)
+	}
+	if _, err := os.Stat(recentOriginal); err != nil {
+		t.Fatalf("recent asset is no longer restorable: %v", err)
 	}
 }

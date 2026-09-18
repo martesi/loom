@@ -326,8 +326,9 @@ func (r *Repo) SetArchived(imageID int64, archived bool) error {
 // SetTrashed flags an image as trashed (hidden from the canvas) and
 // physically moves its file between its current location and
 // .loom/trash/<relative-path-from-repo-root>, mirroring the directory
-// structure so a restore can always reconstruct the original path. Auto-
-// purging trashed files after a retention period is later, separate work.
+// structure so a restore can always reconstruct the original path. The
+// trash timestamp is tracked separately so 30-day retention is measured
+// from the trash action rather than unrelated metadata edits.
 //
 // TrashImage, RestoreImage, and undo's applyStep(stepSetTrashed, ...) all
 // funnel through this one function, so this is the single place that needs
@@ -394,8 +395,16 @@ func (r *Repo) SetTrashed(imageID int64, trashed bool) error {
 
 func (r *Repo) setTrashedFlag(imageID int64, trashed bool, filePath string) error {
 	_, err := r.DB.Exec(`
-		UPDATE images SET trashed = ?, file_path = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`,
-		trashed, filePath, imageID)
+		UPDATE images SET
+			trashed = ?,
+			file_path = ?,
+			trashed_at = CASE
+				WHEN ? THEN COALESCE(trashed_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+				ELSE NULL
+			END,
+			updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+		WHERE id = ?`,
+		trashed, filePath, trashed, imageID)
 	return err
 }
 

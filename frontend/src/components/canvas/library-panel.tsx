@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { type DragEvent, useEffect, useRef, useState } from 'react'
 import {
   ImageService,
   type LibraryRow,
@@ -18,6 +18,7 @@ interface Props {
   onError: (e: unknown) => void
   visible: (ids: number[]) => void
   reveal: { id: number; folder: string | null } | null
+  change: () => Promise<void>
   compress: (ids: number[]) => void
 }
 export function LibraryPanel({
@@ -28,6 +29,7 @@ export function LibraryPanel({
   onError,
   visible,
   reveal,
+  change,
   compress,
 }: Props) {
   const [mode, setMode] = useState('all'),
@@ -106,6 +108,51 @@ export function LibraryPanel({
     }
   }, [itemMenu])
   const selected = selection.surface === 'assets' ? selection.ids : []
+  async function moveAssets(ids: number[], targetFolder: string) {
+    await Promise.all(
+      ids.map((id) => {
+        const row = rows.find((item) => item.id === id)
+        return row
+          ? ImageService.MoveFile(
+              path,
+              id,
+              [targetFolder, row.fileName].filter(Boolean).join('/')
+            )
+          : Promise.resolve()
+      })
+    )
+    await change()
+  }
+  function dropInto(event: DragEvent, targetFolder: string) {
+    const raw = event.dataTransfer.getData('application/x-loom-assets')
+    if (!raw) return
+    event.preventDefault()
+    try {
+      const ids: unknown = JSON.parse(raw)
+      if (!Array.isArray(ids) || !ids.every((id) => Number.isSafeInteger(id)))
+        throw new Error('Invalid asset drag')
+      void moveAssets(ids, targetFolder).catch(onError)
+    } catch (error) {
+      onError(error)
+    }
+  }
+  function renameAsset(id: number) {
+    const row = rows.find((item) => item.id === id)
+    if (!row) return
+    const name = window.prompt('Rename file', row.fileName)
+    if (!name || name === row.fileName) return
+    if (/[\\/]/.test(name)) {
+      onError(new Error('File name cannot contain / or \\'))
+      return
+    }
+    void ImageService.MoveFile(
+      path,
+      id,
+      [folder, name].filter(Boolean).join('/')
+    )
+      .then(() => change())
+      .catch(onError)
+  }
   return (
     <div
       className="flex min-h-0 flex-1 flex-col text-xs"
@@ -175,6 +222,18 @@ export function LibraryPanel({
             type="button"
             className="max-w-full rounded-sm px-2 py-1.5 text-left font-medium text-ink-muted outline-none hover:bg-black/[0.03] focus-visible:ring-2 focus-visible:ring-primary/40"
             onClick={() => setFolder(folder.split('/').slice(0, -1).join('/'))}
+            onDragOver={(event) => {
+              if (
+                !folder ||
+                !event.dataTransfer.types.includes('application/x-loom-assets')
+              )
+                return
+              event.preventDefault()
+              event.dataTransfer.dropEffect = 'move'
+            }}
+            onDrop={(event) =>
+              dropInto(event, folder.split('/').slice(0, -1).join('/'))
+            }
           >
             ↑ Repository / {folder}
           </button>
@@ -184,6 +243,19 @@ export function LibraryPanel({
               type="button"
               key={d}
               onClick={() => setFolder([folder, d].filter(Boolean).join('/'))}
+              onDragOver={(event) => {
+                if (
+                  !event.dataTransfer.types.includes(
+                    'application/x-loom-assets'
+                  )
+                )
+                  return
+                event.preventDefault()
+                event.dataTransfer.dropEffect = 'move'
+              }}
+              onDrop={(event) =>
+                dropInto(event, [folder, d].filter(Boolean).join('/'))
+              }
             >
               📁 {d}
             </button>
@@ -237,7 +309,7 @@ export function LibraryPanel({
                 'application/x-loom-assets',
                 JSON.stringify(ids)
               )
-              e.dataTransfer.effectAllowed = 'copy'
+              e.dataTransfer.effectAllowed = 'copyMove'
             }}
           >
             <img
@@ -256,6 +328,19 @@ export function LibraryPanel({
           className="fixed z-50 min-w-44 rounded-lg border border-black/8 bg-white p-1.5 shadow-lg"
           style={{ left: itemMenu.x, top: itemMenu.y }}
         >
+          {mode === 'folders' && itemMenu.assetIds.length === 1 && (
+            <button
+              type="button"
+              className="block w-full rounded-md px-3 py-2 text-left text-[12.5px] text-ink hover:bg-black/[0.04]"
+              onClick={() => {
+                const [id] = itemMenu.assetIds
+                setItemMenu(null)
+                renameAsset(id)
+              }}
+            >
+              Rename…
+            </button>
+          )}
           <button
             type="button"
             className="block w-full rounded-md px-3 py-2 text-left text-[12.5px] text-ink hover:bg-black/[0.04]"
