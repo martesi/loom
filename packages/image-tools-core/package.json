@@ -1,0 +1,6 @@
+{
+  "name": "@loom/image-tools-core",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts"
+}
