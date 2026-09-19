@@ -9,6 +9,7 @@ import {
 } from '../../../bindings/loom/internal/service'
 import type { Selection } from '../../lib/selection'
 import { Button } from '../ui/button'
+import { SetComparisonDialog } from './set-comparison-dialog'
 
 const fieldClass =
   'h-8 w-full rounded-sm border border-black/12 bg-card px-2 text-xs text-ink outline-none focus-visible:ring-2 focus-visible:ring-primary/40'
@@ -41,7 +42,8 @@ export function DetailPanel({
   onError,
 }: Props) {
   const [images, setImages] = useState<ImageInfo[]>([]),
-    [tags, setTags] = useState<string[]>([])
+    [tags, setTags] = useState<string[]>([]),
+    [compareGroup, setCompareGroup] = useState<number | null>(null)
   const key = selection.ids.join(',')
   const errors = useRef(onError)
   errors.current = onError
@@ -91,6 +93,9 @@ export function DetailPanel({
     void action().then(change).catch(errors.current)
   const group = data.groups?.find((g) => g.id === selection.group)
   if (group) {
+    const memberImages = (data.images ?? []).filter(
+      (image) => (group.memberIds ?? []).includes(image.id) && !image.trashed
+    )
     const saveMetadata = (form: HTMLFormElement) => {
       const name = form.elements.namedItem('set-name') as HTMLInputElement
       const kind = form.elements.namedItem('set-kind') as HTMLInputElement
@@ -128,6 +133,24 @@ export function DetailPanel({
         <p className="text-ink-muted">
           {(group.memberIds ?? []).length} assets
         </p>
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={memberImages.length < 2}
+          onClick={() => setCompareGroup(group.id)}
+        >
+          Compare
+        </Button>
+        <SetComparisonDialog
+          open={compareGroup === group.id}
+          name={group.name}
+          images={memberImages}
+          coverImageId={group.coverImageId}
+          onClose={() => setCompareGroup(null)}
+          onSetCover={(imageId) =>
+            run(() => GroupService.SetCover(path, group.id, imageId))
+          }
+        />
         <Button
           variant="danger"
           size="sm"

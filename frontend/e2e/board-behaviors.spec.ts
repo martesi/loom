@@ -109,6 +109,35 @@ test('sets persist metadata and movement, accept source links, expand, and disso
   await kind.blur()
   await expect(group).toContainText('Pair · 2')
 
+  await page.getByRole('button', { name: 'Compare', exact: true }).click()
+  const comparison = page.getByRole('dialog', { name: 'Compare Pair' })
+  await expect(comparison).toBeVisible()
+  await expect(comparison.getByRole('article')).toHaveCount(2)
+  await comparison.getByRole('button', { name: 'Zoom in' }).click()
+  await expect(comparison.getByText('125%')).toBeVisible()
+  const alphaImage = comparison.getByRole('img', { name: 'group-alpha.png' })
+  const betaImage = comparison.getByRole('img', { name: 'group-beta.png' })
+  await expect(alphaImage).toHaveAttribute('style', /scale\(1\.25\)/)
+  const alphaBox = await alphaImage.boundingBox()
+  if (!alphaBox) throw new Error('comparison image has no bounding box')
+  await page.mouse.move(
+    alphaBox.x + alphaBox.width / 2,
+    alphaBox.y + alphaBox.height / 2
+  )
+  await page.mouse.down()
+  await page.mouse.move(
+    alphaBox.x + alphaBox.width / 2 + 30,
+    alphaBox.y + alphaBox.height / 2 + 20
+  )
+  await page.mouse.up()
+  await expect(alphaImage).toHaveAttribute('style', /translate\(30px, 20px\)/)
+  await expect(betaImage).toHaveAttribute('style', /translate\(30px, 20px\)/)
+  const beta = comparison.getByRole('article', { name: 'group-beta.png' })
+  await beta.getByRole('button', { name: 'Use as cover' }).click()
+  await expect(beta.getByText('Cover', { exact: true })).toBeVisible()
+  await comparison.getByRole('button', { name: 'Close comparison' }).click()
+  await expect(comparison).toHaveCount(0)
+
   await ctrlDrag(page, imageNodes(page).first(), group)
   await expect(page.locator('.react-flow__edge')).toHaveCount(2)
 
