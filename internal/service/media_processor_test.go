@@ -99,29 +99,38 @@ func TestMediaServiceTranscode(t *testing.T) {
 		t.Fatalf("converted copy = %+v, want one AVIF", converted)
 	}
 
-	noUpscale, err := (&MediaService{}).Transcode(repoPath, images[0].ID, MediaTranscodeRequest{
-		TargetExt: ".png", MaxWidth: 1200, MaxHeight: 1000,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	noUpscaleData, err := base64.StdEncoding.DecodeString(noUpscale.Data)
-	if err != nil {
-		t.Fatal(err)
-	}
-	noUpscalePath := filepath.Join(t.TempDir(), "no-upscale.png")
-	if err := os.WriteFile(noUpscalePath, noUpscaleData, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	dimensions, err := exec.Command(
-		"ffprobe", "-v", "error", "-select_streams", "v:0",
-		"-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", noUpscalePath,
-	).Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.TrimSpace(string(dimensions)) != "640x480" {
-		t.Fatalf("max dimensions upscaled image to %s", dimensions)
+	for _, tc := range []struct {
+		name    string
+		request MediaTranscodeRequest
+	}{
+		{"both", MediaTranscodeRequest{TargetExt: ".png", MaxWidth: 1200, MaxHeight: 1000}},
+		{"width only", MediaTranscodeRequest{TargetExt: ".png", MaxWidth: 1200}},
+		{"height only", MediaTranscodeRequest{TargetExt: ".png", MaxHeight: 1000}},
+	} {
+		t.Run("no upscale "+tc.name, func(t *testing.T) {
+			result, err := (&MediaService{}).Transcode(repoPath, images[0].ID, tc.request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := base64.StdEncoding.DecodeString(result.Data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "no-upscale.png")
+			if err := os.WriteFile(path, data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			dimensions, err := exec.Command(
+				"ffprobe", "-v", "error", "-select_streams", "v:0",
+				"-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", path,
+			).Output()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.TrimSpace(string(dimensions)) != "640x480" {
+				t.Fatalf("max dimensions upscaled image to %s", dimensions)
+			}
+		})
 	}
 
 	if _, err := (&MediaService{}).Transcode(repoPath, images[0].ID, MediaTranscodeRequest{TargetExt: ".exe"}); err == nil {
