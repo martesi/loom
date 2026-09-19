@@ -62,9 +62,6 @@ func TestCanvasPlacementImportAndPurge(t *testing.T) {
 	if _, err := s.GetImage(path, fresh[0]); err == nil {
 		t.Fatal("purged identity remains")
 	}
-	if _, err := s.CopyMedia(path, ids, true); err == nil {
-		t.Fatal("missing converter accepted")
-	}
 }
 func TestSetDropIsAtomicAndMovesMembership(t *testing.T) {
 	path := t.TempDir()

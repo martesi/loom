@@ -106,7 +106,7 @@ export function CompressionDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/20 p-4">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/20 p-4">
       <section
         role="dialog"
         aria-modal="true"
@@ -118,7 +118,8 @@ export function CompressionDialog({
           <button
             type="button"
             aria-label="Close operation"
-            className="rounded-sm px-2 py-1 text-xs text-ink-muted hover:bg-black/[0.04]"
+            className="rounded-sm px-2 py-1 text-xs text-ink-muted hover:bg-black/[0.04] disabled:opacity-40"
+            disabled={running}
             onClick={onClose}
           >
             Close

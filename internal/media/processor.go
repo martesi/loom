@@ -94,11 +94,11 @@ func (FFmpegProcessor) Transcode(srcPath, destPath string, options TranscodeOpti
 func scaleFilter(maxWidth, maxHeight int) string {
 	switch {
 	case maxWidth > 0 && maxHeight > 0:
-		return fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease", maxWidth, maxHeight)
+		return fmt.Sprintf("scale='min(iw,%d)':'min(ih,%d)':force_original_aspect_ratio=decrease", maxWidth, maxHeight)
 	case maxWidth > 0:
-		return fmt.Sprintf("scale=%d:-2:force_original_aspect_ratio=decrease", maxWidth)
+		return fmt.Sprintf("scale='min(iw,%d)':-2", maxWidth)
 	case maxHeight > 0:
-		return fmt.Sprintf("scale=-2:%d:force_original_aspect_ratio=decrease", maxHeight)
+		return fmt.Sprintf("scale=-2:'min(ih,%d)'", maxHeight)
 	default:
 		return ""
 	}

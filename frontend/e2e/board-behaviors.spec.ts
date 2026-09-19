@@ -137,6 +137,12 @@ test('sets persist metadata and movement, accept source links, expand, and disso
   await expect(beta.getByText('Cover', { exact: true })).toBeVisible()
   await comparison.getByRole('button', { name: 'Close comparison' }).click()
   await expect(comparison).toHaveCount(0)
+  await page.getByRole('button', { name: 'Compare', exact: true }).click()
+  await expect(comparison.getByText('100%')).toBeVisible()
+  await expect(
+    comparison.getByRole('img', { name: 'group-alpha.png' })
+  ).toHaveAttribute('style', /translate\(0px, 0px\) scale\(1\)/)
+  await comparison.getByRole('button', { name: 'Close comparison' }).click()
 
   await ctrlDrag(page, imageNodes(page).first(), group)
   await expect(page.locator('.react-flow__edge')).toHaveCount(2)
@@ -299,10 +305,12 @@ test('file drop and canvas clipboard paste create placed assets and errors are d
 
   await asset(page, 'media-alpha.png').click()
   await page.keyboard.press('Control+Shift+c')
-  const alert = page.getByRole('alert')
-  await expect(alert).toContainText('converted copy is unavailable')
-  await alert.getByRole('button', { name: 'Dismiss' }).click()
-  await expect(alert).toHaveCount(0)
+  await expect(page.getByRole('alert')).toHaveCount(0)
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toContain('media-alpha.avif')
+  await page.keyboard.press('Control+v')
+  await expect(asset(page, 'media-alpha.avif')).toBeVisible()
 
   await page.evaluate(() => navigator.clipboard.writeText('not Loom media'))
   await page.keyboard.press('Control+v')

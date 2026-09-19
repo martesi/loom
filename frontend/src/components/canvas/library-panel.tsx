@@ -485,7 +485,11 @@ export function LibraryPanel({
               <button
                 type="button"
                 className="block w-full rounded-md px-3 py-2 text-left text-[12.5px] text-ink hover:bg-black/[0.04]"
-                onClick={() => compress(itemMenu.assetIds)}
+                onClick={() => {
+                  const ids = itemMenu.assetIds
+                  setItemMenu(null)
+                  compress(ids)
+                }}
               >
                 Compress…
               </button>

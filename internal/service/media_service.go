@@ -89,9 +89,6 @@ func (s *ImageService) CopyMedia(repoPath string, ids []int64, converted bool) (
 	if err != nil {
 		return nil, err
 	}
-	if converted && s.Media == nil {
-		return nil, fmt.Errorf("converted copy is unavailable: no converter is installed")
-	}
 	out := make([]ClipboardMedia, 0, len(images))
 	for _, img := range images {
 		path := img.FilePath
@@ -104,7 +101,7 @@ func (s *ImageService) CopyMedia(repoPath string, ids []int64, converted bool) (
 			defer os.RemoveAll(dir)
 			name = strings.TrimSuffix(name, filepath.Ext(name)) + ".avif"
 			path = filepath.Join(dir, filepath.Base(name))
-			if err := s.Media.Transcode(img.FilePath, path, media.TranscodeOptions{}); err != nil {
+			if err := s.mediaProcessor().Transcode(img.FilePath, path, media.TranscodeOptions{}); err != nil {
 				return nil, err
 			}
 		}
@@ -334,13 +331,16 @@ func purgeImages(r *store.Repo, ids []int64) error {
 		if err := os.Remove(img.FilePath); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("purge %s: %w", filepath.Base(img.FilePath), err)
 		}
-		if _, err := r.DB.Exec("DELETE FROM images WHERE id = ?", img.ID); err != nil {
-			return err
-		}
 		if img.ThumbPath != "" {
 			if err := os.Remove(img.ThumbPath); err != nil && !os.IsNotExist(err) {
 				return err
 			}
+		}
+		if err := os.RemoveAll(filepath.Join(r.Path, ".loom", "trash", "replacements", fmt.Sprint(img.ID))); err != nil {
+			return err
+		}
+		if _, err := r.DB.Exec("DELETE FROM images WHERE id = ?", img.ID); err != nil {
+			return err
 		}
 	}
 	_, err := r.DB.Exec("DELETE FROM groups WHERE NOT EXISTS (SELECT 1 FROM images WHERE group_id = groups.id)")

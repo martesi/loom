@@ -18,6 +18,7 @@ test('compression plugin creates copies and replaces representations without cha
 
   const dialog = page.getByRole('dialog', { name: 'Compress images' })
   await expect(dialog).toBeVisible()
+  await expect(page.getByRole('menu')).toHaveCount(0)
   await expect(dialog).toContainText('1 asset selected')
   await expect(dialog.getByLabel('Compression result')).toHaveValue('copy')
   await dialog.getByRole('button', { name: 'Compress', exact: true }).click()

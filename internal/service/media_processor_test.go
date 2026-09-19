@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -89,6 +90,38 @@ func TestMediaServiceTranscode(t *testing.T) {
 	}
 	if len(data) == 0 {
 		t.Fatal("transcode returned empty media")
+	}
+	converted, err := (&ImageService{}).CopyMedia(repoPath, []int64{images[0].ID}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(converted) != 1 || !strings.HasSuffix(converted[0].Name, ".avif") {
+		t.Fatalf("converted copy = %+v, want one AVIF", converted)
+	}
+
+	noUpscale, err := (&MediaService{}).Transcode(repoPath, images[0].ID, MediaTranscodeRequest{
+		TargetExt: ".png", MaxWidth: 1200, MaxHeight: 1000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	noUpscaleData, err := base64.StdEncoding.DecodeString(noUpscale.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	noUpscalePath := filepath.Join(t.TempDir(), "no-upscale.png")
+	if err := os.WriteFile(noUpscalePath, noUpscaleData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dimensions, err := exec.Command(
+		"ffprobe", "-v", "error", "-select_streams", "v:0",
+		"-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", noUpscalePath,
+	).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(dimensions)) != "640x480" {
+		t.Fatalf("max dimensions upscaled image to %s", dimensions)
 	}
 
 	if _, err := (&MediaService{}).Transcode(repoPath, images[0].ID, MediaTranscodeRequest{TargetExt: ".exe"}); err == nil {
@@ -176,5 +209,15 @@ func TestReplaceMediaPreservesIdentityAndUndoRedo(t *testing.T) {
 	}
 	if redone.ID != imageID || filepath.Ext(redone.FilePath) != ".avif" {
 		t.Fatalf("redo changed identity/path incorrectly: %+v", redone)
+	}
+	stashDir := filepath.Join(repoPath, ".loom", "trash", "replacements", strconv.FormatInt(imageID, 10))
+	if _, err := os.Stat(stashDir); err != nil {
+		t.Fatalf("replacement stash missing before purge: %v", err)
+	}
+	if err := images.PurgeImages(repoPath, []int64{imageID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stashDir); !os.IsNotExist(err) {
+		t.Fatalf("replacement stash remains after purge: %v", err)
 	}
 }

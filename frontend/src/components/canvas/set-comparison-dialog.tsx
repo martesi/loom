@@ -1,6 +1,6 @@
 import { Dialog } from '@base-ui-components/react/dialog'
 import { X } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ImageInfo } from '../../../bindings/loom/internal/service'
 
 interface Props {
@@ -27,6 +27,10 @@ export function SetComparisonDialog({
     panX: number
     panY: number
   } | null>(null)
+
+  useEffect(() => {
+    if (open) setView({ zoom: 1, x: 0, y: 0 })
+  }, [open])
 
   return (
     <Dialog.Root open={open} onOpenChange={(next) => !next && onClose()}>
