@@ -1,5 +1,6 @@
 r/
 .cache/
+.direnv/
 .bin
 .task
 .test
