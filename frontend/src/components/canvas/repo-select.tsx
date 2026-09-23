@@ -17,10 +17,6 @@ interface RepoSelectProps {
   repo: RepoInfo
 }
 
-// Bottom-of-panel repo select (Stage 10). Sits in FloatingPanel's reserved
-// footer row, sized to leave room for Stage 11's settings gear alongside it
-// — see the `w-[70%]` on the trigger below.
-//
 // This is modeled as a *controlled* Select whose value never actually
 // changes: `value` is pinned to the current repo's path for the lifetime of
 // this window. Picking a different entry fires SwitchTo (Stage 5) as a
@@ -105,7 +101,7 @@ export function RepoSelect({ repo }: RepoSelectProps) {
     >
       <SelectTrigger
         aria-label="Switch repository"
-        className="w-[70%] max-w-[70%]"
+        className="w-52 max-w-[40vw]"
       >
         <SelectValue />
       </SelectTrigger>

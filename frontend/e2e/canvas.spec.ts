@@ -4,7 +4,7 @@ async function open(page: Page, name: string) {
   await page.goto('/')
   await page.getByRole('button', { name: /^(Create )?New Repo$/ }).click()
   const dialog = page.getByRole('dialog')
-  await dialog.getByRole('button').filter({ hasText: name }).first().click()
+  await dialog.getByRole('button', { name, exact: true }).click()
   await dialog
     .getByRole('button', { name: /^(Create repo here|Open this folder)$/ })
     .click()
@@ -22,12 +22,24 @@ async function drop(page: Page, name: string, x: number, y: number) {
 function canvasNodes(page: Page) {
   return page.locator('.react-flow__node-image')
 }
+async function nodePosition(node: ReturnType<Page['locator']>) {
+  const transform = await node.evaluate(
+    (element) => (element as HTMLElement).style.transform
+  )
+  const match = transform.match(/translate\((-?[\d.]+)px,\s*(-?[\d.]+)px\)/)
+  if (!match) throw new Error(`missing node transform: ${transform}`)
+  return { x: Number(match[1]), y: Number(match[2]) }
+}
 test('Assets selection, placement, unplace, trash and viewport persistence', async ({
   page,
 }) => {
   await open(page, 'canvas-fixtures')
   await expect(page.getByRole('checkbox')).toHaveCount(0)
   await expect(page.locator('.react-flow__node')).toHaveCount(0)
+  await expect(page.locator('.react-flow__viewport')).toHaveAttribute(
+    'style',
+    /scale\(1\)/
+  )
   await expect(
     page.getByRole('heading', { name: 'Start with an asset' })
   ).toBeVisible()
@@ -79,6 +91,109 @@ test('Assets selection, placement, unplace, trash and viewport persistence', asy
     transform ?? ''
   )
 })
+test('canvas context menus and auto-arrange preserve the canvas origin', async ({
+  page,
+}) => {
+  await open(page, 'canvas-menu-actions-fixtures')
+  await drop(page, 'context-alpha.png', 280, 240)
+  await drop(page, 'context-beta.png', 520, 420)
+  await page.getByRole('button', { name: 'Reset 100%', exact: true }).click()
+
+  const nodes = canvasNodes(page)
+  await expect(nodes).toHaveCount(2)
+  const before = [
+    await nodePosition(nodes.nth(0)),
+    await nodePosition(nodes.nth(1)),
+  ]
+  const minBefore = {
+    x: Math.min(...before.map((position) => position.x)),
+    y: Math.min(...before.map((position) => position.y)),
+  }
+
+  await page.getByRole('button', { name: 'Auto-arrange', exact: true }).click()
+  await expect
+    .poll(async () => {
+      const after = [
+        await nodePosition(nodes.nth(0)),
+        await nodePosition(nodes.nth(1)),
+      ]
+      return Math.max(
+        ...after.map(
+          (position, index) =>
+            Math.abs(position.x - before[index].x) +
+            Math.abs(position.y - before[index].y)
+        )
+      )
+    })
+    .toBeGreaterThan(10)
+
+  const after = [
+    await nodePosition(nodes.nth(0)),
+    await nodePosition(nodes.nth(1)),
+  ]
+  expect(Math.min(...after.map((position) => position.x))).toBeCloseTo(
+    minBefore.x,
+    3
+  )
+  expect(Math.min(...after.map((position) => position.y))).toBeCloseTo(
+    minBefore.y,
+    3
+  )
+
+  await page.locator('.react-flow__pane').click({
+    button: 'right',
+    position: { x: 480, y: 30 },
+  })
+  const paneMenu = page.getByRole('menu')
+  await expect(paneMenu).toBeVisible()
+  await expect(
+    paneMenu.getByRole('button', { name: 'Select all', exact: true })
+  ).toBeVisible()
+  await expect(
+    paneMenu.getByRole('button', { name: 'Auto-arrange canvas', exact: true })
+  ).toBeVisible()
+  await paneMenu
+    .getByRole('button', { name: 'Select all', exact: true })
+    .click()
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
+  await nodes.first().click({ button: 'right' })
+  const selectionMenu = page.getByRole('menu')
+  await expect(
+    selectionMenu.getByRole('button', {
+      name: 'Auto-arrange selection',
+      exact: true,
+    })
+  ).toBeVisible()
+  await page.keyboard.press('Escape')
+  await page.locator('.react-flow__pane').click({ position: { x: 480, y: 30 } })
+
+  await nodes.first().click({ button: 'right' })
+  const nodeMenu = page.getByRole('menu')
+  await expect(nodeMenu).toBeVisible()
+  await expect(
+    nodeMenu.getByRole('button', { name: 'Find in assets', exact: true })
+  ).toBeVisible()
+  await expect(
+    nodeMenu.getByRole('button', { name: 'Remove from canvas', exact: true })
+  ).toBeVisible()
+  await nodeMenu
+    .getByRole('button', { name: 'Remove from canvas', exact: true })
+    .click()
+  await expect(nodes).toHaveCount(1)
+  await expect(
+    page.getByText('Select an asset, set, or relationship.')
+  ).toBeVisible()
+  await expect(assets(page)).toHaveCount(2)
+
+  await nodes.first().click({ button: 'right' })
+  await page.getByRole('menu').getByRole('button', { name: 'Trash' }).click()
+  await expect(nodes).toHaveCount(0)
+  await expect(assets(page)).toHaveCount(1)
+  await expect(
+    page.getByText('Select an asset, set, or relationship.')
+  ).toBeVisible()
+})
+
 test('explicit relationship gesture, navigation, and semantic sets', async ({
   page,
 }) => {
@@ -143,6 +258,48 @@ test('explicit relationship gesture, navigation, and semantic sets', async ({
   await expect(nodes).toHaveCount(2)
   await page.locator('.react-flow__pane').click({ position: { x: 10, y: 10 } })
   await expect(page.locator('.react-flow__node-group')).toHaveCount(1)
+  await page.locator('.react-flow__pane').click({
+    button: 'right',
+    position: { x: 10, y: 10 },
+  })
+  await page
+    .getByRole('menu')
+    .getByRole('button', { name: 'Select all' })
+    .click()
+  await expect(page.locator('.react-flow__node-group.selected')).toHaveCount(1)
+})
+test('Select all highlights a set with an unplaced member', async ({
+  page,
+}) => {
+  await open(page, 'partial-set-fixtures')
+  await drop(page, 'partial-alpha.png', 80, 100)
+  await drop(page, 'partial-beta.png', 280, 100)
+  await expect(canvasNodes(page)).toHaveCount(2)
+  await canvasNodes(page).first().click()
+  await page.keyboard.press('Control+a')
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
+  await page.getByRole('button', { name: 'Create set', exact: true }).click()
+
+  const group = page.locator('.react-flow__node-group')
+  await expect(group).toHaveCount(1)
+  await group.dblclick()
+  await expect(canvasNodes(page)).toHaveCount(2)
+  await canvasNodes(page).first().click()
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(1)
+  await page.keyboard.press('Delete')
+  await expect(canvasNodes(page)).toHaveCount(1)
+  await page.locator('.react-flow__pane').click({ position: { x: 10, y: 10 } })
+  await expect(group).toHaveCount(1)
+
+  await page.locator('.react-flow__pane').click({
+    button: 'right',
+    position: { x: 10, y: 10 },
+  })
+  await page
+    .getByRole('menu')
+    .getByRole('button', { name: 'Select all' })
+    .click()
+  await expect(group).toHaveClass(/selected/)
 })
 test('marquee selection replaces the Canvas selection', async ({ page }) => {
   await open(page, 'set-fixtures')

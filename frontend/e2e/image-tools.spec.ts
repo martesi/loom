@@ -34,6 +34,9 @@ test('compression plugin creates copies and replaces representations without cha
     .click()
   const replaceDialog = page.getByRole('dialog', { name: 'Compress images' })
   await replaceDialog.getByLabel('Compression result').selectOption('replace')
+  await expect(replaceDialog.getByLabel('Compression result')).toHaveValue(
+    'replace'
+  )
   await replaceDialog
     .getByRole('button', { name: 'Compress', exact: true })
     .click()

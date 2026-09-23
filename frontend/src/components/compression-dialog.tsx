@@ -29,29 +29,43 @@ export function CompressionDialog({
   const [maxWidth, setMaxWidth] = useState('')
   const [maxHeight, setMaxHeight] = useState('')
   const [running, setRunning] = useState(false)
+  const [settingsLoaded, setSettingsLoaded] = useState(false)
   const [summary, setSummary] = useState('')
   const [error, setError] = useState('')
 
   useEffect(() => {
     let cancelled = false
+    setSettingsLoaded(false)
     void Promise.all([
       SettingsService.Get(path, `${settingsPrefix}.mode`),
       SettingsService.Get(path, `${settingsPrefix}.format`),
       SettingsService.Get(path, `${settingsPrefix}.quality`),
       SettingsService.Get(path, `${settingsPrefix}.max_width`),
       SettingsService.Get(path, `${settingsPrefix}.max_height`),
-    ]).then(
-      ([savedMode, savedFormat, savedQuality, savedWidth, savedHeight]) => {
+    ])
+      .then(
+        ([savedMode, savedFormat, savedQuality, savedWidth, savedHeight]) => {
+          if (cancelled) return
+          if (savedMode === 'copy' || savedMode === 'replace')
+            setMode(savedMode)
+          if (isImageFormat(savedFormat)) setFormat(savedFormat)
+          const parsedQuality = Number(savedQuality)
+          if (parsedQuality >= 1 && parsedQuality <= 100)
+            setQuality(parsedQuality)
+          if (Number(savedWidth) > 0) setMaxWidth(savedWidth)
+          if (Number(savedHeight) > 0) setMaxHeight(savedHeight)
+        }
+      )
+      .catch((cause: unknown) => {
         if (cancelled) return
-        if (savedMode === 'copy' || savedMode === 'replace') setMode(savedMode)
-        if (isImageFormat(savedFormat)) setFormat(savedFormat)
-        const parsedQuality = Number(savedQuality)
-        if (parsedQuality >= 1 && parsedQuality <= 100)
-          setQuality(parsedQuality)
-        if (Number(savedWidth) > 0) setMaxWidth(savedWidth)
-        if (Number(savedHeight) > 0) setMaxHeight(savedHeight)
-      }
-    )
+        console.error('compression settings load failed', cause)
+        setError(
+          'Could not load saved settings. Review the defaults before compressing.'
+        )
+      })
+      .finally(() => {
+        if (!cancelled) setSettingsLoaded(true)
+      })
     return () => {
       cancelled = true
     }
@@ -133,6 +147,7 @@ export function CompressionDialog({
             <span className="font-medium">Result</span>
             <select
               aria-label="Compression result"
+              disabled={!settingsLoaded || running}
               className="h-8 rounded-sm border border-black/12 bg-card px-2"
               value={mode}
               onChange={(event) =>
@@ -147,6 +162,7 @@ export function CompressionDialog({
             <span className="font-medium">Format</span>
             <select
               aria-label="Compression format"
+              disabled={!settingsLoaded || running}
               className="h-8 rounded-sm border border-black/12 bg-card px-2"
               value={format}
               onChange={(event) => setFormat(event.target.value as ImageFormat)}
@@ -162,6 +178,7 @@ export function CompressionDialog({
             <input
               aria-label="Compression quality"
               type="range"
+              disabled={!settingsLoaded || running}
               min={1}
               max={100}
               value={quality}
@@ -174,6 +191,7 @@ export function CompressionDialog({
               <input
                 aria-label="Maximum width"
                 type="number"
+                disabled={!settingsLoaded || running}
                 min={1}
                 placeholder="Original"
                 className="h-8 rounded-sm border border-black/12 bg-card px-2"
@@ -186,6 +204,7 @@ export function CompressionDialog({
               <input
                 aria-label="Maximum height"
                 type="number"
+                disabled={!settingsLoaded || running}
                 min={1}
                 placeholder="Original"
                 className="h-8 rounded-sm border border-black/12 bg-card px-2"
@@ -208,7 +227,7 @@ export function CompressionDialog({
           <button
             type="button"
             className="h-9 rounded-sm bg-primary px-3 font-semibold text-white disabled:opacity-40"
-            disabled={!assetIds.length || running}
+            disabled={!settingsLoaded || !assetIds.length || running}
             onClick={() => void compress()}
           >
             {running ? 'Compressing…' : 'Compress'}

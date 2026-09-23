@@ -27,6 +27,14 @@ const fixtureRepos = [
   { name: 'remove-fixtures', files: ['remove-me.png'] },
   { name: 'context-menu-fixtures', files: ['context-menu.png'] },
   { name: 'menu-linux-fixtures', files: ['menu-alpha.png', 'menu-beta.png'] },
+  {
+    name: 'canvas-menu-actions-fixtures',
+    files: ['context-alpha.png', 'context-beta.png'],
+  },
+  {
+    name: 'partial-set-fixtures',
+    files: ['partial-alpha.png', 'partial-beta.png'],
+  },
   { name: 'menu-mac-fixtures', files: ['menu-alpha.png', 'menu-beta.png'] },
   { name: 'filename-fixtures', files: ['hover-target.png'] },
   { name: 'clipboard-fixtures', files: ['hover-target.png'] },

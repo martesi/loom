@@ -1,0 +1,14 @@
+{
+  "name": "@arca/e2e",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "dependencies": {
+    "@playwright/cli": "^0.1.21",
+    "fflate": "^0.8.3",
+    "smol-toml": "^1.8.0",
+    "zod": "^4.6.5"
+  }
+}

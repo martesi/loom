@@ -113,4 +113,12 @@ test('side panels collapse into overlays on compact viewports', async ({
   await expect(
     page.getByText('Select an asset, set, or relationship.')
   ).toBeVisible()
+
+  await page.setViewportSize({ width: 1400, height: 700 })
+  await expect(
+    page.getByRole('button', { name: 'Assets', exact: true })
+  ).toHaveAttribute('aria-expanded', 'true')
+  await expect(
+    page.getByRole('button', { name: 'Inspector', exact: true })
+  ).toHaveAttribute('aria-expanded', 'true')
 })

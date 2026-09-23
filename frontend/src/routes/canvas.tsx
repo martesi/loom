@@ -25,9 +25,10 @@ import { ImageNode } from '../components/canvas/image-node'
 import { LibraryPanel } from '../components/canvas/library-panel'
 import { RepoSelect } from '../components/canvas/repo-select'
 import { CompressionDialog } from '../components/compression-dialog'
+import { type MenuAction, PositionedMenu } from '../components/menu'
 import { Button } from '../components/ui/button'
 import { copyMedia, filesToMedia, readMedia } from '../lib/clipboard'
-import { computeSubgraphLayout } from '../lib/layout'
+import { computeSubgraphLayout, placeCluster } from '../lib/layout'
 import { emptySelection, type Selection } from '../lib/selection'
 import { useGroupShortcut, useUndoShortcuts } from '../lib/use-undo'
 
@@ -57,6 +58,12 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     [ready, setReady] = useState(false)
   const [compressIds, setCompressIds] = useState<number[] | null>(null)
   const [purgeIds, setPurgeIds] = useState<number[] | null>(null)
+  const [menu, setMenu] = useState<{
+    kind: 'pane' | 'node' | 'selection'
+    x: number
+    y: number
+    nodeId?: string
+  } | null>(null)
   const [reveal, setReveal] = useState<{
     id: number
     folder: string | null
@@ -92,7 +99,11 @@ function Canvas({ repo }: { repo: RepoInfo }) {
         setRefresh((n) => n + 1)
         if (v) void flow.setViewport(v)
         setReady(true)
-        if (!v) setTimeout(() => void flow.fitView({ padding: 0.2 }), 100)
+        if (
+          !v &&
+          (d?.images ?? []).some((image) => image.placed && !image.trashed)
+        )
+          setTimeout(() => void flow.fitView({ padding: 0.2, maxZoom: 1 }), 100)
       })
       .catch(callbacks.current.report)
   }, [repo.path, flow])
@@ -166,13 +177,23 @@ function Canvas({ repo }: { repo: RepoInfo }) {
         })
     )
   }, [data, expanded, repo.path])
+  function isCanvasNodeSelected(node: Node) {
+    if (selection.surface !== 'canvas') return false
+    if (node.type !== 'group') return selection.ids.includes(Number(node.id))
+    const groupId = Number(node.id.slice(4))
+    const members = groupMembers(groupId).filter((id) =>
+      (data.images ?? []).some(
+        (image) => image.id === id && image.placed && !image.trashed
+      )
+    )
+    return (
+      selection.group === groupId ||
+      (members.length > 0 && members.every((id) => selection.ids.includes(id)))
+    )
+  }
   const displayNodes = nodes.map((n) => ({
     ...n,
-    selected:
-      selection.surface === 'canvas' &&
-      (n.type === 'group'
-        ? selection.group === Number(n.id.slice(4))
-        : selection.ids.includes(Number(n.id))),
+    selected: isCanvasNodeSelected(n),
     className:
       target?.id === n.id
         ? target.valid
@@ -207,6 +228,23 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       ]),
     ]
   }
+  async function removeCanvasAssets(ids: number[], trash: boolean) {
+    if (trash)
+      await Promise.all(ids.map((id) => ImageService.TrashImage(repo.path, id)))
+    else await ImageService.UnplaceImages(repo.path, ids)
+    setSelection((current) => {
+      if (current.surface !== 'canvas') return current
+      return {
+        ...current,
+        ids: current.ids.filter((id) => !ids.includes(id)),
+        group:
+          current.group &&
+          groupMembers(current.group).some((id) => ids.includes(id))
+            ? null
+            : current.group,
+      }
+    })
+  }
   const canCreateSet =
     selection.surface === 'canvas' &&
     selection.group === null &&
@@ -217,6 +255,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   async function createSet() {
     if (!canCreateSet) return
     await GroupService.CreateGroup(repo.path, '', '', selection.ids)
+    setSelection(emptySelection)
     await reload()
   }
   useUndoShortcuts(repo.path, reload)
@@ -379,21 +418,151 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       return true
     })
   }
-  async function arrange() {
-    const placed = (data.images ?? []).filter((i) => i.placed)
+  async function arrange(nodeIds = nodes.map((node) => node.id)) {
+    const clusterNodes = nodes.filter((node) => nodeIds.includes(node.id))
+    if (!clusterNodes.length) return
     const positions = computeSubgraphLayout(
-      placed.map((i) => String(i.id)),
-      (data.relationships ?? []).map((r) => ({
-        source: String(r.sourceImageId),
-        target: String(r.derivedImageId),
-      }))
+      nodeIds,
+      edges.map((edge) => ({ source: edge.source, target: edge.target }))
     )
-    await ImageService.SetPositions(
-      repo.path,
-      [...positions].map(([id, p]) => ({ imageId: Number(id), ...p }))
-    )
+    const existing = nodes
+      .filter((node) => !nodeIds.includes(node.id))
+      .map((node) => node.position)
+    const minX = Math.min(...clusterNodes.map((node) => node.position.x))
+    const minY = Math.min(...clusterNodes.map((node) => node.position.y))
+    const placed = existing.length
+      ? placeCluster(positions, existing)
+      : new Map(
+          [...positions].map(([id, position]) => [
+            id,
+            { x: position.x + minX, y: position.y + minY },
+          ])
+        )
+    const updates = [...placed].flatMap(([id, position]) => {
+      const node = nodes.find((candidate) => candidate.id === id)
+      if (!node) return []
+      if (node.type !== 'group') return [{ imageId: Number(id), ...position }]
+      const group = (data.groups ?? []).find((g) => `set-${g.id}` === id)
+      if (!group) return []
+      const dx = position.x - node.position.x
+      const dy = position.y - node.position.y
+      return (data.images ?? [])
+        .filter(
+          (image) => (group.memberIds ?? []).includes(image.id) && image.placed
+        )
+        .map((image) => ({
+          imageId: image.id,
+          x: image.canvasX + dx,
+          y: image.canvasY + dy,
+        }))
+    })
+    await ImageService.SetPositions(repo.path, updates)
     await reload()
   }
+  const selectedCanvasNodeIds = displayNodes
+    .filter((node) => node.selected)
+    .map((node) => node.id)
+  const menuItems: MenuAction[] = (() => {
+    if (!menu) return []
+    if (menu.kind === 'pane')
+      return [
+        {
+          key: 'select-all',
+          label: 'Select all',
+          disabled: displayNodes.length === 0,
+          onSelect: () =>
+            setSelection({
+              surface: 'canvas',
+              ids: (data.images ?? [])
+                .filter((image) => image.placed && !image.trashed)
+                .map((image) => image.id),
+              edges: [],
+              group: null,
+            }),
+        },
+        {
+          key: 'auto-arrange',
+          label: 'Auto-arrange canvas',
+          disabled: displayNodes.length < 2,
+          onSelect: () => run(() => arrange()),
+        },
+      ]
+    if (menu.kind === 'selection') {
+      const ids = selectedIds()
+      return [
+        {
+          key: 'create-set',
+          label: 'Create set',
+          disabled: !canCreateSet,
+          onSelect: () => void createSet().catch(report),
+        },
+        {
+          key: 'auto-arrange-selection',
+          label: 'Auto-arrange selection',
+          onSelect: () => run(() => arrange(selectedCanvasNodeIds)),
+        },
+        {
+          key: 'remove',
+          label: 'Remove from canvas',
+          separatorBefore: true,
+          onSelect: () => run(() => removeCanvasAssets(ids, false)),
+        },
+        {
+          key: 'trash',
+          label: 'Trash selection',
+          danger: true,
+          onSelect: () => run(() => removeCanvasAssets(ids, true)),
+        },
+      ]
+    }
+    const nodeId = menu.nodeId
+    if (!nodeId) return []
+    if (nodeId.startsWith('set-')) {
+      const groupId = Number(nodeId.slice(4))
+      return [
+        {
+          key: 'dissolve-set',
+          label: 'Dissolve set',
+          onSelect: () => run(() => GroupService.Ungroup(repo.path, groupId)),
+        },
+      ]
+    }
+    const imageId = Number(nodeId)
+    const image = (data.images ?? []).find(
+      (candidate) => candidate.id === imageId
+    )
+    if (!image) return []
+    return [
+      {
+        key: 'find-assets',
+        label: 'Find in assets',
+        onSelect: () => {
+          selectAssets([imageId])
+          setReveal({ id: imageId, folder: null })
+        },
+      },
+      {
+        key: 'remove',
+        label: 'Remove from canvas',
+        separatorBefore: true,
+        onSelect: () => run(() => removeCanvasAssets([imageId], false)),
+      },
+      {
+        key: 'archive',
+        label: image.archived ? 'Unarchive' : 'Archive',
+        onSelect: () =>
+          run(() =>
+            ImageService.SetArchived(repo.path, imageId, !image.archived)
+          ),
+      },
+      {
+        key: 'trash',
+        label: 'Trash',
+        danger: true,
+        onSelect: () => run(() => removeCanvasAssets([imageId], true)),
+      },
+    ]
+  })()
   const toolbar = (
     label: string,
     action: () => Promise<unknown>,
@@ -459,26 +628,38 @@ function Canvas({ repo }: { repo: RepoInfo }) {
           ref={host}
           aria-label="Canvas"
           className="relative min-w-0 flex-1"
-          onPointerDownCapture={(e) => {
-            const id = targetAt(e.clientX, e.clientY)
-            if ((e.ctrlKey || e.metaKey) && id && !id.startsWith('set-')) {
+          onClickCapture={(event) => {
+            if (
+              (event.ctrlKey || event.metaKey) &&
+              targetAt(event.clientX, event.clientY)
+            ) {
+              event.stopPropagation()
+              event.preventDefault()
+            }
+          }}
+          onPointerDownCapture={(event) => {
+            const id = targetAt(event.clientX, event.clientY)
+            if (
+              (event.ctrlKey || event.metaKey) &&
+              id &&
+              !id.startsWith('set-')
+            ) {
               relation.current = {
                 source: Number(id),
-                x: e.clientX,
-                y: e.clientY,
+                x: event.clientX,
+                y: event.clientY,
               }
-              e.currentTarget.setPointerCapture(e.pointerId)
-              e.stopPropagation()
-              e.preventDefault()
+              event.stopPropagation()
+              event.preventDefault()
             }
           }}
           onPointerCancel={() => {
             relation.current = null
             setTarget(null)
           }}
-          onPointerMove={(e) => {
+          onPointerMove={(event) => {
             if (!relation.current) return
-            const id = targetAt(e.clientX, e.clientY)
+            const id = targetAt(event.clientX, event.clientY)
             setTarget(
               id
                 ? {
@@ -489,18 +670,25 @@ function Canvas({ repo }: { repo: RepoInfo }) {
                 : null
             )
           }}
-          onPointerUp={(e) => {
+          onPointerUpCapture={(event) => {
             const drag = relation.current
             if (!drag) return
+            event.stopPropagation()
+            event.preventDefault()
             relation.current = null
             setTarget(null)
-            const id = targetAt(e.clientX, e.clientY)
-            if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 5) {
-              setSelection((s) => ({
+            const id = targetAt(event.clientX, event.clientY)
+            if (
+              Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 5
+            ) {
+              setSelection((current) => ({
                 surface: 'canvas',
-                ids: s.ids.includes(drag.source)
-                  ? s.ids.filter((i) => i !== drag.source)
-                  : [...(s.surface === 'canvas' ? s.ids : []), drag.source],
+                ids: current.ids.includes(drag.source)
+                  ? current.ids.filter((imageId) => imageId !== drag.source)
+                  : [
+                      ...(current.surface === 'canvas' ? current.ids : []),
+                      drag.source,
+                    ],
                 edges: [],
                 group: null,
               }))
@@ -600,7 +788,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             edgesReconnectable={false}
             deleteKeyCode={null}
             selectionKeyCode={null}
-            multiSelectionKeyCode={['Shift', 'Control', 'Meta']}
+            multiSelectionKeyCode="Shift"
             selectionOnDrag={!space}
             selectionMode={SelectionMode.Partial}
             panOnDrag={space ? [0, 1, 2] : [1, 2]}
@@ -655,7 +843,23 @@ function Canvas({ repo }: { repo: RepoInfo }) {
               setSelection(emptySelection)
               setExpanded(null)
             }}
-            onNodeClick={(_, node) => {
+            onNodeClick={(event, node) => {
+              if (!(event.shiftKey || event.ctrlKey || event.metaKey))
+                setSelection(
+                  node.type === 'group'
+                    ? {
+                        surface: 'canvas',
+                        ids: groupMembers(Number(node.id.slice(4))),
+                        edges: [],
+                        group: Number(node.id.slice(4)),
+                      }
+                    : {
+                        surface: 'canvas',
+                        ids: [Number(node.id)],
+                        edges: [],
+                        group: null,
+                      }
+                )
               if (
                 node.type === 'image' &&
                 data.images?.find((i) => String(i.id) === node.id)?.groupId !==
@@ -675,7 +879,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
               }
             }}
             onNodeDrag={(_, node) => {
-              if (relation.current || node.type !== 'image') return
+              if (node.type !== 'image') return
               const group = flow
                 .getIntersectingNodes(node)
                 .find((candidate) => candidate.type === 'group')
@@ -735,6 +939,52 @@ function Canvas({ repo }: { repo: RepoInfo }) {
               if (ready)
                 void ImageService.SetViewport(repo.path, v).catch(report)
             }}
+            onPaneContextMenu={(event) => {
+              event.preventDefault()
+              setMenu({ kind: 'pane', x: event.clientX, y: event.clientY })
+            }}
+            onNodeContextMenu={(event, node) => {
+              event.preventDefault()
+              const isSelected = isCanvasNodeSelected(node)
+              if (isSelected && selectedCanvasNodeIds.length > 1) {
+                setMenu({
+                  kind: 'selection',
+                  x: event.clientX,
+                  y: event.clientY,
+                })
+                return
+              }
+              setSelection(
+                node.type === 'group'
+                  ? {
+                      surface: 'canvas',
+                      ids: groupMembers(Number(node.id.slice(4))),
+                      edges: [],
+                      group: Number(node.id.slice(4)),
+                    }
+                  : {
+                      surface: 'canvas',
+                      ids: [Number(node.id)],
+                      edges: [],
+                      group: null,
+                    }
+              )
+              setMenu({
+                kind: 'node',
+                x: event.clientX,
+                y: event.clientY,
+                nodeId: node.id,
+              })
+            }}
+            onSelectionContextMenu={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              setMenu({
+                kind: 'selection',
+                x: event.clientX,
+                y: event.clientY,
+              })
+            }}
           >
             <Background />
           </ReactFlow>
@@ -749,6 +999,14 @@ function Canvas({ repo }: { repo: RepoInfo }) {
                   ? 'Release to create relationship'
                   : 'Cannot create this relationship'}
             </div>
+          )}
+          {menu && menuItems.length > 0 && (
+            <PositionedMenu
+              x={menu.x}
+              y={menu.y}
+              items={menuItems}
+              onClose={() => setMenu(null)}
+            />
           )}
           <div className="absolute bottom-3 left-3 right-3 flex flex-wrap gap-1 text-xs">
             {toolbar(

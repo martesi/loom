@@ -17,11 +17,9 @@ export function FloatingPanel({
 
   useEffect(() => {
     const compact = window.matchMedia('(max-width: 1099px)')
-    const collapse = (event: MediaQueryListEvent) => {
-      if (event.matches) setOpen(false)
-    }
-    compact.addEventListener('change', collapse)
-    return () => compact.removeEventListener('change', collapse)
+    const sync = (event: MediaQueryListEvent) => setOpen(!event.matches)
+    compact.addEventListener('change', sync)
+    return () => compact.removeEventListener('change', sync)
   }, [])
 
   return (
