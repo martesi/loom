@@ -4,13 +4,9 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    llm-agents = {
-      url = "github:numtide/llm-agents.nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
-  outputs = { self, nixpkgs, flake-utils, llm-agents }:
+  outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
@@ -149,34 +145,5 @@
           '';
         };
 
-        # Headless-Chromium closure for driving the server-mode build
-        # (main_server.go, `task run:server`) through a real browser via
-        # agent-browser comes from llm-agents.nix, built against this flake's
-        # nixpkgs input.
-        # Split out from `default`/`e2e` for the same reason as `e2e`:
-        # nobody should pay for a Chromium closure just to enter the shell.
-        devShells.web-e2e = pkgs.mkShell {
-          buildInputs = commonBuildInputs ++ [
-            pkgs.chromium
-            llm-agents.packages.${system}.agent-browser
-          ];
-          shellHook = ''
-            ${commonHook}
-
-            export CHROMIUM_BIN="${pkgs.chromium}/bin/chromium"
-            # agent-browser's own bundled-Chrome download (its default) is a
-            # foreign "Chrome for Testing" binary that doesn't run against
-            # this shell's libc/libglib on NixOS — point it at the
-            # properly-linked nixpkgs build instead, and skip the download.
-            export AGENT_BROWSER_EXECUTABLE_PATH="$CHROMIUM_BIN"
-
-            source "$(git rev-parse --show-toplevel)/build/e2e/setup-workspace.sh"
-
-            echo "web-e2e: chromium ready at \$CHROMIUM_BIN" >&2
-            echo "web-e2e: try 'agent-browser open <url>' first." >&2
-            echo "web-e2e: if it hangs/resets (seen under sandboxed CI shells)," >&2
-            echo "web-e2e:   run 'build/e2e/start-browser.sh &' then use 'agent-browser --cdp 9222 ...'" >&2
-          '';
-        };
       });
 }

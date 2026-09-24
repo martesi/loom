@@ -41,9 +41,11 @@ task build
 nix develop --command go test ./...
 nix develop --command bash -lc 'cd frontend && bun run build'
 nix develop .#e2e --command bash -lc 'cd frontend && bun run test:e2e'
+bun run test:agent -- snapshot
+bun run benchmark:1k
 ```
 
-Focused Playwright specs live under `frontend/e2e/`. Test runtime artifacts stay under `.cache/`.
+Focused Playwright specs live under `frontend/e2e/`. `benchmark:1k` records 1,000-photo Canvas latency and browser resource metrics to `.cache/e2e/benchmark-1k.json`. Arca owns the agent-driven Chromium/dev-server lifecycle from `.config/arca.toml`; test runtime artifacts stay under `.cache/`.
 
 ## Repository layout
 

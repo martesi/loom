@@ -18,6 +18,26 @@ const fixturePng = Buffer.from(
   'base64'
 )
 
+const benchmarkRepos =
+  process.env.LOOM_BENCHMARK === '1'
+    ? [
+        {
+          name: 'benchmark-10-fixtures',
+          files: Array.from(
+            { length: 10 },
+            (_, index) => `benchmark-${String(index + 1).padStart(2, '0')}.png`
+          ),
+        },
+        {
+          name: 'benchmark-1k-fixtures',
+          files: Array.from(
+            { length: 1000 },
+            (_, index) => `benchmark-${String(index + 1).padStart(4, '0')}.png`
+          ),
+        },
+      ]
+    : []
+
 const fixtureRepos = [
   { name: 'e2e-repo', files: ['auth-fixture.png'] },
   {
@@ -56,6 +76,15 @@ const fixtureRepos = [
     ],
   },
   {
+    name: 'library-selection-fixtures',
+    files: [
+      'root-alpha.png',
+      'root-beta.png',
+      'nested/folder-gamma.png',
+      'nested/deeper/folder-delta.png',
+    ],
+  },
+  {
     name: 'folders-fixtures',
     files: ['nested/deeper/folder-delta.png'],
   },
@@ -71,6 +100,10 @@ const fixtureRepos = [
     name: 'group-fixtures',
     files: ['group-alpha.png', 'group-beta.png', 'group-gamma.png'],
   },
+  {
+    name: 'group-drop-fixtures',
+    files: ['group-alpha.png', 'group-beta.png', 'group-gamma.png'],
+  },
   { name: 'resize-fixtures', files: ['resize-alpha.png'] },
   { name: 'rescan-fixtures', files: ['rescan-alpha.png'] },
   { name: 'recent-fixtures', files: ['recent-alpha.png'] },
@@ -84,6 +117,7 @@ const fixtureRepos = [
   },
   { name: 'media-fixtures', files: ['media-alpha.png'] },
   { name: 'image-tools-fixtures', files: ['image-tools-alpha.png'] },
+  ...benchmarkRepos,
 ] as const
 
 async function seedFixtureRepos(browseRoot: string) {

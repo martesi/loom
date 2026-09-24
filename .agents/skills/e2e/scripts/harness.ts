@@ -42,6 +42,7 @@ const devSchema = z.object({
   ready: z.array(z.string()).optional(),
   env: envSchema.optional(),
 })
+const cookiesSchema = z.object({ file: z.string().optional(), required: z.boolean().optional() })
 const profileSchema = z.object({
   dataDir: z.string().optional(),
   executable: z.string().optional(),
@@ -50,6 +51,7 @@ const profileSchema = z.object({
   headed: z.boolean().optional(),
   port: z.number().int().optional(),
   idleTimeout: z.number().nonnegative().optional(),
+  cookies: cookiesSchema.optional(),
 })
 const pluginSchema = z.discriminatedUnion('name', [
   z.object({
@@ -66,7 +68,7 @@ const harnessInputSchema = z.object({
   display: z.object({ value: z.string().optional(), timeout: z.number().nonnegative().optional() }).optional(),
   dev: z.union([devSchema, z.array(devSchema)]).optional(),
   profile: z.record(z.string(), profileSchema).optional(),
-  cookies: z.object({ file: z.string().optional(), required: z.boolean().optional() }).optional(),
+  cookies: cookiesSchema.optional(),
   userscript: z.object({
     installUrl: z.string().optional(),
     installOnStart: z.boolean().optional(),
@@ -146,6 +148,7 @@ export function normalizeConfig(input: unknown, root = process.cwd(), env = proc
     dev: Array.isArray(parsed.dev) ? parsed.dev : parsed.dev ? [parsed.dev] : [],
     profiles: Object.fromEntries(profileNames.map((name) => {
       const value = name === 'default' ? defaultProfile : { ...defaultProfile, ...rawProfiles[name] }
+      const profileCookies = rawProfiles[name]?.cookies
       const dataDir = rawProfiles[name]?.dataDir
         ?? (name === 'default' ? defaultProfile.dataDir : undefined)
         ?? path.join(cacheDir, 'browser', name)
@@ -160,6 +163,10 @@ export function normalizeConfig(input: unknown, root = process.cwd(), env = proc
         headed: value.headed ?? false,
         port: normalizePort(value.port ?? DEFAULT_BROWSER_PORT),
         idleTimeout: normalizeTimeout(value.idleTimeout ?? DEFAULT_IDLE_TIMEOUT),
+        cookies: profileCookies ? {
+          file: profileCookies.file,
+          required: profileCookies.required ?? false,
+        } : undefined,
       }]
     })),
     cookies: parsed.cookies ? {
@@ -187,6 +194,11 @@ interface DevConfig {
   env?: EnvValues
 }
 
+interface CookieConfig {
+  file?: string
+  required: boolean
+}
+
 interface ProfileConfig {
   dataDir: string
   executable?: string
@@ -195,6 +207,7 @@ interface ProfileConfig {
   headed: boolean
   port: number
   idleTimeout: number
+  cookies?: CookieConfig
 }
 
 interface HarnessConfig {
@@ -206,7 +219,7 @@ interface HarnessConfig {
   display?: { value: string; timeout: number }
   dev: DevConfig[]
   profiles: Record<string, ProfileConfig>
-  cookies?: { file?: string; required: boolean }
+  cookies?: CookieConfig
   userscript?: {
     installUrl?: string
     installOnStart: boolean
@@ -257,6 +270,7 @@ interface SurfaceOptions {
   port?: number
   browserArgs?: string[]
   plugins?: PluginConfig[]
+  cookies?: boolean
   keepAlive?: boolean
 }
 
@@ -272,7 +286,7 @@ export function buildAgentEnv(
   if (scope.profile.executable) env.AGENT_BROWSER_EXECUTABLE_PATH = scope.profile.executable
   if (scope.profile.extensions.length) env.AGENT_BROWSER_EXTENSIONS = scope.profile.extensions.join(',')
   if (scope.profile.args.length) env.AGENT_BROWSER_ARGS = scope.profile.args.join(' ')
-  env.PLAYWRIGHT_MCP_OUTPUT_DIR ??= path.join(config.playwrightDir, scope.name, scope.session)
+  env.PLAYWRIGHT_MCP_OUTPUT_DIR = path.join(config.playwrightDir, scope.name, scope.session)
   return env
 }
 
@@ -285,10 +299,11 @@ export async function stopHarness(config: HarnessConfig, profile?: string): Prom
 }
 
 export async function importCookies(config: HarnessConfig, agentOptions: AgentOptions = {}): Promise<number> {
-  if (!config.cookies) return 0
-  const cookies = await loadLocalCookies(config.root, { file: config.cookies.file })
-  if (!cookies.length && config.cookies.required) {
-    const source = config.cookies.file ?? 'cookies.json or cookies*.txt'
+  const cookieConfig = cookiesForProfile(config, agentOptions.profile)
+  if (!cookieConfig) return 0
+  const cookies = await loadLocalCookies(config.root, { file: cookieConfig.file })
+  if (!cookies.length && cookieConfig.required) {
+    const source = cookieConfig.file ?? 'cookies.json or cookies*.txt'
     throw new Error(`Required cookie source not found or empty: ${source}`)
   }
 
@@ -491,9 +506,10 @@ export async function runAgentCommand(
 
   try {
     ensurePlaywrightSession(config, browser.endpoint, scope.name, scope.session, browser.profile)
+    if (options.cookies === false) runAgent(config, ['cookie-clear'], agentOptions)
     if (browser.started) {
       await bootstrapPlugins(config, preparedPlugins, agentOptions)
-      await bootstrapAttachedAgent(config, agentOptions)
+      await bootstrapAttachedAgent(config, agentOptions, options)
     }
     return runAgent(config, normalizeAttachedCommand(args), agentOptions)
   } finally {
@@ -519,9 +535,10 @@ export async function runPlaywrightCommand(
 
   try {
     ensurePlaywrightSession(config, browser.endpoint, scope.name, scope.session, browser.profile)
+    if (options.cookies === false) runAgent(config, ['cookie-clear'], agentOptions)
     if (browser.started) {
       await bootstrapPlugins(config, preparedPlugins, agentOptions)
-      await bootstrapAttachedAgent(config, agentOptions)
+      await bootstrapAttachedAgent(config, agentOptions, options)
     }
 
     const result = spawnSync(process.execPath, [playwrightTestCli(config.root), ...args], {
@@ -637,9 +654,15 @@ async function ensureSharedRuntime(config: HarnessConfig, needsDisplay: boolean)
   await startDevProcesses(config, runtime)
 }
 
-async function bootstrapAttachedAgent(config: HarnessConfig, agentOptions: AgentOptions): Promise<void> {
+async function bootstrapAttachedAgent(
+  config: HarnessConfig,
+  agentOptions: AgentOptions,
+  options: SurfaceOptions,
+): Promise<void> {
   runAgent(config, ['goto', 'about:blank'], agentOptions)
-  if (config.cookies) await importCookies(config, agentOptions)
+  if (options.cookies !== false && cookiesForProfile(config, agentOptions.profile)) {
+    await importCookies(config, agentOptions)
+  }
   if (config.userscript && config.userscript.installOnStart && config.userscript.installUrl) {
     await installUserscript(config, agentOptions)
   }
@@ -737,7 +760,7 @@ function buildAttachedAgentEnv(
   env.E2E_HARNESS_PROFILE_NAME = scope.name
   env.E2E_HARNESS_SESSION = scope.session
   env.E2E_HARNESS_PROFILE = dataDir
-  env.PLAYWRIGHT_MCP_OUTPUT_DIR ??= path.join(config.playwrightDir, scope.name, scope.session)
+  env.PLAYWRIGHT_MCP_OUTPUT_DIR = path.join(config.playwrightDir, scope.name, scope.session)
   return env
 }
 
@@ -753,7 +776,7 @@ function buildPlaywrightTestEnv(
   env.E2E_HARNESS_PROFILE_NAME = scope.name
   env.E2E_HARNESS_SESSION = scope.session
   env.E2E_HARNESS_PROFILE = browser.profile
-  env.PLAYWRIGHT_MCP_OUTPUT_DIR ??= path.join(config.playwrightDir, scope.name, scope.session)
+  env.PLAYWRIGHT_MCP_OUTPUT_DIR = path.join(config.playwrightDir, scope.name, scope.session)
   return env
 }
 
@@ -784,6 +807,13 @@ function profileScope(
     },
     session: normalizeSession(session ?? process.env.AGENT_BROWSER_SESSION ?? path.basename(config.root)),
   }
+}
+
+function cookiesForProfile(config: HarnessConfig, profile = 'default'): CookieConfig | undefined {
+  const name = normalizeProfileName(profile)
+  const configured = config.profiles[name]
+  if (!configured) throw new Error(`Unknown E2E profile: ${name}`)
+  return configured.cookies ?? config.cookies
 }
 
 function runtimeName(profile: string): string {
@@ -1115,6 +1145,7 @@ function parseSurfaceArgs(args: string[]) {
       port: undefined,
       browserArgs: undefined,
       plugins: [],
+      cookies: true,
     }
   }
 
@@ -1123,6 +1154,7 @@ function parseSurfaceArgs(args: string[]) {
   let profile = process.env.E2E_HARNESS_PROFILE_NAME ?? 'default'
   let session = process.env.AGENT_BROWSER_SESSION
   let port
+  let cookies = true
   const browserArgs: string[] = []
   const plugins: PluginConfig[] = []
   for (let index = 0; index < control.length; index += 1) {
@@ -1152,6 +1184,10 @@ function parseSurfaceArgs(args: string[]) {
       plugins.push(parsePluginOption(control[++index]))
       continue
     }
+    if (option === '--no-cookies') {
+      cookies = false
+      continue
+    }
     throw new Error(`Unknown harness option: ${option}`)
   }
   return {
@@ -1161,6 +1197,7 @@ function parseSurfaceArgs(args: string[]) {
     port,
     browserArgs: browserArgs.length ? browserArgs : undefined,
     plugins,
+    cookies,
   }
 }
 
@@ -1175,7 +1212,7 @@ export function parsePluginOption(value: string): PluginConfig {
 async function main(argv = process.argv.slice(2)): Promise<void | string | number | boolean> {
   const { command, args, configFile } = parseCli(argv)
   if (!command || command === 'help' || command === '--help') {
-    console.log('usage: node <e2e>/scripts/harness.ts <browser|playwright|start|stop|cookies|install-userscript|enable-user-scripts> [--config path] [--profile name --session id --port n --browser-arg arg --plugin disable-csp --plugin userscript[@version]=url --] [args]')
+    console.log('usage: node <e2e>/scripts/harness.ts <browser|playwright|start|stop|cookies|install-userscript|enable-user-scripts> [--config path] [--profile name --session id --port n --no-cookies --browser-arg arg --plugin disable-csp --plugin userscript[@version]=url --] [args]')
     return
   }
 

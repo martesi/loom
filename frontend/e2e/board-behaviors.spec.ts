@@ -187,6 +187,28 @@ test('sets persist metadata and movement, accept source links, expand, and disso
   await expect(page.locator('.react-flow__edge')).toHaveCount(2)
 })
 
+test('dragging an unplaced Assets item onto a set places it and adds membership', async ({
+  page,
+}) => {
+  await openFixtureRepo(page, 'group-drop-fixtures')
+  await placeAssets(page, ['group-alpha.png', 'group-beta.png'])
+  await page.getByRole('button', { name: 'Auto-arrange' }).click()
+  await page.getByRole('button', { name: 'Reset 100%' }).click()
+  await selectImageNodes(page, [0, 1])
+  await page.getByRole('button', { name: 'Create set' }).click()
+
+  const group = page.locator('.react-flow__node-group')
+  await expect(group).toHaveCount(1)
+  await expect(imageNodes(page)).toHaveCount(0)
+
+  await asset(page, 'group-gamma.png').dragTo(group)
+  await expect(group).toContainText('3')
+  await expect(imageNodes(page)).toHaveCount(0)
+
+  await group.dblclick()
+  await expect(imageNodes(page)).toHaveCount(3)
+})
+
 test('node resize and movement persist while Space drag pans instead of moving nodes', async ({
   page,
 }) => {

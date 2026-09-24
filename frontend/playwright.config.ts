@@ -13,6 +13,8 @@ const cacheDir = path.resolve(import.meta.dirname, '../.cache/e2e')
 export default defineConfig({
   testDir: './e2e',
   testMatch: '**/*.spec.ts',
+  testIgnore:
+    process.env.LOOM_BENCHMARK === '1' ? undefined : '**/*-benchmark.spec.ts',
   fullyParallel: false,
   workers: 1,
   timeout: 60_000,

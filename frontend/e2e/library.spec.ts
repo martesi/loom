@@ -4,6 +4,7 @@ import {
   asset,
   assets,
   fixturePath,
+  imageNodes,
   openFixtureRepo,
   placeAssets,
 } from './test-helpers'
@@ -80,6 +81,36 @@ test('library selection, search, placement filters, and folder navigation', asyn
 
   await page.getByRole('button', { name: /Repository/ }).click()
   await expect(asset(page, 'renamed-gamma.png')).toBeVisible()
+})
+
+test('asset selection survives view switches and multi-row drag transfers selection to Canvas', async ({
+  page,
+}) => {
+  await openFixtureRepo(page, 'library-selection-fixtures')
+  const list = page.getByRole('listbox', { name: 'Assets' })
+  const selectedAssets = list.locator('[role=option][aria-selected=true]')
+
+  await expect(list.getByRole('checkbox')).toHaveCount(0)
+  await asset(page, 'root-alpha.png').click()
+  await asset(page, 'root-beta.png').click({ modifiers: ['Control'] })
+  await expect(selectedAssets).toHaveCount(2)
+
+  await page.getByRole('button', { name: 'Folders', exact: true }).click()
+  await expect(selectedAssets).toHaveCount(2)
+  await page.getByRole('button', { name: 'All Assets', exact: true }).click()
+  await expect(selectedAssets).toHaveCount(2)
+
+  await asset(page, 'root-alpha.png').dragTo(page.locator('.react-flow__pane'), {
+    targetPosition: { x: 180, y: 160 },
+  })
+  await expect(imageNodes(page)).toHaveCount(2)
+  await expect(selectedAssets).toHaveCount(0)
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
+
+  await asset(page, 'root-alpha.png').dragTo(page.locator('.react-flow__pane'), {
+    targetPosition: { x: 480, y: 220 },
+  })
+  await expect(imageNodes(page)).toHaveCount(2)
 })
 
 test('inspector edits metadata and library filters follow tag/archive/trash state', async ({

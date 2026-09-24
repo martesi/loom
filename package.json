@@ -1,0 +1,11 @@
+{
+  "name": "loom",
+  "private": true,
+  "workspaces": [
+    ".agents/skills/e2e"
+  ],
+  "scripts": {
+    "test:agent": "nix develop .#e2e --command node .agents/skills/e2e/scripts/harness.ts browser --",
+    "benchmark:1k": "nix develop .#e2e --command bash -lc 'cd frontend && bun run benchmark:1k'"
+  }
+}

@@ -1,0 +1,8 @@
+targetUrl = "http://127.0.0.1:9245/"
+
+[[dev]]
+command = ["task", "dev:server"]
+ready = ["http://127.0.0.1:9245/"]
+
+[dev.env]
+BROWSER = "true"
