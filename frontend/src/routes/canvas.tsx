@@ -4,6 +4,7 @@ import {
   applyNodeChanges,
   Background,
   type Edge,
+  MarkerType,
   type Node,
   ReactFlow,
   ReactFlowProvider,
@@ -33,6 +34,7 @@ import { emptySelection, type Selection } from '../lib/selection'
 import { useGroupShortcut, useUndoShortcuts } from '../lib/use-undo'
 
 const nodeTypes = { image: ImageNode, group: GroupNode }
+const RELATION_DRAG_THRESHOLD = 5
 export function CanvasWorkspace({ repo }: { repo: RepoInfo }) {
   return (
     <ReactFlowProvider>
@@ -70,6 +72,13 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   } | null>(null)
   const visible = useRef<number[]>([]),
     relation = useRef<{ source: number; x: number; y: number } | null>(null)
+  const [relationshipPreview, setRelationshipPreview] = useState<{
+    x1: number
+    y1: number
+    x2: number
+    y2: number
+    valid: boolean | null
+  } | null>(null)
   const [target, setTarget] = useState<{
     id: string
     valid: boolean
@@ -201,11 +210,17 @@ function Canvas({ repo }: { repo: RepoInfo }) {
           : 'ring-4 ring-red-500'
         : '',
   }))
-  const displayEdges = edges.map((e) => ({
-    ...e,
-    selected:
-      selection.surface === 'canvas' && selection.edges.includes(Number(e.id)),
-  }))
+  const displayEdges: Edge[] = edges.map((e) => {
+    const selected =
+      selection.surface === 'canvas' && selection.edges.includes(Number(e.id))
+    const color = selected ? 'var(--color-ink)' : 'var(--color-primary)'
+    return {
+      ...e,
+      selected,
+      style: { stroke: color, strokeWidth: selected ? 3 : 2 },
+      markerEnd: { type: MarkerType.ArrowClosed, color },
+    }
+  })
   function center() {
     const b = host.current?.getBoundingClientRect()
     return flow.screenToFlowPosition({
@@ -396,6 +411,13 @@ function Canvas({ repo }: { repo: RepoInfo }) {
         ?.getAttribute('data-id') ?? null
     )
   }
+  function isRelationshipDrag(
+    drag: { x: number; y: number },
+    x: number,
+    y: number
+  ) {
+    return Math.hypot(x - drag.x, y - drag.y) >= RELATION_DRAG_THRESHOLD
+  }
   function validTarget(source: number, id: string) {
     const targets = id.startsWith('set-')
       ? groupMembers(Number(id.slice(4)))
@@ -422,12 +444,21 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     const clusterNodes = nodes.filter((node) => nodeIds.includes(node.id))
     if (!clusterNodes.length) return
     const positions = computeSubgraphLayout(
-      nodeIds,
+      clusterNodes.map((node) => ({
+        id: node.id,
+        width: node.width ?? node.measured?.width ?? 150,
+        height: node.height ?? node.measured?.height ?? 110,
+      })),
       edges.map((edge) => ({ source: edge.source, target: edge.target }))
     )
     const existing = nodes
       .filter((node) => !nodeIds.includes(node.id))
-      .map((node) => node.position)
+      .map((node) => ({
+        id: node.id,
+        ...node.position,
+        width: node.width ?? node.measured?.width ?? 150,
+        height: node.height ?? node.measured?.height ?? 110,
+      }))
     const minX = Math.min(...clusterNodes.map((node) => node.position.x))
     const minY = Math.min(...clusterNodes.map((node) => node.position.y))
     const placed = existing.length
@@ -655,16 +686,33 @@ function Canvas({ repo }: { repo: RepoInfo }) {
           }}
           onPointerCancel={() => {
             relation.current = null
+            setRelationshipPreview(null)
             setTarget(null)
           }}
           onPointerMove={(event) => {
-            if (!relation.current) return
+            const drag = relation.current
+            if (!drag) return
+            if (!isRelationshipDrag(drag, event.clientX, event.clientY)) {
+              setRelationshipPreview(null)
+              setTarget(null)
+              return
+            }
             const id = targetAt(event.clientX, event.clientY)
+            const valid = id ? validTarget(drag.source, id) : null
+            const rect = host.current?.getBoundingClientRect()
+            if (rect)
+              setRelationshipPreview({
+                x1: drag.x - rect.left,
+                y1: drag.y - rect.top,
+                x2: event.clientX - rect.left,
+                y2: event.clientY - rect.top,
+                valid,
+              })
             setTarget(
               id
                 ? {
                     id,
-                    valid: validTarget(relation.current.source, id),
+                    valid: valid ?? false,
                     kind: 'relationship',
                   }
                 : null
@@ -676,11 +724,10 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             event.stopPropagation()
             event.preventDefault()
             relation.current = null
+            setRelationshipPreview(null)
             setTarget(null)
             const id = targetAt(event.clientX, event.clientY)
-            if (
-              Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 5
-            ) {
+            if (!isRelationshipDrag(drag, event.clientX, event.clientY)) {
               setSelection((current) => ({
                 surface: 'canvas',
                 ids: current.ids.includes(drag.source)
@@ -988,6 +1035,32 @@ function Canvas({ repo }: { repo: RepoInfo }) {
           >
             <Background />
           </ReactFlow>
+          {relationshipPreview && (
+            <svg
+              data-testid="relationship-preview"
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 z-20 h-full w-full"
+            >
+              <line
+                x1={relationshipPreview.x1}
+                y1={relationshipPreview.y1}
+                x2={relationshipPreview.x2}
+                y2={relationshipPreview.y2}
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeDasharray={
+                  relationshipPreview.valid === null ? '6 5' : undefined
+                }
+                className={
+                  relationshipPreview.valid === false
+                    ? 'stroke-red-500'
+                    : relationshipPreview.valid
+                      ? 'stroke-green-500'
+                      : 'stroke-primary'
+                }
+              />
+            </svg>
+          )}
           {target && (
             <div
               role="status"

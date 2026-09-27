@@ -97,6 +97,10 @@ const fixtureRepos = [
     files: ['relation-alpha.png', 'relation-beta.png', 'relation-gamma.png'],
   },
   {
+    name: 'arrange-resize-fixtures',
+    files: ['arrange-alpha.png', 'arrange-beta.png', 'arrange-gamma.png'],
+  },
+  {
     name: 'group-fixtures',
     files: ['group-alpha.png', 'group-beta.png', 'group-gamma.png'],
   },

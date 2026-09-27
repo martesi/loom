@@ -42,7 +42,14 @@ test('relationships reject cycles, support ctrl-click selection, and delete as e
   await page.keyboard.down('Control')
   await page.mouse.move(first.x + 30, first.y + 30)
   await page.mouse.down()
+  await page.mouse.move(first.x + 32, first.y + 32)
+  await expect(page.getByRole('status')).toHaveCount(0)
+  await expect(page.getByTestId('relationship-preview')).toHaveCount(0)
   await page.mouse.move(second.x + 30, second.y + 30, { steps: 8 })
+  await expect(page.getByTestId('relationship-preview')).toBeVisible()
+  await expect(
+    page.getByTestId('relationship-preview').locator('line')
+  ).toHaveClass(/stroke-green-500/)
   await expect(page.getByRole('status')).toHaveText(
     'Release to create relationship'
   )
@@ -50,6 +57,17 @@ test('relationships reject cycles, support ctrl-click selection, and delete as e
   await page.mouse.up()
   await page.keyboard.up('Control')
   await expect(page.locator('.react-flow__edge')).toHaveCount(1)
+  const persistedEdge = page.locator('.react-flow__edge-path')
+  await expect(persistedEdge).toHaveAttribute('marker-end', /url/)
+  await expect(persistedEdge).toHaveCSS('stroke-width', '2px')
+  await expect
+    .poll(async () =>
+      persistedEdge.evaluate((path) => {
+        const rect = path.getBoundingClientRect()
+        return Math.max(rect.width, rect.height)
+      })
+    )
+    .toBeGreaterThan(0)
 
   await page.keyboard.down('Control')
   await page.mouse.move(second.x + 30, second.y + 30)
@@ -62,6 +80,15 @@ test('relationships reject cycles, support ctrl-click selection, and delete as e
   await page.mouse.up()
   await page.keyboard.up('Control')
   await expect(page.locator('.react-flow__edge')).toHaveCount(1)
+
+  await page.getByRole('button', { name: 'Auto-arrange' }).click()
+  await expect
+    .poll(async () => {
+      const source = await nodeBox(nodes.nth(0))
+      const derived = await nodeBox(nodes.nth(1))
+      return source.x + source.width < derived.x
+    })
+    .toBe(true)
 
   const third = await nodeBox(nodes.nth(2))
   await page.keyboard.down('Control')
@@ -80,6 +107,58 @@ test('relationships reject cycles, support ctrl-click selection, and delete as e
   await expect(page.locator('.react-flow__edge.selected')).toHaveCount(1)
   await page.keyboard.press('Delete')
   await expect(page.locator('.react-flow__edge')).toHaveCount(0)
+})
+
+test('auto-arrange respects resized node bounds', async ({ page }) => {
+  await openFixtureRepo(page, 'arrange-resize-fixtures')
+  await placeAssets(page, ['arrange-alpha.png', 'arrange-beta.png'])
+  await page.getByRole('button', { name: 'Reset 100%' }).click()
+
+  const nodes = imageNodes(page)
+  await nodes.first().click()
+  const beforeResize = await nodeBox(nodes.first())
+  const handle = page.locator('.react-flow__resize-control.handle').last()
+  await expect(handle).toBeVisible()
+  await dragBy(page, handle, 220, 80)
+  await expect
+    .poll(async () => (await nodeBox(nodes.first())).width)
+    .toBeGreaterThan(beforeResize.width + 150)
+  await page.getByRole('button', { name: 'Auto-arrange' }).click()
+
+  await expect
+    .poll(async () => {
+      const first = await nodeBox(nodes.nth(0))
+      const second = await nodeBox(nodes.nth(1))
+      return (
+        first.x + first.width <= second.x ||
+        second.x + second.width <= first.x ||
+        first.y + first.height <= second.y ||
+        second.y + second.height <= first.y
+      )
+    })
+    .toBe(true)
+
+  await asset(page, 'arrange-gamma.png').dragTo(
+    page.locator('.react-flow__pane'),
+    {
+      targetPosition: { x: 500, y: 450 },
+    }
+  )
+  await expect(nodes).toHaveCount(3)
+  await selectImageNodes(page, [1, 2])
+  await nodes.nth(1).click({ button: 'right' })
+  await page
+    .getByRole('menu')
+    .getByRole('button', { name: 'Auto-arrange selection' })
+    .click()
+  await expect
+    .poll(async () => {
+      const obstacle = await nodeBox(nodes.nth(0))
+      const second = await nodeBox(nodes.nth(1))
+      const third = await nodeBox(nodes.nth(2))
+      return Math.min(second.y, third.y) >= obstacle.y + obstacle.height + 50
+    })
+    .toBe(true)
 })
 
 test('sets persist metadata and movement, accept source links, expand, and dissolve', async ({

@@ -34,7 +34,7 @@ export function ImageNode({ data, selected, width, height }: NodeProps) {
       <Handle
         type="target"
         position={Position.Left}
-        style={{ display: 'none' }}
+        style={{ visibility: 'hidden' }}
       />
       <NodeResizer
         minWidth={100}
@@ -75,7 +75,7 @@ export function ImageNode({ data, selected, width, height }: NodeProps) {
       <Handle
         type="source"
         position={Position.Right}
-        style={{ display: 'none' }}
+        style={{ visibility: 'hidden' }}
       />
     </div>
   )

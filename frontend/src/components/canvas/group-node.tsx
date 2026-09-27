@@ -7,12 +7,12 @@ export function GroupNode({ data, selected }: NodeProps) {
       <Handle
         type="target"
         position={Position.Left}
-        style={{ display: 'none' }}
+        style={{ visibility: 'hidden' }}
       />
       <Handle
         type="source"
         position={Position.Right}
-        style={{ display: 'none' }}
+        style={{ visibility: 'hidden' }}
       />
       <img
         src={String(data.thumbUrl ?? '')}
