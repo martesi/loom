@@ -11,6 +11,7 @@ import {
   SelectionMode,
   useReactFlow,
 } from '@xyflow/react'
+import { PanelLeft, PanelRight } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import '@xyflow/react/dist/style.css'
 import {
@@ -19,12 +20,15 @@ import {
   ImageService,
   type RepoInfo,
 } from '../../bindings/loom/internal/service'
+import { CanvasDock } from '../components/canvas/canvas-dock'
 import { DetailPanel } from '../components/canvas/detail-panel'
-import { FloatingPanel } from '../components/canvas/floating-panel'
 import { GroupNode } from '../components/canvas/group-node'
 import { ImageNode } from '../components/canvas/image-node'
 import { LibraryPanel } from '../components/canvas/library-panel'
+import { LightboxViewer } from '../components/canvas/lightbox'
 import { RepoSelect } from '../components/canvas/repo-select'
+import { SelectionHud } from '../components/canvas/selection-hud'
+import { ShelfPanel } from '../components/canvas/shelf-panel'
 import { CompressionDialog } from '../components/compression-dialog'
 import { type MenuAction, PositionedMenu } from '../components/menu'
 import { Button } from '../components/ui/button'
@@ -32,6 +36,7 @@ import { copyMedia, filesToMedia, readMedia } from '../lib/clipboard'
 import { computeSubgraphLayout, placeCluster } from '../lib/layout'
 import { emptySelection, type Selection } from '../lib/selection'
 import { useGroupShortcut, useUndoShortcuts } from '../lib/use-undo'
+import { cn } from '../lib/utils'
 
 const nodeTypes = { image: ImageNode, group: GroupNode }
 const RELATION_DRAG_THRESHOLD = 5
@@ -60,6 +65,27 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     [ready, setReady] = useState(false)
   const [compressIds, setCompressIds] = useState<number[] | null>(null)
   const [purgeIds, setPurgeIds] = useState<number[] | null>(null)
+  const [previewImageId, setPreviewImageId] = useState<number | null>(null)
+  const [assetsOpen, setAssetsOpen] = useState(
+    () =>
+      typeof window === 'undefined' ||
+      !window.matchMedia('(max-width: 1099px)').matches
+  )
+  const [inspectorOpen, setInspectorOpen] = useState(
+    () =>
+      typeof window === 'undefined' ||
+      !window.matchMedia('(max-width: 1099px)').matches
+  )
+
+  useEffect(() => {
+    const compact = window.matchMedia('(max-width: 1099px)')
+    const sync = (event: MediaQueryListEvent) => {
+      setAssetsOpen(!event.matches)
+      setInspectorOpen(!event.matches)
+    }
+    compact.addEventListener('change', sync)
+    return () => compact.removeEventListener('change', sync)
+  }, [])
   const [menu, setMenu] = useState<{
     kind: 'pane' | 'node' | 'selection'
     x: number
@@ -141,6 +167,8 @@ function Canvas({ repo }: { repo: RepoInfo }) {
           thumbUrl: i.thumbUrl,
           missing: i.missing,
           showFileName: true,
+          width: i.width,
+          height: i.height,
           onResizeEnd: (x: number, y: number, w: number, h: number) =>
             callbacks.current.run(async () => {
               await ImageService.SetPosition(repo.path, i.id, x, y)
@@ -345,8 +373,26 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     setSelection({ ...selection, ids: [], edges: [], group: null })
     await reload()
   }
-  const latest = useRef({ selection, selectedIds, remove, paste })
-  latest.current = { selection, selectedIds, remove, paste }
+  const latest = useRef({
+    selection,
+    selectedIds,
+    remove,
+    paste,
+    displayNodes,
+    center,
+    arrange,
+    flow,
+  })
+  latest.current = {
+    selection,
+    selectedIds,
+    remove,
+    paste,
+    displayNodes,
+    center,
+    arrange,
+    flow,
+  }
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
       if (
@@ -362,7 +408,74 @@ function Canvas({ repo }: { repo: RepoInfo }) {
         e.preventDefault()
         void latest.current.remove(e.shiftKey).catch(callbacks.current.report)
       }
+      if (e.shiftKey && !(e.ctrlKey || e.metaKey)) {
+        if (e.key === '1' || e.key === '!' || e.code === 'Digit1') {
+          e.preventDefault()
+          void latest.current.flow
+            .fitView({ padding: 0.2 })
+            .then(() =>
+              ImageService.SetViewport(
+                repo.path,
+                latest.current.flow.getViewport()
+              )
+            )
+            .catch(callbacks.current.report)
+          return
+        }
+        if (e.key === '2' || e.key === '@' || e.code === 'Digit2') {
+          e.preventDefault()
+          const selected = latest.current.displayNodes.filter((n) => n.selected)
+          if (selected.length > 0) {
+            void latest.current.flow
+              .fitView({ nodes: selected, padding: 0.2 })
+              .then(() =>
+                ImageService.SetViewport(
+                  repo.path,
+                  latest.current.flow.getViewport()
+                )
+              )
+              .catch(callbacks.current.report)
+          }
+          return
+        }
+        if (e.key.toLowerCase() === 'a') {
+          e.preventDefault()
+          const selected = latest.current.displayNodes.filter((n) => n.selected)
+          if (selected.length >= 2) {
+            void latest.current
+              .arrange(selected.map((n) => n.id))
+              .catch(callbacks.current.report)
+          } else {
+            void latest.current.arrange().catch(callbacks.current.report)
+          }
+          return
+        }
+      }
       if (!(e.ctrlKey || e.metaKey)) return
+      if (e.key.toLowerCase() === 'b') {
+        e.preventDefault()
+        setAssetsOpen((prev) => !prev)
+        return
+      }
+      if (e.key.toLowerCase() === 'i') {
+        e.preventDefault()
+        setInspectorOpen((prev) => !prev)
+        return
+      }
+      if (e.key === '0' || e.code === 'Digit0') {
+        e.preventDefault()
+        const p = latest.current.center()
+        void latest.current.flow
+          .setCenter(p.x, p.y, { zoom: 1 })
+          .then(() =>
+            ImageService.SetViewport(
+              repo.path,
+              latest.current.flow.getViewport()
+            )
+          )
+          .catch(callbacks.current.report)
+        return
+      }
       if (e.key.toLowerCase() === 'a') {
         e.preventDefault()
         if (latest.current.selection.surface === 'assets')
@@ -493,6 +606,94 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   const selectedCanvasNodeIds = displayNodes
     .filter((node) => node.selected)
     .map((node) => node.id)
+  async function alignHorizontal() {
+    const selected = displayNodes.filter((n) => n.selected)
+    if (selected.length < 2) return
+    const avgY = Math.round(
+      selected.reduce((sum, n) => sum + n.position.y, 0) / selected.length
+    )
+    const updates = selected.flatMap((n) => {
+      if (n.type === 'group') {
+        const group = (data.groups ?? []).find((g) => `set-${g.id}` === n.id)
+        if (!group) return []
+        const members = (data.images ?? []).filter(
+          (i) => (group.memberIds ?? []).includes(i.id) && i.placed
+        )
+        const dy = avgY - n.position.y
+        return members.map((i) => ({
+          imageId: i.id,
+          x: i.canvasX,
+          y: i.canvasY + dy,
+        }))
+      }
+      return [{ imageId: Number(n.id), x: n.position.x, y: avgY }]
+    })
+    await ImageService.SetPositions(repo.path, updates)
+    await reload()
+  }
+  async function alignVertical() {
+    const selected = displayNodes.filter((n) => n.selected)
+    if (selected.length < 2) return
+    const avgX = Math.round(
+      selected.reduce((sum, n) => sum + n.position.x, 0) / selected.length
+    )
+    const updates = selected.flatMap((n) => {
+      if (n.type === 'group') {
+        const group = (data.groups ?? []).find((g) => `set-${g.id}` === n.id)
+        if (!group) return []
+        const members = (data.images ?? []).filter(
+          (i) => (group.memberIds ?? []).includes(i.id) && i.placed
+        )
+        const dx = avgX - n.position.x
+        return members.map((i) => ({
+          imageId: i.id,
+          x: i.canvasX + dx,
+          y: i.canvasY,
+        }))
+      }
+      return [{ imageId: Number(n.id), x: avgX, y: n.position.y }]
+    })
+    await ImageService.SetPositions(repo.path, updates)
+    await reload()
+  }
+  function handleLocate(node: Node) {
+    if (node.type === 'group') {
+      const groupId = Number(node.id.slice(4))
+      const members = groupMembers(groupId)
+      selectAssets(members)
+      if (members.length) setReveal({ id: members[0], folder: null })
+    } else {
+      const imageId = Number(node.id)
+      selectAssets([imageId])
+      setReveal({ id: imageId, folder: null })
+    }
+    void flow
+      .setCenter(
+        node.position.x + (node.measured?.width ?? node.width ?? 150) / 2,
+        node.position.y + (node.measured?.height ?? node.height ?? 110) / 2,
+        { zoom: flow.getZoom() }
+      )
+      .catch(report)
+  }
+  function handlePreview(node: Node) {
+    if (node.type === 'group') {
+      const groupId = Number(node.id.slice(4))
+      const group = (data.groups ?? []).find((g) => g.id === groupId)
+      const firstId = group?.coverImageId ?? group?.memberIds?.[0]
+      if (firstId) setPreviewImageId(firstId)
+    } else {
+      setPreviewImageId(Number(node.id))
+    }
+  }
+  function handleUnplace(nodeIds: string[]) {
+    const idsToUnplace = nodeIds.flatMap((id) => {
+      if (id.startsWith('set-')) {
+        return groupMembers(Number(id.slice(4)))
+      }
+      return [Number(id)]
+    })
+    run(() => removeCanvasAssets(idsToUnplace, false))
+  }
   const menuItems: MenuAction[] = (() => {
     if (!menu) return []
     if (menu.kind === 'pane')
@@ -611,6 +812,22 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   return (
     <div className="flex h-screen flex-col bg-surface-canvas text-ink">
       <header className="flex items-center gap-2 border-b border-black/10 bg-card px-3 py-2 text-xs">
+        <button
+          type="button"
+          aria-label="Assets"
+          aria-expanded={assetsOpen}
+          title="Toggle Assets shelf (Cmd+B)"
+          data-testid="toggle-assets-shelf"
+          onClick={() => setAssetsOpen((v) => !v)}
+          className={cn(
+            'inline-flex h-8 w-8 items-center justify-center rounded-sm border transition-colors focus-visible:ring-2 focus-visible:ring-primary/40',
+            assetsOpen
+              ? 'border-black/20 bg-black/[0.06] text-ink'
+              : 'border-black/16 bg-transparent text-ink/70 hover:bg-black/[0.03] hover:text-ink'
+          )}
+        >
+          <PanelLeft className="h-4 w-4" />
+        </button>
         <RepoSelect repo={repo} />
         <h1 className="text-xs font-semibold">Canvas</h1>
         {toolbar('Rescan', reload)}
@@ -630,6 +847,23 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             }}
           />
         </label>
+        <div className="flex-1" />
+        <button
+          type="button"
+          aria-label="Inspector"
+          aria-expanded={inspectorOpen}
+          title="Toggle Inspector shelf (Cmd+I)"
+          data-testid="toggle-inspector-shelf"
+          onClick={() => setInspectorOpen((v) => !v)}
+          className={cn(
+            'inline-flex h-8 w-8 items-center justify-center rounded-sm border transition-colors focus-visible:ring-2 focus-visible:ring-primary/40',
+            inspectorOpen
+              ? 'border-black/20 bg-black/[0.06] text-ink'
+              : 'border-black/16 bg-transparent text-ink/70 hover:bg-black/[0.03] hover:text-ink'
+          )}
+        >
+          <PanelRight className="h-4 w-4" />
+        </button>
       </header>
       {error && (
         <div role="alert" className="bg-red-100 p-2 text-sm">
@@ -640,7 +874,13 @@ function Canvas({ repo }: { repo: RepoInfo }) {
         </div>
       )}
       <div className="relative flex min-h-0 flex-1">
-        <FloatingPanel title="Assets" side="left">
+        <ShelfPanel
+          title="Assets"
+          side="left"
+          open={assetsOpen}
+          onOpenChange={setAssetsOpen}
+          shortcutHint="Cmd+B"
+        >
           <LibraryPanel
             path={repo.path}
             selection={selection}
@@ -654,7 +894,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             change={reload}
             compress={setCompressIds}
           />
-        </FloatingPanel>
+        </ShelfPanel>
         <main
           ref={host}
           aria-label="Canvas"
@@ -1081,36 +1321,52 @@ function Canvas({ repo }: { repo: RepoInfo }) {
               onClose={() => setMenu(null)}
             />
           )}
-          <div className="absolute bottom-3 left-3 right-3 flex flex-wrap gap-1 text-xs">
-            {toolbar(
-              'Fit all',
-              async () => {
-                await flow.fitView({ padding: 0.2 })
-                await ImageService.SetViewport(repo.path, flow.getViewport())
-              },
-              displayNodes.length === 0
-            )}
-            {toolbar(
-              'Fit selection',
-              async () => {
-                await flow.fitView({
-                  nodes: displayNodes.filter((n) => n.selected),
-                  padding: 0.2,
-                })
-                await ImageService.SetViewport(repo.path, flow.getViewport())
-              },
-              !displayNodes.some((n) => n.selected)
-            )}
-            {toolbar('Reset 100%', async () => {
+          <SelectionHud
+            selectedNodes={displayNodes.filter((n) => n.selected)}
+            hostRef={host}
+            canCreateSet={canCreateSet}
+            onCreateSet={() => void createSet().catch(report)}
+            onAlignHorizontal={() => void alignHorizontal().catch(report)}
+            onAlignVertical={() => void alignVertical().catch(report)}
+            onArrangeSubgraph={() =>
+              void arrange(selectedCanvasNodeIds).catch(report)
+            }
+            onUnplace={handleUnplace}
+            onPreview={handlePreview}
+            onLocate={handleLocate}
+          />
+          <CanvasDock
+            canFitAll={displayNodes.length > 0}
+            canFitSelection={displayNodes.some((n) => n.selected)}
+            canAutoArrange={displayNodes.length >= 2}
+            canCreateSet={canCreateSet}
+            onFitAll={async () => {
+              await flow.fitView({ padding: 0.2 })
+              await ImageService.SetViewport(repo.path, flow.getViewport())
+            }}
+            onFitSelection={async () => {
+              await flow.fitView({
+                nodes: displayNodes.filter((n) => n.selected),
+                padding: 0.2,
+              })
+              await ImageService.SetViewport(repo.path, flow.getViewport())
+            }}
+            onResetZoom={async () => {
               const p = center()
               await flow.setCenter(p.x, p.y, { zoom: 1 })
               await ImageService.SetViewport(repo.path, flow.getViewport())
-            })}
-            {toolbar('Auto-arrange', arrange, displayNodes.length < 2)}
-            {toolbar('Create set', createSet, !canCreateSet)}
-          </div>
+            }}
+            onAutoArrange={() => void arrange().catch(report)}
+            onCreateSet={() => void createSet().catch(report)}
+          />
         </main>
-        <FloatingPanel title="Inspector" side="right">
+        <ShelfPanel
+          title="Inspector"
+          side="right"
+          open={inspectorOpen}
+          onOpenChange={setInspectorOpen}
+          shortcutHint="Cmd+I"
+        >
           <DetailPanel
             path={repo.path}
             data={data}
@@ -1119,8 +1375,50 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             go={(id, folder) => void go(id, folder).catch(report)}
             onError={report}
           />
-        </FloatingPanel>
+        </ShelfPanel>
       </div>
+      {previewImageId !== null && (
+        <LightboxViewer
+          images={(data.images ?? []).filter((i) => i.placed && !i.trashed)}
+          index={Math.max(
+            0,
+            (data.images ?? [])
+              .filter((i) => i.placed && !i.trashed)
+              .findIndex((i) => i.id === previewImageId)
+          )}
+          onClose={() => setPreviewImageId(null)}
+          onIndexChange={(idx) => {
+            const placed = (data.images ?? []).filter(
+              (i) => i.placed && !i.trashed
+            )
+            if (placed[idx]) setPreviewImageId(placed[idx].id)
+          }}
+          tagsForImage={() => []}
+          placementLabel={
+            (data.images ?? []).find((i) => i.id === previewImageId)?.placed
+              ? 'Canvas'
+              : 'Library'
+          }
+          sourcesFor={(id) =>
+            (data.relationships ?? [])
+              .filter((r) => r.derivedImageId === id)
+              .map((r) => {
+                const src = (data.images ?? []).find(
+                  (i) => i.id === r.sourceImageId
+                )
+                return {
+                  id: r.sourceImageId,
+                  fileName: src?.fileName ?? '',
+                  thumbUrl: src?.thumbUrl ?? '',
+                }
+              })
+          }
+          onJumpTo={(id) => {
+            setPreviewImageId(id)
+            void go(id).catch(report)
+          }}
+        />
+      )}
       {compressIds && (
         <CompressionDialog
           path={repo.path}

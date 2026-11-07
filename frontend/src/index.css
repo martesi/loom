@@ -1,29 +1,31 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --font-sans:
     "Segoe UI", "Segoe UI Variable", system-ui, -apple-system, sans-serif;
 
-  /* Fluent-leaning neutral surfaces */
-  --color-surface: #f3f2f1;
-  --color-surface-canvas: #f9f9f8;
-  --color-card: #ffffff;
-  --color-ink: #201f1e;
-  --color-ink-muted: #605e5c;
-  --color-ink-subtle: #8a8886;
+  /* Theme tokens bound to CSS variables */
+  --color-surface: var(--color-surface);
+  --color-surface-canvas: var(--color-surface-canvas);
+  --color-card: var(--color-card);
+  --color-ink: var(--color-ink);
+  --color-ink-muted: var(--color-ink-muted);
+  --color-ink-subtle: var(--color-ink-subtle);
 
-  /* Single brand blue. */
-  --color-primary: #0067c6;
-  --color-primary-soft: #eaf3fc;
-  --color-danger: #c42b1c;
-  --color-danger-soft: #fde7e4;
+  /* Brand and functional colors */
+  --color-primary: var(--color-primary);
+  --color-primary-soft: var(--color-primary-soft);
+  --color-danger: var(--color-danger);
+  --color-danger-soft: var(--color-danger-soft);
 
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 8px;
 
-  /* Semantic component colors. */
-  --color-background: var(--color-surface);
+  /* Semantic component colors */
+  --color-background: var(--color-surface-canvas);
   --color-foreground: var(--color-ink);
   --color-card-foreground: var(--color-ink);
   --color-popover: var(--color-card);
@@ -31,16 +33,78 @@
   --color-primary-foreground: #ffffff;
   --color-secondary: var(--color-surface);
   --color-secondary-foreground: var(--color-ink-subtle);
-  --color-muted: var(--color-surface);
-  --color-muted-foreground: var(--color-ink-subtle);
+  --color-muted: var(--color-muted);
+  --color-muted-foreground: var(--color-ink-muted);
   --color-destructive: var(--color-danger);
   --color-destructive-foreground: #ffffff;
+  --color-border: var(--color-border);
+  --color-input: var(--color-input);
+  --color-ring: var(--color-primary);
+  /* Neutral hover-highlight fill */
+  --color-accent: var(--color-accent);
+  --color-accent-foreground: var(--color-ink);
+}
+
+/* Editorial Stone (light theme) */
+:root {
+  --color-surface: #f3f2f1;
+  --color-surface-canvas: #f9f9f8;
+  --color-card: #ffffff;
+  --color-ink: #18181b;
+  --color-ink-muted: #52525b;
+  --color-ink-subtle: #71717a;
+
+  --color-primary: #0067c6;
+  --color-primary-soft: #eaf3fc;
+  --color-danger: #c42b1c;
+  --color-danger-soft: #fde7e4;
+
   --color-border: rgba(0, 0, 0, 0.08);
   --color-input: rgba(0, 0, 0, 0.08);
-  --color-ring: var(--color-primary);
-  /* Neutral hover-highlight fill. */
-  --color-accent: var(--color-surface);
-  --color-accent-foreground: var(--color-ink);
+  --color-muted: #f3f2f1;
+  --color-accent: #f3f2f1;
+}
+
+/* Studio Obsidian (dark theme) */
+.dark,
+[data-theme="dark"] {
+  --color-surface: #141416;
+  --color-surface-canvas: #0f0f11;
+  --color-card: #18181b;
+  --color-ink: #f4f4f5;
+  --color-ink-muted: #a1a1aa;
+  --color-ink-subtle: #71717a;
+
+  --color-primary: #0067c6;
+  --color-primary-soft: rgba(0, 103, 198, 0.15);
+  --color-danger: #c42b1c;
+  --color-danger-soft: rgba(196, 43, 28, 0.15);
+
+  --color-border: rgba(255, 255, 255, 0.1);
+  --color-input: rgba(255, 255, 255, 0.1);
+  --color-muted: #27272a;
+  --color-accent: #27272a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --color-surface: #141416;
+    --color-surface-canvas: #0f0f11;
+    --color-card: #18181b;
+    --color-ink: #f4f4f5;
+    --color-ink-muted: #a1a1aa;
+    --color-ink-subtle: #71717a;
+
+    --color-primary: #0067c6;
+    --color-primary-soft: rgba(0, 103, 198, 0.15);
+    --color-danger: #c42b1c;
+    --color-danger-soft: rgba(196, 43, 28, 0.15);
+
+    --color-border: rgba(255, 255, 255, 0.1);
+    --color-input: rgba(255, 255, 255, 0.1);
+    --color-muted: #27272a;
+    --color-accent: #27272a;
+  }
 }
 
 body {
@@ -81,7 +145,7 @@ body {
   height: 32px;
   margin-top: 4px;
   padding: 0 8px;
-  border: 1px solid rgba(0, 0, 0, 0.12);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   outline: none;
   background: var(--color-card);
@@ -97,7 +161,7 @@ body {
 .loom-detail-panel button {
   min-height: 32px;
   padding: 0 12px;
-  border: 1px solid rgba(0, 0, 0, 0.16);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-ink);
@@ -108,6 +172,11 @@ body {
 
 .loom-detail-panel button:hover {
   background: rgba(0, 0, 0, 0.03);
+}
+
+.dark .loom-detail-panel button:hover,
+[data-theme="dark"] .loom-detail-panel button:hover {
+  background: rgba(255, 255, 255, 0.05);
 }
 
 /* WebKitGTK (the Linux webview) paints overflow scrollbars as a native
@@ -133,4 +202,13 @@ body {
 }
 ::-webkit-scrollbar-thumb:hover {
   background-color: rgba(0, 0, 0, 0.32);
+}
+
+.dark ::-webkit-scrollbar-thumb,
+[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.18);
+}
+.dark ::-webkit-scrollbar-thumb:hover,
+[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255, 255, 255, 0.32);
 }

@@ -96,20 +96,20 @@ test('side panels collapse into overlays on compact viewports', async ({
 
   const canvas = page.getByRole('main', { name: 'Canvas' })
   await expect(
-    page.getByRole('button', { name: 'A', exact: true })
+    page.getByRole('button', { name: 'Assets', exact: true })
   ).toHaveAttribute('aria-expanded', 'false')
   await expect(
-    page.getByRole('button', { name: 'I', exact: true })
+    page.getByRole('button', { name: 'Inspector', exact: true })
   ).toHaveAttribute('aria-expanded', 'false')
   await expect.poll(async () => (await canvas.boundingBox())?.width).toBe(1024)
 
-  await page.getByRole('button', { name: 'A', exact: true }).click()
+  await page.getByRole('button', { name: 'Assets', exact: true }).click()
   await expect(
     page.getByRole('button', { name: 'Assets', exact: true })
   ).toHaveAttribute('aria-expanded', 'true')
   await expect.poll(async () => (await canvas.boundingBox())?.width).toBe(1024)
 
-  await page.getByRole('button', { name: 'I', exact: true }).click()
+  await page.getByRole('button', { name: 'Inspector', exact: true }).click()
   await expect(
     page.getByText('Select an asset, set, or relationship.')
   ).toBeVisible()

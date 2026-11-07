@@ -121,6 +121,44 @@ const fixtureRepos = [
   },
   { name: 'media-fixtures', files: ['media-alpha.png'] },
   { name: 'image-tools-fixtures', files: ['image-tools-alpha.png'] },
+  // Dedicated fixtures for CanvasDock & SelectionHud
+  { name: 'dock-fixtures', files: ['dock-alpha.png', 'dock-beta.png'] },
+  { name: 'dock-rel-fixtures', files: ['rel-alpha.png', 'rel-beta.png'] },
+  {
+    name: 'dock-arrange-fixtures',
+    files: ['arrange-alpha.png', 'arrange-beta.png', 'arrange-gamma.png'],
+  },
+  {
+    name: 'dock-group-fixtures',
+    files: ['group-alpha.png', 'group-beta.png', 'group-gamma.png'],
+  },
+  { name: 'dock-resize-fixtures', files: ['resize-alpha.png'] },
+  {
+    name: 'dock-shortcut-fixtures',
+    files: ['shortcut-alpha.png', 'shortcut-beta.png'],
+  },
+  // Dedicated fixtures for Card & Deck Stacks
+  { name: 'card-fixtures', files: ['card-alpha.png', 'card-beta.png'] },
+  { name: 'card-hover-fixtures', files: ['hover-alpha.png'] },
+  {
+    name: 'deck-group-fixtures',
+    files: ['group-alpha.png', 'group-beta.png', 'group-gamma.png'],
+  },
+  {
+    name: 'deck-drop-fixtures',
+    files: ['group-alpha.png', 'group-beta.png', 'group-gamma.png'],
+  },
+  { name: 'deck-theme-fixtures', files: ['theme-alpha.png'] },
+  // Dedicated fixtures for Shelves
+  { name: 'shelves-fixtures', files: ['shelf-alpha.png', 'shelf-beta.png'] },
+  {
+    name: 'shelves-inspector-fixtures',
+    files: ['shelf-alpha.png', 'shelf-beta.png'],
+  },
+  {
+    name: 'shelves-resize-fixtures',
+    files: ['shelf-alpha.png', 'shelf-beta.png'],
+  },
   ...benchmarkRepos,
 ] as const
 

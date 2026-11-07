@@ -23,7 +23,9 @@ export async function openFixtureRepo(page: Page, repoName: string) {
 
   const picker = page.getByRole('dialog')
   await expect(picker).toBeVisible()
-  await picker.getByRole('button', { name: repoName, exact: true }).click()
+  await picker
+    .getByRole('button', { name: new RegExp(`^${repoName}(?:\\s+repo)?$`) })
+    .click()
   await picker
     .getByRole('button', { name: /^(Create repo here|Open this folder)$/ })
     .click()

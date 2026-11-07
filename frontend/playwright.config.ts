@@ -33,6 +33,7 @@ export default defineConfig({
   outputDir: path.join(cacheDir, 'test-results'),
   use: {
     baseURL,
+    viewport: { width: 1280, height: 800 },
     screenshot: 'only-on-failure',
     trace: 'retain-on-failure',
     launchOptions: chromiumBin

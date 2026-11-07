@@ -173,7 +173,7 @@ test('sets persist metadata and movement, accept source links, expand, and disso
   await page.getByRole('button', { name: 'Auto-arrange' }).click()
   await page.getByRole('button', { name: 'Reset 100%' }).click()
   await selectImageNodes(page, [0, 1])
-  await page.getByRole('button', { name: 'Create set' }).click()
+  await page.getByRole('button', { name: 'Create set', exact: true }).click()
 
   let group = page.locator('.react-flow__node-group')
   await expect(group).toHaveCount(1)
@@ -274,7 +274,7 @@ test('dragging an unplaced Assets item onto a set places it and adds membership'
   await page.getByRole('button', { name: 'Auto-arrange' }).click()
   await page.getByRole('button', { name: 'Reset 100%' }).click()
   await selectImageNodes(page, [0, 1])
-  await page.getByRole('button', { name: 'Create set' }).click()
+  await page.getByRole('button', { name: 'Create set', exact: true }).click()
 
   const group = page.locator('.react-flow__node-group')
   await expect(group).toHaveCount(1)
@@ -333,13 +333,17 @@ test('set shortcut and undo/redo work without stealing text-input undo', async (
   await openFixtureRepo(page, 'shortcut-fixtures')
   await placeAssets(page, ['shortcut-alpha.png'])
   await imageNodes(page).first().click()
-  await expect(page.getByRole('button', { name: 'Create set' })).toBeDisabled()
+  await expect(
+    page.getByRole('button', { name: 'Create set', exact: true })
+  ).toBeDisabled()
 
   await placeAssets(page, ['shortcut-beta.png'], { x: 360, y: 180 })
   await page.getByRole('button', { name: 'Auto-arrange' }).click()
   await page.getByRole('button', { name: 'Reset 100%' }).click()
   await selectImageNodes(page, [0, 1])
-  await expect(page.getByRole('button', { name: 'Create set' })).toBeEnabled()
+  await expect(
+    page.getByRole('button', { name: 'Create set', exact: true })
+  ).toBeEnabled()
 
   await page.keyboard.press('Control+g')
   await expect(page.locator('.react-flow__node-group')).toHaveCount(1)

@@ -100,16 +100,22 @@ test('asset selection survives view switches and multi-row drag transfers select
   await page.getByRole('button', { name: 'All Assets', exact: true }).click()
   await expect(selectedAssets).toHaveCount(2)
 
-  await asset(page, 'root-alpha.png').dragTo(page.locator('.react-flow__pane'), {
-    targetPosition: { x: 180, y: 160 },
-  })
+  await asset(page, 'root-alpha.png').dragTo(
+    page.locator('.react-flow__pane'),
+    {
+      targetPosition: { x: 180, y: 160 },
+    }
+  )
   await expect(imageNodes(page)).toHaveCount(2)
   await expect(selectedAssets).toHaveCount(0)
   await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
 
-  await asset(page, 'root-alpha.png').dragTo(page.locator('.react-flow__pane'), {
-    targetPosition: { x: 480, y: 220 },
-  })
+  await asset(page, 'root-alpha.png').dragTo(
+    page.locator('.react-flow__pane'),
+    {
+      targetPosition: { x: 480, y: 220 },
+    }
+  )
   await expect(imageNodes(page)).toHaveCount(2)
 })
 
