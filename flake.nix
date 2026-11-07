@@ -16,19 +16,19 @@
         # CLI generates and consumes code that the library must agree with.
         wails3 = pkgs.buildGoModule rec {
           pname = "wails3";
-          version = "3.0.0-beta.23";
+          version = "3.1.0";
 
           src = pkgs.fetchFromGitHub {
             owner = "wailsapp";
             repo = "wails";
             rev = "v${version}";
-            hash = "sha256-sAg0fzWIxpmPeJbGOSJMg4ZivZHTesGApNPu8BJAVxs=";
+            hash = "sha256-Eqi2QEOdgjeJXYRtFJSYgqovDXn8PFoF5QExwhFg/+8=";
           };
 
           # The v3 module lives in a subdirectory of the repo.
           sourceRoot = "${src.name}/v3";
           subPackages = [ "cmd/wails3" ];
-          vendorHash = "sha256-+go9Z8pdqGAwo7aKDmiDuQCh1w+n+2JJCN3ScNdmoE8=";
+          vendorHash = "sha256-VmWjstXfAcbNf/3XpP6pUPbq5K3EApSCANFVzKsruVE=";
 
           nativeBuildInputs = [ pkgs.pkg-config ];
           buildInputs = [ pkgs.gtk4 pkgs.webkitgtk_6_0 ];
