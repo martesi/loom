@@ -88,6 +88,143 @@ test('library selection, search, placement filters, and folder navigation', asyn
   await expect(asset(page, 'renamed-gamma.png')).toBeVisible()
 })
 
+test('Assets gallery controls and saved views persist and switch from the palette', async ({
+  page,
+}) => {
+  await openFixtureRepo(page, 'inspector-fixtures')
+  await asset(page, 'inspect-alpha.png').click()
+  const inspector = page.getByLabel('Inspector')
+  await inspector.getByLabel('Add tag').fill('portrait')
+  await inspector.getByRole('button', { name: 'Add', exact: true }).click()
+  await inspector.getByLabel('Prompt').fill('soft studio light')
+  await inspector.getByRole('button', { name: 'Save prompt' }).click()
+
+  await page.getByRole('button', { name: 'Gallery view' }).click()
+  const gallery = page.getByRole('grid', { name: 'Asset gallery' })
+  await expect(gallery.getByRole('gridcell')).toHaveCount(2)
+  await expect(
+    gallery.getByRole('button', { name: /inspect-alpha.png/ })
+  ).toBeVisible()
+  const firstCard = gallery.getByRole('button').nth(0)
+  const secondCard = gallery.getByRole('button').nth(1)
+  const firstBox = await firstCard.boundingBox()
+  const secondBox = await secondCard.boundingBox()
+  if (!firstBox || !secondBox)
+    throw new Error('Gallery cards have no layout box')
+  const dx = secondBox.x - firstBox.x
+  const dy = secondBox.y - firstBox.y
+  const rowKey =
+    Math.abs(dx) > Math.abs(dy)
+      ? dx > 0
+        ? 'ArrowRight'
+        : 'ArrowLeft'
+      : dy > 0
+        ? 'ArrowDown'
+        : 'ArrowUp'
+  const reverseRowKey = {
+    ArrowRight: 'ArrowLeft',
+    ArrowLeft: 'ArrowRight',
+    ArrowDown: 'ArrowUp',
+    ArrowUp: 'ArrowDown',
+  }[rowKey]
+  await firstCard.focus()
+  await page.keyboard.press(rowKey)
+  await expect(secondCard).toBeFocused()
+  await page.keyboard.press(reverseRowKey)
+  await expect(firstCard).toBeFocused()
+  await page.mouse.move(0, 0)
+  await page.getByRole('button', { name: 'Gallery view' }).hover()
+  await expect(page.getByTestId('base-tooltip-popup')).toContainText(
+    'Gallery view'
+  )
+  await expect(page.getByText('Size 2')).toBeVisible()
+  await page.getByRole('button', { name: 'Larger gallery cards' }).click()
+  await expect(page.getByText('Size 3')).toBeVisible()
+  await page.getByLabel('Image fit').selectOption('contain')
+  await page.getByLabel('Tags').check()
+  await page.getByRole('checkbox', { name: 'Prompt' }).check()
+  await expect(gallery.getByText('portrait')).toBeVisible()
+  await expect(gallery.getByText('soft studio light')).toBeVisible()
+  await expect(gallery.getByText('1 × 1').first()).toBeVisible()
+  await gallery
+    .getByRole('button', { name: /inspect-alpha.png/ })
+    .click({ button: 'right' })
+  await expect(
+    page.getByRole('menu').getByRole('button', { name: 'Compress…' })
+  ).toBeVisible()
+  await expect(
+    page.getByRole('menu').getByRole('menuitem', { name: 'Show commands' })
+  ).toBeVisible()
+  await page.keyboard.press('Escape')
+
+  await page.getByRole('button', { name: /^Filters/ }).click()
+  await page.getByRole('combobox', { name: 'Tag filter' }).selectOption({
+    label: 'portrait',
+  })
+  await page.getByLabel('Saved view name').fill('Portrait references')
+  await page.getByRole('button', { name: 'Save view' }).click()
+  const savedViews = page.getByRole('combobox', { name: 'Saved asset view' })
+  await expect(
+    savedViews.getByRole('option', { name: 'Portrait references' })
+  ).toHaveCount(1)
+  await expect(savedViews.getByRole('option', { name: 'Recent' })).toHaveCount(
+    1
+  )
+  await expect(
+    savedViews.getByRole('option', { name: 'Unplaced' })
+  ).toHaveCount(1)
+  await page.getByRole('button', { name: 'List view' }).click()
+  await page.getByLabel('Sort assets').selectOption('name-asc')
+  await expect(page.getByLabel('Saved view name')).toHaveValue(
+    'Portrait references'
+  )
+  await page.getByLabel('Saved view name').fill('Portraits')
+  await page.getByRole('button', { name: 'Save changes' }).click()
+  await expect(
+    savedViews.getByRole('option', { name: 'Portraits' })
+  ).toHaveCount(1)
+  await expect(page.getByRole('status')).toContainText('View saved')
+
+  await page.reload()
+  await expect(page.getByRole('heading', { name: 'Canvas' })).toBeVisible()
+  await openAssetsShelf(page)
+  const restoredViews = page.getByRole('combobox', { name: 'Saved asset view' })
+  await expect(
+    restoredViews.getByRole('option', { name: 'Portraits' })
+  ).toHaveCount(1)
+  await restoredViews.selectOption({ label: 'Portraits' })
+  await expect(page.getByRole('button', { name: 'List view' })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+  await expect(page.getByLabel('Sort assets')).toHaveValue('name-asc')
+  await expect(
+    page.getByRole('listbox', { name: 'Assets' }).getByRole('option')
+  ).toHaveCount(1)
+
+  await page
+    .locator('.react-flow__pane')
+    .click({ position: { x: 500, y: 400 } })
+  await page.keyboard.press('ControlOrMeta+k')
+  const search = page.getByRole('combobox', { name: 'Search commands' })
+  await search.fill('Show Assets gallery')
+  const galleryCommand = page.getByRole('option', {
+    name: /Show Assets gallery/,
+  })
+  await expect(galleryCommand.locator('kbd')).toHaveCount(3)
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('grid', { name: 'Asset gallery' })).toBeVisible()
+  await expect(
+    page.getByRole('button', { name: 'Gallery view' })
+  ).toHaveAttribute('aria-pressed', 'true')
+
+  await page.getByRole('button', { name: 'Delete saved view' }).click()
+  await expect(
+    restoredViews.getByRole('option', { name: 'Portraits' })
+  ).toHaveCount(0)
+  await expect(page.getByRole('status')).toContainText('View saved')
+})
+
 test('asset selection survives view switches and multi-row drag transfers selection to Canvas', async ({
   page,
 }) => {
