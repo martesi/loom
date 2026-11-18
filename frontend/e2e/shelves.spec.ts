@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './test-fixtures'
 import { dropAsset, openFixtureRepo } from './test-helpers'
 
 test.describe('floating Canvas drawers', () => {

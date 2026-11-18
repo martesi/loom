@@ -1,6 +1,6 @@
 import { Dialog } from '@base-ui-components/react/dialog'
 import { t } from '@lingui/core/macro'
-import { Trans } from '@lingui/react/macro'
+import { Plural, Trans } from '@lingui/react/macro'
 import {
   applyEdgeChanges,
   applyNodeChanges,
@@ -2522,12 +2522,17 @@ function Canvas({ repo }: { repo: RepoInfo }) {
           <Dialog.Backdrop className="fixed inset-0 z-50 bg-black/20 backdrop-blur-[1px]" />
           <Dialog.Popup className="fixed left-1/2 top-1/2 z-50 w-[min(420px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-black/8 bg-card p-5 shadow-lg outline-none">
             <Dialog.Title className="text-sm font-semibold text-ink">
-              Permanently delete {purgeIds?.length ?? 0} asset
-              {purgeIds?.length === 1 ? '' : 's'}?
+              <Plural
+                value={purgeIds?.length ?? 0}
+                one="Permanently delete # asset?"
+                other="Permanently delete # assets?"
+              />
             </Dialog.Title>
             <Dialog.Description className="mt-2 text-xs leading-relaxed text-ink-muted">
-              This removes the files and Loom metadata immediately. Trash
-              retention does not apply, and this action cannot be undone.
+              <Trans>
+                This removes the files and Loom metadata immediately. Trash
+                retention does not apply, and this action cannot be undone.
+              </Trans>
             </Dialog.Description>
             <div className="mt-5 flex justify-end gap-2">
               <Dialog.Close render={<Button variant="secondary" size="sm" />}>

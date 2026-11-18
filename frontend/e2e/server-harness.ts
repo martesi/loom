@@ -15,7 +15,7 @@ const cacheDir = path.join(repoDir, '.cache', 'e2e')
 const runId = getE2ERunId()
 const runDir = path.join(cacheDir, 'runs', runId)
 const fixtureDir = path.join(runDir, 'fixtures')
-const fixtureRootFile = path.join(runDir, 'fixture-root.txt')
+const fixtureRootFile = path.join(runDir, 'fixture-root.json')
 const buildLockFile = path.join(cacheDir, 'build.lock')
 const port = process.env.E2E_PORT ?? '4173'
 let activeBuildCommand: ChildProcess | undefined
@@ -24,8 +24,8 @@ let activeBuildTermination: Promise<void> | undefined
 // Keep the browser fixtures outside the repository checkout. The files are
 // deliberately created here rather than copied from a fixture directory so
 // ignored/generated workspace assets can never affect the server-mode suite.
-// Every test gets its own repo so .loom state and settings cannot leak across
-// tests even though the Playwright web server is shared by the worker.
+// Every test attempt gets a fresh copy of each repo so .loom state and
+// filesystem mutations cannot leak across attempts.
 const fixturePng = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
   'base64'
@@ -278,15 +278,19 @@ async function main() {
   await mkdir(fixtureDir, { recursive: true })
   const tempRoot = await mkdtemp(path.join(fixtureDir, 'run-'))
   const browseRoot = path.join(tempRoot, 'browse-root')
-  const repoPath = path.join(browseRoot, 'e2e-repo')
+  const templateRoot = path.join(tempRoot, 'fixture-templates')
+  const configRoot = path.join(tempRoot, 'config')
   const binaryPath = path.join(
     tempRoot,
     process.platform === 'win32' ? 'loom-server.exe' : 'loom-server'
   )
 
-  await mkdir(repoPath, { recursive: true })
-  await seedFixtureRepos(browseRoot)
-  await writeFile(fixtureRootFile, browseRoot)
+  await seedFixtureRepos(templateRoot)
+  await mkdir(browseRoot, { recursive: true })
+  await writeFile(
+    fixtureRootFile,
+    JSON.stringify({ browseRoot, configRoot, templateRoot })
+  )
 
   let server: ChildProcess | undefined
   let forceStop: NodeJS.Timeout | undefined
@@ -368,8 +372,8 @@ async function main() {
         ...process.env,
         LOOM_BROWSE_ROOT: browseRoot,
         ...(process.platform === 'win32'
-          ? { APPDATA: path.join(tempRoot, 'config') }
-          : { XDG_CONFIG_HOME: path.join(tempRoot, 'config') }),
+          ? { APPDATA: configRoot }
+          : { XDG_CONFIG_HOME: configRoot }),
         WAILS_SERVER_HOST: '127.0.0.1',
         WAILS_SERVER_PORT: port,
       },

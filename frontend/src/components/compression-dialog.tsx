@@ -1,3 +1,5 @@
+import { t } from '@lingui/core/macro'
+import { Plural, Trans } from '@lingui/react/macro'
 import { useEffect, useState } from 'react'
 import {
   ImageService,
@@ -60,7 +62,7 @@ export function CompressionDialog({
         if (cancelled) return
         console.error('compression settings load failed', cause)
         setError(
-          'Could not load saved settings. Review the defaults before compressing.'
+          t`Could not load saved settings. Review the defaults before compressing.`
         )
       })
       .finally(() => {
@@ -95,7 +97,7 @@ export function CompressionDialog({
             maxWidth: positiveInt(maxWidth) ?? 0,
             maxHeight: positiveInt(maxHeight) ?? 0,
           })
-          if (!media) throw new Error('Media transcode returned no result')
+          if (!media) throw new Error(t`Media transcode returned no result`)
           if (mode === 'replace') {
             await ImageService.ReplaceMedia(path, id, media)
           } else {
@@ -109,7 +111,9 @@ export function CompressionDialog({
 
       await onChange()
       setSummary(
-        `${compressed} compressed${failures.length ? `, ${failures.length} failed` : ''}`
+        failures.length
+          ? t`${compressed} compressed, ${failures.length} failed`
+          : t`${compressed} compressed`
       )
       if (failures.length) setError(failures.join('\n'))
     } catch (cause) {
@@ -124,29 +128,37 @@ export function CompressionDialog({
       <section
         role="dialog"
         aria-modal="true"
-        aria-label="Compress images"
+        aria-label={t`Compress images`}
         className="w-full max-w-lg rounded-lg border border-black/10 bg-card p-4 shadow-xl"
       >
         <header className="mb-4 flex items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold text-ink">Compress images</h2>
+          <h2 className="text-sm font-semibold text-ink">
+            <Trans>Compress images</Trans>
+          </h2>
           <button
             type="button"
-            aria-label="Close operation"
+            aria-label={t`Close operation`}
             className="rounded-sm px-2 py-1 text-xs text-ink-muted hover:bg-black/[0.04] disabled:opacity-40"
             disabled={running}
             onClick={onClose}
           >
-            Close
+            <Trans>Close</Trans>
           </button>
         </header>
         <div className="grid gap-4 text-xs text-ink">
           <p className="text-ink-muted">
-            {assetIds.length} asset{assetIds.length === 1 ? '' : 's'} selected
+            <Plural
+              value={assetIds.length}
+              one="# asset selected"
+              other="# assets selected"
+            />
           </p>
           <label className="grid gap-1">
-            <span className="font-medium">Result</span>
+            <span className="font-medium">
+              <Trans>Result</Trans>
+            </span>
             <select
-              aria-label="Compression result"
+              aria-label={t`Compression result`}
               disabled={!settingsLoaded || running}
               className="h-8 rounded-sm border border-black/12 bg-card px-2"
               value={mode}
@@ -154,14 +166,20 @@ export function CompressionDialog({
                 setMode(event.target.value as CompressionMode)
               }
             >
-              <option value="copy">Create compressed copy</option>
-              <option value="replace">Replace original</option>
+              <option value="copy">
+                <Trans>Create compressed copy</Trans>
+              </option>
+              <option value="replace">
+                <Trans>Replace original</Trans>
+              </option>
             </select>
           </label>
           <label className="grid gap-1">
-            <span className="font-medium">Format</span>
+            <span className="font-medium">
+              <Trans>Format</Trans>
+            </span>
             <select
-              aria-label="Compression format"
+              aria-label={t`Compression format`}
               disabled={!settingsLoaded || running}
               className="h-8 rounded-sm border border-black/12 bg-card px-2"
               value={format}
@@ -174,9 +192,11 @@ export function CompressionDialog({
             </select>
           </label>
           <label className="grid gap-1">
-            <span className="font-medium">Quality: {quality}</span>
+            <span className="font-medium">
+              <Trans>Quality: {quality}</Trans>
+            </span>
             <input
-              aria-label="Compression quality"
+              aria-label={t`Compression quality`}
               type="range"
               disabled={!settingsLoaded || running}
               min={1}
@@ -187,26 +207,30 @@ export function CompressionDialog({
           </label>
           <div className="grid grid-cols-2 gap-2">
             <label className="grid gap-1">
-              <span className="font-medium">Max width</span>
+              <span className="font-medium">
+                <Trans>Max width</Trans>
+              </span>
               <input
-                aria-label="Maximum width"
+                aria-label={t`Maximum width`}
                 type="number"
                 disabled={!settingsLoaded || running}
                 min={1}
-                placeholder="Original"
+                placeholder={t`Original`}
                 className="h-8 rounded-sm border border-black/12 bg-card px-2"
                 value={maxWidth}
                 onChange={(event) => setMaxWidth(event.target.value)}
               />
             </label>
             <label className="grid gap-1">
-              <span className="font-medium">Max height</span>
+              <span className="font-medium">
+                <Trans>Max height</Trans>
+              </span>
               <input
-                aria-label="Maximum height"
+                aria-label={t`Maximum height`}
                 type="number"
                 disabled={!settingsLoaded || running}
                 min={1}
-                placeholder="Original"
+                placeholder={t`Original`}
                 className="h-8 rounded-sm border border-black/12 bg-card px-2"
                 value={maxHeight}
                 onChange={(event) => setMaxHeight(event.target.value)}
@@ -215,7 +239,7 @@ export function CompressionDialog({
           </div>
           {mode === 'replace' && (
             <p className="text-ink-muted">
-              Replacement keeps the asset ID and can be undone.
+              <Trans>Replacement keeps the asset ID and can be undone.</Trans>
             </p>
           )}
           {summary && <p role="status">{summary}</p>}
@@ -230,7 +254,7 @@ export function CompressionDialog({
             disabled={!settingsLoaded || !assetIds.length || running}
             onClick={() => void compress()}
           >
-            {running ? 'Compressing…' : 'Compress'}
+            {running ? <Trans>Compressing…</Trans> : <Trans>Compress</Trans>}
           </button>
         </div>
       </section>

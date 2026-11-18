@@ -79,10 +79,11 @@ their application sources were not cloned.
    Round 4 extracts the remaining Canvas route, shelf controls, node hints,
    repository switcher, and set-comparison dialog labels. The Inspector's
    multi-asset selection summary is pluralized as well. English remains the
-   only shipped locale; the catalog has 152 active English messages and 80
-   obsolete entries retained by extraction.
+   only shipped locale. The catalog has 177 active English messages and 81
+   obsolete entries retained by extraction; the rest of the UI is not yet
+   localized.
 
-## Existing evidence and remaining work
+## Existing evidence and round notes
 
 - Two concurrent Playwright invocations passed with separate ports and fixture
   roots. After adding the three P2 UI regressions, the full 43-test server-mode
@@ -105,9 +106,10 @@ their application sources were not cloned.
   `test:agent` command selects an Arca profile separate from the default. That
   profile has a fixed data directory and CDP port, so concurrent
   `test:agent` runs are unsupported; run agent-browser checks one at a time.
-- CI retries are disabled until each test attempt gets a fresh copy of its
-  mutable fixture repo. A retry currently could inherit files and `.loom` state
-  from the failed attempt.
+- Mutable fixture repos are copied to a unique path from immutable templates
+  before every test attempt. App config is also cleared so repo databases,
+  recent-repo state, and generated files cannot leak into retries; CI allows one
+  retry while local runs remain single-attempt.
 - The Sources, self-link, and collapsed-set source cases now have direct
   browser assertions. The collapsed-set case also checks that no relationship
   preview appears while the Ctrl-drag is in progress.
@@ -120,8 +122,46 @@ their application sources were not cloned.
   action, and one relationship gesture produced no edge. At the time, the
   container had 1,864 of 2,048 task slots in use. Isolated Assets and shelf
   tests passed 10/10, the relationship gesture passed 1/1, and the multi-asset
-  selection assertion passed 1/1. Re-run the full suite with more process
-  headroom before treating this checkout's E2E status as green.
+  selection assertion passed 1/1. This left E2E status inconclusive until the
+  headroom-available rerun in Round 5 below.
+- Round 5 adds a harness unit test proving attempts use unique fixture paths,
+  and config, `.loom` state, and generated files are cleared. The initial full
+  Playwright attempt was skipped at 2,003 of 2,048 task slots; after usage fell
+  to 1,600, the full server-mode suite passed 43/43 in 1.4 minutes through the
+  Nix E2E environment.
+- Round 6 adds a Playwright retry integration case: its first attempt opens a
+  real fixture repo, confirms app recent-repo config was written, mutates the
+  fixture and generates a file, then writes an external marker and deliberately
+  fails. The retry requires that marker and verifies the prior attempt folder
+  is gone, the original image bytes are restored, and `.loom`, generated
+  output, and app config are gone. The auto fixture clears stale markers
+  before reading roots or restoring fixtures, so setup failures and reused run
+  IDs cannot carry a previous marker into a retry. The fixture implementation
+  also documents its single-worker requirement: restoration removes shared
+  browse/config roots and helpers read one shared attempt file. Run this suite
+  with `workers: 1`. Round 6 verification: full Playwright completed with 43
+  passed and the retry test's expected first-fail/second-pass flaky result;
+  harness tests 5/5, frontend unit tests 4/4, Go tests, Biome, and E2E
+  typecheck passed.
+- Round 8 converts the recent-repo image count, permanent-purge confirmation,
+  selected-relationship count, and permanent-purge description to Lingui
+  messages. E2E assertions now cover the exact singular image label and
+  singular relationship label; the existing purge test covers the singular
+  asset label. The frontend count sweep found no further unpluralized
+  interpolated count-plus-noun labels.
+- Round 8 verification: the full server-mode Playwright suite completed with
+  43 passed and the retry test's expected first-fail/second-pass flaky result;
+  frontend unit tests 4/4, harness tests 5/5, Go tests 31 tests across 7
+  packages, frontend typecheck and production build, Biome, E2E typecheck, and
+  Lingui extraction passed.
+
+## Backlog status
+
+The six itemized contract and test-audit actions above are complete. Translation
+coverage remains partial: English is the only shipped locale, and localization
+of the rest of the UI is deferred. “Done” here means the reviewed, itemized
+scope is complete; no additional contract or test-audit work is currently
+listed.
 
 ## Sources
 

@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './test-fixtures'
 import { asset, assets, openFixtureRepo } from './test-helpers'
 
 test('compression plugin creates copies and replaces representations without changing identity', async ({

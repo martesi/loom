@@ -1,5 +1,5 @@
 import { plural, t } from '@lingui/core/macro'
-import { Trans } from '@lingui/react/macro'
+import { Plural, Trans } from '@lingui/react/macro'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import {
   type CanvasData,
@@ -204,8 +204,11 @@ export function DetailPanel({
     return (
       <div className="loom-detail-panel grid gap-3 overflow-auto p-3 text-xs">
         <h2 className="text-sm font-semibold text-ink">
-          {selection.edges.length} relationship
-          {selection.edges.length === 1 ? '' : 's'}
+          <Plural
+            value={selection.edges.length}
+            one="# relationship"
+            other="# relationships"
+          />
         </h2>
         {(data.relationships ?? [])
           .filter((r) => selection.edges.includes(r.id))
