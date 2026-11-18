@@ -7,7 +7,24 @@ import {
   LibraryService,
   TagService,
 } from '../../../bindings/loom/internal/service'
-import { type Selection, selectAsset } from '../../lib/selection'
+import {
+  type AssetLayout,
+  type AssetSort,
+  type AssetView,
+  DEFAULT_ASSET_VIEWS,
+  matchesAssetView,
+  sortAssetRows,
+} from '../../lib/asset-views'
+import type { Selection } from '../../lib/selection'
+import { AssetGallery } from './asset-gallery'
+import { AssetList } from './asset-list'
+import { AssetViewControls } from './asset-view-controls'
+import { FolderNavigator } from './folder-navigator'
+import {
+  type AssetContextMenuState,
+  LibraryContextMenu,
+} from './library-context-menu'
+import { useSavedAssetViews } from './use-saved-asset-views'
 
 const fieldClass =
   'h-8 w-full rounded-sm border border-black/12 bg-card px-2 text-xs text-ink outline-none focus-visible:ring-2 focus-visible:ring-primary/40'
@@ -23,7 +40,12 @@ interface Props {
   change: () => Promise<void>
   compress: (ids: number[]) => void
   searchFocusRequest: number
-  navigatorModeRequest: { mode: 'all' | 'folders'; request: number } | null
+  navigatorModeRequest: {
+    mode: 'all' | 'folders'
+    layout?: AssetLayout
+    densityDelta?: -1 | 1
+    request: number
+  } | null
   onShowCommands: () => void
 }
 export function LibraryPanel({
@@ -47,21 +69,46 @@ export function LibraryPanel({
     [placement, setPlacement] = useState(''),
     [tagId, setTagId] = useState(0),
     [filtersOpen, setFiltersOpen] = useState(false)
+  const [layout, setLayout] = useState<AssetLayout>('list')
+  const [sort, setSort] = useState<AssetSort>('recent')
+  const [selectedViewId, setSelectedViewId] = useState('default-recent')
+  const [galleryDensity, setGalleryDensity] = useState(1)
+  const [imageFit, setImageFit] = useState<'cover' | 'contain'>('cover')
+  const [overlays, setOverlays] = useState({
+    filename: true,
+    dimensions: true,
+    tags: false,
+    prompt: false,
+  })
   const [rows, setRows] = useState<LibraryRow[]>([]),
     [dirs, setDirs] = useState<string[]>([]),
     [tags, setTags] = useState<{ id: number; name: string }[]>([])
-  const [itemMenu, setItemMenu] = useState<{
-    x: number
-    y: number
-    assetIds: number[]
-  } | null>(null)
-  const [renaming, setRenaming] = useState<{ id: number; name: string } | null>(
-    null
-  )
-  const anchor = useRef<number | null>(null)
+  const [itemMenu, setItemMenu] = useState<AssetContextMenuState | null>(null)
   const searchInput = useRef<HTMLInputElement>(null)
   const callbacks = useRef({ onError, visible })
   callbacks.current = { onError, visible }
+  const {
+    savedViews,
+    viewsLoaded,
+    loadError: viewsLoadError,
+    saveStatus,
+    retryLoad,
+    saveView,
+    deleteView,
+  } = useSavedAssetViews(path, onError)
+  const views = [...DEFAULT_ASSET_VIEWS, ...savedViews]
+  const savedViewIds = new Set(savedViews.map((view) => view.id))
+  const currentView: AssetView = {
+    id: selectedViewId,
+    name: views.find((view) => view.id === selectedViewId)?.name ?? '',
+    search,
+    status: status as AssetView['status'],
+    placement: placement as AssetView['placement'],
+    tagId,
+    sort,
+    layout,
+  }
+  const sortedRows = sortAssetRows(rows, sort)
   // biome-ignore lint/correctness/useExhaustiveDependencies: repository mutations invalidate the tag catalog.
   useEffect(() => {
     void TagService.ListTags(path)
@@ -80,6 +127,12 @@ export function LibraryPanel({
   useEffect(() => {
     if (!navigatorModeRequest) return
     setMode(navigatorModeRequest.mode)
+    if (navigatorModeRequest.layout) setLayout(navigatorModeRequest.layout)
+    const densityDelta = navigatorModeRequest.densityDelta
+    if (densityDelta !== undefined)
+      setGalleryDensity((density) =>
+        Math.max(0, Math.min(2, density + densityDelta))
+      )
   }, [navigatorModeRequest])
   useEffect(() => {
     if (!searchFocusRequest) return
@@ -98,7 +151,7 @@ export function LibraryPanel({
         tagId: mode === 'folders' ? 0 : tagId,
       })
       let list = (all ?? []).filter(
-        (r) => mode === 'folders' || status !== 'missing' || r.missing
+        (row) => mode === 'folders' || matchesAssetView(row, currentView)
       )
       if (mode === 'folders') {
         const d = await ImageService.ListDirectory(path, folder)
@@ -108,39 +161,14 @@ export function LibraryPanel({
       }
       if (!cancelled) {
         setRows(list)
-        callbacks.current.visible(list.map((r) => r.id))
+        callbacks.current.visible(sortAssetRows(list, sort).map((r) => r.id))
       }
     }
     void load().catch(callbacks.current.onError)
     return () => {
       cancelled = true
     }
-  }, [path, mode, folder, search, status, placement, tagId, refresh])
-  useEffect(() => {
-    if (!itemMenu) return
-    const close = () => setItemMenu(null)
-    const clickOutside = (event: MouseEvent) => {
-      if (
-        event
-          .composedPath()
-          .some(
-            (node) =>
-              node instanceof Element && node.getAttribute('role') === 'menu'
-          )
-      )
-        return
-      close()
-    }
-    const keydown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close()
-    }
-    window.addEventListener('click', clickOutside)
-    window.addEventListener('keydown', keydown)
-    return () => {
-      window.removeEventListener('click', clickOutside)
-      window.removeEventListener('keydown', keydown)
-    }
-  }, [itemMenu])
+  }, [path, mode, folder, search, status, placement, tagId, sort, refresh])
   const selected = selection.surface === 'assets' ? selection.ids : []
   const activeFilterCount =
     Number(status !== 'active') + Number(Boolean(placement)) + Number(tagId > 0)
@@ -189,6 +217,34 @@ export function LibraryPanel({
       .then(() => change())
       .catch(onError)
   }
+  function saveAssetView(id: string, name: string) {
+    if (!viewsLoaded) return
+    const saved: AssetView = {
+      ...currentView,
+      id: savedViewIds.has(id) ? id : crypto.randomUUID(),
+      name,
+    }
+    saveView(saved, setSelectedViewId)
+  }
+  function selectAssetView(id: string) {
+    const view = views.find((candidate) => candidate.id === id)
+    if (!view) return
+    setSelectedViewId(id)
+    setMode('all')
+    setSearch(view.search)
+    setStatus(view.status)
+    setPlacement(view.placement)
+    setTagId(view.tagId)
+    setSort(view.sort)
+    setLayout(view.layout)
+  }
+  function deleteAssetView(id: string) {
+    if (!viewsLoaded || !savedViewIds.has(id)) return
+    deleteView(id, selectAssetView)
+  }
+  function setOverlay(key: keyof typeof overlays, checked: boolean) {
+    setOverlays((current) => ({ ...current, [key]: checked }))
+  }
   return (
     <div
       className="flex min-h-0 flex-1 flex-col text-xs"
@@ -211,6 +267,28 @@ export function LibraryPanel({
       </div>
       {mode === 'all' ? (
         <div className="grid gap-2 p-2">
+          <AssetViewControls
+            views={views}
+            savedViewIds={savedViewIds}
+            selectedViewId={selectedViewId}
+            viewsLoaded={viewsLoaded}
+            loadError={viewsLoadError}
+            saveStatus={saveStatus}
+            sort={sort}
+            layout={layout}
+            density={galleryDensity}
+            fit={imageFit}
+            overlays={overlays}
+            onSelectView={selectAssetView}
+            onRetryLoad={retryLoad}
+            onSaveView={saveAssetView}
+            onDeleteView={deleteAssetView}
+            onSortChange={setSort}
+            onLayoutChange={setLayout}
+            onDensityChange={setGalleryDensity}
+            onFitChange={setImageFit}
+            onOverlayChange={setOverlay}
+          />
           <div className="flex gap-1.5">
             <input
               ref={searchInput}
@@ -320,236 +398,48 @@ export function LibraryPanel({
           )}
         </div>
       ) : (
-        <div className="p-2">
-          <div className="mb-1 flex flex-wrap items-center gap-0.5 text-ink-muted">
-            {[t`Repository`, ...folder.split('/').filter(Boolean)].map(
-              (part, index, parts) => {
-                const target = parts.slice(1, index + 1).join('/')
-                return (
-                  <span
-                    key={target || 'repository'}
-                    className="flex items-center"
-                  >
-                    {index > 0 && <span className="text-ink-subtle">/</span>}
-                    <button
-                      type="button"
-                      className="rounded-sm px-1.5 py-1 font-medium outline-none hover:bg-black/[0.03] focus-visible:ring-2 focus-visible:ring-primary/40"
-                      onClick={() => setFolder(target)}
-                      onDragOver={(event) => {
-                        if (
-                          !event.dataTransfer.types.includes(
-                            'application/x-loom-assets'
-                          )
-                        )
-                          return
-                        event.preventDefault()
-                        event.dataTransfer.dropEffect = 'move'
-                      }}
-                      onDrop={(event) => dropInto(event, target)}
-                    >
-                      {part}
-                    </button>
-                  </span>
-                )
-              }
-            )}
-          </div>
-          {dirs.map((d) => (
-            <button
-              className="block w-full rounded-sm px-2 py-1.5 text-left text-ink outline-none hover:bg-black/[0.03] focus-visible:ring-2 focus-visible:ring-primary/40"
-              type="button"
-              key={d}
-              onClick={() => setFolder([folder, d].filter(Boolean).join('/'))}
-              onDragOver={(event) => {
-                if (
-                  !event.dataTransfer.types.includes(
-                    'application/x-loom-assets'
-                  )
-                )
-                  return
-                event.preventDefault()
-                event.dataTransfer.dropEffect = 'move'
-              }}
-              onDrop={(event) =>
-                dropInto(event, [folder, d].filter(Boolean).join('/'))
-              }
-            >
-              📁 {d}
-            </button>
-          ))}
-        </div>
+        <FolderNavigator
+          folder={folder}
+          dirs={dirs}
+          onFolderChange={setFolder}
+          onDropInto={dropInto}
+        />
       )}
       <div className="px-2 pb-1 text-[11px] text-ink-subtle">
-        {plural(rows.length, { one: '# asset', other: '# assets' })}
+        {plural(sortedRows.length, { one: '# asset', other: '# assets' })}
       </div>
-      <div
-        role="listbox"
-        aria-label={t`Assets`}
-        aria-multiselectable="true"
-        className="min-h-0 flex-1 overflow-auto"
-      >
-        {rows.length === 0 && (
-          <div className="px-3 py-6 text-center text-[11.5px] leading-relaxed text-ink-muted">
-            {mode === 'folders' ? (
-              <Trans>No assets in this folder.</Trans>
-            ) : search || status !== 'active' || placement || tagId ? (
-              <Trans>No assets match these filters.</Trans>
-            ) : (
-              <Trans>
-                No assets yet. Import files or rescan the repository.
-              </Trans>
-            )}
-          </div>
-        )}
-        {rows.map((row) => (
-          <button
-            type="button"
-            role="option"
-            aria-selected={selected.includes(row.id)}
-            data-asset-id={row.id}
-            key={row.id}
-            draggable
-            className="flex w-full items-center gap-2 px-2 py-1.5 text-left outline-none hover:bg-black/[0.03] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40 aria-selected:bg-primary/15"
-            onClick={(e) => {
-              select(
-                selectAsset(
-                  selected,
-                  row.id,
-                  rows.map((r) => r.id),
-                  anchor.current,
-                  e.shiftKey,
-                  e.ctrlKey || e.metaKey
-                )
-              )
-              if (!e.shiftKey) anchor.current = row.id
-            }}
-            onContextMenu={(event) => {
-              event.preventDefault()
-              if (!selected.includes(row.id)) {
-                select([row.id])
-                anchor.current = row.id
-              }
-              setItemMenu({
-                x: event.clientX,
-                y: event.clientY,
-                assetIds: selected.includes(row.id) ? selected : [row.id],
-              })
-            }}
-            onDragStart={(e) => {
-              const ids = selected.includes(row.id) ? selected : [row.id]
-              select(ids)
-              e.dataTransfer.setData(
-                'application/x-loom-assets',
-                JSON.stringify(ids)
-              )
-              e.dataTransfer.effectAllowed = 'copyMove'
-            }}
-          >
-            <img
-              src={row.thumbUrl}
-              alt=""
-              draggable={false}
-              className="h-9 w-9 rounded object-cover"
-            />
-            <span className="truncate">{row.fileName}</span>
-          </button>
-        ))}
-      </div>
-      {itemMenu && (
-        <div
-          role="menu"
-          className="fixed z-50 min-w-44 rounded-lg border border-black/8 bg-white p-1.5 shadow-lg"
-          style={{ left: itemMenu.x, top: itemMenu.y }}
-        >
-          {renaming ? (
-            <form
-              className="grid w-56 gap-1.5 p-1"
-              onSubmit={(event) => {
-                event.preventDefault()
-                const input = event.currentTarget.elements.namedItem(
-                  'rename-file'
-                ) as HTMLInputElement
-                renameAsset(renaming.id, input.value.trim())
-                setRenaming(null)
-                setItemMenu(null)
-              }}
-            >
-              <label
-                htmlFor="rename-file"
-                className="text-[11px] font-semibold text-ink-muted"
-              >
-                <Trans>Rename file</Trans>
-              </label>
-              <input
-                id="rename-file"
-                name="rename-file"
-                aria-label={t`Rename file`}
-                defaultValue={renaming.name}
-                className={fieldClass}
-                onKeyDown={(event) => {
-                  if (event.key === 'Escape') {
-                    event.preventDefault()
-                    setRenaming(null)
-                  }
-                }}
-              />
-              <div className="flex justify-end gap-1">
-                <button
-                  type="button"
-                  className="rounded-sm px-2 py-1.5 text-[12px] text-ink-muted hover:bg-black/[0.04]"
-                  onClick={() => setRenaming(null)}
-                >
-                  <Trans>Cancel</Trans>
-                </button>
-                <button
-                  type="submit"
-                  className="rounded-sm bg-primary px-2 py-1.5 text-[12px] font-semibold text-white"
-                >
-                  <Trans>Rename</Trans>
-                </button>
-              </div>
-            </form>
-          ) : (
-            <>
-              {mode === 'folders' && itemMenu.assetIds.length === 1 && (
-                <button
-                  type="button"
-                  className="block w-full rounded-md px-3 py-2 text-left text-[12.5px] text-ink hover:bg-black/[0.04]"
-                  onClick={() => {
-                    const [id] = itemMenu.assetIds
-                    const row = rows.find((item) => item.id === id)
-                    if (row) setRenaming({ id, name: row.fileName })
-                  }}
-                >
-                  <Trans>Rename…</Trans>
-                </button>
-              )}
-              <button
-                type="button"
-                className="block w-full rounded-md px-3 py-2 text-left text-[12.5px] text-ink hover:bg-black/[0.04]"
-                onClick={() => {
-                  const ids = itemMenu.assetIds
-                  setItemMenu(null)
-                  compress(ids)
-                }}
-              >
-                <Trans>Compress…</Trans>
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="block w-full rounded-md px-3 py-2 text-left text-[12.5px] text-ink hover:bg-black/[0.04]"
-                onClick={() => {
-                  setItemMenu(null)
-                  requestAnimationFrame(onShowCommands)
-                }}
-              >
-                <Trans>Show commands</Trans>
-              </button>
-            </>
-          )}
-        </div>
+      {layout === 'gallery' && mode === 'all' ? (
+        <AssetGallery
+          rows={sortedRows}
+          selected={selected}
+          select={select}
+          density={galleryDensity}
+          fit={imageFit}
+          overlays={overlays}
+          onContextMenu={(assetIds, x, y) => setItemMenu({ assetIds, x, y })}
+        />
+      ) : (
+        <AssetList
+          rows={sortedRows}
+          selected={selected}
+          search={search}
+          status={status}
+          placement={placement}
+          tagId={tagId}
+          mode={mode}
+          onSelect={select}
+          onContextMenu={(assetIds, x, y) => setItemMenu({ assetIds, x, y })}
+        />
       )}
+      <LibraryContextMenu
+        menu={itemMenu}
+        mode={mode}
+        rows={rows}
+        onClose={() => setItemMenu(null)}
+        onRename={renameAsset}
+        onCompress={compress}
+        onShowCommands={onShowCommands}
+      />
     </div>
   )
 }

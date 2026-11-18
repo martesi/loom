@@ -47,6 +47,7 @@ import {
   isMacPlatform,
   shortcutMatches,
 } from '../lib/action-catalog'
+import type { AssetLayout } from '../lib/asset-views'
 import { copyMedia, filesToMedia, readMedia } from '../lib/clipboard'
 import { computeSubgraphLayout, placeCluster } from '../lib/layout'
 import { emptySelection, type Selection } from '../lib/selection'
@@ -142,6 +143,8 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   const [repoOpenRequest, setRepoOpenRequest] = useState(0)
   const [navigatorModeRequest, setNavigatorModeRequest] = useState<{
     mode: 'all' | 'folders'
+    layout?: AssetLayout
+    densityDelta?: -1 | 1
     request: number
   } | null>(null)
   const [paletteAssets, setPaletteAssets] = useState<PaletteAsset[]>([])
@@ -1066,6 +1069,78 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       },
     },
     {
+      id: 'assets-gallery-view',
+      label: t`Show Assets gallery`,
+      description: t`Switch Assets to a thumbnail gallery`,
+      category: t`Assets navigation`,
+      aliases: ['gallery view', 'asset grid'],
+      shortcut: 'Mod+Shift+1',
+      context: t`Assets`,
+      enabled: true,
+      execute: () => {
+        openAssets()
+        setNavigatorModeRequest((current) => ({
+          mode: 'all',
+          layout: 'gallery',
+          request: (current?.request ?? 0) + 1,
+        }))
+      },
+    },
+    {
+      id: 'assets-list-view',
+      label: t`Show Assets list`,
+      description: t`Switch Assets to the compact list`,
+      category: t`Assets navigation`,
+      aliases: ['list view', 'asset list'],
+      shortcut: 'Mod+Shift+2',
+      context: t`Assets`,
+      enabled: true,
+      execute: () => {
+        openAssets()
+        setNavigatorModeRequest((current) => ({
+          mode: 'all',
+          layout: 'list',
+          request: (current?.request ?? 0) + 1,
+        }))
+      },
+    },
+    {
+      id: 'assets-gallery-smaller',
+      label: t`Smaller gallery cards`,
+      description: t`Reduce the thumbnail gallery card size`,
+      category: t`Assets navigation`,
+      aliases: ['decrease gallery density', 'smaller thumbnails'],
+      shortcut: 'Mod+Alt+ArrowDown',
+      context: t`Assets`,
+      enabled: true,
+      execute: () => {
+        openAssets()
+        setNavigatorModeRequest((current) => ({
+          mode: 'all',
+          densityDelta: -1,
+          request: (current?.request ?? 0) + 1,
+        }))
+      },
+    },
+    {
+      id: 'assets-gallery-larger',
+      label: t`Larger gallery cards`,
+      description: t`Increase the thumbnail gallery card size`,
+      category: t`Assets navigation`,
+      aliases: ['increase gallery density', 'larger thumbnails'],
+      shortcut: 'Mod+Alt+ArrowUp',
+      context: t`Assets`,
+      enabled: true,
+      execute: () => {
+        openAssets()
+        setNavigatorModeRequest((current) => ({
+          mode: 'all',
+          densityDelta: 1,
+          request: (current?.request ?? 0) + 1,
+        }))
+      },
+    },
+    {
       id: 'focus-asset-search',
       label: t`Focus asset search`,
       description: t`Open Assets and focus its search field`,
@@ -1944,6 +2019,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
           shortcutHint={actionById.get('toggle-assets')?.shortcut}
         >
           <LibraryPanel
+            key={repo.path}
             path={repo.path}
             selection={selection}
             select={selectAssets}

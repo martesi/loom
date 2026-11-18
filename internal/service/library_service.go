@@ -15,6 +15,8 @@ type LibraryRow struct {
 	FileName   string   `json:"fileName"`
 	FilePath   string   `json:"filePath"`
 	ThumbURL   string   `json:"thumbUrl"`
+	Width      int      `json:"width"`
+	Height     int      `json:"height"`
 	PromptText string   `json:"promptText"`
 	Tags       []string `json:"tags"`
 	Placed     bool     `json:"placed"`
@@ -69,6 +71,8 @@ func (s *LibraryService) ListImages(repoPath string, query LibraryQuery) ([]Libr
 			FileName:   filepath.Base(img.FilePath),
 			FilePath:   img.FilePath,
 			ThumbURL:   thumbURL(repoPath, img.ID),
+			Width:      img.Width,
+			Height:     img.Height,
 			PromptText: img.PromptText,
 			Tags:       tagNames,
 			Placed:     img.HasCanvasPos,
