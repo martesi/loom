@@ -11,6 +11,7 @@
     "check": "biome check",
     "format": "biome check --write",
     "test:unit": "bun test src",
+    "test:harness": "node --test e2e/build-lock.test.ts e2e/process-tree.test.ts",
     "i18n:extract": "lingui extract",
     "typecheck:e2e": "tsc -p e2e/tsconfig.json --noEmit",
     "test:e2e": "bash ../build/e2e/setup-workspace.sh && bun run typecheck:e2e && playwright test",

@@ -1,10 +1,12 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { expect, type Locator, type Page } from '@playwright/test'
+import { getE2ERunId } from './run-context'
 
+const runId = getE2ERunId()
 const fixtureRootFile = path.resolve(
   import.meta.dirname,
-  '../../.cache/e2e/fixture-root.txt'
+  `../../.cache/e2e/runs/${runId}/fixture-root.txt`
 )
 
 export async function fixturePath(repoName: string, ...segments: string[]) {
@@ -17,7 +19,7 @@ export async function openFixtureRepo(page: Page, repoName: string) {
   await expect(page).toHaveTitle('Loom')
 
   const openButton = page
-    .getByRole('button', { name: /^(Create New Repo|New Repo|Open Folder)$/ })
+    .getByRole('button', { name: /^(Create New Repo|New Repo)$/ })
     .first()
   await openButton.click()
 
@@ -52,7 +54,14 @@ export async function dropAsset(
   fileName: string,
   targetPosition: { x: number; y: number }
 ) {
-  const source = asset(page, fileName)
+  return dropAssetRow(page, asset(page, fileName), targetPosition)
+}
+
+export async function dropAssetRow(
+  page: Page,
+  source: Locator,
+  targetPosition: { x: number; y: number }
+) {
   await expect(source).toHaveCount(1)
   await source.dragTo(page.locator('.react-flow__pane'), { targetPosition })
 }

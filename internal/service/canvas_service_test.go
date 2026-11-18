@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/base64"
 	"loom/internal/store"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -117,6 +118,20 @@ func TestViewportAndImportFailure(t *testing.T) {
 	want := Viewport{X: 123, Y: -456, Zoom: 1.25}
 	if err := s.SetViewport(path, want); err != nil {
 		t.Fatal(err)
+	}
+	for _, invalid := range []Viewport{
+		{X: math.NaN(), Y: 0, Zoom: 1},
+		{X: math.Inf(1), Y: 0, Zoom: 1},
+		{X: 0, Y: math.NaN(), Zoom: 1},
+		{X: 0, Y: math.Inf(-1), Zoom: 1},
+		{X: 0, Y: 0, Zoom: math.NaN()},
+		{X: 0, Y: 0, Zoom: math.Inf(1)},
+		{X: 0, Y: 0, Zoom: 0},
+		{X: 0, Y: 0, Zoom: -1},
+	} {
+		if err := s.SetViewport(path, invalid); err == nil {
+			t.Fatalf("invalid viewport accepted: %+v", invalid)
+		}
 	}
 	if v, err := s.GetViewport(path); err != nil || *v != want {
 		t.Fatalf("viewport: %+v %v", v, err)

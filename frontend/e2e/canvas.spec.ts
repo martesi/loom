@@ -1,26 +1,14 @@
 import { expect, type Page, test } from '@playwright/test'
+import {
+  assets,
+  imageNodes as canvasNodes,
+  dropAsset,
+  dropAssetRow,
+  openFixtureRepo as open,
+} from './test-helpers'
 
-async function open(page: Page, name: string) {
-  await page.goto('/')
-  await page.getByRole('button', { name: /^(Create )?New Repo$/ }).click()
-  const dialog = page.getByRole('dialog')
-  await dialog.getByRole('button', { name, exact: true }).click()
-  await dialog
-    .getByRole('button', { name: /^(Create repo here|Open this folder)$/ })
-    .click()
-  await expect(page.locator('.react-flow')).toBeVisible()
-  await expect(assets(page).first()).toBeVisible()
-}
-function assets(page: Page) {
-  return page.getByRole('listbox', { name: 'Assets' }).getByRole('option')
-}
 async function drop(page: Page, name: string, x: number, y: number) {
-  await assets(page)
-    .filter({ hasText: name })
-    .dragTo(page.locator('.react-flow__pane'), { targetPosition: { x, y } })
-}
-function canvasNodes(page: Page) {
-  return page.locator('.react-flow__node-image')
+  await dropAsset(page, name, { x, y })
 }
 async function nodePosition(node: ReturnType<Page['locator']>) {
   const transform = await node.evaluate(
@@ -61,6 +49,14 @@ test('Assets selection, placement, unplace, trash and viewport persistence', asy
   await expect(page.locator('[role=option][aria-selected=true]')).toHaveCount(0)
   await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
   await page.getByRole('button', { name: 'Fit selection', exact: true }).click()
+  await rows.first().click()
+  await expect(page.locator('[role=option][aria-selected=true]')).toHaveCount(1)
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(0)
+  await canvasNodes(page).first().click()
+  await expect(page.locator('[role=option][aria-selected=true]')).toHaveCount(0)
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(1)
+  await page.keyboard.press('Control+a')
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
   await page.getByRole('button', { name: 'Reset 100%', exact: true }).click()
   await expect(page.locator('.react-flow__viewport')).toHaveAttribute(
     'style',
@@ -73,7 +69,7 @@ test('Assets selection, placement, unplace, trash and viewport persistence', asy
   await rows.first().click()
   await page.keyboard.press('Delete')
   await expect(rows).toHaveCount(1)
-  await drop(page, await rows.first().innerText(), 90, 90)
+  await dropAssetRow(page, rows.first(), { x: 90, y: 90 })
   await expect(page.locator('.react-flow__node')).toHaveCount(1)
   const viewport = page.locator('.react-flow__viewport')
   const viewportSaved = page.waitForResponse(
@@ -326,6 +322,7 @@ test('marquee selection replaces the Canvas selection', async ({ page }) => {
   )
   await page.mouse.up()
   await expect(nodes).toHaveCount(3)
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
 })
 test('browser import creates an unplaced asset and keeps Canvas focused behavior separate', async ({
   page,

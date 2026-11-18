@@ -1,12 +1,25 @@
 import { type ChildProcess, spawn } from 'node:child_process'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import * as path from 'node:path'
+import { acquireBuildLock } from './build-lock'
+import {
+  spawnBuildProcess,
+  terminateBuildProcessTree,
+  waitForBuildProcessTree,
+} from './process-tree'
+import { getE2ERunId } from './run-context'
 
 const frontendDir = path.resolve(import.meta.dirname, '..')
 const repoDir = path.resolve(frontendDir, '..')
 const cacheDir = path.join(repoDir, '.cache', 'e2e')
-const fixtureRootFile = path.join(cacheDir, 'fixture-root.txt')
+const runId = getE2ERunId()
+const runDir = path.join(cacheDir, 'runs', runId)
+const fixtureDir = path.join(runDir, 'fixtures')
+const fixtureRootFile = path.join(runDir, 'fixture-root.txt')
+const buildLockFile = path.join(cacheDir, 'build.lock')
 const port = process.env.E2E_PORT ?? '4173'
+let activeBuildCommand: ChildProcess | undefined
+let activeBuildTermination: Promise<void> | undefined
 
 // Keep the browser fixtures outside the repository checkout. The files are
 // deliberately created here rather than copied from a fixture directory so
@@ -180,32 +193,51 @@ async function seedFixtureRepos(browseRoot: string) {
 
 function run(command: string, args: string[], cwd: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd,
-      env: process.env,
-      stdio: 'inherit',
-    })
+    const child = spawnBuildProcess(command, args, cwd)
+    activeBuildCommand = child
     let settled = false
 
-    child.once('error', (error) => {
+    const settle = (
+      result:
+        | { error: Error }
+        | { code: number | null; signal: NodeJS.Signals | null }
+    ) => {
       if (settled) return
       settled = true
-      reject(error)
-    })
-    child.once('exit', (code, signal) => {
-      if (settled) return
-      settled = true
-      if (code === 0) {
-        resolve()
-        return
-      }
-      reject(
-        new Error(
-          `${command} ${args.join(' ')} exited with ${
-            signal ? `signal ${signal}` : `status ${code}`
-          }`
-        )
+      void Promise.all([
+        waitForBuildProcessTree(child.pid),
+        activeBuildTermination ?? Promise.resolve(),
+      ]).then(
+        () => {
+          if (activeBuildCommand === child) activeBuildCommand = undefined
+          if ('error' in result) {
+            reject(result.error)
+            return
+          }
+          if (result.code === 0) {
+            resolve()
+            return
+          }
+          reject(
+            new Error(
+              `${command} ${args.join(' ')} exited with ${
+                result.signal
+                  ? `signal ${result.signal}`
+                  : `status ${result.code}`
+              }`
+            )
+          )
+        },
+        (error: unknown) => {
+          if (activeBuildCommand === child) activeBuildCommand = undefined
+          reject(error)
+        }
       )
+    }
+
+    child.once('error', (error) => void settle({ error }))
+    child.once('exit', (code, signal) => {
+      void settle({ code, signal })
     })
   })
 }
@@ -231,9 +263,8 @@ function waitForExit(child: ChildProcess): Promise<{
 }
 
 async function main() {
-  const tempDir = path.join(cacheDir, 'tmp')
-  await mkdir(tempDir, { recursive: true })
-  const tempRoot = await mkdtemp(path.join(tempDir, 'run-'))
+  await mkdir(fixtureDir, { recursive: true })
+  const tempRoot = await mkdtemp(path.join(fixtureDir, 'run-'))
   const browseRoot = path.join(tempRoot, 'browse-root')
   const repoPath = path.join(browseRoot, 'e2e-repo')
   const binaryPath = path.join(
@@ -246,45 +277,78 @@ async function main() {
   await writeFile(fixtureRootFile, browseRoot)
 
   let server: ChildProcess | undefined
+  let forceStop: NodeJS.Timeout | undefined
   let stopping = false
   const stop = () => {
     stopping = true
+    if (activeBuildCommand) {
+      activeBuildTermination = terminateBuildProcessTree(activeBuildCommand)
+      void activeBuildTermination.catch((error: unknown) => {
+        console.error('Could not terminate E2E build process tree', error)
+      })
+    }
     server?.kill('SIGTERM')
+    forceStop ??= setTimeout(() => {
+      if (activeBuildCommand) {
+        activeBuildTermination = terminateBuildProcessTree(
+          activeBuildCommand,
+          true
+        )
+        void activeBuildTermination.catch((error: unknown) => {
+          console.error('Could not force-stop E2E build process tree', error)
+        })
+      }
+      server?.kill('SIGKILL')
+    }, 5_000)
+    forceStop.unref()
   }
 
   process.once('SIGINT', stop)
   process.once('SIGTERM', stop)
 
   try {
-    await run(
-      'wails3',
-      [
-        'generate',
-        'bindings',
-        '-f',
-        '-tags server,production',
-        '-clean=true',
-        '-ts',
-        '-i',
-      ],
-      repoDir
+    const releaseBuildLock = await acquireBuildLock(
+      buildLockFile,
+      () => stopping
     )
-    await run('bun', ['run', 'build'], frontendDir)
-    await run(
-      'go',
-      [
-        'build',
-        '-tags',
-        'server,production',
-        '-trimpath',
-        '-buildvcs=false',
-        '-ldflags=-w -s',
-        '-o',
-        binaryPath,
-        '.',
-      ],
-      repoDir
-    )
+    try {
+      if (stopping) throw new Error('E2E server startup cancelled')
+      await run(
+        'wails3',
+        [
+          'generate',
+          'bindings',
+          '-f',
+          '-tags server,production',
+          '-clean=true',
+          '-ts',
+          '-i',
+        ],
+        repoDir
+      )
+      if (stopping) throw new Error('E2E server startup cancelled')
+      await run('bun', ['run', 'build'], frontendDir)
+      if (stopping) throw new Error('E2E server startup cancelled')
+      await run(
+        'go',
+        [
+          'build',
+          '-tags',
+          'server,production',
+          '-trimpath',
+          '-buildvcs=false',
+          '-ldflags=-w -s',
+          '-o',
+          binaryPath,
+          '.',
+        ],
+        repoDir
+      )
+    } finally {
+      if (activeBuildTermination) await activeBuildTermination
+      await releaseBuildLock()
+    }
+    if (stopping) throw new Error('E2E server startup cancelled')
 
     server = spawn(binaryPath, [], {
       cwd: repoDir,
@@ -311,12 +375,13 @@ async function main() {
   } finally {
     process.off('SIGINT', stop)
     process.off('SIGTERM', stop)
+    if (forceStop) clearTimeout(forceStop)
     if (server && !stopping) {
       server.kill('SIGTERM')
       await waitForExit(server).catch(() => undefined)
     }
     await rm(fixtureRootFile, { force: true })
-    await rm(tempRoot, { recursive: true, force: true })
+    await rm(fixtureDir, { recursive: true, force: true })
   }
 }
 

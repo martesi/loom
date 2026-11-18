@@ -6,3 +6,10 @@ ready = ["http://127.0.0.1:9245/"]
 
 [dev.env]
 BROWSER = "true"
+
+[profile.e2e]
+# Sessions share this browser profile; run only one test:agent invocation at a time.
+dataDir = ".cache/arca/browser/e2e"
+headed = false
+port = 2010
+args = ["--no-sandbox", "--disable-dev-shm-usage"]
