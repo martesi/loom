@@ -152,6 +152,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   }
   function closeInspector(restoreFocus = true) {
     setInspectorOpen(false)
+    setInspectorCommandRequest(null)
     if (restoreFocus)
       requestAnimationFrame(() => {
         if (!focusCanvas) inspectorReturnFocus.current?.focus()
@@ -2373,6 +2374,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
           )}
         >
           <DetailPanel
+            open={inspectorOpen}
             path={repo.path}
             data={data}
             selection={selection}

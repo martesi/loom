@@ -33,6 +33,7 @@ function Section({
 }
 
 interface Props {
+  open: boolean
   path: string
   data: CanvasData
   selection: Selection
@@ -56,6 +57,7 @@ interface Props {
   restoreEnabled: boolean
 }
 export function DetailPanel({
+  open,
   path,
   data,
   selection,
@@ -113,6 +115,7 @@ export function DetailPanel({
   }, [path, key, data])
   // biome-ignore lint/correctness/useExhaustiveDependencies: retry field focus after async image data mounts the editor.
   useEffect(() => {
+    if (!open) return
     if (
       !commandRequest ||
       commandRequest.request === focusedCommandRequest.current
@@ -133,6 +136,7 @@ export function DetailPanel({
     )
       return
     const frame = requestAnimationFrame(() => {
+      if (!open) return
       if (
         commandRequest.command === 'compare-set' &&
         selection.group !== null
@@ -163,6 +167,7 @@ export function DetailPanel({
     return () => cancelAnimationFrame(frame)
   }, [
     commandRequest,
+    open,
     onCommandRequestHandled,
     group,
     imageDataLoaded,
