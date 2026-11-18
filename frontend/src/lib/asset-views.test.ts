@@ -55,6 +55,24 @@ describe('asset views', () => {
     expect(() => parseAssetViews('{"corrupt')).toThrow(InvalidAssetViewsError)
   })
 
+  it('rejects non-string values in saved view fields', () => {
+    const malformedViews = [
+      { ...DEFAULT_ASSET_VIEWS[0], id: ['default-recent'] },
+      { ...DEFAULT_ASSET_VIEWS[0], name: { value: 'Recent' } },
+      { ...DEFAULT_ASSET_VIEWS[0], search: [] },
+      { ...DEFAULT_ASSET_VIEWS[0], status: ['active'] },
+      { ...DEFAULT_ASSET_VIEWS[0], placement: ['placed'] },
+      { ...DEFAULT_ASSET_VIEWS[0], sort: ['recent'] },
+      { ...DEFAULT_ASSET_VIEWS[0], layout: ['list'] },
+    ]
+
+    for (const view of malformedViews) {
+      expect(() => parseAssetViews(JSON.stringify([view]))).toThrow(
+        InvalidAssetViewsError
+      )
+    }
+  })
+
   it('matches placement and sorts by name or recency', () => {
     const unplaced = DEFAULT_ASSET_VIEWS[1]
     expect(rows.filter((row) => matchesAssetView(row, unplaced))).toEqual([

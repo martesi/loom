@@ -84,18 +84,24 @@ export function sortAssetRows(rows: LibraryRow[], sort: AssetSort) {
 }
 
 function isAssetView(value: unknown): value is AssetView {
-  if (!value || typeof value !== 'object') return false
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const view = value as Record<string, unknown>
+  if (
+    typeof view.id !== 'string' ||
+    typeof view.name !== 'string' ||
+    typeof view.search !== 'string' ||
+    typeof view.status !== 'string' ||
+    typeof view.placement !== 'string' ||
+    typeof view.sort !== 'string' ||
+    typeof view.layout !== 'string'
+  )
+    return false
+
   return (
-    typeof view.id === 'string' &&
-    typeof view.name === 'string' &&
-    typeof view.search === 'string' &&
-    ['active', 'all', 'archived', 'trashed', 'missing'].includes(
-      String(view.status)
-    ) &&
-    ['', 'placed', 'unplaced'].includes(String(view.placement)) &&
+    ['active', 'all', 'archived', 'trashed', 'missing'].includes(view.status) &&
+    ['', 'placed', 'unplaced'].includes(view.placement) &&
     Number.isSafeInteger(view.tagId) &&
-    ['recent', 'oldest', 'name-asc', 'name-desc'].includes(String(view.sort)) &&
-    ['list', 'gallery'].includes(String(view.layout))
+    ['recent', 'oldest', 'name-asc', 'name-desc'].includes(view.sort) &&
+    ['list', 'gallery'].includes(view.layout)
   )
 }
