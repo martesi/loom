@@ -39,8 +39,21 @@ interface Props {
   change: () => Promise<void>
   go: (id: number, folder?: boolean) => void
   onError: (e: unknown) => void
-  commandRequest: { command: string; request: number } | null
+  commandRequest: {
+    command: string
+    request: number
+    selectionKey: string
+    pending: boolean
+  } | null
+  onCommandRequestHandled: (request: number) => void
   onAction: (id: string) => void
+  onSubmitField: (
+    id: 'move-rename-file' | 'add-tag' | 'save-prompt',
+    value: string,
+    imageIds: number[],
+    fileName?: string
+  ) => Promise<void>
+  restoreEnabled: boolean
 }
 export function DetailPanel({
   path,
@@ -50,13 +63,26 @@ export function DetailPanel({
   go,
   onError,
   commandRequest,
+  onCommandRequestHandled,
   onAction,
+  onSubmitField,
+  restoreEnabled,
 }: Props) {
-  const [images, setImages] = useState<ImageInfo[]>([]),
+  const [imageResult, setImageResult] = useState<{
+      path: string
+      key: string
+      images: ImageInfo[]
+    }>({ path: '', key: '', images: [] }),
     [tags, setTags] = useState<string[]>([]),
     [compareGroup, setCompareGroup] = useState<number | null>(null)
   const key = selection.ids.join(',')
+  const images =
+    imageResult.path === path && imageResult.key === key
+      ? imageResult.images
+      : []
   const errors = useRef(onError)
+  const focusedCommandRequest = useRef<number | null>(null)
+  const selectionFocusKey = `${selection.surface}:${key}:${selection.group ?? ''}`
   errors.current = onError
   useEffect(() => {
     let cancelled = false
@@ -70,21 +96,37 @@ export function DetailPanel({
     )
       .then((list) => {
         if (!cancelled)
-          setImages(list.filter((i): i is ImageInfo => i !== null))
+          setImageResult({
+            path,
+            key,
+            images: list.filter((i): i is ImageInfo => i !== null),
+          })
       })
       .catch(errors.current)
     return () => {
       cancelled = true
     }
   }, [path, key, data])
+  // biome-ignore lint/correctness/useExhaustiveDependencies: retry field focus after async image data mounts the editor.
   useEffect(() => {
-    if (!commandRequest) return
+    if (
+      !commandRequest ||
+      commandRequest.request === focusedCommandRequest.current
+    )
+      return
+    if (commandRequest.selectionKey !== selectionFocusKey) {
+      focusedCommandRequest.current = commandRequest.request
+      onCommandRequestHandled(commandRequest.request)
+      return
+    }
     const frame = requestAnimationFrame(() => {
       if (
         commandRequest.command === 'compare-set' &&
         selection.group !== null
       ) {
         setCompareGroup(selection.group)
+        focusedCommandRequest.current = commandRequest.request
+        onCommandRequestHandled(commandRequest.request)
         return
       }
       const fieldByCommand: Record<string, string> = {
@@ -95,11 +137,23 @@ export function DetailPanel({
         'edit-set-kind': 'set-kind',
       }
       const field = fieldByCommand[commandRequest.command]
-      if (field)
-        document.querySelector<HTMLElement>(`[name="${field}"]`)?.focus()
+      const target = field
+        ? document.querySelector<HTMLElement>(`[name="${field}"]`)
+        : null
+      if (target) {
+        target.focus()
+        focusedCommandRequest.current = commandRequest.request
+        onCommandRequestHandled(commandRequest.request)
+      }
     })
     return () => cancelAnimationFrame(frame)
-  }, [commandRequest, selection.group])
+  }, [
+    commandRequest,
+    onCommandRequestHandled,
+    selection.group,
+    selectionFocusKey,
+    images,
+  ])
   // biome-ignore lint/correctness/useExhaustiveDependencies: data refresh invalidates metadata fetched from the repository.
   useEffect(() => {
     let cancelled = false
@@ -297,7 +351,15 @@ export function DetailPanel({
               className="flex gap-1.5"
               onSubmit={(event) => {
                 event.preventDefault()
-                onAction('move-rename-file')
+                const field = event.currentTarget.elements.namedItem(
+                  'asset-path'
+                ) as HTMLInputElement
+                void onSubmitField(
+                  'move-rename-file',
+                  field.value,
+                  images.map((current) => current.id),
+                  image?.fileName
+                ).catch(errors.current)
               }}
             >
               <input
@@ -341,7 +403,18 @@ export function DetailPanel({
           className="flex gap-1.5"
           onSubmit={(event) => {
             event.preventDefault()
-            onAction('add-tag')
+            const field = event.currentTarget.elements.namedItem(
+              'new-tag'
+            ) as HTMLInputElement
+            void onSubmitField(
+              'add-tag',
+              field.value,
+              images.map((current) => current.id)
+            )
+              .then(() => {
+                field.value = ''
+              })
+              .catch(errors.current)
           }}
         >
           <input
@@ -364,7 +437,14 @@ export function DetailPanel({
           className="grid gap-1.5"
           onSubmit={(event) => {
             event.preventDefault()
-            onAction('save-prompt')
+            const field = event.currentTarget.elements.namedItem(
+              'prompt-text'
+            ) as HTMLTextAreaElement
+            void onSubmitField(
+              'save-prompt',
+              field.value,
+              images.map((current) => current.id)
+            ).catch(errors.current)
           }}
         >
           <textarea
@@ -414,6 +494,7 @@ export function DetailPanel({
           <Button
             variant="secondary"
             size="sm"
+            disabled={!restoreEnabled}
             onClick={() => onAction('restore-from-trash')}
           >
             <Trans>Restore from trash</Trans>

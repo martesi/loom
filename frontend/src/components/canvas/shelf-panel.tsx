@@ -11,6 +11,7 @@ export interface ShelfPanelProps {
   pinned: boolean
   onPinnedChange: (pinned: boolean) => void
   focusHidden?: boolean
+  deferOpeningFocus?: boolean
   shortcutHint?: string
   children: React.ReactNode
   width?: number
@@ -30,6 +31,7 @@ export function ShelfPanel({
   pinned,
   onPinnedChange,
   focusHidden = false,
+  deferOpeningFocus = false,
   shortcutHint,
   children,
   width = DEFAULT_WIDTH,
@@ -39,6 +41,7 @@ export function ShelfPanel({
   const [panelWidth, setPanelWidth] = useState(width)
   const [isResizing, setIsResizing] = useState(false)
   const asideRef = useRef<HTMLElement>(null)
+  const openingFocusDeferred = useRef(false)
   const visible = open && !focusHidden
 
   useEffect(() => {
@@ -48,7 +51,15 @@ export function ShelfPanel({
   }, [width])
 
   useEffect(() => {
-    if (!visible) return
+    if (!visible) {
+      openingFocusDeferred.current = false
+      return
+    }
+    if (deferOpeningFocus) {
+      openingFocusDeferred.current = true
+      return
+    }
+    if (openingFocusDeferred.current) return
     const frame = requestAnimationFrame(() => {
       const target = asideRef.current?.querySelector<HTMLElement>(
         'button:not([disabled]), input:not([disabled]), [tabindex="0"]'
@@ -57,7 +68,7 @@ export function ShelfPanel({
       else asideRef.current?.focus()
     })
     return () => cancelAnimationFrame(frame)
-  }, [visible])
+  }, [visible, deferOpeningFocus])
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {

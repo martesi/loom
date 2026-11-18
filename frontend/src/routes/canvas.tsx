@@ -14,7 +14,13 @@ import {
   useReactFlow,
 } from '@xyflow/react'
 import { Command, MoreHorizontal, PanelLeft, PanelRight } from 'lucide-react'
-import { type MouseEvent, useEffect, useRef, useState } from 'react'
+import {
+  type MouseEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react'
 import '@xyflow/react/dist/style.css'
 import {
   type CanvasData,
@@ -99,6 +105,8 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   const [inspectorCommandRequest, setInspectorCommandRequest] = useState<{
     command: string
     request: number
+    selectionKey: string
+    pending: boolean
   } | null>(null)
   const [repoMenuOpen, setRepoMenuOpen] = useState(false)
   const [searchFocusRequest, setSearchFocusRequest] = useState(0)
@@ -125,11 +133,12 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     if (window.matchMedia('(max-width: 720px)').matches) setInspectorOpen(false)
     setAssetsOpen(true)
   }
-  function closeAssets() {
+  function closeAssets(restoreFocus = true) {
     setAssetsOpen(false)
-    requestAnimationFrame(() => {
-      if (!focusCanvas) assetsReturnFocus.current?.focus()
-    })
+    if (restoreFocus)
+      requestAnimationFrame(() => {
+        if (!focusCanvas) assetsReturnFocus.current?.focus()
+      })
   }
   function toggleAssets() {
     if (assetsOpen) closeAssets()
@@ -141,11 +150,12 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     if (window.matchMedia('(max-width: 720px)').matches) setAssetsOpen(false)
     setInspectorOpen(true)
   }
-  function closeInspector() {
+  function closeInspector(restoreFocus = true) {
     setInspectorOpen(false)
-    requestAnimationFrame(() => {
-      if (!focusCanvas) inspectorReturnFocus.current?.focus()
-    })
+    if (restoreFocus)
+      requestAnimationFrame(() => {
+        if (!focusCanvas) inspectorReturnFocus.current?.focus()
+      })
   }
   function toggleInspector() {
     if (inspectorOpen) closeInspector()
@@ -156,7 +166,50 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     setInspectorCommandRequest((current) => ({
       command,
       request: (current?.request ?? 0) + 1,
+      selectionKey: `${selection.surface}:${selection.ids.join(',')}:${selection.group ?? ''}`,
+      pending: true,
     }))
+  }
+  const handleInspectorCommandRequest = useCallback((request: number) => {
+    setInspectorCommandRequest((current) =>
+      current?.request === request ? { ...current, pending: false } : current
+    )
+  }, [])
+  async function submitInspectorField(
+    command: 'move-rename-file' | 'add-tag' | 'save-prompt',
+    value: string,
+    imageIds: number[],
+    fileName?: string
+  ) {
+    const ids = selectedIds()
+    if (
+      !ids.length ||
+      imageIds.length !== ids.length ||
+      ids.some((id) => !imageIds.includes(id))
+    )
+      return
+    if (command === 'move-rename-file') {
+      const path = value.trim()
+      if (ids.length !== 1 || !path || path === fileName) return
+      await ImageService.MoveFile(repo.path, ids[0], path)
+      await reload()
+      return
+    }
+    if (command === 'add-tag') {
+      const tag = value.trim()
+      if (!tag) return
+      await Promise.all(ids.map((id) => TagService.AddTag(repo.path, id, tag)))
+      await reload()
+      return
+    }
+    if (command === 'save-prompt') {
+      await Promise.all(
+        ids.map((id) =>
+          PromptService.CreateAndAttachPrompt(repo.path, id, '', value, '')
+        )
+      )
+      await reload()
+    }
   }
   function openPalette(shortcuts = false, initialQuery = '') {
     rememberFocus(paletteReturnFocus)
@@ -1302,24 +1355,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       context: t`Single Asset`,
       enabled: selectedIds().length === 1,
       disabledReason: t`Select one Asset`,
-      execute: async () => {
-        openInspector()
-        const field = document.querySelector<HTMLInputElement>(
-          '[name="asset-path"]'
-        )
-        const image = selectedImageRecords[0]
-        if (!field || !image) {
-          requestInspectorCommand('move-rename-file')
-          return
-        }
-        const value = field.value.trim()
-        if (!value || value === image.fileName) {
-          requestInspectorCommand('move-rename-file')
-          return
-        }
-        await ImageService.MoveFile(repo.path, image.id, value)
-        await reload()
-      },
+      execute: () => requestInspectorCommand('move-rename-file'),
     },
     {
       id: 'add-tag',
@@ -1330,21 +1366,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       context: t`Asset selection`,
       enabled: selectedIds().length > 0,
       disabledReason: t`Select Assets`,
-      execute: async () => {
-        openInspector()
-        const field =
-          document.querySelector<HTMLInputElement>('[name="new-tag"]')
-        const tag = field?.value.trim()
-        if (!field || !tag) {
-          requestInspectorCommand('add-tag')
-          return
-        }
-        await Promise.all(
-          selectedIds().map((id) => TagService.AddTag(repo.path, id, tag))
-        )
-        field.value = ''
-        await reload()
-      },
+      execute: () => requestInspectorCommand('add-tag'),
     },
     {
       id: 'save-prompt',
@@ -1355,23 +1377,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       context: t`Asset selection`,
       enabled: selectedIds().length > 0,
       disabledReason: t`Select Assets`,
-      execute: async () => {
-        openInspector()
-        const field = document.querySelector<HTMLTextAreaElement>(
-          '[name="prompt-text"]'
-        )
-        const prompt = field?.value.trim()
-        if (!prompt) {
-          requestInspectorCommand('save-prompt')
-          return
-        }
-        await Promise.all(
-          selectedIds().map((id) =>
-            PromptService.CreateAndAttachPrompt(repo.path, id, '', prompt, '')
-          )
-        )
-        await reload()
-      },
+      execute: () => requestInspectorCommand('save-prompt'),
     },
     {
       id: 'restore-from-trash',
@@ -2003,7 +2009,10 @@ function Canvas({ repo }: { repo: RepoInfo }) {
                     p.y,
                     group
                   )
-                  if (!assetsPinned) closeAssets()
+                  if (!assetsPinned) {
+                    closeAssets(false)
+                    requestAnimationFrame(() => host.current?.focus())
+                  }
                   setSelection({
                     surface: 'canvas',
                     ids: group ? [] : ids,
@@ -2113,7 +2122,10 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             onPaneClick={() => {
               setSelection(emptySelection)
               setExpanded(null)
-              if (inspectorOpen && !inspectorPinned) closeInspector()
+              if (inspectorOpen && !inspectorPinned) {
+                closeInspector(false)
+                host.current?.focus()
+              }
             }}
             onNodeClick={(event, node) => {
               if (!(event.shiftKey || event.ctrlKey || event.metaKey))
@@ -2344,6 +2356,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
         </main>
         <ShelfPanel
           title={t`Inspector`}
+          deferOpeningFocus={inspectorCommandRequest?.pending ?? false}
           side="right"
           open={inspectorOpen}
           onOpenChange={(open) =>
@@ -2367,7 +2380,12 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             go={(id, folder) => void go(id, folder).catch(report)}
             onError={report}
             commandRequest={inspectorCommandRequest}
+            onCommandRequestHandled={handleInspectorCommandRequest}
             onAction={executeActionById}
+            onSubmitField={submitInspectorField}
+            restoreEnabled={
+              actionById.get('restore-from-trash')?.enabled ?? false
+            }
           />
         </ShelfPanel>
       </div>

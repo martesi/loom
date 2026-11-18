@@ -154,6 +154,94 @@ test.describe('Canvas command palette', () => {
     ).toHaveAttribute('aria-selected', 'true')
   })
 
+  test('field commands focus Inspector editors and only explicit submit changes data', async ({
+    page,
+  }) => {
+    await openFixtureRepo(page, 'inspector-fixtures')
+    await asset(page, 'inspect-alpha.png').click()
+    const inspector = page.getByLabel('Inspector')
+
+    const runPaletteCommand = async (label: string) => {
+      await page.getByTestId('open-command-palette').click()
+      const search = page.getByRole('combobox', { name: 'Search commands' })
+      await search.fill(label)
+      await page.getByRole('option', { name: new RegExp(label) }).click()
+      await expect(page.getByRole('dialog')).toHaveCount(0)
+    }
+
+    const path = inspector.getByRole('textbox', { name: 'File path' })
+    await path.fill('palette-renamed.png')
+    await runPaletteCommand('Move or rename file path')
+    await expect(path).toBeFocused()
+    await expect(asset(page, 'inspect-alpha.png')).toHaveCount(1)
+    await page.keyboard.press('Enter')
+    await expect(asset(page, 'palette-renamed.png')).toHaveCount(1)
+
+    const tag = inspector.getByRole('textbox', { name: 'Add tag' })
+    await tag.fill('palette-added-tag')
+    await runPaletteCommand('Add tag')
+    await expect(tag).toBeFocused()
+    await expect(tag).toHaveValue('palette-added-tag')
+    await expect(
+      inspector.getByText('palette-added-tag', { exact: true })
+    ).toHaveCount(0)
+    await page.keyboard.press('Enter')
+    await expect(tag).toHaveValue('')
+    await expect(inspector.getByText(/palette-added-tag/)).toBeVisible()
+
+    const prompt = inspector.getByRole('textbox', { name: 'Prompt' })
+    const rawPrompt = '  prompt spacing is preserved  '
+    await prompt.fill(rawPrompt)
+    await runPaletteCommand('Save prompt')
+    await expect(prompt).toBeFocused()
+    await expect(prompt).toHaveValue(rawPrompt)
+    await inspector.getByRole('button', { name: 'Save prompt' }).click()
+    await asset(page, 'inspect-beta.png').click()
+    await expect(prompt).toHaveValue('')
+    await asset(page, 'palette-renamed.png').click()
+    await expect(prompt).toHaveValue(rawPrompt)
+
+    await prompt.fill('')
+    await inspector.getByRole('button', { name: 'Save prompt' }).click()
+    await asset(page, 'inspect-beta.png').click()
+    await asset(page, 'palette-renamed.png').click()
+    await expect(prompt).toHaveValue('')
+    await asset(page, 'inspect-beta.png').click()
+    await expect(
+      inspector.getByText('inspect-beta.png', { exact: true })
+    ).toBeVisible()
+    await expect(prompt).not.toBeFocused()
+  })
+
+  test('focuses a requested field when a palette command opens a closed Inspector', async ({
+    page,
+  }) => {
+    await openFixtureRepo(page, 'inspector-fixtures')
+    await asset(page, 'inspect-alpha.png').click()
+
+    const inspector = page.locator('aside[aria-label="Inspector"]')
+    const path = inspector.getByRole('textbox', { name: 'File path' })
+    await expect(path).toHaveValue('inspect-alpha.png')
+    await inspector.getByTestId('collapse-shelf-right').click()
+    await expect(inspector).toHaveAttribute('data-state', 'closed')
+
+    await page.getByTestId('open-command-palette').click()
+    const search = page.getByRole('combobox', { name: 'Search commands' })
+    await search.fill('Move or rename file path')
+    await page.getByRole('option', { name: /Move or rename file path/ }).click()
+
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    await expect(inspector).toHaveAttribute('data-state', 'open')
+    await expect(path).toBeFocused()
+    await expect(inspector.getByRole('button').first()).not.toBeFocused()
+
+    await inspector.getByTestId('collapse-shelf-right').click()
+    await expect(inspector).toHaveAttribute('data-state', 'closed')
+    await page.getByTestId('shelf-edge-trigger-right').click()
+    await expect(inspector).toHaveAttribute('data-state', 'open')
+    await expect(inspector.getByRole('button').first()).toBeFocused()
+  })
+
   test('does not carry restore eligibility across an asset selection change', async ({
     page,
   }) => {
@@ -169,6 +257,11 @@ test.describe('Canvas command palette', () => {
       .selectOption('trashed')
     await asset(page, 'inspect-alpha.png').click()
     await expect(inspector.getByText('Trashed')).toBeVisible()
+    const inspectorRestore = inspector.getByRole('button', {
+      name: 'Restore from trash',
+    })
+    await expect(inspectorRestore).toBeVisible()
+    await expect(inspectorRestore).toBeEnabled()
 
     await page
       .getByRole('combobox', { name: 'Asset state' })
@@ -187,6 +280,8 @@ test.describe('Canvas command palette', () => {
 
     await asset(page, 'inspect-beta.png').click()
     await getImageStarted
+    if (await inspectorRestore.count())
+      await expect(inspectorRestore).toBeDisabled()
     await page.keyboard.press('ControlOrMeta+k')
     const search = page.getByRole('combobox', { name: 'Search commands' })
     await search.fill('> Restore from trash')

@@ -70,6 +70,7 @@ test.describe('floating Canvas drawers', () => {
     )
     await dropAsset(page, 'dock-beta.png', { x: 640, y: 180 })
     await expect(assets).toHaveAttribute('data-state', 'closed')
+    await expect(page.getByRole('main', { name: 'Canvas' })).toBeFocused()
   })
 
   test('Escape closes an unpinned drawer while focus is in its search field', async ({
@@ -84,6 +85,12 @@ test.describe('floating Canvas drawers', () => {
     await expect(search).toBeFocused()
     await page.keyboard.press('Escape')
 
+    await expect(assets).toHaveAttribute('data-state', 'closed')
+    await expect(trigger).toBeFocused()
+
+    await trigger.click()
+    await expect(assets).toHaveAttribute('data-state', 'open')
+    await page.getByTestId('collapse-shelf-left').click()
     await expect(assets).toHaveAttribute('data-state', 'closed')
     await expect(trigger).toBeFocused()
   })
@@ -141,10 +148,18 @@ test.describe('floating Canvas drawers', () => {
     await dropAsset(page, 'dock-alpha.png', { x: 420, y: 180 })
     await page.getByTestId('toggle-inspector-shelf').click()
     await expect(inspector).toHaveAttribute('data-state', 'open')
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          document.activeElement?.closest('aside')?.getAttribute('aria-label')
+        )
+      )
+      .toBe('Inspector')
     await page
       .locator('.react-flow__pane')
       .click({ position: { x: 700, y: 460 } })
     await expect(inspector).toHaveAttribute('data-state', 'closed')
+    await expect(page.getByRole('main', { name: 'Canvas' })).toBeFocused()
 
     await page.getByTestId('toggle-inspector-shelf').click()
     await page.getByTestId('pin-shelf-right').click()
@@ -178,6 +193,26 @@ test.describe('floating Canvas drawers', () => {
       'data-state',
       'open'
     )
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          document.activeElement?.closest('aside')?.getAttribute('aria-label')
+        )
+      )
+      .toBe('Inspector')
     expect((await canvas.boundingBox())?.width).toBe(390)
+
+    await page.getByTestId('toggle-assets-shelf').click()
+    await expect(page.locator('aside[aria-label="Inspector"]')).toHaveAttribute(
+      'data-state',
+      'closed'
+    )
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          document.activeElement?.closest('aside')?.getAttribute('aria-label')
+        )
+      )
+      .toBe('Assets')
   })
 })
