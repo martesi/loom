@@ -118,6 +118,30 @@ export function CommandPalette({
     if (result?.action.enabled) onRunAction(result.action)
   }
 
+  function focusResult(index: number) {
+    const resultId = assetMode
+      ? assetResults[index]?.asset.id
+      : commandResults[index]?.action.id
+    if (resultId === undefined) return
+    document.getElementById(optionId(index, resultId))?.focus()
+  }
+
+  function moveActive(delta: number) {
+    const nextIndex = Math.max(
+      0,
+      Math.min(resultCount - 1, selectedIndex + delta)
+    )
+    const focusIsOnResult =
+      document.activeElement?.getAttribute('role') === 'option'
+    setActiveIndex(nextIndex)
+    if (focusIsOnResult) focusResult(nextIndex)
+  }
+
+  function activateHoveredResult(index: number) {
+    if (document.activeElement?.getAttribute('role') === 'option') return
+    setActiveIndex(index)
+  }
+
   return (
     <Dialog.Root
       open={open}
@@ -134,11 +158,11 @@ export function CommandPalette({
           onKeyDown={(event) => {
             if (event.key === 'ArrowDown') {
               event.preventDefault()
-              setActiveIndex(Math.min(resultCount - 1, selectedIndex + 1))
+              moveActive(1)
             }
             if (event.key === 'ArrowUp') {
               event.preventDefault()
-              setActiveIndex(Math.max(0, selectedIndex - 1))
+              moveActive(-1)
             }
             if (event.key === 'Enter') {
               event.preventDefault()
@@ -217,7 +241,14 @@ export function CommandPalette({
                     aria-selected={index === selectedIndex}
                     id={optionId(index, asset.id)}
                     key={asset.id}
-                    onMouseMove={() => setActiveIndex(index)}
+                    onFocus={() => setActiveIndex(index)}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Enter') return
+                      event.preventDefault()
+                      event.stopPropagation()
+                      onChooseAsset(asset)
+                    }}
+                    onMouseMove={() => activateHoveredResult(index)}
                     onClick={() => onChooseAsset(asset)}
                     className="flex w-full items-center justify-between gap-4 rounded-md px-3 py-2.5 text-left aria-selected:bg-primary-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                   >
@@ -240,7 +271,14 @@ export function CommandPalette({
                     aria-disabled={!action.enabled}
                     id={optionId(index, action.id)}
                     key={action.id}
-                    onMouseMove={() => setActiveIndex(index)}
+                    onFocus={() => setActiveIndex(index)}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Enter') return
+                      event.preventDefault()
+                      event.stopPropagation()
+                      if (action.enabled) onRunAction(action)
+                    }}
+                    onMouseMove={() => activateHoveredResult(index)}
                     onClick={() => action.enabled && onRunAction(action)}
                     className="flex w-full items-start justify-between gap-4 rounded-md px-3 py-2.5 text-left aria-selected:bg-primary-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 aria-disabled:opacity-55"
                   >

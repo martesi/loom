@@ -113,6 +113,7 @@ test.describe('Canvas command palette', () => {
       )
       .toBe(true)
 
+    await expect(search).toBeFocused()
     await page.keyboard.press('Enter')
     await expect(page.getByTestId('command-palette')).toHaveCount(0)
     await expect(page.getByTestId('canvas-workspace-controls')).toHaveAttribute(
@@ -142,6 +143,99 @@ test.describe('Canvas command palette', () => {
         })
       )
       .toBe(true)
+  })
+
+  test('Enter runs the focused result after focus leaves the search field', async ({
+    page,
+  }) => {
+    await openFixtureRepo(page, 'direct-fixtures', { drawers: 'closed' })
+    await page.getByTestId('toggle-assets-shelf').click()
+    const folders = page.getByRole('button', { name: 'Folders', exact: true })
+    await folders.click()
+    await expect(folders).toHaveAttribute('aria-pressed', 'true')
+
+    await page.keyboard.press('ControlOrMeta+k')
+
+    const search = page.getByRole('combobox', { name: 'Search commands' })
+    const dialog = page.getByRole('dialog', { name: 'Command palette' })
+    const focusedOption = page.locator('[role="option"]:focus')
+    const activeOption = page.locator('[role="option"][aria-selected="true"]')
+    await expect(search).toBeFocused()
+    await search.fill('show')
+
+    await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('ArrowDown')
+    await expect(activeOption).toContainText('Show All Assets')
+
+    await page.keyboard.press('Tab')
+    await expect(focusedOption).toContainText('Open Assets')
+    await expect(focusedOption).toHaveAttribute('aria-selected', 'true')
+    await page.keyboard.press('Enter')
+
+    await expect(dialog).toHaveCount(0)
+    await expect(folders).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  test('arrow navigation keeps focus and selection together on result buttons', async ({
+    page,
+  }) => {
+    await openFixtureRepo(page, 'direct-fixtures', { drawers: 'closed' })
+    await page.keyboard.press('ControlOrMeta+k')
+
+    const search = page.getByRole('combobox', { name: 'Search commands' })
+    const dialog = page.getByRole('dialog', { name: 'Command palette' })
+    const focusedOption = page.locator('[role="option"]:focus')
+    const activeOption = page.locator('[role="option"][aria-selected="true"]')
+    await search.fill('show')
+    await page.keyboard.press('Tab')
+    await expect(focusedOption).toContainText('Open Assets')
+    await expect(focusedOption).toHaveAttribute('aria-selected', 'true')
+
+    await page.keyboard.press('ArrowDown')
+    await expect(activeOption).toContainText('Open Inspector')
+    await expect(focusedOption).toContainText('Open Inspector')
+    await page.keyboard.press('Enter')
+
+    await expect(dialog).toHaveCount(0)
+    await expect(page.locator('aside[aria-label="Assets"]')).toHaveAttribute(
+      'data-state',
+      'closed'
+    )
+    await expect(page.locator('aside[aria-label="Inspector"]')).toHaveAttribute(
+      'data-state',
+      'open'
+    )
+  })
+
+  test('pointer hover keeps a focused result selected for Enter', async ({
+    page,
+  }) => {
+    await openFixtureRepo(page, 'direct-fixtures', { drawers: 'closed' })
+    await page.keyboard.press('ControlOrMeta+k')
+
+    const search = page.getByRole('combobox', { name: 'Search commands' })
+    const dialog = page.getByRole('dialog', { name: 'Command palette' })
+    const focusedOption = page.locator('[role="option"]:focus')
+    const activeOption = page.locator('[role="option"][aria-selected="true"]')
+    await search.fill('show')
+    await page.keyboard.press('Tab')
+    await expect(focusedOption).toContainText('Open Assets')
+    await expect(focusedOption).toHaveAttribute('aria-selected', 'true')
+
+    await page.getByRole('option', { name: /Open Inspector/ }).hover()
+    await expect(focusedOption).toContainText('Open Assets')
+    await expect(activeOption).toContainText('Open Assets')
+    await page.keyboard.press('Enter')
+
+    await expect(dialog).toHaveCount(0)
+    await expect(page.locator('aside[aria-label="Assets"]')).toHaveAttribute(
+      'data-state',
+      'open'
+    )
+    await expect(page.locator('aside[aria-label="Inspector"]')).toHaveAttribute(
+      'data-state',
+      'closed'
+    )
   })
 
   test('asset search matches repository tags', async ({ page }) => {
