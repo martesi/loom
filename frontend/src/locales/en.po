@@ -15,7 +15,7 @@ msgstr ""
 
 #. placeholder {0}: assetIds.length
 #. placeholder {0}: images.length
-#: src/components/canvas/detail-panel.tsx:305
+#: src/components/canvas/detail-panel.tsx:308
 #: src/components/compression-dialog.tsx:150
 msgid "{0, plural, one {# asset selected} other {# assets selected}}"
 msgstr "{0, plural, one {# asset selected} other {# assets selected}}"
@@ -29,8 +29,23 @@ msgstr "{0, plural, one {# asset} other {# assets}}"
 
 #. placeholder {0}: repo.imageCount
 #: src/routes/landing.tsx:118
-msgid "{0} images"
-msgstr "{0} images"
+msgid "{0, plural, one {# image} other {# images}}"
+msgstr "{0, plural, one {# image} other {# images}}"
+
+#. placeholder {0}: selection.edges.length
+#: src/components/canvas/detail-panel.tsx:181
+msgid "{0, plural, one {# relationship} other {# relationships}}"
+msgstr "{0, plural, one {# relationship} other {# relationships}}"
+
+#. placeholder {0}: purgeIds?.length ?? 0
+#: src/routes/canvas.tsx:1453
+msgid "{0, plural, one {Permanently delete # asset?} other {Permanently delete # assets?}}"
+msgstr "{0, plural, one {Permanently delete # asset?} other {Permanently delete # assets?}}"
+
+#. placeholder {0}: repo.imageCount
+#: src/routes/landing.tsx:118
+#~ msgid "{0} images"
+#~ msgstr "{0} images"
 
 #: src/components/compression-dialog.tsx:116
 msgid "{compressed} compressed"
@@ -57,7 +72,7 @@ msgstr "active"
 #~ msgid "Active"
 #~ msgstr "Active"
 
-#: src/components/canvas/detail-panel.tsx:344
+#: src/components/canvas/detail-panel.tsx:347
 msgid "Add"
 msgstr "Add"
 
@@ -69,8 +84,8 @@ msgstr "Add a tag…"
 #~ msgid "Add prompt…"
 #~ msgstr "Add prompt…"
 
-#: src/components/canvas/detail-panel.tsx:336
-#: src/components/canvas/detail-panel.tsx:337
+#: src/components/canvas/detail-panel.tsx:339
+#: src/components/canvas/detail-panel.tsx:340
 msgid "Add tag"
 msgstr "Add tag"
 
@@ -117,7 +132,7 @@ msgstr "All placements"
 msgid "All tags"
 msgstr "All tags"
 
-#: src/components/canvas/detail-panel.tsx:417
+#: src/components/canvas/detail-panel.tsx:420
 #: src/routes/canvas.tsx:786
 msgid "Archive"
 msgstr "Archive"
@@ -275,7 +290,7 @@ msgstr "Collapse {title} ({shortcutHint})"
 msgid "Collapse {title} shelf"
 msgstr "Collapse {title} shelf"
 
-#: src/components/canvas/detail-panel.tsx:313
+#: src/components/canvas/detail-panel.tsx:316
 msgid "Common:"
 msgstr "Common:"
 
@@ -382,7 +397,7 @@ msgstr "Create Set ({0})"
 msgid "Ctrl/Cmd-drag image → image or set to create a relationship."
 msgstr "Ctrl/Cmd-drag image → image or set to create a relationship."
 
-#: src/components/canvas/detail-panel.tsx:259
+#: src/components/canvas/detail-panel.tsx:262
 msgid "Ctrl/Cmd-drag this image onto another image or set to create a relationship."
 msgstr "Ctrl/Cmd-drag this image onto another image or set to create a relationship."
 
@@ -398,7 +413,7 @@ msgstr "Current"
 #~ msgid "Delete board"
 #~ msgstr "Delete board"
 
-#: src/components/canvas/detail-panel.tsx:231
+#: src/components/canvas/detail-panel.tsx:234
 msgid "Derived"
 msgstr "Derived"
 
@@ -443,7 +458,7 @@ msgstr "edits metadata for the current selection."
 #~ msgid "Explorer"
 #~ msgstr "Explorer"
 
-#: src/components/canvas/detail-panel.tsx:265
+#: src/components/canvas/detail-panel.tsx:268
 msgid "File"
 msgstr "File"
 
@@ -455,7 +470,7 @@ msgstr "File"
 msgid "File not found on disk"
 msgstr "File not found on disk"
 
-#: src/components/canvas/detail-panel.tsx:282
+#: src/components/canvas/detail-panel.tsx:285
 msgid "File path"
 msgstr "File path"
 
@@ -499,11 +514,11 @@ msgstr "Folders"
 msgid "Format"
 msgstr "Format"
 
-#: src/components/canvas/detail-panel.tsx:465
+#: src/components/canvas/detail-panel.tsx:468
 msgid "Go to"
 msgstr "Go to"
 
-#: src/components/canvas/detail-panel.tsx:203
+#: src/components/canvas/detail-panel.tsx:206
 msgid "Go to derived"
 msgstr "Go to derived"
 
@@ -511,7 +526,7 @@ msgstr "Go to derived"
 #~ msgid "Go to library"
 #~ msgstr "Go to library"
 
-#: src/components/canvas/detail-panel.tsx:196
+#: src/components/canvas/detail-panel.tsx:199
 msgid "Go to source"
 msgstr "Go to source"
 
@@ -610,16 +625,16 @@ msgstr "Media transcode returned no result"
 msgid "missing"
 msgstr "missing"
 
-#: src/components/canvas/detail-panel.tsx:247
+#: src/components/canvas/detail-panel.tsx:250
 #: src/components/canvas/panel-image-row.tsx:112
 msgid "Missing"
 msgstr "Missing"
 
-#: src/components/canvas/detail-panel.tsx:384
+#: src/components/canvas/detail-panel.tsx:387
 msgid "Mixed prompts — enter text to replace all"
 msgstr "Mixed prompts — enter text to replace all"
 
-#: src/components/canvas/detail-panel.tsx:291
+#: src/components/canvas/detail-panel.tsx:294
 msgid "Move"
 msgstr "Move"
 
@@ -676,7 +691,7 @@ msgstr "No assets yet. Import files or rescan the repository."
 #~ msgid "No images match."
 #~ msgstr "No images match."
 
-#: src/components/canvas/detail-panel.tsx:383
+#: src/components/canvas/detail-panel.tsx:386
 msgid "No prompt"
 msgstr "No prompt"
 
@@ -692,8 +707,8 @@ msgstr "No subfolders here."
 msgid "No tags yet"
 msgstr "No tags yet"
 
-#: src/components/canvas/detail-panel.tsx:314
-#: src/components/canvas/detail-panel.tsx:443
+#: src/components/canvas/detail-panel.tsx:317
+#: src/components/canvas/detail-panel.tsx:446
 msgid "None"
 msgstr "None"
 
@@ -743,7 +758,7 @@ msgstr "Original"
 msgid "placed"
 msgstr "placed"
 
-#: src/components/canvas/detail-panel.tsx:251
+#: src/components/canvas/detail-panel.tsx:254
 msgid "Placed"
 msgstr "Placed"
 
@@ -756,8 +771,8 @@ msgstr "Placement"
 msgid "Preview"
 msgstr "Preview"
 
-#: src/components/canvas/detail-panel.tsx:348
-#: src/components/canvas/detail-panel.tsx:374
+#: src/components/canvas/detail-panel.tsx:351
+#: src/components/canvas/detail-panel.tsx:377
 #: src/components/canvas/lightbox.tsx:101
 msgid "Prompt"
 msgstr "Prompt"
@@ -798,8 +813,8 @@ msgstr "Recent"
 msgid "Remove from canvas"
 msgstr "Remove from canvas"
 
-#: src/components/canvas/detail-panel.tsx:210
-#: src/components/canvas/detail-panel.tsx:476
+#: src/components/canvas/detail-panel.tsx:213
+#: src/components/canvas/detail-panel.tsx:479
 msgid "Remove relationship"
 msgstr "Remove relationship"
 
@@ -856,7 +871,7 @@ msgstr "Reset 100%"
 msgid "Resize {title} shelf"
 msgstr "Resize {title} shelf"
 
-#: src/components/canvas/detail-panel.tsx:434
+#: src/components/canvas/detail-panel.tsx:437
 msgid "Restore from trash"
 msgstr "Restore from trash"
 
@@ -868,7 +883,7 @@ msgstr "Result"
 msgid "Reuse a prompt"
 msgstr "Reuse a prompt"
 
-#: src/components/canvas/detail-panel.tsx:392
+#: src/components/canvas/detail-panel.tsx:395
 msgid "Save prompt"
 msgstr "Save prompt"
 
@@ -909,7 +924,7 @@ msgstr "Select 2+ images, then Create set or press Ctrl/Cmd+G."
 msgid "Select all"
 msgstr "Select all"
 
-#: src/components/canvas/detail-panel.tsx:219
+#: src/components/canvas/detail-panel.tsx:222
 msgid "Select an asset, set, or relationship."
 msgstr "Select an asset, set, or relationship."
 
@@ -953,7 +968,7 @@ msgstr "Set name"
 #~ msgid "Show in file explorer"
 #~ msgstr "Show in file explorer"
 
-#: src/components/canvas/detail-panel.tsx:299
+#: src/components/canvas/detail-panel.tsx:302
 msgid "Show in Folders"
 msgstr "Show in Folders"
 
@@ -961,7 +976,7 @@ msgstr "Show in Folders"
 #~ msgid "Show on board"
 #~ msgstr "Show on board"
 
-#: src/components/canvas/detail-panel.tsx:230
+#: src/components/canvas/detail-panel.tsx:233
 msgid "Sources"
 msgstr "Sources"
 
@@ -969,7 +984,7 @@ msgstr "Sources"
 msgid "Start with an asset"
 msgstr "Start with an asset"
 
-#: src/components/canvas/detail-panel.tsx:396
+#: src/components/canvas/detail-panel.tsx:399
 msgid "State"
 msgstr "State"
 
@@ -989,7 +1004,7 @@ msgstr "Switched to existing window"
 msgid "Tag filter"
 msgstr "Tag filter"
 
-#: src/components/canvas/detail-panel.tsx:311
+#: src/components/canvas/detail-panel.tsx:314
 #: src/components/canvas/lightbox.tsx:109
 msgid "Tags"
 msgstr "Tags"
@@ -997,6 +1012,10 @@ msgstr "Tags"
 #: src/components/board/library-panel.tsx:447
 #~ msgid "Tags: any"
 #~ msgstr "Tags: any"
+
+#: src/routes/canvas.tsx:1460
+msgid "This removes the files and Loom metadata immediately. Trash retention does not apply, and this action cannot be undone."
+msgstr "This removes the files and Loom metadata immediately. Trash retention does not apply, and this action cannot be undone."
 
 #: src/routes/canvas.tsx:821
 msgid "Toggle Assets shelf (Cmd+B)"
@@ -1023,12 +1042,12 @@ msgstr "Trash selection"
 msgid "trashed"
 msgstr "trashed"
 
-#: src/components/canvas/detail-panel.tsx:249
+#: src/components/canvas/detail-panel.tsx:252
 #: src/components/canvas/panel-image-row.tsx:117
 msgid "Trashed"
 msgstr "Trashed"
 
-#: src/components/canvas/detail-panel.tsx:415
+#: src/components/canvas/detail-panel.tsx:418
 #: src/routes/canvas.tsx:786
 msgid "Unarchive"
 msgstr "Unarchive"
@@ -1064,7 +1083,7 @@ msgstr "Unplace Selection"
 msgid "unplaced"
 msgstr "unplaced"
 
-#: src/components/canvas/detail-panel.tsx:253
+#: src/components/canvas/detail-panel.tsx:256
 #: src/components/canvas/lightbox.tsx:156
 msgid "Unplaced"
 msgstr "Unplaced"

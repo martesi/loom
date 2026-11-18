@@ -79,10 +79,11 @@ their application sources were not cloned.
    Round 4 extracts the remaining Canvas route, shelf controls, node hints,
    repository switcher, and set-comparison dialog labels. The Inspector's
    multi-asset selection summary is pluralized as well. English remains the
-   only shipped locale; the catalog has 152 active English messages and 80
-   obsolete entries retained by extraction.
+   only shipped locale. The catalog has 177 active English messages and 81
+   obsolete entries retained by extraction; the rest of the UI is not yet
+   localized.
 
-## Existing evidence and remaining work
+## Existing evidence and round notes
 
 - Two concurrent Playwright invocations passed with separate ports and fixture
   roots. After adding the three P2 UI regressions, the full 43-test server-mode
@@ -142,6 +143,25 @@ their application sources were not cloned.
   passed and the retry test's expected first-fail/second-pass flaky result;
   harness tests 5/5, frontend unit tests 4/4, Go tests, Biome, and E2E
   typecheck passed.
+- Round 8 converts the recent-repo image count, permanent-purge confirmation,
+  selected-relationship count, and permanent-purge description to Lingui
+  messages. E2E assertions now cover the exact singular image label and
+  singular relationship label; the existing purge test covers the singular
+  asset label. The frontend count sweep found no further unpluralized
+  interpolated count-plus-noun labels.
+- Round 8 verification: the full server-mode Playwright suite completed with
+  43 passed and the retry test's expected first-fail/second-pass flaky result;
+  frontend unit tests 4/4, harness tests 5/5, Go tests 31 tests across 7
+  packages, frontend typecheck and production build, Biome, E2E typecheck, and
+  Lingui extraction passed.
+
+## Backlog status
+
+The six itemized contract and test-audit actions above are complete. Translation
+coverage remains partial: English is the only shipped locale, and localization
+of the rest of the UI is deferred. “Done” here means the reviewed, itemized
+scope is complete; no additional contract or test-audit work is currently
+listed.
 
 ## Sources
 

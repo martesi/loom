@@ -106,6 +106,9 @@ test('relationships reject cycles, support ctrl-click selection, and delete as e
   await edge.focus()
   await page.keyboard.press('Enter')
   await expect(page.locator('.react-flow__edge.selected')).toHaveCount(1)
+  await expect(
+    page.getByRole('heading', { name: '1 relationship', exact: true })
+  ).toBeVisible()
   await page.keyboard.press('Delete')
   await expect(page.locator('.react-flow__edge')).toHaveCount(0)
 })

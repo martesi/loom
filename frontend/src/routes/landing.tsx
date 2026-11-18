@@ -1,4 +1,4 @@
-import { Trans } from '@lingui/react/macro'
+import { Plural, Trans } from '@lingui/react/macro'
 import { Button } from '../components/ui/button'
 
 export interface RecentRepo {
@@ -115,7 +115,7 @@ export function Landing({
               </div>
             </div>
             <div className="flex-none text-[11.5px] text-ink-subtle">
-              <Trans>{repo.imageCount} images</Trans>
+              <Plural value={repo.imageCount} one="# image" other="# images" />
             </div>
             <div className="w-[130px] flex-none text-right text-[11.5px] text-ink-subtle">
               {repo.openedAt}

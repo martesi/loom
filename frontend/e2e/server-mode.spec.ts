@@ -38,7 +38,7 @@ test('server health, folder picker navigation, recent repos, and reload restorat
   await page.goto('/')
   const recent = page.getByRole('button').filter({ hasText: 'recent-fixtures' })
   await expect(recent).toBeVisible()
-  await expect(recent).toContainText('1 images')
+  await expect(recent.getByText('1 image', { exact: true })).toBeVisible()
   await recent.click()
   await expect(page).toHaveURL(/\/canvas$/)
 })
