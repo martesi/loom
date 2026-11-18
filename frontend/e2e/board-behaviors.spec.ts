@@ -145,9 +145,29 @@ test('collapsed sets cannot be relationship sources', async ({ page }) => {
 
   const group = page.locator('.react-flow__node-group')
   await expect(group).toHaveCount(1)
-  await ctrlDrag(page, group, imageNodes(page).first())
-
+  const groupBox = await nodeBox(group)
+  const targetBox = await nodeBox(imageNodes(page).first())
+  await page.keyboard.down('Control')
+  await page.mouse.move(
+    groupBox.x + groupBox.width / 2,
+    groupBox.y + groupBox.height / 2
+  )
+  await page.mouse.down()
+  await page.mouse.move(
+    groupBox.x + groupBox.width / 2 + 12,
+    groupBox.y + groupBox.height / 2 + 8,
+    { steps: 2 }
+  )
   await expect(page.getByTestId('relationship-preview')).toHaveCount(0)
+  await page.mouse.move(
+    targetBox.x + targetBox.width / 2,
+    targetBox.y + targetBox.height / 2,
+    { steps: 8 }
+  )
+  await expect(page.getByTestId('relationship-preview')).toHaveCount(0)
+  await page.mouse.up()
+  await page.keyboard.up('Control')
+
   await expect(page.locator('.react-flow__edge')).toHaveCount(0)
 })
 

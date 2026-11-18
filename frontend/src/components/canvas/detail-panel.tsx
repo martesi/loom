@@ -1,4 +1,4 @@
-import { t } from '@lingui/core/macro'
+import { plural, t } from '@lingui/core/macro'
 import { Trans } from '@lingui/react/macro'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import {
@@ -141,7 +141,10 @@ export function DetailPanel({
           />
         </label>
         <p className="text-ink-muted">
-          {(group.memberIds ?? []).length} <Trans>assets</Trans>
+          {plural((group.memberIds ?? []).length, {
+            one: '# asset',
+            other: '# assets',
+          })}
         </p>
         <Button
           variant="secondary"

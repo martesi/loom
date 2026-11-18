@@ -1,3 +1,5 @@
+import { plural, t } from '@lingui/core/macro'
+import { Trans } from '@lingui/react/macro'
 import { type DragEvent, useEffect, useRef, useState } from 'react'
 import {
   ImageService,
@@ -187,7 +189,7 @@ export function LibraryPanel({
             onClick={() => setMode(m)}
             className="h-8 flex-1 rounded-sm px-2 font-semibold text-ink-muted outline-none transition-colors hover:bg-black/[0.03] focus-visible:ring-2 focus-visible:ring-primary/40 aria-pressed:bg-primary-soft aria-pressed:text-ink"
           >
-            {m === 'all' ? 'All Assets' : 'Folders'}
+            {m === 'all' ? <Trans>All Assets</Trans> : <Trans>Folders</Trans>}
           </button>
         ))}
       </div>
@@ -196,8 +198,8 @@ export function LibraryPanel({
           <div className="flex gap-1.5">
             <input
               className={fieldClass}
-              aria-label="Search assets"
-              placeholder="Search assets"
+              aria-label={t`Search assets`}
+              placeholder={t`Search assets`}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -207,40 +209,59 @@ export function LibraryPanel({
               onClick={() => setFiltersOpen((open) => !open)}
               className="h-8 shrink-0 rounded-sm border border-black/12 px-2.5 font-semibold text-ink-muted outline-none hover:bg-black/[0.03] focus-visible:ring-2 focus-visible:ring-primary/40"
             >
-              Filters{activeFilterCount ? ` ${activeFilterCount}` : ''}
+              <Trans>Filters</Trans>
+              {activeFilterCount > 0 && <> {activeFilterCount}</>}
             </button>
           </div>
           {filtersOpen && (
             <div className="grid gap-1.5 rounded-md border border-black/6 bg-black/[0.015] p-2">
               <select
                 className={fieldClass}
-                aria-label="Asset state"
+                aria-label={t`Asset state`}
                 value={status}
                 onChange={(e) => setStatus(e.target.value)}
               >
-                {['active', 'all', 'archived', 'trashed', 'missing'].map(
-                  (s) => (
-                    <option key={s}>{s}</option>
-                  )
-                )}
+                <option value="active">
+                  <Trans>active</Trans>
+                </option>
+                <option value="all">
+                  <Trans>all</Trans>
+                </option>
+                <option value="archived">
+                  <Trans>archived</Trans>
+                </option>
+                <option value="trashed">
+                  <Trans>trashed</Trans>
+                </option>
+                <option value="missing">
+                  <Trans>missing</Trans>
+                </option>
               </select>
               <select
                 className={fieldClass}
-                aria-label="Placement"
+                aria-label={t`Placement`}
                 value={placement}
                 onChange={(e) => setPlacement(e.target.value)}
               >
-                <option value="">All placements</option>
-                <option>placed</option>
-                <option>unplaced</option>
+                <option value="">
+                  <Trans>All placements</Trans>
+                </option>
+                <option value="placed">
+                  <Trans>placed</Trans>
+                </option>
+                <option value="unplaced">
+                  <Trans>unplaced</Trans>
+                </option>
               </select>
               <select
                 className={fieldClass}
-                aria-label="Tag filter"
+                aria-label={t`Tag filter`}
                 value={tagId}
                 onChange={(e) => setTagId(Number(e.target.value))}
               >
-                <option value={0}>All tags</option>
+                <option value={0}>
+                  <Trans>All tags</Trans>
+                </option>
                 {tags.map((t) => (
                   <option key={t.id} value={t.id}>
                     {t.name}
@@ -284,7 +305,7 @@ export function LibraryPanel({
       ) : (
         <div className="p-2">
           <div className="mb-1 flex flex-wrap items-center gap-0.5 text-ink-muted">
-            {['Repository', ...folder.split('/').filter(Boolean)].map(
+            {[t`Repository`, ...folder.split('/').filter(Boolean)].map(
               (part, index, parts) => {
                 const target = parts.slice(1, index + 1).join('/')
                 return (
@@ -342,21 +363,25 @@ export function LibraryPanel({
         </div>
       )}
       <div className="px-2 pb-1 text-[11px] text-ink-subtle">
-        {rows.length} asset{rows.length === 1 ? '' : 's'}
+        {plural(rows.length, { one: '# asset', other: '# assets' })}
       </div>
       <div
         role="listbox"
-        aria-label="Assets"
+        aria-label={t`Assets`}
         aria-multiselectable="true"
         className="min-h-0 flex-1 overflow-auto"
       >
         {rows.length === 0 && (
           <div className="px-3 py-6 text-center text-[11.5px] leading-relaxed text-ink-muted">
-            {mode === 'folders'
-              ? 'No assets in this folder.'
-              : search || status !== 'active' || placement || tagId
-                ? 'No assets match these filters.'
-                : 'No assets yet. Import files or rescan the repository.'}
+            {mode === 'folders' ? (
+              <Trans>No assets in this folder.</Trans>
+            ) : search || status !== 'active' || placement || tagId ? (
+              <Trans>No assets match these filters.</Trans>
+            ) : (
+              <Trans>
+                No assets yet. Import files or rescan the repository.
+              </Trans>
+            )}
           </div>
         )}
         {rows.map((row) => (
@@ -436,12 +461,12 @@ export function LibraryPanel({
                 htmlFor="rename-file"
                 className="text-[11px] font-semibold text-ink-muted"
               >
-                Rename file
+                <Trans>Rename file</Trans>
               </label>
               <input
                 id="rename-file"
                 name="rename-file"
-                aria-label="Rename file"
+                aria-label={t`Rename file`}
                 defaultValue={renaming.name}
                 className={fieldClass}
                 onKeyDown={(event) => {
@@ -457,13 +482,13 @@ export function LibraryPanel({
                   className="rounded-sm px-2 py-1.5 text-[12px] text-ink-muted hover:bg-black/[0.04]"
                   onClick={() => setRenaming(null)}
                 >
-                  Cancel
+                  <Trans>Cancel</Trans>
                 </button>
                 <button
                   type="submit"
                   className="rounded-sm bg-primary px-2 py-1.5 text-[12px] font-semibold text-white"
                 >
-                  Rename
+                  <Trans>Rename</Trans>
                 </button>
               </div>
             </form>
@@ -479,7 +504,7 @@ export function LibraryPanel({
                     if (row) setRenaming({ id, name: row.fileName })
                   }}
                 >
-                  Rename…
+                  <Trans>Rename…</Trans>
                 </button>
               )}
               <button
@@ -491,7 +516,7 @@ export function LibraryPanel({
                   compress(ids)
                 }}
               >
-                Compress…
+                <Trans>Compress…</Trans>
               </button>
             </>
           )}

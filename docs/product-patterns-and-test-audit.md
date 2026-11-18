@@ -73,10 +73,12 @@ their application sources were not cloned.
    asset. Existing tests continue to cover cycle rejection, set fan-out,
    navigation, and unlinking.
 6. **P2 — translation coverage is partial.** Added Lingui extraction for the
-   Canvas dock, Selection HUD, and common Inspector actions, section headings,
-   and form accessibility labels. English remains the only shipped locale;
-   remaining literal labels across the rest of Canvas and Assets still need
-   extraction before another locale is added.
+   Canvas dock, Selection HUD, common Inspector actions, section headings, and
+   form accessibility labels. Round 3 adds pluralized set and asset counts,
+   plus the Assets shelf's mode, search, filter, choice, and empty-state text.
+   English remains the only shipped locale; remaining literal labels in other
+   Canvas and Assets paths, including filter chips and selection summaries,
+   still need extraction before another locale is added.
 
 ## Existing evidence and remaining work
 
@@ -105,7 +107,10 @@ their application sources were not cloned.
   mutable fixture repo. A retry currently could inherit files and `.loom` state
   from the failed attempt.
 - The Sources, self-link, and collapsed-set source cases now have direct
-  browser assertions.
+  browser assertions. The collapsed-set case also checks that no relationship
+  preview appears while the Ctrl-drag is in progress.
+- Round 3's Lingui extraction contains 201 English messages. Set and asset
+  counts are full plural messages, including the set badge's surrounding text.
 
 ## Sources
 
