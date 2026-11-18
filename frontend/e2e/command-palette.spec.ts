@@ -248,7 +248,7 @@ test.describe('Canvas command palette', () => {
     await expect(inspector.getByRole('button').first()).toBeFocused()
   })
 
-  test('waits for selected asset details before focusing a palette field', async ({
+  test('cancels pending palette field focus when the Inspector closes before image load', async ({
     page,
   }) => {
     await openFixtureRepo(page, 'inspector-fixtures')
@@ -306,7 +306,23 @@ test.describe('Canvas command palette', () => {
     await expect(page.getByRole('dialog')).toHaveCount(0)
     await expect(inspector).toHaveAttribute('data-state', 'open')
     await expect(addTag).toHaveCount(0)
+
+    await inspector.getByTestId('collapse-shelf-right').click()
+    await expect(inspector).toHaveAttribute('data-state', 'closed')
+    await page.getByTestId('shelf-edge-trigger-right').click()
+    await expect(inspector).toHaveAttribute('data-state', 'open')
+    await expect(inspector.getByTestId('pin-shelf-right')).toBeFocused()
+
     releaseImageLoad()
+    await expect(addTag).toHaveCount(1)
+    await expect(inspector.getByTestId('pin-shelf-right')).toBeFocused()
+    await expect(addTag).not.toBeFocused()
+
+    await page.getByTestId('open-command-palette').click()
+    await page
+      .getByRole('combobox', { name: 'Search commands' })
+      .fill('Add tag')
+    await page.getByRole('option', { name: /Add tag/ }).click()
     await expect(addTag).toBeFocused()
 
     failImageLoads = true
