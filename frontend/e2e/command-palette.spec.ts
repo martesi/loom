@@ -1,5 +1,11 @@
 import { expect, test } from './test-fixtures'
-import { asset, openFixtureRepo, placeAssets } from './test-helpers'
+import {
+  asset,
+  autoArrangeCanvas,
+  openFixtureRepo,
+  placeAssets,
+  selectImageNodes,
+} from './test-helpers'
 
 test.describe('Canvas command palette', () => {
   test('searches labels, aliases, categories, and keeps unavailable actions explained', async ({
@@ -240,6 +246,116 @@ test.describe('Canvas command palette', () => {
     await page.getByTestId('shelf-edge-trigger-right').click()
     await expect(inspector).toHaveAttribute('data-state', 'open')
     await expect(inspector.getByRole('button').first()).toBeFocused()
+  })
+
+  test('waits for selected asset details before focusing a palette field', async ({
+    page,
+  }) => {
+    await openFixtureRepo(page, 'inspector-fixtures')
+    await asset(page, 'inspect-alpha.png').click()
+    await asset(page, 'inspect-beta.png').click({ modifiers: ['Shift'] })
+    await page.keyboard.press('Delete')
+    await page.getByRole('button', { name: /^Filters/ }).click()
+    await page
+      .getByRole('combobox', { name: 'Asset state' })
+      .selectOption('trashed')
+    await expect(asset(page, 'inspect-alpha.png')).toBeVisible()
+
+    const inspector = page.locator('aside[aria-label="Inspector"]')
+    await inspector.getByTestId('collapse-shelf-right').click()
+    let releaseImageLoad: () => void = () => {}
+    const imageLoadGate = new Promise<void>((resolve) => {
+      releaseImageLoad = resolve
+    })
+    let resolveImageLoadStarted: () => void = () => {}
+    const imageLoadStarted = new Promise<void>((resolve) => {
+      resolveImageLoadStarted = resolve
+    })
+    let failImageLoads = false
+    let releaseImageFailure: () => void = () => {}
+    const imageFailureGate = new Promise<void>((resolve) => {
+      releaseImageFailure = resolve
+    })
+    let resolveImageFailureStarted: () => void = () => {}
+    const imageFailureStarted = new Promise<void>((resolve) => {
+      resolveImageFailureStarted = resolve
+    })
+    await page.route('**/wails/runtime', async (route) => {
+      if (route.request().postData()?.includes('1073816885')) {
+        if (failImageLoads) {
+          resolveImageFailureStarted()
+          await imageFailureGate
+          await route.abort('failed')
+          return
+        }
+        resolveImageLoadStarted()
+        await imageLoadGate
+      }
+      await route.continue()
+    })
+
+    await asset(page, 'inspect-alpha.png').click()
+    await imageLoadStarted
+    await page.getByTestId('open-command-palette').click()
+    await page
+      .getByRole('combobox', { name: 'Search commands' })
+      .fill('Add tag')
+    await page.getByRole('option', { name: /Add tag/ }).click()
+
+    const addTag = inspector.getByRole('textbox', { name: 'Add tag' })
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    await expect(inspector).toHaveAttribute('data-state', 'open')
+    await expect(addTag).toHaveCount(0)
+    releaseImageLoad()
+    await expect(addTag).toBeFocused()
+
+    failImageLoads = true
+    await inspector.getByTestId('collapse-shelf-right').click()
+    await asset(page, 'inspect-beta.png').click()
+    await imageFailureStarted
+    await page.getByTestId('open-command-palette').click()
+    await page
+      .getByRole('combobox', { name: 'Search commands' })
+      .fill('Add tag')
+    await page.getByRole('option', { name: /Add tag/ }).click()
+    await expect(addTag).toHaveCount(0)
+
+    releaseImageFailure()
+    await expect(page.getByRole('alert')).toBeVisible()
+    await inspector.getByTestId('collapse-shelf-right').click()
+    await page.getByTestId('shelf-edge-trigger-right').click()
+    await expect(inspector.getByTestId('pin-shelf-right')).toBeFocused()
+  })
+
+  test('restores normal Inspector focus after a field command on a selected set', async ({
+    page,
+  }) => {
+    await openFixtureRepo(page, 'group-fixtures')
+    await placeAssets(page, ['group-alpha.png', 'group-beta.png'])
+    await autoArrangeCanvas(page)
+    await page.getByRole('button', { name: 'Reset 100%' }).click()
+    await selectImageNodes(page, [0, 1])
+    await page.getByTestId('hud-create-set').click()
+
+    const inspector = page.locator('aside[aria-label="Inspector"]')
+    const group = page.locator('.react-flow__node-group')
+    await group.click()
+    await expect(group).toHaveClass(/selected/)
+    await expect(inspector.getByLabel('Set name')).toBeVisible()
+
+    const paletteTrigger = page.getByTestId('open-command-palette')
+    await paletteTrigger.click()
+    const search = page.getByRole('combobox', { name: 'Search commands' })
+    await search.fill('Add tag')
+    await page.getByRole('option', { name: /Add tag/ }).click()
+
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    await expect(paletteTrigger).toBeFocused()
+    await inspector.getByTestId('collapse-shelf-right').click()
+    await expect(inspector).toHaveAttribute('data-state', 'closed')
+    await page.getByTestId('shelf-edge-trigger-right').click()
+    await expect(inspector).toHaveAttribute('data-state', 'open')
+    await expect(inspector.getByTestId('pin-shelf-right')).toBeFocused()
   })
 
   test('does not carry restore eligibility across an asset selection change', async ({

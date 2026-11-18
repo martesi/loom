@@ -76,10 +76,9 @@ export function DetailPanel({
     [tags, setTags] = useState<string[]>([]),
     [compareGroup, setCompareGroup] = useState<number | null>(null)
   const key = selection.ids.join(',')
-  const images =
-    imageResult.path === path && imageResult.key === key
-      ? imageResult.images
-      : []
+  const imageDataLoaded = imageResult.path === path && imageResult.key === key
+  const images = imageDataLoaded ? imageResult.images : []
+  const group = data.groups?.find((g) => g.id === selection.group)
   const errors = useRef(onError)
   const focusedCommandRequest = useRef<number | null>(null)
   const selectionFocusKey = `${selection.surface}:${key}:${selection.group ?? ''}`
@@ -102,7 +101,12 @@ export function DetailPanel({
             images: list.filter((i): i is ImageInfo => i !== null),
           })
       })
-      .catch(errors.current)
+      .catch((error: unknown) => {
+        if (cancelled) return
+        // Settle pending focus even when the selected image cannot be loaded.
+        setImageResult({ path, key, images: [] })
+        errors.current(error)
+      })
     return () => {
       cancelled = true
     }
@@ -119,6 +123,15 @@ export function DetailPanel({
       onCommandRequestHandled(commandRequest.request)
       return
     }
+    if (
+      !group &&
+      key &&
+      !imageDataLoaded &&
+      ['move-rename-file', 'add-tag', 'save-prompt'].includes(
+        commandRequest.command
+      )
+    )
+      return
     const frame = requestAnimationFrame(() => {
       if (
         commandRequest.command === 'compare-set' &&
@@ -142,14 +155,18 @@ export function DetailPanel({
         : null
       if (target) {
         target.focus()
-        focusedCommandRequest.current = commandRequest.request
-        onCommandRequestHandled(commandRequest.request)
       }
+      // Some rendered forms, such as a selected set, do not include asset fields.
+      focusedCommandRequest.current = commandRequest.request
+      onCommandRequestHandled(commandRequest.request)
     })
     return () => cancelAnimationFrame(frame)
   }, [
     commandRequest,
     onCommandRequestHandled,
+    group,
+    imageDataLoaded,
+    key,
     selection.group,
     selectionFocusKey,
     images,
@@ -179,7 +196,6 @@ export function DetailPanel({
   }, [path, key, data])
   const run = (action: () => Promise<unknown>) =>
     void action().then(change).catch(errors.current)
-  const group = data.groups?.find((g) => g.id === selection.group)
   if (group) {
     const memberImages = (data.images ?? []).filter(
       (image) => (group.memberIds ?? []).includes(image.id) && !image.trashed
