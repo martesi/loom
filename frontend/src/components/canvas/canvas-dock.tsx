@@ -1,3 +1,4 @@
+import { t } from '@lingui/core/macro'
 import { Boxes, Focus, LayoutGrid, Maximize2, RotateCcw } from 'lucide-react'
 import type React from 'react'
 
@@ -69,14 +70,14 @@ export function CanvasDock({
     <div
       data-testid="canvas-dock"
       role="toolbar"
-      aria-label="Canvas Actions"
+      aria-label={t`Canvas Actions`}
       onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
       className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1 rounded-full border border-border bg-card/90 p-1.5 shadow-2xl backdrop-blur-xl"
     >
       <DockButton
         testId="dock-fit-all"
-        label="Fit all"
+        label={t`Fit all`}
         shortcut="⇧1"
         icon={<Maximize2 className="h-3.5 w-3.5" />}
         disabled={!canFitAll}
@@ -84,7 +85,7 @@ export function CanvasDock({
       />
       <DockButton
         testId="dock-fit-selection"
-        label="Fit selection"
+        label={t`Fit selection`}
         shortcut="⇧2"
         icon={<Focus className="h-3.5 w-3.5" />}
         disabled={!canFitSelection}
@@ -92,7 +93,7 @@ export function CanvasDock({
       />
       <DockButton
         testId="dock-reset-zoom"
-        label="Reset 100%"
+        label={t`Reset 100%`}
         shortcut="⌘0"
         icon={<RotateCcw className="h-3.5 w-3.5" />}
         onClick={onResetZoom}
@@ -100,7 +101,7 @@ export function CanvasDock({
       <div className="my-auto h-4 w-px bg-border" />
       <DockButton
         testId="dock-auto-arrange"
-        label="Auto-arrange"
+        label={t`Auto-arrange`}
         shortcut="⇧A"
         icon={<LayoutGrid className="h-3.5 w-3.5" />}
         disabled={!canAutoArrange}
@@ -108,7 +109,7 @@ export function CanvasDock({
       />
       <DockButton
         testId="dock-create-set"
-        label="Create set"
+        label={t`Create set`}
         shortcut="⌘G"
         icon={<Boxes className="h-3.5 w-3.5" />}
         disabled={!canCreateSet}

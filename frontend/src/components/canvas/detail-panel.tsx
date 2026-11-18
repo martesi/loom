@@ -1,3 +1,5 @@
+import { t } from '@lingui/core/macro'
+import { Trans } from '@lingui/react/macro'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import {
   type CanvasData,
@@ -14,7 +16,13 @@ import { SetComparisonDialog } from './set-comparison-dialog'
 const fieldClass =
   'h-8 w-full rounded-sm border border-black/12 bg-card px-2 text-xs text-ink outline-none focus-visible:ring-2 focus-visible:ring-primary/40'
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+function Section({
+  title,
+  children,
+}: {
+  title: ReactNode
+  children: ReactNode
+}) {
   return (
     <section className="grid gap-2 border-t border-black/6 pt-3 first:border-t-0 first:pt-0">
       <h3 className="text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">
@@ -111,9 +119,11 @@ export function DetailPanel({
             saveMetadata(event.currentTarget)
         }}
       >
-        <h2 className="text-sm font-semibold text-ink">Set</h2>
+        <h2 className="text-sm font-semibold text-ink">
+          <Trans>Set</Trans>
+        </h2>
         <label className="grid gap-1 text-ink-muted">
-          Set name
+          <Trans>Set name</Trans>
           <input
             className={fieldClass}
             name="set-name"
@@ -122,7 +132,7 @@ export function DetailPanel({
           />
         </label>
         <label className="grid gap-1 text-ink-muted">
-          Kind
+          <Trans>Kind</Trans>
           <input
             className={fieldClass}
             name="set-kind"
@@ -131,7 +141,7 @@ export function DetailPanel({
           />
         </label>
         <p className="text-ink-muted">
-          {(group.memberIds ?? []).length} assets
+          {(group.memberIds ?? []).length} <Trans>assets</Trans>
         </p>
         <Button
           variant="secondary"
@@ -139,7 +149,7 @@ export function DetailPanel({
           disabled={memberImages.length < 2}
           onClick={() => setCompareGroup(group.id)}
         >
-          Compare
+          <Trans>Compare</Trans>
         </Button>
         <SetComparisonDialog
           open={compareGroup === group.id}
@@ -156,7 +166,7 @@ export function DetailPanel({
           size="sm"
           onClick={() => run(() => GroupService.Ungroup(path, group.id))}
         >
-          Dissolve set
+          <Trans>Dissolve set</Trans>
         </Button>
       </form>
     )
@@ -180,21 +190,21 @@ export function DetailPanel({
                 size="sm"
                 onClick={() => go(r.sourceImageId)}
               >
-                Go to source
+                <Trans>Go to source</Trans>
               </Button>
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => go(r.derivedImageId)}
               >
-                Go to derived
+                <Trans>Go to derived</Trans>
               </Button>
               <Button
                 variant="danger"
                 size="sm"
                 onClick={() => run(() => ImageService.UnlinkSource(path, r.id))}
               >
-                Remove relationship
+                <Trans>Remove relationship</Trans>
               </Button>
             </div>
           ))}
@@ -203,7 +213,7 @@ export function DetailPanel({
   if (!images.length)
     return (
       <p className="p-3 text-xs text-ink-muted">
-        Select an asset, set, or relationship.
+        <Trans>Select an asset, set, or relationship.</Trans>
       </p>
     )
   const image = images.length === 1 ? images[0] : null
@@ -213,6 +223,10 @@ export function DetailPanel({
   const outgoing = image
     ? (data.relationships ?? []).filter((r) => r.sourceImageId === image.id)
     : []
+  const relationshipSections = [
+    { kind: 'sources', title: t`Sources`, relationships: incoming },
+    { kind: 'derived', title: t`Derived`, relationships: outgoing },
+  ] as const
   return (
     <div className="loom-detail-panel grid gap-3 overflow-auto p-3 text-xs">
       {image ? (
@@ -226,22 +240,26 @@ export function DetailPanel({
             <strong className="text-[13px] text-ink">{image.fileName}</strong>
             <p className="text-ink-muted">
               {image.width} × {image.height} ·{' '}
-              {image.missing
-                ? 'Missing'
-                : image.trashed
-                  ? 'Trashed'
-                  : image.placed
-                    ? 'Placed'
-                    : 'Unplaced'}
+              {image.missing ? (
+                <Trans>Missing</Trans>
+              ) : image.trashed ? (
+                <Trans>Trashed</Trans>
+              ) : image.placed ? (
+                <Trans>Placed</Trans>
+              ) : (
+                <Trans>Unplaced</Trans>
+              )}
             </p>
           </div>
           {selection.surface === 'canvas' && (
             <p className="rounded-md bg-black/[0.035] px-2 py-1.5 text-ink-muted">
-              Ctrl/Cmd-drag this image onto another image or set to create a
-              relationship.
+              <Trans>
+                Ctrl/Cmd-drag this image onto another image or set to create a
+                relationship.
+              </Trans>
             </p>
           )}
-          <Section title="File">
+          <Section title={<Trans>File</Trans>}>
             <p className="break-all text-ink-muted">{image.filePath}</p>
             <form
               className="flex gap-1.5"
@@ -258,7 +276,7 @@ export function DetailPanel({
               <input
                 className={fieldClass}
                 name="asset-path"
-                aria-label="File path"
+                aria-label={t`File path`}
                 defaultValue={image.fileName}
                 key={`${image.id}-${image.filePath}`}
               />
@@ -267,7 +285,7 @@ export function DetailPanel({
                 size="sm"
                 render={<button type="submit" />}
               >
-                Move
+                <Trans>Move</Trans>
               </Button>
             </form>
             <Button
@@ -275,7 +293,7 @@ export function DetailPanel({
               size="sm"
               onClick={() => go(image.id, true)}
             >
-              Show in Folders
+              <Trans>Show in Folders</Trans>
             </Button>
           </Section>
         </>
@@ -284,9 +302,10 @@ export function DetailPanel({
           {images.length} assets selected
         </strong>
       )}
-      <Section title="Tags">
+      <Section title={<Trans>Tags</Trans>}>
         <p className="text-ink-muted">
-          Common: {tags.length ? tags.join(', ') : 'None'}
+          <Trans>Common:</Trans>{' '}
+          {tags.length ? tags.join(', ') : <Trans>None</Trans>}
         </p>
         <form
           className="flex gap-1.5"
@@ -308,19 +327,19 @@ export function DetailPanel({
           <input
             className={fieldClass}
             name="new-tag"
-            aria-label="Add tag"
-            placeholder="Add tag"
+            aria-label={t`Add tag`}
+            placeholder={t`Add tag`}
           />
           <Button
             variant="secondary"
             size="sm"
             render={<button type="submit" />}
           >
-            Add
+            <Trans>Add</Trans>
           </Button>
         </form>
       </Section>
-      <Section title="Prompt">
+      <Section title={<Trans>Prompt</Trans>}>
         <form
           className="grid gap-1.5"
           onSubmit={(event) => {
@@ -346,7 +365,7 @@ export function DetailPanel({
           <textarea
             className="min-h-20 w-full resize-y rounded-sm border border-black/12 bg-card p-2 text-xs text-ink outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
             name="prompt-text"
-            aria-label="Prompt"
+            aria-label={t`Prompt`}
             key={`prompt-${key}-${images.map((i) => i.promptText).join('|')}`}
             defaultValue={
               images.every((i) => i.promptText === images[0].promptText)
@@ -355,8 +374,8 @@ export function DetailPanel({
             }
             placeholder={
               images.every((i) => i.promptText === images[0].promptText)
-                ? 'No prompt'
-                : 'Mixed prompts — enter text to replace all'
+                ? t`No prompt`
+                : t`Mixed prompts — enter text to replace all`
             }
           />
           <Button
@@ -364,11 +383,11 @@ export function DetailPanel({
             size="sm"
             render={<button type="submit" />}
           >
-            Save prompt
+            <Trans>Save prompt</Trans>
           </Button>
         </form>
       </Section>
-      <Section title="State">
+      <Section title={<Trans>State</Trans>}>
         <Button
           variant="secondary"
           size="sm"
@@ -386,7 +405,11 @@ export function DetailPanel({
             )
           }
         >
-          {images.every((i) => i.archived) ? 'Unarchive' : 'Archive'}
+          {images.every((i) => i.archived) ? (
+            <Trans>Unarchive</Trans>
+          ) : (
+            <Trans>Archive</Trans>
+          )}
         </Button>
         {images.some((i) => i.trashed) && (
           <Button
@@ -402,50 +425,55 @@ export function DetailPanel({
               )
             }
           >
-            Restore from trash
+            <Trans>Restore from trash</Trans>
           </Button>
         )}
       </Section>
       {image &&
-        [
-          ['Sources', incoming],
-          ['Derived', outgoing],
-        ].map(
-          ([title, rels]) =>
-            typeof title === 'string' &&
-            Array.isArray(rels) && (
-              <Section key={title} title={title}>
-                {rels.length === 0 && <p className="text-ink-muted">None</p>}
-                {rels.map((r) => {
-                  const id =
-                    title === 'Sources' ? r.sourceImageId : r.derivedImageId
-                  return (
-                    <div
-                      key={r.id}
-                      className="grid gap-1.5 rounded-md border border-black/8 p-2"
-                    >
-                      <span className="truncate text-ink">
-                        {(data.images ?? []).find((i) => i.id === id)
-                          ?.fileName ?? `Asset ${id}`}
-                      </span>
-                      <Button variant="ghost" size="sm" onClick={() => go(id)}>
-                        Go to
-                      </Button>
-                      <Button
-                        variant="danger"
-                        size="sm"
-                        onClick={() =>
-                          run(() => ImageService.UnlinkSource(path, r.id))
-                        }
-                      >
-                        Remove relationship
-                      </Button>
-                    </div>
-                  )
-                })}
-              </Section>
-            )
-        )}
+        relationshipSections.map(({ kind, title, relationships }) => (
+          <Section key={kind} title={title}>
+            {relationships.length === 0 && (
+              <p className="text-ink-muted">
+                <Trans>None</Trans>
+              </p>
+            )}
+            {relationships.map((relationship) => {
+              const endpointId =
+                kind === 'sources'
+                  ? relationship.sourceImageId
+                  : relationship.derivedImageId
+              return (
+                <div
+                  key={relationship.id}
+                  className="grid gap-1.5 rounded-md border border-black/8 p-2"
+                >
+                  <span className="truncate text-ink">
+                    {(data.images ?? []).find((i) => i.id === endpointId)
+                      ?.fileName ?? `Asset ${endpointId}`}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => go(endpointId)}
+                  >
+                    <Trans>Go to</Trans>
+                  </Button>
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    onClick={() =>
+                      run(() =>
+                        ImageService.UnlinkSource(path, relationship.id)
+                      )
+                    }
+                  >
+                    <Trans>Remove relationship</Trans>
+                  </Button>
+                </div>
+              )
+            })}
+          </Section>
+        ))}
     </div>
   )
 }

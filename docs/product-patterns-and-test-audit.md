@@ -67,21 +67,23 @@ their application sources were not cloned.
    E2E already covers clipboard round trips and import. Normalization is now a
    standalone pure function with `bun:test` coverage for valid and malformed
    payloads.
-5. **P2 — relationship edge cases still need explicit UI assertions.** Current
-   tests cover cycle rejection, set fan-out, navigation, and unlinking. Add
-   focused cases for self-link rejection, a set as relationship source, and
-   Sources navigation to an unplaced asset.
-6. **P2 — translation coverage is partial.** Lingui macros appear in the
-   landing page, repository picker, and a few detail components; most Canvas,
-   Inspector, and selection controls remain hard-coded English. This is low
-   priority while English is the only shipped locale, but localization work
-   should begin by extracting shared action and accessibility labels.
+5. **P2 — relationship edge cases needed explicit UI assertions.** Added
+   Playwright coverage for self-link rejection, rejecting collapsed sets as
+   relationship sources, and using Sources to reveal and select an unplaced
+   asset. Existing tests continue to cover cycle rejection, set fan-out,
+   navigation, and unlinking.
+6. **P2 — translation coverage is partial.** Added Lingui extraction for the
+   Canvas dock, Selection HUD, and common Inspector actions, section headings,
+   and form accessibility labels. English remains the only shipped locale;
+   remaining literal labels across the rest of Canvas and Assets still need
+   extraction before another locale is added.
 
 ## Existing evidence and remaining work
 
 - Two concurrent Playwright invocations passed with separate ports and fixture
-  roots; the full 40-test server-mode suite also passed. Go tests, frontend
-  typecheck, Biome, unit tests, and production build passed on this tree.
+  roots. After adding the three P2 UI regressions, the full 43-test server-mode
+  suite passed. Go tests, frontend typecheck, Biome, and production build also
+  passed.
 - Node's `test:harness` verifies that lock contenders serialize, stale locks
   remain for explicit recovery, and a ready build descendant exits before
   cleanup. Bun's `test:unit` remains limited to pure helpers as required by
@@ -102,9 +104,8 @@ their application sources were not cloned.
 - CI retries are disabled until each test attempt gets a fresh copy of its
   mutable fixture repo. A retry currently could inherit files and `.loom` state
   from the failed attempt.
-- Product-level behavior not directly asserted in browser tests yet: Sources
-  navigation to an unplaced endpoint, self-links, and rejection when dragging
-  from a collapsed set.
+- The Sources, self-link, and collapsed-set source cases now have direct
+  browser assertions.
 
 ## Sources
 

@@ -1,3 +1,4 @@
+import { t } from '@lingui/core/macro'
 import { type Node, useReactFlow, useViewport } from '@xyflow/react'
 import {
   AlignCenterHorizontal,
@@ -158,7 +159,7 @@ export function SelectionHud({
       ref={hudRef}
       data-testid="selection-hud"
       role="toolbar"
-      aria-label="Selection Actions"
+      aria-label={t`Selection Actions`}
       onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
       style={{
@@ -172,20 +173,20 @@ export function SelectionHud({
         <>
           <HudButton
             testId="hud-preview"
-            label="Preview"
+            label={t`Preview`}
             icon={<Eye className="h-3.5 w-3.5" />}
             onClick={() => onPreview(singleNode)}
           />
           <HudButton
             testId="hud-locate"
-            label="Locate"
+            label={t`Locate`}
             icon={<MapPin className="h-3.5 w-3.5" />}
             onClick={() => onLocate(singleNode)}
           />
           <div className="my-auto h-4 w-px bg-border" />
           <HudButton
             testId="hud-unplace"
-            label="Unplace"
+            label={t`Unplace`}
             danger
             icon={<MinusCircle className="h-3.5 w-3.5" />}
             onClick={() => onUnplace([singleNode.id])}
@@ -195,7 +196,7 @@ export function SelectionHud({
         <>
           <HudButton
             testId="hud-create-set"
-            label={`Create Set (${selectedNodes.length})`}
+            label={t`Create Set (${selectedNodes.length})`}
             icon={<Boxes className="h-3.5 w-3.5" />}
             disabled={!canCreateSet}
             onClick={onCreateSet}
@@ -203,26 +204,26 @@ export function SelectionHud({
           <div className="my-auto h-4 w-px bg-border" />
           <HudButton
             testId="hud-align-horizontally"
-            label="Align Horizontally"
+            label={t`Align Horizontally`}
             icon={<AlignCenterHorizontal className="h-3.5 w-3.5" />}
             onClick={onAlignHorizontal}
           />
           <HudButton
             testId="hud-align-vertically"
-            label="Align Vertically"
+            label={t`Align Vertically`}
             icon={<AlignCenterVertical className="h-3.5 w-3.5" />}
             onClick={onAlignVertical}
           />
           <HudButton
             testId="hud-arrange-subgraph"
-            label="Auto-arrange Subgraph"
+            label={t`Auto-arrange Subgraph`}
             icon={<Sparkles className="h-3.5 w-3.5" />}
             onClick={onArrangeSubgraph}
           />
           <div className="my-auto h-4 w-px bg-border" />
           <HudButton
             testId="hud-unplace-selection"
-            label="Unplace Selection"
+            label={t`Unplace Selection`}
             danger
             icon={<MinusCircle className="h-3.5 w-3.5" />}
             onClick={() => onUnplace(selectedNodes.map((n) => n.id))}

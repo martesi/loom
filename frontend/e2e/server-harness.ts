@@ -110,6 +110,18 @@ const fixtureRepos = [
     files: ['relation-alpha.png', 'relation-beta.png', 'relation-gamma.png'],
   },
   {
+    name: 'relationship-self-link-fixtures',
+    files: ['relation-alpha.png'],
+  },
+  {
+    name: 'set-source-fixtures',
+    files: ['group-alpha.png', 'group-beta.png', 'group-gamma.png'],
+  },
+  {
+    name: 'sources-nav-fixtures',
+    files: ['relation-alpha.png', 'relation-beta.png'],
+  },
+  {
     name: 'arrange-resize-fixtures',
     files: ['arrange-alpha.png', 'arrange-beta.png', 'arrange-gamma.png'],
   },

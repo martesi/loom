@@ -109,6 +109,75 @@ test('relationships reject cycles, support ctrl-click selection, and delete as e
   await expect(page.locator('.react-flow__edge')).toHaveCount(0)
 })
 
+test('relationship gestures reject self-links', async ({ page }) => {
+  await openFixtureRepo(page, 'relationship-self-link-fixtures')
+  await placeAssets(page, ['relation-alpha.png'])
+  await page.getByRole('button', { name: 'Reset 100%' }).click()
+
+  const node = imageNodes(page).first()
+  const box = await nodeBox(node)
+  await page.keyboard.down('Control')
+  await page.mouse.move(box.x + 40, box.y + 40)
+  await page.mouse.down()
+  await page.mouse.move(box.x + 70, box.y + 65, { steps: 6 })
+  await expect(page.getByRole('status')).toHaveText(
+    'Cannot create this relationship'
+  )
+  await expect(
+    page.getByTestId('relationship-preview').locator('line')
+  ).toHaveClass(/stroke-red-500/)
+  await page.mouse.up()
+  await page.keyboard.up('Control')
+
+  await expect(page.locator('.react-flow__edge')).toHaveCount(0)
+})
+
+test('collapsed sets cannot be relationship sources', async ({ page }) => {
+  await openFixtureRepo(page, 'set-source-fixtures')
+  await placeAssets(page, [
+    'group-alpha.png',
+    'group-beta.png',
+    'group-gamma.png',
+  ])
+  await page.getByRole('button', { name: 'Reset 100%' }).click()
+  await selectImageNodes(page, [0, 1])
+  await page.getByRole('button', { name: 'Create set', exact: true }).click()
+
+  const group = page.locator('.react-flow__node-group')
+  await expect(group).toHaveCount(1)
+  await ctrlDrag(page, group, imageNodes(page).first())
+
+  await expect(page.getByTestId('relationship-preview')).toHaveCount(0)
+  await expect(page.locator('.react-flow__edge')).toHaveCount(0)
+})
+
+test('Sources navigation reveals and selects an unplaced asset', async ({
+  page,
+}) => {
+  await openFixtureRepo(page, 'sources-nav-fixtures')
+  await placeAssets(page, ['relation-alpha.png', 'relation-beta.png'])
+  await page.getByRole('button', { name: 'Reset 100%' }).click()
+  await ctrlDrag(page, imageNodes(page).nth(0), imageNodes(page).nth(1))
+  await expect(page.locator('.react-flow__edge')).toHaveCount(1)
+
+  await imageNodes(page).nth(0).click()
+  await page.getByTestId('hud-unplace').click()
+  await expect(imageNodes(page)).toHaveCount(1)
+  await imageNodes(page).first().click()
+
+  const sources = page
+    .locator('.loom-detail-panel section')
+    .filter({ has: page.getByRole('heading', { name: 'Sources' }) })
+  await expect(sources.getByText('relation-alpha.png')).toBeVisible()
+  await sources.getByRole('button', { name: 'Go to' }).click()
+
+  await expect(asset(page, 'relation-alpha.png')).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
+  await expect(page.getByText(/× .* · Unplaced/)).toBeVisible()
+})
+
 test('auto-arrange respects resized node bounds', async ({ page }) => {
   await openFixtureRepo(page, 'arrange-resize-fixtures')
   await placeAssets(page, ['arrange-alpha.png', 'arrange-beta.png'])
