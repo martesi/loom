@@ -14,7 +14,11 @@ export async function fixturePath(repoName: string, ...segments: string[]) {
   return path.join(root, repoName, ...segments)
 }
 
-export async function openFixtureRepo(page: Page, repoName: string) {
+export async function openFixtureRepo(
+  page: Page,
+  repoName: string,
+  options: { drawers?: 'both' | 'closed' | 'assets' | 'inspector' } = {}
+) {
   await page.goto('/')
   await expect(page).toHaveTitle('Loom')
 
@@ -35,6 +39,11 @@ export async function openFixtureRepo(page: Page, repoName: string) {
   await expect(page).toHaveURL(/\/canvas$/)
   await expect(page.getByRole('heading', { name: 'Canvas' })).toBeVisible()
   await expect(page.locator('.react-flow')).toBeVisible()
+  const drawers = options.drawers ?? 'both'
+  if (drawers === 'both' || drawers === 'assets')
+    await page.getByTestId('toggle-assets-shelf').click()
+  if (drawers === 'both' || drawers === 'inspector')
+    await page.getByTestId('toggle-inspector-shelf').click()
 }
 
 export function assets(page: Page) {
@@ -62,8 +71,32 @@ export async function dropAssetRow(
   source: Locator,
   targetPosition: { x: number; y: number }
 ) {
+  const drawer = page.locator('aside[aria-label="Assets"]')
+  if ((await drawer.getAttribute('data-visible')) !== 'true') {
+    await page.getByTestId('shelf-edge-trigger-left').click()
+    await expect(drawer).toHaveAttribute('data-visible', 'true')
+  }
   await expect(source).toHaveCount(1)
-  await source.dragTo(page.locator('.react-flow__pane'), { targetPosition })
+  const pane = page.locator('.react-flow__pane')
+  const paneBox = await pane.boundingBox()
+  const drawerBox = (await drawer.isVisible())
+    ? await drawer.boundingBox()
+    : null
+  const safeX =
+    paneBox &&
+    drawerBox &&
+    targetPosition.x + paneBox.x < drawerBox.x + drawerBox.width
+      ? drawerBox.x + drawerBox.width + 24 - paneBox.x
+      : targetPosition.x
+  await source.dragTo(pane, {
+    targetPosition: { x: safeX, y: targetPosition.y },
+  })
+  if (
+    (await page.getByTestId('pin-shelf-left').getAttribute('aria-pressed')) !==
+    'true'
+  ) {
+    await expect(drawer).toHaveAttribute('data-state', 'closed')
+  }
 }
 
 export async function placeAssets(

@@ -33,7 +33,7 @@ test.describe('CanvasDock and SelectionHud', () => {
     // All dock buttons must have hit target >= 32px (Fitts's Law)
     const buttons = dock.getByRole('button')
     const buttonCount = await buttons.count()
-    expect(buttonCount).toBeGreaterThanOrEqual(5)
+    expect(buttonCount).toBeGreaterThanOrEqual(4)
 
     for (let i = 0; i < buttonCount; i++) {
       const box = await buttons.nth(i).boundingBox()
@@ -47,30 +47,31 @@ test.describe('CanvasDock and SelectionHud', () => {
     // Initial state: 0 nodes on canvas
     await expect(page.getByTestId('dock-fit-all')).toBeDisabled()
     await expect(page.getByTestId('dock-fit-selection')).toBeDisabled()
-    await expect(page.getByTestId('dock-auto-arrange')).toBeDisabled()
-    await expect(page.getByTestId('dock-create-set')).toBeDisabled()
     await expect(page.getByTestId('dock-reset-zoom')).toBeEnabled()
+    await page.getByTestId('dock-more').click()
+    await expect(page.getByTestId('dock-auto-arrange')).toBeDisabled()
 
     // Place 2 assets (they are automatically selected on placement)
     await placeAssets(page, ['dock-alpha.png', 'dock-beta.png'])
     await expect(page.getByTestId('dock-fit-all')).toBeEnabled()
+    await page.getByTestId('dock-more').click()
     await expect(page.getByTestId('dock-auto-arrange')).toBeEnabled()
 
     // Click canvas pane to deselect all nodes
     await page
       .locator('.react-flow__pane')
-      .click({ position: { x: 50, y: 50 } })
+      .click({ position: { x: 600, y: 400 } })
     await expect(page.locator('.react-flow__node.selected')).toHaveCount(0)
     await expect(page.getByTestId('dock-fit-selection')).toBeDisabled()
 
     // Select 1 node
     await selectImageNodes(page, [0])
     await expect(page.getByTestId('dock-fit-selection')).toBeEnabled()
-    await expect(page.getByTestId('dock-create-set')).toBeDisabled()
+    await expect(page.getByTestId('dock-more')).toBeVisible()
 
     // Select 2 nodes
     await selectImageNodes(page, [0, 1])
-    await expect(page.getByTestId('dock-create-set')).toBeEnabled()
+    await expect(page.getByTestId('hud-create-set')).toBeEnabled()
 
     // Clicking dock buttons does not deselect canvas nodes (stopPropagation)
     await page.getByTestId('dock-reset-zoom').click()
@@ -88,7 +89,7 @@ test.describe('CanvasDock and SelectionHud', () => {
     // Click canvas pane to deselect
     await page
       .locator('.react-flow__pane')
-      .click({ position: { x: 50, y: 50 } })
+      .click({ position: { x: 600, y: 400 } })
     await expect(page.locator('.react-flow__node.selected')).toHaveCount(0)
 
     // 0 selected: HUD hidden
@@ -137,6 +138,7 @@ test.describe('CanvasDock and SelectionHud', () => {
       1
     )
     await expect(page.locator('.react-flow__node.selected')).toHaveCount(0)
+    await page.getByTestId('toggle-assets-shelf').click()
 
     // 2 nodes selected: progressive disclosure shifts to multi-item toolset
     await selectImageNodes(page, [0, 1])

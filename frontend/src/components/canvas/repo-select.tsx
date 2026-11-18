@@ -1,6 +1,6 @@
 import { t } from '@lingui/core/macro'
 import { Trans } from '@lingui/react/macro'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { RepoInfo } from '../../../bindings/loom/internal/service'
 import { RepoService } from '../../../bindings/loom/internal/service'
 import { useCapabilities } from '../../lib/capabilities-store'
@@ -15,6 +15,7 @@ import { useToast } from '../ui/toast'
 
 interface RepoSelectProps {
   repo: RepoInfo
+  openRequest?: number
 }
 
 // This is modeled as a *controlled* Select whose value never actually
@@ -26,10 +27,15 @@ interface RepoSelectProps {
 // navigate as a result. Leaving `value` untouched after the call keeps the
 // trigger correctly showing this window's own repo regardless of what was
 // clicked.
-export function RepoSelect({ repo }: RepoSelectProps) {
+export function RepoSelect({ repo, openRequest = 0 }: RepoSelectProps) {
+  const [open, setOpen] = useState(false)
   const [recent, setRecent] = useState<RepoInfo[]>([])
   const toast = useToast()
   const capabilities = useCapabilities()
+
+  useEffect(() => {
+    if (openRequest > 0) setOpen(true)
+  }, [openRequest])
 
   // Merge the live "current repo" (always present, always up to date) with
   // whatever the last ListRecentRepos fetch returned, so the trigger can
@@ -94,14 +100,18 @@ export function RepoSelect({ repo }: RepoSelectProps) {
 
   return (
     <Select
+      open={open}
       items={items}
       value={repo.path}
       onValueChange={handleValueChange}
-      onOpenChange={handleOpenChange}
+      onOpenChange={(next) => {
+        setOpen(next)
+        handleOpenChange(next)
+      }}
     >
       <SelectTrigger
         aria-label={t`Switch repository`}
-        className="w-52 max-w-[40vw]"
+        className="w-52 max-w-[34vw]"
       >
         <SelectValue />
       </SelectTrigger>

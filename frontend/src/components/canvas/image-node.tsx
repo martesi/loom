@@ -1,7 +1,8 @@
 import { t } from '@lingui/core/macro'
 import { Trans } from '@lingui/react/macro'
 import { Handle, type NodeProps, NodeResizer, Position } from '@xyflow/react'
-import { useState } from 'react'
+import { Ellipsis, Eye } from 'lucide-react'
+import { type MouseEvent, useState } from 'react'
 import { DEFAULT_NODE_HEIGHT, DEFAULT_NODE_WIDTH } from '../../lib/node-size'
 import { cn } from '../../lib/utils'
 
@@ -13,12 +14,21 @@ export interface ImageNodeData {
   width?: number
   height?: number
   onResizeEnd?: (x: number, y: number, w: number, h: number) => void
+  onPreview?: () => void
+  onMore?: (event: MouseEvent<HTMLButtonElement>) => void
   [key: string]: unknown
 }
 
 export function ImageNode({ data, selected, width, height }: NodeProps) {
-  const { fileName, thumbUrl, missing, showFileName, onResizeEnd } =
-    data as unknown as ImageNodeData
+  const {
+    fileName,
+    thumbUrl,
+    missing,
+    showFileName,
+    onResizeEnd,
+    onPreview,
+    onMore,
+  } = data as unknown as ImageNodeData
   const [imgFailed, setImgFailed] = useState(false)
   const [naturalSize, setNaturalSize] = useState<{
     w: number
@@ -93,9 +103,9 @@ export function ImageNode({ data, selected, width, height }: NodeProps) {
         {/* Smooth hover HUD overlay with zero layout shift */}
         <div
           data-testid="image-node-hud"
-          className="pointer-events-none absolute inset-0 z-10 flex flex-col justify-between p-1.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100"
+          className="pointer-events-none absolute inset-0 z-10 flex flex-col justify-between p-1.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 motion-reduce:transition-none"
         >
-          {/* Top row: resolution badge and quick action pill */}
+          {/* Keep drag gestures on the image while button targets opt in to pointer input. */}
           <div className="flex items-center justify-between gap-1">
             <span
               data-testid="resolution-badge"
@@ -103,12 +113,37 @@ export function ImageNode({ data, selected, width, height }: NodeProps) {
             >
               {resolutionStr}
             </span>
-            <span
-              data-testid="quick-action-pill"
-              className="flex items-center gap-1 rounded-full bg-black/70 px-2 py-0.5 text-[10px] font-medium text-white/95 backdrop-blur-md shadow-sm border border-white/10"
-            >
-              <Trans>Quick Action</Trans>
-            </span>
+            <div className="pointer-events-auto flex items-center gap-1">
+              <button
+                type="button"
+                aria-label={t`Preview ${fileName}`}
+                title={t`Preview`}
+                data-testid="image-preview-action"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onPreview?.()
+                }}
+                className="inline-flex h-7 items-center gap-1 rounded-full border border-white/15 bg-black/75 px-2 text-[10px] font-semibold text-white shadow-sm backdrop-blur-md hover:bg-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              >
+                <Eye className="h-3 w-3" />
+                <Trans>Preview</Trans>
+              </button>
+              <button
+                type="button"
+                aria-label={t`More actions for ${fileName}`}
+                title={t`More actions`}
+                data-testid="image-more-action"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onMore?.(event)
+                }}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-white/15 bg-black/75 text-white shadow-sm backdrop-blur-md hover:bg-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              >
+                <Ellipsis className="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
 
           {/* Bottom row: file name */}

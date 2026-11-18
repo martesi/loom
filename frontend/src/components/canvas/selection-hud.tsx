@@ -7,6 +7,7 @@ import {
   Eye,
   MapPin,
   MinusCircle,
+  MoreHorizontal,
   Sparkles,
 } from 'lucide-react'
 import { type RefObject, useLayoutEffect, useRef, useState } from 'react'
@@ -22,6 +23,7 @@ export interface SelectionHudProps {
   onUnplace: (nodeIds: string[]) => void
   onPreview: (node: Node) => void
   onLocate: (node: Node) => void
+  onMore: (nodes: Node[]) => void
 }
 
 interface HudButtonProps {
@@ -75,6 +77,7 @@ export function SelectionHud({
   onUnplace,
   onPreview,
   onLocate,
+  onMore,
 }: SelectionHudProps) {
   const flow = useReactFlow()
   // Subscribe to viewport changes so the HUD follows pan/zoom seamlessly
@@ -183,6 +186,12 @@ export function SelectionHud({
             icon={<MapPin className="h-3.5 w-3.5" />}
             onClick={() => onLocate(singleNode)}
           />
+          <HudButton
+            testId="hud-more"
+            label={t`More`}
+            icon={<MoreHorizontal className="h-3.5 w-3.5" />}
+            onClick={() => onMore(selectedNodes)}
+          />
           <div className="my-auto h-4 w-px bg-border" />
           <HudButton
             testId="hud-unplace"
@@ -219,6 +228,12 @@ export function SelectionHud({
             label={t`Auto-arrange Subgraph`}
             icon={<Sparkles className="h-3.5 w-3.5" />}
             onClick={onArrangeSubgraph}
+          />
+          <HudButton
+            testId="hud-more"
+            label={t`More`}
+            icon={<MoreHorizontal className="h-3.5 w-3.5" />}
+            onClick={() => onMore(selectedNodes)}
           />
           <div className="my-auto h-4 w-px bg-border" />
           <HudButton

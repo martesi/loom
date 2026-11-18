@@ -6,7 +6,6 @@ import {
   GroupService,
   type ImageInfo,
   ImageService,
-  PromptService,
   TagService,
 } from '../../../bindings/loom/internal/service'
 import type { Selection } from '../../lib/selection'
@@ -40,6 +39,8 @@ interface Props {
   change: () => Promise<void>
   go: (id: number, folder?: boolean) => void
   onError: (e: unknown) => void
+  commandRequest: { command: string; request: number } | null
+  onAction: (id: string) => void
 }
 export function DetailPanel({
   path,
@@ -48,6 +49,8 @@ export function DetailPanel({
   change,
   go,
   onError,
+  commandRequest,
+  onAction,
 }: Props) {
   const [images, setImages] = useState<ImageInfo[]>([]),
     [tags, setTags] = useState<string[]>([]),
@@ -74,6 +77,29 @@ export function DetailPanel({
       cancelled = true
     }
   }, [path, key, data])
+  useEffect(() => {
+    if (!commandRequest) return
+    const frame = requestAnimationFrame(() => {
+      if (
+        commandRequest.command === 'compare-set' &&
+        selection.group !== null
+      ) {
+        setCompareGroup(selection.group)
+        return
+      }
+      const fieldByCommand: Record<string, string> = {
+        'move-rename-file': 'asset-path',
+        'add-tag': 'new-tag',
+        'save-prompt': 'prompt-text',
+        'edit-set-name': 'set-name',
+        'edit-set-kind': 'set-kind',
+      }
+      const field = fieldByCommand[commandRequest.command]
+      if (field)
+        document.querySelector<HTMLElement>(`[name="${field}"]`)?.focus()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [commandRequest, selection.group])
   // biome-ignore lint/correctness/useExhaustiveDependencies: data refresh invalidates metadata fetched from the repository.
   useEffect(() => {
     let cancelled = false
@@ -150,7 +176,7 @@ export function DetailPanel({
           variant="secondary"
           size="sm"
           disabled={memberImages.length < 2}
-          onClick={() => setCompareGroup(group.id)}
+          onClick={() => onAction('compare-set')}
         >
           <Trans>Compare</Trans>
         </Button>
@@ -167,7 +193,7 @@ export function DetailPanel({
         <Button
           variant="danger"
           size="sm"
-          onClick={() => run(() => GroupService.Ungroup(path, group.id))}
+          onClick={() => onAction('dissolve-set')}
         >
           <Trans>Dissolve set</Trans>
         </Button>
@@ -191,14 +217,14 @@ export function DetailPanel({
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => go(r.sourceImageId)}
+                onClick={() => onAction('go-to-source')}
               >
                 <Trans>Go to source</Trans>
               </Button>
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => go(r.derivedImageId)}
+                onClick={() => onAction('go-to-derived')}
               >
                 <Trans>Go to derived</Trans>
               </Button>
@@ -268,12 +294,7 @@ export function DetailPanel({
               className="flex gap-1.5"
               onSubmit={(event) => {
                 event.preventDefault()
-                const input = event.currentTarget.elements.namedItem(
-                  'asset-path'
-                ) as HTMLInputElement
-                const value = input.value.trim()
-                if (value && value !== image.fileName)
-                  run(() => ImageService.MoveFile(path, image.id, value))
+                onAction('move-rename-file')
               }}
             >
               <input
@@ -294,7 +315,7 @@ export function DetailPanel({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => go(image.id, true)}
+              onClick={() => onAction('show-in-folders')}
             >
               <Trans>Show in Folders</Trans>
             </Button>
@@ -317,17 +338,7 @@ export function DetailPanel({
           className="flex gap-1.5"
           onSubmit={(event) => {
             event.preventDefault()
-            const input = event.currentTarget.elements.namedItem(
-              'new-tag'
-            ) as HTMLInputElement
-            const tag = input.value.trim()
-            if (!tag) return
-            run(async () => {
-              await Promise.all(
-                images.map((i) => TagService.AddTag(path, i.id, tag))
-              )
-              input.value = ''
-            })
+            onAction('add-tag')
           }}
         >
           <input
@@ -350,22 +361,7 @@ export function DetailPanel({
           className="grid gap-1.5"
           onSubmit={(event) => {
             event.preventDefault()
-            const input = event.currentTarget.elements.namedItem(
-              'prompt-text'
-            ) as HTMLTextAreaElement
-            run(() =>
-              Promise.all(
-                images.map((i) =>
-                  PromptService.CreateAndAttachPrompt(
-                    path,
-                    i.id,
-                    '',
-                    input.value,
-                    ''
-                  )
-                )
-              )
-            )
+            onAction('save-prompt')
           }}
         >
           <textarea
@@ -398,16 +394,10 @@ export function DetailPanel({
           variant="secondary"
           size="sm"
           onClick={() =>
-            run(() =>
-              Promise.all(
-                images.map((i) =>
-                  ImageService.SetArchived(
-                    path,
-                    i.id,
-                    !images.every((x) => x.archived)
-                  )
-                )
-              )
+            onAction(
+              images.every((image) => image.archived)
+                ? 'unarchive-selection'
+                : 'archive-selection'
             )
           }
         >
@@ -421,15 +411,7 @@ export function DetailPanel({
           <Button
             variant="secondary"
             size="sm"
-            onClick={() =>
-              run(() =>
-                Promise.all(
-                  images
-                    .filter((i) => i.trashed)
-                    .map((i) => ImageService.RestoreImage(path, i.id))
-                )
-              )
-            }
+            onClick={() => onAction('restore-from-trash')}
           >
             <Trans>Restore from trash</Trans>
           </Button>

@@ -22,6 +22,9 @@ interface Props {
   reveal: { id: number; folder: string | null } | null
   change: () => Promise<void>
   compress: (ids: number[]) => void
+  searchFocusRequest: number
+  navigatorModeRequest: { mode: 'all' | 'folders'; request: number } | null
+  onShowCommands: () => void
 }
 export function LibraryPanel({
   path,
@@ -33,6 +36,9 @@ export function LibraryPanel({
   reveal,
   change,
   compress,
+  searchFocusRequest,
+  navigatorModeRequest,
+  onShowCommands,
 }: Props) {
   const [mode, setMode] = useState('all'),
     [folder, setFolder] = useState(''),
@@ -53,6 +59,7 @@ export function LibraryPanel({
     null
   )
   const anchor = useRef<number | null>(null)
+  const searchInput = useRef<HTMLInputElement>(null)
   const callbacks = useRef({ onError, visible })
   callbacks.current = { onError, visible }
   // biome-ignore lint/correctness/useExhaustiveDependencies: repository mutations invalidate the tag catalog.
@@ -70,6 +77,15 @@ export function LibraryPanel({
     setPlacement('')
     setTagId(0)
   }, [reveal])
+  useEffect(() => {
+    if (!navigatorModeRequest) return
+    setMode(navigatorModeRequest.mode)
+  }, [navigatorModeRequest])
+  useEffect(() => {
+    if (!searchFocusRequest) return
+    setMode('all')
+    requestAnimationFrame(() => searchInput.current?.focus())
+  }, [searchFocusRequest])
   // biome-ignore lint/correctness/useExhaustiveDependencies: refresh explicitly invalidates repository listings.
   useEffect(() => {
     let cancelled = false
@@ -197,6 +213,7 @@ export function LibraryPanel({
         <div className="grid gap-2 p-2">
           <div className="flex gap-1.5">
             <input
+              ref={searchInput}
               className={fieldClass}
               aria-label={t`Search assets`}
               placeholder={t`Search assets`}
@@ -517,6 +534,17 @@ export function LibraryPanel({
                 }}
               >
                 <Trans>Compress…</Trans>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="block w-full rounded-md px-3 py-2 text-left text-[12.5px] text-ink hover:bg-black/[0.04]"
+                onClick={() => {
+                  setItemMenu(null)
+                  requestAnimationFrame(onShowCommands)
+                }}
+              >
+                <Trans>Show commands</Trans>
               </button>
             </>
           )}

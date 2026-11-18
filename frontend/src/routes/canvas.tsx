@@ -13,16 +13,23 @@ import {
   SelectionMode,
   useReactFlow,
 } from '@xyflow/react'
-import { PanelLeft, PanelRight } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { Command, MoreHorizontal, PanelLeft, PanelRight } from 'lucide-react'
+import { type MouseEvent, useEffect, useRef, useState } from 'react'
 import '@xyflow/react/dist/style.css'
 import {
   type CanvasData,
   GroupService,
   ImageService,
+  LibraryService,
+  PromptService,
   type RepoInfo,
+  TagService,
 } from '../../bindings/loom/internal/service'
 import { CanvasDock } from '../components/canvas/canvas-dock'
+import {
+  CommandPalette,
+  type PaletteAsset,
+} from '../components/canvas/command-palette'
 import { DetailPanel } from '../components/canvas/detail-panel'
 import { GroupNode } from '../components/canvas/group-node'
 import { ImageNode } from '../components/canvas/image-node'
@@ -34,10 +41,16 @@ import { ShelfPanel } from '../components/canvas/shelf-panel'
 import { CompressionDialog } from '../components/compression-dialog'
 import { type MenuAction, PositionedMenu } from '../components/menu'
 import { Button } from '../components/ui/button'
+import {
+  type CanvasAction,
+  displayShortcut,
+  isMacPlatform,
+  shortcutMatches,
+} from '../lib/action-catalog'
 import { copyMedia, filesToMedia, readMedia } from '../lib/clipboard'
 import { computeSubgraphLayout, placeCluster } from '../lib/layout'
 import { emptySelection, type Selection } from '../lib/selection'
-import { useGroupShortcut, useUndoShortcuts } from '../lib/use-undo'
+import { useUndoActions } from '../lib/use-undo'
 import { cn } from '../lib/utils'
 
 const nodeTypes = { image: ImageNode, group: GroupNode }
@@ -52,6 +65,7 @@ export function CanvasWorkspace({ repo }: { repo: RepoInfo }) {
 function Canvas({ repo }: { repo: RepoInfo }) {
   const flow = useReactFlow(),
     host = useRef<HTMLDivElement>(null)
+  const isMac = isMacPlatform()
   const [data, setData] = useState<CanvasData>({
     images: [],
     relationships: [],
@@ -68,26 +82,90 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   const [compressIds, setCompressIds] = useState<number[] | null>(null)
   const [purgeIds, setPurgeIds] = useState<number[] | null>(null)
   const [previewImageId, setPreviewImageId] = useState<number | null>(null)
-  const [assetsOpen, setAssetsOpen] = useState(
-    () =>
-      typeof window === 'undefined' ||
-      !window.matchMedia('(max-width: 1099px)').matches
-  )
-  const [inspectorOpen, setInspectorOpen] = useState(
-    () =>
-      typeof window === 'undefined' ||
-      !window.matchMedia('(max-width: 1099px)').matches
-  )
+  const [assetsOpen, setAssetsOpen] = useState(false)
+  const [inspectorOpen, setInspectorOpen] = useState(false)
+  const [assetsPinned, setAssetsPinned] = useState(false)
+  const [inspectorPinned, setInspectorPinned] = useState(false)
+  const [focusCanvas, setFocusCanvas] = useState(false)
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const [shortcutsOnly, setShortcutsOnly] = useState(false)
+  const [paletteInitialQuery, setPaletteInitialQuery] = useState('')
+  const [recentActionIds, setRecentActionIds] = useState<string[]>([])
+  const [inspectorCommandRequest, setInspectorCommandRequest] = useState<{
+    command: string
+    request: number
+  } | null>(null)
+  const [repoMenuOpen, setRepoMenuOpen] = useState(false)
+  const [searchFocusRequest, setSearchFocusRequest] = useState(0)
+  const [repoOpenRequest, setRepoOpenRequest] = useState(0)
+  const [navigatorModeRequest, setNavigatorModeRequest] = useState<{
+    mode: 'all' | 'folders'
+    request: number
+  } | null>(null)
+  const [paletteAssets, setPaletteAssets] = useState<PaletteAsset[]>([])
+  const importInput = useRef<HTMLInputElement>(null)
+  const assetsReturnFocus = useRef<HTMLElement | null>(null)
+  const inspectorReturnFocus = useRef<HTMLElement | null>(null)
+  const paletteReturnFocus = useRef<HTMLElement | null>(null)
 
-  useEffect(() => {
-    const compact = window.matchMedia('(max-width: 1099px)')
-    const sync = (event: MediaQueryListEvent) => {
-      setAssetsOpen(!event.matches)
-      setInspectorOpen(!event.matches)
+  function rememberFocus(target: { current: HTMLElement | null }) {
+    target.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null
+  }
+  function openAssets() {
+    if (!assetsOpen) rememberFocus(assetsReturnFocus)
+    setFocusCanvas(false)
+    if (window.matchMedia('(max-width: 720px)').matches) setInspectorOpen(false)
+    setAssetsOpen(true)
+  }
+  function closeAssets() {
+    setAssetsOpen(false)
+    requestAnimationFrame(() => {
+      if (!focusCanvas) assetsReturnFocus.current?.focus()
+    })
+  }
+  function toggleAssets() {
+    if (assetsOpen) closeAssets()
+    else openAssets()
+  }
+  function openInspector() {
+    if (!inspectorOpen) rememberFocus(inspectorReturnFocus)
+    setFocusCanvas(false)
+    if (window.matchMedia('(max-width: 720px)').matches) setAssetsOpen(false)
+    setInspectorOpen(true)
+  }
+  function closeInspector() {
+    setInspectorOpen(false)
+    requestAnimationFrame(() => {
+      if (!focusCanvas) inspectorReturnFocus.current?.focus()
+    })
+  }
+  function toggleInspector() {
+    if (inspectorOpen) closeInspector()
+    else openInspector()
+  }
+  function requestInspectorCommand(command: string) {
+    openInspector()
+    setInspectorCommandRequest((current) => ({
+      command,
+      request: (current?.request ?? 0) + 1,
+    }))
+  }
+  function openPalette(shortcuts = false, initialQuery = '') {
+    rememberFocus(paletteReturnFocus)
+    setShortcutsOnly(shortcuts)
+    setPaletteInitialQuery(initialQuery)
+    setPaletteOpen(true)
+  }
+  function changePaletteOpen(open: boolean) {
+    setPaletteOpen(open)
+    if (!open) {
+      requestAnimationFrame(() => paletteReturnFocus.current?.focus())
     }
-    compact.addEventListener('change', sync)
-    return () => compact.removeEventListener('change', sync)
-  }, [])
+  }
+
   const [menu, setMenu] = useState<{
     kind: 'pane' | 'node' | 'selection'
     x: number
@@ -171,6 +249,22 @@ function Canvas({ repo }: { repo: RepoInfo }) {
           showFileName: true,
           width: i.width,
           height: i.height,
+          onPreview: () => setPreviewImageId(i.id),
+          onMore: (event: MouseEvent<HTMLButtonElement>) => {
+            const bounds = event.currentTarget.getBoundingClientRect()
+            setSelection({
+              surface: 'canvas',
+              ids: [i.id],
+              edges: [],
+              group: null,
+            })
+            setMenu({
+              kind: 'node',
+              x: event.clientX || bounds.left,
+              y: event.clientY || bounds.bottom,
+              nodeId: String(i.id),
+            })
+          },
           onResizeEnd: (x: number, y: number, w: number, h: number) =>
             callbacks.current.run(async () => {
               await ImageService.SetPosition(repo.path, i.id, x, y)
@@ -303,14 +397,12 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     setSelection(emptySelection)
     await reload()
   }
-  useUndoShortcuts(repo.path, reload)
-  useGroupShortcut(canCreateSet, () => {
-    void createSet().catch(report)
-  })
+  const undoActions = useUndoActions(repo.path, reload)
   async function go(id: number, folder = false) {
     const image = await ImageService.GetImage(repo.path, id)
     if (!image) return
     if (folder || !image.placed) {
+      openAssets()
       selectAssets([id])
       setReveal({
         id,
@@ -375,149 +467,6 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     setSelection({ ...selection, ids: [], edges: [], group: null })
     await reload()
   }
-  const latest = useRef({
-    selection,
-    selectedIds,
-    remove,
-    paste,
-    displayNodes,
-    center,
-    arrange,
-    flow,
-  })
-  latest.current = {
-    selection,
-    selectedIds,
-    remove,
-    paste,
-    displayNodes,
-    center,
-    arrange,
-    flow,
-  }
-  useEffect(() => {
-    const down = (e: KeyboardEvent) => {
-      if (
-        e.target instanceof HTMLElement &&
-        e.target.closest('input,textarea,select,[contenteditable=true]')
-      )
-        return
-      if (e.code === 'Space') {
-        e.preventDefault()
-        setSpace(true)
-      }
-      if (e.key === 'Delete' || e.key === 'Backspace') {
-        e.preventDefault()
-        void latest.current.remove(e.shiftKey).catch(callbacks.current.report)
-      }
-      if (e.shiftKey && !(e.ctrlKey || e.metaKey)) {
-        if (e.key === '1' || e.key === '!' || e.code === 'Digit1') {
-          e.preventDefault()
-          void latest.current.flow
-            .fitView({ padding: 0.2 })
-            .then(() =>
-              ImageService.SetViewport(
-                repo.path,
-                latest.current.flow.getViewport()
-              )
-            )
-            .catch(callbacks.current.report)
-          return
-        }
-        if (e.key === '2' || e.key === '@' || e.code === 'Digit2') {
-          e.preventDefault()
-          const selected = latest.current.displayNodes.filter((n) => n.selected)
-          if (selected.length > 0) {
-            void latest.current.flow
-              .fitView({ nodes: selected, padding: 0.2 })
-              .then(() =>
-                ImageService.SetViewport(
-                  repo.path,
-                  latest.current.flow.getViewport()
-                )
-              )
-              .catch(callbacks.current.report)
-          }
-          return
-        }
-        if (e.key.toLowerCase() === 'a') {
-          e.preventDefault()
-          const selected = latest.current.displayNodes.filter((n) => n.selected)
-          if (selected.length >= 2) {
-            void latest.current
-              .arrange(selected.map((n) => n.id))
-              .catch(callbacks.current.report)
-          } else {
-            void latest.current.arrange().catch(callbacks.current.report)
-          }
-          return
-        }
-      }
-      if (!(e.ctrlKey || e.metaKey)) return
-      if (e.key.toLowerCase() === 'b') {
-        e.preventDefault()
-        setAssetsOpen((prev) => !prev)
-        return
-      }
-      if (e.key.toLowerCase() === 'i') {
-        e.preventDefault()
-        setInspectorOpen((prev) => !prev)
-        return
-      }
-      if (e.key === '0' || e.code === 'Digit0') {
-        e.preventDefault()
-        const p = latest.current.center()
-        void latest.current.flow
-          .setCenter(p.x, p.y, { zoom: 1 })
-          .then(() =>
-            ImageService.SetViewport(
-              repo.path,
-              latest.current.flow.getViewport()
-            )
-          )
-          .catch(callbacks.current.report)
-        return
-      }
-      if (e.key.toLowerCase() === 'a') {
-        e.preventDefault()
-        if (latest.current.selection.surface === 'assets')
-          callbacks.current.selectAssets(visible.current)
-        else
-          setSelection({
-            surface: 'canvas',
-            ids: (data.images ?? [])
-              .filter((i) => i.placed && !i.trashed)
-              .map((i) => i.id),
-            edges: [],
-            group: null,
-          })
-      }
-      if (e.key.toLowerCase() === 'c') {
-        e.preventDefault()
-        void copyMedia(
-          repo.path,
-          latest.current.selectedIds(),
-          e.shiftKey
-        ).catch(callbacks.current.report)
-      }
-      if (e.key.toLowerCase() === 'v') {
-        e.preventDefault()
-        void latest.current.paste().catch(callbacks.current.report)
-      }
-    }
-    const up = (e: KeyboardEvent) => {
-      if (e.code === 'Space') setSpace(false)
-    }
-    const blur = () => setSpace(false)
-    window.addEventListener('keydown', down)
-    window.addEventListener('keyup', up)
-    window.addEventListener('blur', blur)
-    return () => {
-      window.removeEventListener('keydown', down)
-      window.removeEventListener('keyup', up)
-      window.removeEventListener('blur', blur)
-    }
-  }, [repo.path, data])
   function targetAt(x: number, y: number) {
     return (
       document
@@ -659,6 +608,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     await reload()
   }
   function handleLocate(node: Node) {
+    openAssets()
     if (node.type === 'group') {
       const groupId = Number(node.id.slice(4))
       const members = groupMembers(groupId)
@@ -687,203 +637,1165 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       setPreviewImageId(Number(node.id))
     }
   }
-  function handleUnplace(nodeIds: string[]) {
-    const idsToUnplace = nodeIds.flatMap((id) => {
-      if (id.startsWith('set-')) {
-        return groupMembers(Number(id.slice(4)))
-      }
-      return [Number(id)]
+  function handleMore(nodesToShow: Node[]) {
+    const first = nodesToShow[0]
+    if (!first) return
+    const position = flow.flowToScreenPosition(first.position)
+    setMenu({
+      kind: nodesToShow.length > 1 ? 'selection' : 'node',
+      x: position.x,
+      y: position.y,
+      nodeId: nodesToShow.length === 1 ? first.id : undefined,
     })
-    run(() => removeCanvasAssets(idsToUnplace, false))
+  }
+  async function fitAll() {
+    await flow.fitView({ padding: 0.2 })
+    await ImageService.SetViewport(repo.path, flow.getViewport())
+  }
+  async function fitSelection() {
+    await flow.fitView({
+      nodes: nodes.filter(isCanvasNodeSelected),
+      padding: 0.2,
+    })
+    await ImageService.SetViewport(repo.path, flow.getViewport())
+  }
+  async function resetZoom() {
+    const point = center()
+    await flow.setCenter(point.x, point.y, { zoom: 1 })
+    await ImageService.SetViewport(repo.path, flow.getViewport())
+  }
+  async function zoomBy(factor: number) {
+    await flow.setViewport({
+      ...flow.getViewport(),
+      zoom: Math.max(0.05, Math.min(4, flow.getZoom() * factor)),
+    })
+    await ImageService.SetViewport(repo.path, flow.getViewport())
+  }
+  function toggleFocusMode() {
+    setFocusCanvas((focused) => !focused)
+    requestAnimationFrame(() => host.current?.focus())
+  }
+  const selectedImageRecords = (data.images ?? []).filter((image) =>
+    selectedIds().includes(image.id)
+  )
+  const selectedRelationships = (data.relationships ?? []).filter(
+    (relationship) => selection.edges.includes(relationship.id)
+  )
+  const singleImageRelations =
+    selectedImageRecords.length === 1
+      ? (data.relationships ?? []).filter(
+          (relationship) =>
+            relationship.sourceImageId === selectedImageRecords[0].id ||
+            relationship.derivedImageId === selectedImageRecords[0].id
+        )
+      : []
+  const relationshipActions = selectedRelationships.length
+    ? selectedRelationships
+    : singleImageRelations
+  const canNavigateRelationship = relationshipActions.length > 0
+  const canRemoveRelationship = relationshipActions.length === 1
+  const canFitSelection = displayNodes.some((node) => node.selected)
+  const canArrangeSelection = selectedCanvasNodeIds.length > 0
+  const actionCatalog: CanvasAction[] = [
+    {
+      id: 'open-assets',
+      label: t`Open Assets`,
+      description: t`Show the repository asset navigator`,
+      category: t`Workspace`,
+      aliases: ['library', 'asset shelf'],
+      context: t`Workspace`,
+      enabled: true,
+      execute: openAssets,
+    },
+    {
+      id: 'toggle-assets',
+      label: t`Toggle Assets`,
+      description: t`Open or close the Assets navigator`,
+      category: t`Workspace`,
+      aliases: ['assets drawer'],
+      shortcut: 'Mod+B',
+      context: t`Workspace`,
+      enabled: true,
+      execute: toggleAssets,
+    },
+    {
+      id: 'close-assets',
+      label: t`Close Assets`,
+      description: t`Close the Assets navigator`,
+      category: t`Workspace`,
+      aliases: ['hide assets'],
+      context: t`Workspace`,
+      enabled: assetsOpen,
+      disabledReason: t`Assets is already closed`,
+      execute: closeAssets,
+    },
+    {
+      id: 'pin-assets',
+      label: t`Pin Assets drawer`,
+      description: t`Keep Assets open during Canvas interactions`,
+      category: t`Workspace`,
+      aliases: ['keep assets open'],
+      context: t`Assets`,
+      enabled: assetsOpen && !assetsPinned,
+      disabledReason: t`Open Assets before pinning`,
+      execute: () => setAssetsPinned(true),
+    },
+    {
+      id: 'unpin-assets',
+      label: t`Unpin Assets drawer`,
+      description: t`Allow Assets to close after an action`,
+      category: t`Workspace`,
+      aliases: ['unpin assets'],
+      context: t`Assets`,
+      enabled: assetsOpen && assetsPinned,
+      disabledReason: t`Assets is not pinned`,
+      execute: () => setAssetsPinned(false),
+    },
+    {
+      id: 'open-inspector',
+      label: t`Open Inspector`,
+      description: t`Show metadata for the active selection`,
+      category: t`Workspace`,
+      aliases: ['details', 'inspector shelf'],
+      context: t`Workspace`,
+      enabled: true,
+      execute: openInspector,
+    },
+    {
+      id: 'toggle-inspector',
+      label: t`Toggle Inspector`,
+      description: t`Open or close the Inspector`,
+      category: t`Workspace`,
+      aliases: ['inspector drawer'],
+      shortcut: 'Mod+I',
+      context: t`Workspace`,
+      enabled: true,
+      execute: toggleInspector,
+    },
+    {
+      id: 'close-inspector',
+      label: t`Close Inspector`,
+      description: t`Close the Inspector drawer`,
+      category: t`Workspace`,
+      aliases: ['hide inspector'],
+      context: t`Workspace`,
+      enabled: inspectorOpen,
+      disabledReason: t`Inspector is already closed`,
+      execute: closeInspector,
+    },
+    {
+      id: 'pin-inspector',
+      label: t`Pin Inspector drawer`,
+      description: t`Keep Inspector open during Canvas interactions`,
+      category: t`Workspace`,
+      aliases: ['keep inspector open'],
+      context: t`Inspector`,
+      enabled: inspectorOpen && !inspectorPinned,
+      disabledReason: t`Open Inspector before pinning`,
+      execute: () => setInspectorPinned(true),
+    },
+    {
+      id: 'unpin-inspector',
+      label: t`Unpin Inspector drawer`,
+      description: t`Allow Inspector to close after selection clears`,
+      category: t`Workspace`,
+      aliases: ['unpin inspector'],
+      context: t`Inspector`,
+      enabled: inspectorOpen && inspectorPinned,
+      disabledReason: t`Inspector is not pinned`,
+      execute: () => setInspectorPinned(false),
+    },
+    {
+      id: 'toggle-focus-canvas',
+      label: t`Toggle Focus Canvas`,
+      description: t`Hide or restore Canvas controls and drawers`,
+      category: t`Workspace`,
+      aliases: ['zen', 'focus mode'],
+      shortcut: 'Mod+\\',
+      context: t`Workspace`,
+      enabled: true,
+      execute: toggleFocusMode,
+    },
+    {
+      id: 'show-shortcuts',
+      label: t`Show keyboard shortcuts`,
+      description: t`Browse available keyboard shortcuts`,
+      category: t`Workspace`,
+      aliases: ['help', 'shortcut reference'],
+      shortcut: '?',
+      context: t`Workspace`,
+      enabled: true,
+      execute: () => openPalette(true),
+    },
+    {
+      id: 'show-commands',
+      label: t`Show commands`,
+      description: t`Search Canvas commands and repository assets`,
+      category: t`Workspace`,
+      aliases: ['command palette', 'search actions'],
+      shortcut: 'Mod+K',
+      context: t`Workspace`,
+      enabled: true,
+      execute: () => openPalette(false),
+    },
+    {
+      id: 'rescan-repository',
+      label: t`Rescan repository`,
+      description: t`Refresh the repository asset catalog`,
+      category: t`Workspace`,
+      aliases: ['reload', 'refresh'],
+      context: t`Workspace`,
+      enabled: true,
+      execute: reload,
+    },
+    {
+      id: 'switch-repository',
+      label: t`Switch repository`,
+      description: t`Choose another repository window`,
+      category: t`Workspace`,
+      aliases: ['open repository', 'project picker'],
+      context: t`Workspace`,
+      enabled: true,
+      execute: () => setRepoOpenRequest((request) => request + 1),
+    },
+    {
+      id: 'import-media',
+      label: t`Import media`,
+      description: t`Choose images or videos to add to this repository`,
+      category: t`Workspace`,
+      aliases: ['add files', 'upload'],
+      context: t`Workspace`,
+      enabled: true,
+      execute: () => importInput.current?.click(),
+    },
+    {
+      id: 'show-all-assets',
+      label: t`Show All Assets`,
+      description: t`Open the semantic repository catalog`,
+      category: t`Assets navigation`,
+      aliases: ['catalog'],
+      context: t`Assets`,
+      enabled: true,
+      execute: () => {
+        openAssets()
+        setNavigatorModeRequest((current) => ({
+          mode: 'all',
+          request: (current?.request ?? 0) + 1,
+        }))
+      },
+    },
+    {
+      id: 'show-folders',
+      label: t`Show Folders`,
+      description: t`Open the physical folder navigator`,
+      category: t`Assets navigation`,
+      aliases: ['filesystem', 'directories'],
+      context: t`Assets`,
+      enabled: true,
+      execute: () => {
+        openAssets()
+        setNavigatorModeRequest((current) => ({
+          mode: 'folders',
+          request: (current?.request ?? 0) + 1,
+        }))
+      },
+    },
+    {
+      id: 'focus-asset-search',
+      label: t`Focus asset search`,
+      description: t`Open Assets and focus its search field`,
+      category: t`Assets navigation`,
+      aliases: ['find asset', 'search files'],
+      context: t`Assets`,
+      enabled: true,
+      execute: () => {
+        openAssets()
+        setSearchFocusRequest((request) => request + 1)
+      },
+    },
+    {
+      id: 'search-assets',
+      label: t`Search repository assets`,
+      description: t`Search filenames, tags, and paths with @`,
+      category: t`Assets navigation`,
+      aliases: ['@ search', 'find media'],
+      context: t`Repository`,
+      enabled: true,
+      execute: () => openPalette(false, '@'),
+    },
+    {
+      id: 'fit-all',
+      label: t`Fit all`,
+      description: t`Frame every placed item in the Canvas`,
+      category: t`Canvas view`,
+      aliases: ['zoom extents', 'frame canvas'],
+      shortcut: 'Shift+1',
+      context: t`Canvas`,
+      enabled: displayNodes.length > 0,
+      disabledReason: t`There are no placed items`,
+      execute: fitAll,
+    },
+    {
+      id: 'fit-selection',
+      label: t`Fit selection`,
+      description: t`Frame the selected Canvas items`,
+      category: t`Canvas view`,
+      aliases: ['zoom to selection', 'selection bounds'],
+      shortcut: 'Shift+2',
+      context: t`Canvas selection`,
+      enabled: canFitSelection,
+      disabledReason: t`Select a Canvas item`,
+      execute: fitSelection,
+    },
+    {
+      id: 'reset-zoom',
+      label: t`Reset zoom to 100%`,
+      description: t`Set Canvas zoom to its original scale`,
+      category: t`Canvas view`,
+      aliases: ['actual size', 'zoom reset'],
+      shortcut: 'Mod+0',
+      context: t`Canvas`,
+      enabled: true,
+      execute: resetZoom,
+    },
+    {
+      id: 'zoom-in',
+      label: t`Zoom in`,
+      description: t`Increase Canvas zoom`,
+      category: t`Canvas view`,
+      aliases: ['magnify'],
+      shortcut: 'Mod+=',
+      context: t`Canvas`,
+      enabled: true,
+      execute: () => zoomBy(1.2),
+    },
+    {
+      id: 'zoom-out',
+      label: t`Zoom out`,
+      description: t`Decrease Canvas zoom`,
+      category: t`Canvas view`,
+      aliases: ['shrink'],
+      shortcut: 'Mod+-',
+      context: t`Canvas`,
+      enabled: true,
+      execute: () => zoomBy(1 / 1.2),
+    },
+    {
+      id: 'auto-arrange-canvas',
+      label: t`Auto-arrange Canvas`,
+      description: t`Reposition all placed items using their relationships`,
+      category: t`Canvas view`,
+      aliases: ['layout', 'tidy all'],
+      context: t`Canvas`,
+      enabled: displayNodes.length > 0,
+      disabledReason: t`There are no placed items`,
+      execute: () => arrange(),
+    },
+    {
+      id: 'auto-arrange-active',
+      label: t`Auto-arrange Canvas or selection`,
+      description: t`Arrange the selected subgraph, or the full Canvas when fewer than two items are selected`,
+      category: t`Canvas view`,
+      aliases: ['layout', 'tidy selection', 'tidy all'],
+      shortcut: 'Shift+A',
+      context: t`Canvas`,
+      enabled: displayNodes.length > 0,
+      disabledReason: t`There are no placed items`,
+      execute: () =>
+        arrange(
+          selectedCanvasNodeIds.length >= 2 ? selectedCanvasNodeIds : undefined
+        ),
+    },
+    {
+      id: 'auto-arrange-selection',
+      label: t`Auto-arrange selection`,
+      description: t`Reposition selected items as a connected subgraph`,
+      category: t`Canvas view`,
+      aliases: ['arrange subgraph', 'tidy selection'],
+      context: t`Canvas selection`,
+      enabled: canArrangeSelection,
+      disabledReason: t`Select Canvas items`,
+      execute: () => arrange(selectedCanvasNodeIds),
+    },
+    {
+      id: 'select-all',
+      label: t`Select all in active surface`,
+      description: t`Select all visible Assets or placed Canvas items`,
+      category: t`Selection and sets`,
+      aliases: ['select everything'],
+      shortcut: 'Mod+A',
+      context: t`Active surface`,
+      enabled: visible.current.length > 0 || displayNodes.length > 0,
+      disabledReason: t`There are no selectable items`,
+      execute: () => {
+        if (selection.surface === 'assets') selectAssets(visible.current)
+        else
+          setSelection({
+            surface: 'canvas',
+            ids: (data.images ?? [])
+              .filter((image) => image.placed && !image.trashed)
+              .map((image) => image.id),
+            edges: [],
+            group: null,
+          })
+      },
+    },
+    {
+      id: 'select-all-canvas',
+      label: t`Select all`,
+      description: t`Select every placed Canvas item`,
+      category: t`Selection and sets`,
+      aliases: ['select all canvas items'],
+      context: t`Canvas`,
+      enabled: displayNodes.length > 0,
+      disabledReason: t`There are no placed items`,
+      execute: () =>
+        setSelection({
+          surface: 'canvas',
+          ids: (data.images ?? [])
+            .filter((image) => image.placed && !image.trashed)
+            .map((image) => image.id),
+          edges: [],
+          group: null,
+        }),
+    },
+    {
+      id: 'clear-selection',
+      label: t`Clear selection`,
+      description: t`Clear the active selection`,
+      category: t`Selection and sets`,
+      aliases: ['deselect'],
+      shortcut: 'Escape',
+      context: t`Active surface`,
+      enabled:
+        selection.ids.length > 0 ||
+        selection.edges.length > 0 ||
+        !!selection.group,
+      disabledReason: t`There is no active selection`,
+      execute: () => setSelection(emptySelection),
+    },
+    {
+      id: 'preview-selection',
+      label: t`Preview`,
+      description: t`Open the selected Canvas image in the preview viewer`,
+      category: t`Selection and sets`,
+      aliases: ['lightbox', 'view image'],
+      context: t`Canvas selection`,
+      enabled: selectedCanvasNodeIds.length === 1,
+      disabledReason: t`Select one Canvas item`,
+      execute: () => {
+        const node = displayNodes.find((candidate) => candidate.selected)
+        if (node) handlePreview(node)
+      },
+    },
+    {
+      id: 'locate-selection',
+      label: t`Locate in Assets`,
+      description: t`Reveal the selected Canvas item in Assets`,
+      category: t`Selection and sets`,
+      aliases: ['find in assets', 'show in library'],
+      context: t`Canvas selection`,
+      enabled: selectedCanvasNodeIds.length === 1,
+      disabledReason: t`Select one Canvas item`,
+      execute: () => {
+        const node = displayNodes.find((candidate) => candidate.selected)
+        if (node) handleLocate(node)
+      },
+    },
+    {
+      id: 'create-set',
+      label: t`Create set`,
+      description: t`Create a semantic set from selected Canvas items`,
+      category: t`Selection and sets`,
+      aliases: ['group', 'collection'],
+      shortcut: 'Mod+G',
+      context: t`Canvas selection`,
+      enabled: canCreateSet,
+      disabledReason: t`Select at least two ungrouped Canvas items`,
+      execute: createSet,
+    },
+    {
+      id: 'align-horizontal',
+      label: t`Align horizontally`,
+      description: t`Align selected Canvas items along one row`,
+      category: t`Selection and sets`,
+      aliases: ['align row'],
+      context: t`Canvas selection`,
+      enabled: selectedCanvasNodeIds.length > 1,
+      disabledReason: t`Select at least two Canvas items`,
+      execute: alignHorizontal,
+    },
+    {
+      id: 'align-vertical',
+      label: t`Align vertically`,
+      description: t`Align selected Canvas items along one column`,
+      category: t`Selection and sets`,
+      aliases: ['align column'],
+      context: t`Canvas selection`,
+      enabled: selectedCanvasNodeIds.length > 1,
+      disabledReason: t`Select at least two Canvas items`,
+      execute: alignVertical,
+    },
+    {
+      id: 'unplace-selection',
+      label: t`Unplace selected Canvas items`,
+      description: t`Remove selected nodes while keeping their assets`,
+      category: t`Clipboard and lifecycle`,
+      aliases: ['remove from canvas'],
+      shortcut: 'Delete',
+      shortcuts: ['Delete', 'Backspace'],
+      context: t`Canvas selection`,
+      enabled:
+        selection.surface === 'canvas' &&
+        (selectedIds().length > 0 || selection.edges.length > 0),
+      disabledReason: t`Select Canvas items`,
+      execute: () => remove(false),
+    },
+    {
+      id: 'trash-selection',
+      label: t`Trash selected Assets`,
+      description: t`Move selected Assets to the repository trash`,
+      category: t`Clipboard and lifecycle`,
+      aliases: ['delete assets'],
+      shortcut: 'Delete',
+      shortcuts: ['Delete', 'Backspace'],
+      context: t`Assets selection`,
+      enabled: selection.surface === 'assets' && selectedIds().length > 0,
+      disabledReason: t`Select Assets`,
+      dangerous: true,
+      execute: () => remove(false),
+    },
+    {
+      id: 'trash-canvas-selection',
+      label: t`Trash selection`,
+      description: t`Move selected Canvas assets to repository trash`,
+      category: t`Clipboard and lifecycle`,
+      aliases: ['trash canvas items'],
+      context: t`Canvas selection`,
+      enabled: selection.surface === 'canvas' && selectedIds().length > 0,
+      disabledReason: t`Select Canvas items`,
+      dangerous: true,
+      execute: () => removeCanvasAssets(selectedIds(), true),
+    },
+    {
+      id: 'archive-selection',
+      label: t`Archive`,
+      description: t`Hide selected assets from the active catalog`,
+      category: t`Asset metadata and file`,
+      aliases: ['hide assets'],
+      context: t`Assets selection`,
+      enabled: selectedImageRecords.some((image) => !image.archived),
+      disabledReason: t`Select an unarchived Asset`,
+      execute: () =>
+        Promise.all(
+          selectedIds().map((id) =>
+            ImageService.SetArchived(repo.path, id, true)
+          )
+        ).then(() => reload()),
+    },
+    {
+      id: 'unarchive-selection',
+      label: t`Unarchive`,
+      description: t`Return selected assets to the active catalog`,
+      category: t`Asset metadata and file`,
+      aliases: ['show archived assets'],
+      context: t`Assets selection`,
+      enabled: selectedImageRecords.some((image) => image.archived),
+      disabledReason: t`Select an archived Asset`,
+      execute: () =>
+        Promise.all(
+          selectedIds().map((id) =>
+            ImageService.SetArchived(repo.path, id, false)
+          )
+        ).then(() => reload()),
+    },
+    {
+      id: 'dissolve-set',
+      label: t`Dissolve set`,
+      description: t`Remove the selected set while keeping its assets`,
+      category: t`Selection and sets`,
+      aliases: ['ungroup'],
+      context: t`Set selection`,
+      enabled: selection.group !== null,
+      disabledReason: t`Select a set`,
+      execute: () =>
+        selection.group
+          ? GroupService.Ungroup(repo.path, selection.group).then(() =>
+              reload()
+            )
+          : undefined,
+    },
+    {
+      id: 'find-in-assets',
+      label: t`Find in Assets`,
+      description: t`Select and reveal the active asset in Assets`,
+      category: t`Assets navigation`,
+      aliases: ['locate file'],
+      context: t`Canvas selection`,
+      enabled: selection.surface === 'canvas' && selectedIds().length > 0,
+      disabledReason: t`Select a Canvas item`,
+      execute: () => {
+        const firstId = selectedIds()[0]
+        if (firstId) {
+          selectAssets([firstId])
+          setReveal({ id: firstId, folder: null })
+          openAssets()
+        }
+      },
+    },
+    {
+      id: 'show-in-folders',
+      label: t`Show in Folders`,
+      description: t`Reveal the selected Asset in its physical directory`,
+      category: t`Asset metadata and file`,
+      aliases: ['show file location', 'browse path'],
+      context: t`Asset selection`,
+      enabled: selectedIds().length === 1,
+      disabledReason: t`Select one Asset`,
+      execute: () => {
+        const id = selectedIds()[0]
+        if (id) return go(id, true)
+      },
+    },
+    {
+      id: 'move-rename-file',
+      label: t`Move or rename file path`,
+      description: t`Open the Inspector file path field`,
+      category: t`Asset metadata and file`,
+      aliases: ['rename asset', 'move file'],
+      context: t`Single Asset`,
+      enabled: selectedIds().length === 1,
+      disabledReason: t`Select one Asset`,
+      execute: async () => {
+        openInspector()
+        const field = document.querySelector<HTMLInputElement>(
+          '[name="asset-path"]'
+        )
+        const image = selectedImageRecords[0]
+        if (!field || !image) {
+          requestInspectorCommand('move-rename-file')
+          return
+        }
+        const value = field.value.trim()
+        if (!value || value === image.fileName) {
+          requestInspectorCommand('move-rename-file')
+          return
+        }
+        await ImageService.MoveFile(repo.path, image.id, value)
+        await reload()
+      },
+    },
+    {
+      id: 'add-tag',
+      label: t`Add tag`,
+      description: t`Focus the Inspector tag field for the active selection`,
+      category: t`Asset metadata and file`,
+      aliases: ['tag assets', 'metadata'],
+      context: t`Asset selection`,
+      enabled: selectedIds().length > 0,
+      disabledReason: t`Select Assets`,
+      execute: async () => {
+        openInspector()
+        const field =
+          document.querySelector<HTMLInputElement>('[name="new-tag"]')
+        const tag = field?.value.trim()
+        if (!field || !tag) {
+          requestInspectorCommand('add-tag')
+          return
+        }
+        await Promise.all(
+          selectedIds().map((id) => TagService.AddTag(repo.path, id, tag))
+        )
+        field.value = ''
+        await reload()
+      },
+    },
+    {
+      id: 'save-prompt',
+      label: t`Save prompt`,
+      description: t`Save the current prompt from the Inspector`,
+      category: t`Asset metadata and file`,
+      aliases: ['edit prompt', 'prompt text'],
+      context: t`Asset selection`,
+      enabled: selectedIds().length > 0,
+      disabledReason: t`Select Assets`,
+      execute: async () => {
+        openInspector()
+        const field = document.querySelector<HTMLTextAreaElement>(
+          '[name="prompt-text"]'
+        )
+        const prompt = field?.value.trim()
+        if (!prompt) {
+          requestInspectorCommand('save-prompt')
+          return
+        }
+        await Promise.all(
+          selectedIds().map((id) =>
+            PromptService.CreateAndAttachPrompt(repo.path, id, '', prompt, '')
+          )
+        )
+        await reload()
+      },
+    },
+    {
+      id: 'restore-from-trash',
+      label: t`Restore from trash`,
+      description: t`Return selected trashed assets to the repository`,
+      category: t`Asset metadata and file`,
+      aliases: ['restore assets'],
+      context: t`Asset selection`,
+      enabled: selectedImageRecords.some((image) => image.trashed),
+      disabledReason: t`Select a trashed Asset`,
+      execute: () =>
+        Promise.all(
+          selectedImageRecords
+            .filter((image) => image.trashed)
+            .map((image) => ImageService.RestoreImage(repo.path, image.id))
+        ).then(() => reload()),
+    },
+    {
+      id: 'compress-selection',
+      label: t`Compress selected assets`,
+      description: t`Open compression settings for selected Assets`,
+      category: t`Asset metadata and file`,
+      aliases: ['compress', 'optimize media'],
+      context: t`Asset selection`,
+      enabled: selectedIds().length > 0,
+      disabledReason: t`Select Assets`,
+      execute: () => setCompressIds(selectedIds()),
+    },
+    {
+      id: 'compare-set',
+      label: t`Compare set`,
+      description: t`Open the selected set comparison`,
+      category: t`Selection and sets`,
+      aliases: ['compare images'],
+      context: t`Set selection`,
+      enabled: selection.group !== null && selectedIds().length > 1,
+      disabledReason: t`Select a set with at least two assets`,
+      execute: () => requestInspectorCommand('compare-set'),
+    },
+    {
+      id: 'set-cover-image',
+      label: t`Set cover image`,
+      description: t`Choose a cover image in the set comparison`,
+      category: t`Selection and sets`,
+      aliases: ['change set thumbnail', 'cover'],
+      context: t`Set selection`,
+      enabled: selection.group !== null && selectedIds().length > 1,
+      disabledReason: t`Select a set with at least two assets`,
+      execute: () => requestInspectorCommand('compare-set'),
+    },
+    {
+      id: 'edit-set-name',
+      label: t`Edit set name`,
+      description: t`Focus the selected set name field`,
+      category: t`Selection and sets`,
+      aliases: ['rename set'],
+      context: t`Set selection`,
+      enabled: selection.group !== null,
+      disabledReason: t`Select a set`,
+      execute: () => requestInspectorCommand('edit-set-name'),
+    },
+    {
+      id: 'edit-set-kind',
+      label: t`Edit set kind`,
+      description: t`Focus the selected set kind field`,
+      category: t`Selection and sets`,
+      aliases: ['change set type'],
+      context: t`Set selection`,
+      enabled: selection.group !== null,
+      disabledReason: t`Select a set`,
+      execute: () => requestInspectorCommand('edit-set-kind'),
+    },
+    {
+      id: 'expand-selected-set',
+      label: t`Expand selected set`,
+      description: t`Show the selected set members at their stored positions`,
+      category: t`Selection and sets`,
+      aliases: ['open group'],
+      context: t`Set selection`,
+      enabled: selection.group !== null,
+      disabledReason: t`Select a set`,
+      execute: () => setExpanded(selection.group),
+    },
+    {
+      id: 'collapse-active-set',
+      label: t`Collapse active set`,
+      description: t`Return the expanded set to its compact thumbnail stack`,
+      category: t`Selection and sets`,
+      aliases: ['close group'],
+      context: t`Canvas`,
+      enabled: expanded !== null,
+      disabledReason: t`There is no expanded set`,
+      execute: () => setExpanded(null),
+    },
+    {
+      id: 'go-to-source',
+      label: t`Go to source`,
+      description: t`Navigate to the source asset of the selected relationship`,
+      category: t`Relationships`,
+      aliases: ['source image'],
+      context: t`Relationship or image`,
+      enabled: canNavigateRelationship,
+      disabledReason: t`Select a related image or relationship`,
+      execute: () => {
+        const relationship = relationshipActions[0]
+        if (relationship) return go(relationship.sourceImageId)
+      },
+    },
+    {
+      id: 'go-to-derived',
+      label: t`Go to derived`,
+      description: t`Navigate to the derived asset of the selected relationship`,
+      category: t`Relationships`,
+      aliases: ['derived image'],
+      context: t`Relationship or image`,
+      enabled: canNavigateRelationship,
+      disabledReason: t`Select a related image or relationship`,
+      execute: () => {
+        const relationship = relationshipActions[0]
+        if (relationship) return go(relationship.derivedImageId)
+      },
+    },
+    {
+      id: 'remove-relationship',
+      label: t`Remove relationship`,
+      description: t`Unlink the selected relationship`,
+      category: t`Relationships`,
+      aliases: ['unlink'],
+      context: t`One relationship`,
+      enabled: canRemoveRelationship,
+      disabledReason: t`Select one relationship`,
+      dangerous: true,
+      execute: () => {
+        const relationship = relationshipActions[0]
+        return relationship
+          ? ImageService.UnlinkSource(repo.path, relationship.id).then(() =>
+              reload()
+            )
+          : undefined
+      },
+    },
+    {
+      id: 'purge-selection',
+      label: t`Permanently purge selected assets`,
+      description: t`Permanently remove selected files and metadata`,
+      category: t`Clipboard and lifecycle`,
+      aliases: ['permanent delete'],
+      shortcut: 'Shift+Delete',
+      shortcuts: ['Shift+Delete', 'Shift+Backspace'],
+      context: t`Active selection`,
+      enabled: selectedIds().length > 0,
+      disabledReason: t`Select assets to purge`,
+      dangerous: true,
+      execute: () => remove(true),
+    },
+    {
+      id: 'copy-original',
+      label: t`Copy original media`,
+      description: t`Copy original files for the active selection`,
+      category: t`Clipboard and lifecycle`,
+      aliases: ['copy assets'],
+      shortcut: 'Mod+C',
+      context: t`Active selection`,
+      enabled: selectedIds().length > 0,
+      disabledReason: t`Select assets to copy`,
+      execute: () => copyMedia(repo.path, selectedIds(), false),
+    },
+    {
+      id: 'copy-converted',
+      label: t`Copy converted media`,
+      description: t`Copy converted output when a converter is available`,
+      category: t`Clipboard and lifecycle`,
+      aliases: ['convert and copy'],
+      shortcut: 'Mod+Shift+C',
+      context: t`Active selection`,
+      enabled: selectedIds().length > 0,
+      disabledReason: t`Select assets to copy`,
+      execute: () => copyMedia(repo.path, selectedIds(), true),
+    },
+    {
+      id: 'paste-media',
+      label: t`Paste media`,
+      description: t`Import copied or native clipboard media`,
+      category: t`Clipboard and lifecycle`,
+      aliases: ['paste files'],
+      shortcut: 'Mod+V',
+      context: t`Active surface`,
+      enabled: true,
+      execute: () => paste(),
+    },
+    {
+      id: 'undo',
+      label: t`Undo`,
+      description: t`Undo the last repository operation`,
+      category: t`Clipboard and lifecycle`,
+      aliases: ['revert'],
+      shortcut: 'Mod+Z',
+      context: t`Workspace`,
+      enabled: true,
+      execute: undoActions.undo,
+    },
+    {
+      id: 'redo',
+      label: t`Redo`,
+      description: t`Redo the last undone repository operation`,
+      category: t`Clipboard and lifecycle`,
+      aliases: ['reapply'],
+      shortcut: 'Mod+Shift+Z',
+      shortcuts: ['Mod+Shift+Z', 'Ctrl+Y'],
+      context: t`Workspace`,
+      enabled: true,
+      execute: undoActions.redo,
+    },
+  ]
+  const actionById = new Map(actionCatalog.map((action) => [action.id, action]))
+  const actionRef = useRef(actionCatalog)
+  actionRef.current = actionCatalog
+  function executeAction(action: CanvasAction) {
+    if (!action.enabled) return Promise.resolve()
+    return Promise.resolve(action.execute()).catch(report)
+  }
+  function executeActionById(id: string) {
+    const action = actionById.get(id)
+    if (action) void executeAction(action)
+  }
+  function runPaletteAction(action: CanvasAction) {
+    changePaletteOpen(false)
+    requestAnimationFrame(() => {
+      void executeAction(action).then(() =>
+        setRecentActionIds((ids) =>
+          [action.id, ...ids.filter((id) => id !== action.id)].slice(0, 6)
+        )
+      )
+    })
+  }
+  function choosePaletteAsset(asset: PaletteAsset) {
+    changePaletteOpen(false)
+    requestAnimationFrame(() => void go(asset.id).catch(report))
+  }
+  useEffect(() => {
+    if (!paletteOpen) return
+    let cancelled = false
+    void LibraryService.ListImages(repo.path, {
+      search: '',
+      placement: '',
+      status: 'all',
+      tagId: 0,
+    })
+      .then((rows) => {
+        if (!cancelled)
+          setPaletteAssets(
+            (rows ?? [])
+              .filter((row) => !row.trashed)
+              .map((row) => ({
+                id: row.id,
+                fileName: row.fileName,
+                filePath: row.filePath,
+                tags: row.tags ?? [],
+              }))
+          )
+      })
+      .catch(callbacks.current.report)
+    return () => {
+      cancelled = true
+    }
+  }, [paletteOpen, repo.path])
+  const keyboardState = useRef({
+    assetsOpen,
+    assetsPinned,
+    closeAssets,
+    closeInspector,
+    compressIds,
+    executeAction,
+    expanded,
+    inspectorOpen,
+    inspectorPinned,
+    isMac,
+    menu,
+    openPalette,
+    paletteOpen,
+    previewImageId,
+    purgeIds,
+    selection,
+  })
+  keyboardState.current = {
+    assetsOpen,
+    assetsPinned,
+    closeAssets,
+    closeInspector,
+    compressIds,
+    executeAction,
+    expanded,
+    inspectorOpen,
+    inspectorPinned,
+    isMac,
+    menu,
+    openPalette,
+    paletteOpen,
+    previewImageId,
+    purgeIds,
+    selection,
+  }
+  useEffect(() => {
+    const down = (event: KeyboardEvent) => {
+      const state = keyboardState.current
+      const target = event.target
+      const inEditable =
+        target instanceof HTMLElement &&
+        !!target.closest(
+          'input,textarea,select,[contenteditable=true],[role=dialog]'
+        )
+      if (event.code === 'Space' && !inEditable && !state.paletteOpen) {
+        event.preventDefault()
+        setSpace(true)
+        return
+      }
+      if (
+        inEditable ||
+        state.paletteOpen ||
+        state.purgeIds ||
+        state.compressIds ||
+        state.previewImageId !== null
+      )
+        return
+      if (event.key === 'Escape') {
+        if (state.menu) setMenu(null)
+        else if (state.inspectorOpen && !state.inspectorPinned)
+          state.closeInspector()
+        else if (state.assetsOpen && !state.assetsPinned) state.closeAssets()
+        else if (
+          state.selection.ids.length ||
+          state.selection.edges.length ||
+          state.selection.group
+        )
+          setSelection(emptySelection)
+        else if (state.expanded !== null) setExpanded(null)
+        else return
+        event.preventDefault()
+        return
+      }
+      if (state.menu) return
+      const action = actionRef.current.find(
+        (candidate) =>
+          candidate.enabled &&
+          (
+            candidate.shortcuts ??
+            (candidate.shortcut ? [candidate.shortcut] : [])
+          ).some(
+            (shortcut) =>
+              (shortcut !== 'Ctrl+Y' || !state.isMac) &&
+              shortcutMatches(event, shortcut)
+          )
+      )
+      if (!action) return
+      event.preventDefault()
+      if (action.id === 'show-commands') state.openPalette(false)
+      else if (action.id === 'show-shortcuts') state.openPalette(true)
+      else void state.executeAction(action)
+    }
+    const up = (event: KeyboardEvent) => {
+      if (event.code === 'Space') setSpace(false)
+    }
+    const blur = () => setSpace(false)
+    window.addEventListener('keydown', down)
+    window.addEventListener('keyup', up)
+    window.addEventListener('blur', blur)
+    return () => {
+      window.removeEventListener('keydown', down)
+      window.removeEventListener('keyup', up)
+      window.removeEventListener('blur', blur)
+    }
+  }, [])
+  function menuAction(
+    id: string,
+    key = id,
+    label?: string,
+    separatorBefore = false
+  ): MenuAction {
+    const action = actionById.get(id)
+    return {
+      key,
+      label: label ?? action?.label ?? id,
+      disabled: !action?.enabled,
+      danger: action?.dangerous,
+      separatorBefore,
+      onSelect: () => {
+        if (action) void executeAction(action)
+      },
+    }
   }
   const menuItems: MenuAction[] = (() => {
     if (!menu) return []
+    const showCommands = menuAction('show-commands')
     if (menu.kind === 'pane')
       return [
-        {
-          key: 'select-all',
-          label: t`Select all`,
-          disabled: displayNodes.length === 0,
-          onSelect: () =>
-            setSelection({
-              surface: 'canvas',
-              ids: (data.images ?? [])
-                .filter((image) => image.placed && !image.trashed)
-                .map((image) => image.id),
-              edges: [],
-              group: null,
-            }),
-        },
-        {
-          key: 'auto-arrange',
-          label: t`Auto-arrange canvas`,
-          disabled: displayNodes.length < 2,
-          onSelect: () => run(() => arrange()),
-        },
+        menuAction('select-all-canvas'),
+        menuAction('auto-arrange-canvas', 'auto-arrange'),
+        showCommands,
       ]
-    if (menu.kind === 'selection') {
-      const ids = selectedIds()
+    if (menu.kind === 'selection')
       return [
-        {
-          key: 'create-set',
-          label: t`Create set`,
-          disabled: !canCreateSet,
-          onSelect: () => void createSet().catch(report),
-        },
-        {
-          key: 'auto-arrange-selection',
-          label: t`Auto-arrange selection`,
-          onSelect: () => run(() => arrange(selectedCanvasNodeIds)),
-        },
-        {
-          key: 'remove',
-          label: t`Remove from canvas`,
-          separatorBefore: true,
-          onSelect: () => run(() => removeCanvasAssets(ids, false)),
-        },
-        {
-          key: 'trash',
-          label: t`Trash selection`,
-          danger: true,
-          onSelect: () => run(() => removeCanvasAssets(ids, true)),
-        },
+        menuAction('create-set'),
+        menuAction('auto-arrange-selection'),
+        menuAction(
+          'unplace-selection',
+          'remove-from-canvas',
+          t`Remove from canvas`,
+          true
+        ),
+        menuAction('trash-canvas-selection', 'trash', t`Trash selection`),
+        showCommands,
       ]
-    }
     const nodeId = menu.nodeId
-    if (!nodeId) return []
-    if (nodeId.startsWith('set-')) {
-      const groupId = Number(nodeId.slice(4))
-      return [
-        {
-          key: 'dissolve-set',
-          label: t`Dissolve set`,
-          onSelect: () => run(() => GroupService.Ungroup(repo.path, groupId)),
-        },
-      ]
-    }
-    const imageId = Number(nodeId)
+    if (!nodeId) return [showCommands]
+    if (nodeId.startsWith('set-'))
+      return [menuAction('dissolve-set'), showCommands]
     const image = (data.images ?? []).find(
-      (candidate) => candidate.id === imageId
+      (candidate) => candidate.id === Number(nodeId)
     )
-    if (!image) return []
+    if (!image) return [showCommands]
     return [
-      {
-        key: 'find-assets',
-        label: t`Find in assets`,
-        onSelect: () => {
-          selectAssets([imageId])
-          setReveal({ id: imageId, folder: null })
-        },
-      },
-      {
-        key: 'remove',
-        label: t`Remove from canvas`,
-        separatorBefore: true,
-        onSelect: () => run(() => removeCanvasAssets([imageId], false)),
-      },
-      {
-        key: 'archive',
-        label: image.archived ? t`Unarchive` : t`Archive`,
-        onSelect: () =>
-          run(() =>
-            ImageService.SetArchived(repo.path, imageId, !image.archived)
-          ),
-      },
-      {
-        key: 'trash',
-        label: t`Trash`,
-        danger: true,
-        onSelect: () => run(() => removeCanvasAssets([imageId], true)),
-      },
+      menuAction('find-in-assets', 'find-assets', t`Find in Assets`),
+      menuAction('unplace-selection', 'remove', t`Remove from canvas`, true),
+      image.archived
+        ? menuAction('unarchive-selection', 'archive')
+        : menuAction('archive-selection', 'archive'),
+      menuAction('trash-canvas-selection', 'trash', t`Trash`),
+      showCommands,
     ]
   })()
-  const toolbar = (
-    label: string,
-    action: () => Promise<unknown>,
-    disabled = false
-  ) => (
-    <Button
-      variant="secondary"
-      size="sm"
-      disabled={disabled}
-      onClick={() => void action().catch(report)}
-    >
-      {label}
-    </Button>
-  )
   return (
-    <div className="flex h-screen flex-col bg-surface-canvas text-ink">
-      <header className="flex items-center gap-2 border-b border-black/10 bg-card px-3 py-2 text-xs">
-        <button
-          type="button"
-          aria-label={t`Assets`}
-          aria-expanded={assetsOpen}
-          title={t`Toggle Assets shelf (Cmd+B)`}
-          data-testid="toggle-assets-shelf"
-          onClick={() => setAssetsOpen((v) => !v)}
-          className={cn(
-            'inline-flex h-8 w-8 items-center justify-center rounded-sm border transition-colors focus-visible:ring-2 focus-visible:ring-primary/40',
-            assetsOpen
-              ? 'border-black/20 bg-black/[0.06] text-ink'
-              : 'border-black/16 bg-transparent text-ink/70 hover:bg-black/[0.03] hover:text-ink'
-          )}
-        >
-          <PanelLeft className="h-4 w-4" />
-        </button>
-        <RepoSelect repo={repo} />
-        <h1 className="text-xs font-semibold">
-          <Trans>Canvas</Trans>
-        </h1>
-        {toolbar(t`Rescan`, reload)}
-        <label className="inline-flex h-8 cursor-pointer items-center justify-center rounded-sm border border-black/16 px-3 text-xs font-semibold text-ink transition-colors hover:bg-black/[0.03] focus-within:ring-2 focus-within:ring-primary/40">
-          <Trans>Import</Trans>
-          <input
-            type="file"
-            multiple
-            accept="image/*,video/*"
-            className="hidden"
-            onChange={(e) => {
-              const files = Array.from(e.target.files ?? [])
-              void filesToMedia(files)
-                .then((media) => paste(media, 'assets'))
-                .catch(report)
-              e.target.value = ''
-            }}
-          />
-        </label>
-        <div className="flex-1" />
-        <button
-          type="button"
-          aria-label={t`Inspector`}
-          aria-expanded={inspectorOpen}
-          title={t`Toggle Inspector shelf (Cmd+I)`}
-          data-testid="toggle-inspector-shelf"
-          onClick={() => setInspectorOpen((v) => !v)}
-          className={cn(
-            'inline-flex h-8 w-8 items-center justify-center rounded-sm border transition-colors focus-visible:ring-2 focus-visible:ring-primary/40',
-            inspectorOpen
-              ? 'border-black/20 bg-black/[0.06] text-ink'
-              : 'border-black/16 bg-transparent text-ink/70 hover:bg-black/[0.03] hover:text-ink'
-          )}
-        >
-          <PanelRight className="h-4 w-4" />
-        </button>
-      </header>
+    <div className="relative h-screen overflow-hidden bg-surface-canvas text-ink">
       {error && (
-        <div role="alert" className="bg-red-100 p-2 text-sm">
+        <div
+          role="alert"
+          className="absolute left-1/2 top-16 z-40 flex max-w-[min(620px,calc(100vw-24px))] -translate-x-1/2 items-center gap-3 rounded-md border border-danger/30 bg-card px-3 py-2 text-sm shadow-lg"
+        >
           {error}
           <button type="button" onClick={() => setError('')}>
             <Trans>Dismiss</Trans>
           </button>
         </div>
       )}
-      <div className="relative flex min-h-0 flex-1">
+      <div className="absolute inset-0">
         <ShelfPanel
           title={t`Assets`}
           side="left"
           open={assetsOpen}
-          onOpenChange={setAssetsOpen}
-          shortcutHint="Cmd+B"
+          onOpenChange={(open) =>
+            executeActionById(open ? 'open-assets' : 'close-assets')
+          }
+          pinned={assetsPinned}
+          onPinnedChange={(pinned) =>
+            executeActionById(pinned ? 'pin-assets' : 'unpin-assets')
+          }
+          focusHidden={focusCanvas}
+          shortcutHint={displayShortcut(
+            actionById.get('toggle-assets')?.shortcut ?? '',
+            isMac
+          )}
         >
           <LibraryPanel
             path={repo.path}
@@ -896,13 +1808,22 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             }}
             reveal={reveal}
             change={reload}
-            compress={setCompressIds}
+            compress={(ids) => {
+              selectAssets(ids)
+              requestAnimationFrame(() =>
+                executeActionById('compress-selection')
+              )
+            }}
+            searchFocusRequest={searchFocusRequest}
+            navigatorModeRequest={navigatorModeRequest}
+            onShowCommands={() => executeActionById('show-commands')}
           />
         </ShelfPanel>
         <main
           ref={host}
           aria-label={t`Canvas`}
-          className="relative min-w-0 flex-1"
+          tabIndex={-1}
+          className="absolute inset-0 min-w-0 outline-none"
           onClickCapture={(event) => {
             if (
               (event.ctrlKey || event.metaKey) &&
@@ -1033,6 +1954,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
                     p.y,
                     group
                   )
+                  if (!assetsPinned) closeAssets()
                   setSelection({
                     surface: 'canvas',
                     ids: group ? [] : ids,
@@ -1142,6 +2064,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             onPaneClick={() => {
               setSelection(emptySelection)
               setExpanded(null)
+              if (inspectorOpen && !inspectorPinned) closeInspector()
             }}
             onNodeClick={(event, node) => {
               if (!(event.shiftKey || event.ctrlKey || event.metaKey))
@@ -1334,51 +2257,58 @@ function Canvas({ repo }: { repo: RepoInfo }) {
               onClose={() => setMenu(null)}
             />
           )}
-          <SelectionHud
-            selectedNodes={displayNodes.filter((n) => n.selected)}
-            hostRef={host}
-            canCreateSet={canCreateSet}
-            onCreateSet={() => void createSet().catch(report)}
-            onAlignHorizontal={() => void alignHorizontal().catch(report)}
-            onAlignVertical={() => void alignVertical().catch(report)}
-            onArrangeSubgraph={() =>
-              void arrange(selectedCanvasNodeIds).catch(report)
-            }
-            onUnplace={handleUnplace}
-            onPreview={handlePreview}
-            onLocate={handleLocate}
-          />
-          <CanvasDock
-            canFitAll={displayNodes.length > 0}
-            canFitSelection={displayNodes.some((n) => n.selected)}
-            canAutoArrange={displayNodes.length >= 2}
-            canCreateSet={canCreateSet}
-            onFitAll={async () => {
-              await flow.fitView({ padding: 0.2 })
-              await ImageService.SetViewport(repo.path, flow.getViewport())
-            }}
-            onFitSelection={async () => {
-              await flow.fitView({
-                nodes: displayNodes.filter((n) => n.selected),
-                padding: 0.2,
-              })
-              await ImageService.SetViewport(repo.path, flow.getViewport())
-            }}
-            onResetZoom={async () => {
-              const p = center()
-              await flow.setCenter(p.x, p.y, { zoom: 1 })
-              await ImageService.SetViewport(repo.path, flow.getViewport())
-            }}
-            onAutoArrange={() => void arrange().catch(report)}
-            onCreateSet={() => void createSet().catch(report)}
-          />
+          {!focusCanvas && (
+            <SelectionHud
+              selectedNodes={displayNodes.filter((n) => n.selected)}
+              hostRef={host}
+              canCreateSet={canCreateSet}
+              onCreateSet={() => executeActionById('create-set')}
+              onAlignHorizontal={() => executeActionById('align-horizontal')}
+              onAlignVertical={() => executeActionById('align-vertical')}
+              onArrangeSubgraph={() =>
+                executeActionById('auto-arrange-selection')
+              }
+              onUnplace={() => executeActionById('unplace-selection')}
+              onPreview={() => executeActionById('preview-selection')}
+              onLocate={() => executeActionById('locate-selection')}
+              onMore={handleMore}
+            />
+          )}
+          {!focusCanvas && (
+            <CanvasDock
+              canFitAll={displayNodes.length > 0}
+              canFitSelection={displayNodes.some((n) => n.selected)}
+              canAutoArrange={displayNodes.length >= 2}
+              shortcuts={{
+                fitAll: actionById.get('fit-all')?.shortcut ?? '',
+                fitSelection: actionById.get('fit-selection')?.shortcut ?? '',
+                resetZoom: actionById.get('reset-zoom')?.shortcut ?? '',
+                autoArrange:
+                  actionById.get('auto-arrange-active')?.shortcut ?? '',
+              }}
+              onFitAll={() => executeActionById('fit-all')}
+              onFitSelection={() => executeActionById('fit-selection')}
+              onResetZoom={() => executeActionById('reset-zoom')}
+              onAutoArrange={() => executeActionById('auto-arrange-active')}
+            />
+          )}
         </main>
         <ShelfPanel
           title={t`Inspector`}
           side="right"
           open={inspectorOpen}
-          onOpenChange={setInspectorOpen}
-          shortcutHint="Cmd+I"
+          onOpenChange={(open) =>
+            executeActionById(open ? 'open-inspector' : 'close-inspector')
+          }
+          pinned={inspectorPinned}
+          onPinnedChange={(pinned) =>
+            executeActionById(pinned ? 'pin-inspector' : 'unpin-inspector')
+          }
+          focusHidden={focusCanvas}
+          shortcutHint={displayShortcut(
+            actionById.get('toggle-inspector')?.shortcut ?? '',
+            isMac
+          )}
         >
           <DetailPanel
             path={repo.path}
@@ -1387,9 +2317,151 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             change={reload}
             go={(id, folder) => void go(id, folder).catch(report)}
             onError={report}
+            commandRequest={inspectorCommandRequest}
+            onAction={executeActionById}
           />
         </ShelfPanel>
       </div>
+      <div
+        role="toolbar"
+        aria-label={t`Canvas workspace controls`}
+        data-testid="canvas-workspace-controls"
+        aria-hidden={focusCanvas}
+        inert={focusCanvas}
+        className={cn(
+          'absolute left-1/2 top-3 z-40 flex max-w-[calc(100vw-24px)] -translate-x-1/2 items-center gap-1 rounded-full border border-border bg-card/95 p-1.5 shadow-xl backdrop-blur-xl transition-opacity motion-reduce:transition-none',
+          focusCanvas && 'pointer-events-none opacity-0'
+        )}
+      >
+        <h1 className="sr-only">
+          <Trans>Canvas</Trans>
+        </h1>
+        <RepoSelect repo={repo} openRequest={repoOpenRequest} />
+        <button
+          type="button"
+          aria-label={t`Show commands`}
+          title={t`Show commands (${displayShortcut(actionById.get('show-commands')?.shortcut ?? '', isMac)})`}
+          data-testid="open-command-palette"
+          onClick={() => openPalette(false)}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-full text-ink/75 transition-colors hover:bg-black/[0.06] hover:text-ink focus-visible:ring-2 focus-visible:ring-primary/40"
+        >
+          <Command className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          aria-label={t`Assets`}
+          aria-expanded={assetsOpen}
+          title={t`Toggle Assets shelf (${displayShortcut(actionById.get('toggle-assets')?.shortcut ?? '', isMac)})`}
+          data-testid="toggle-assets-shelf"
+          onClick={() => executeActionById('toggle-assets')}
+          className={cn(
+            'inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors focus-visible:ring-2 focus-visible:ring-primary/40',
+            assetsOpen
+              ? 'bg-primary-soft text-ink'
+              : 'text-ink/75 hover:bg-black/[0.06] hover:text-ink'
+          )}
+        >
+          <PanelLeft className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          aria-label={t`Inspector`}
+          aria-expanded={inspectorOpen}
+          title={t`Toggle Inspector shelf (${displayShortcut(actionById.get('toggle-inspector')?.shortcut ?? '', isMac)})`}
+          data-testid="toggle-inspector-shelf"
+          onClick={() => executeActionById('toggle-inspector')}
+          className={cn(
+            'inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors focus-visible:ring-2 focus-visible:ring-primary/40',
+            inspectorOpen
+              ? 'bg-primary-soft text-ink'
+              : 'text-ink/75 hover:bg-black/[0.06] hover:text-ink'
+          )}
+        >
+          <PanelRight className="h-4 w-4" />
+        </button>
+        <div className="relative">
+          <button
+            type="button"
+            aria-label={t`Repository actions`}
+            aria-haspopup="menu"
+            aria-expanded={repoMenuOpen}
+            data-testid="repository-actions"
+            onClick={() => setRepoMenuOpen((open) => !open)}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full text-ink/75 transition-colors hover:bg-black/[0.06] hover:text-ink focus-visible:ring-2 focus-visible:ring-primary/40"
+          >
+            <MoreHorizontal className="h-4 w-4" />
+          </button>
+          {repoMenuOpen && (
+            <div
+              role="menu"
+              aria-label={t`Repository actions`}
+              className="absolute right-0 top-11 z-50 grid min-w-44 gap-1 rounded-lg border border-border bg-card p-1.5 shadow-xl"
+            >
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setRepoMenuOpen(false)
+                  executeActionById('rescan-repository')
+                }}
+                className="rounded px-3 py-2 text-left text-xs hover:bg-black/[0.05] focus-visible:ring-2 focus-visible:ring-primary/40"
+              >
+                <Trans>Rescan repository</Trans>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setRepoMenuOpen(false)
+                  importInput.current?.click()
+                }}
+                className="rounded px-3 py-2 text-left text-xs hover:bg-black/[0.05] focus-visible:ring-2 focus-visible:ring-primary/40"
+              >
+                <Trans>Import media</Trans>
+              </button>
+            </div>
+          )}
+        </div>
+        <input
+          ref={importInput}
+          type="file"
+          multiple
+          accept="image/*,video/*"
+          className="hidden"
+          onChange={(event) => {
+            const files = Array.from(event.target.files ?? [])
+            void filesToMedia(files)
+              .then((media) => paste(media, 'assets'))
+              .catch(report)
+            event.target.value = ''
+          }}
+        />
+      </div>
+      {focusCanvas && (
+        <button
+          type="button"
+          aria-label={t`Exit Focus Canvas mode`}
+          title={t`Exit Focus Canvas (${displayShortcut(actionById.get('toggle-focus-canvas')?.shortcut ?? '', isMac)})`}
+          onClick={toggleFocusMode}
+          className="group absolute left-0 top-1/2 z-40 flex h-12 w-2 -translate-y-1/2 items-center gap-2 overflow-hidden rounded-r-full border border-border bg-card/70 px-1 text-xs font-medium text-ink opacity-55 shadow-lg backdrop-blur transition-[width,opacity] hover:w-48 hover:bg-card/90 hover:opacity-100 focus-visible:w-48 focus-visible:bg-card/90 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 motion-reduce:transition-none"
+        >
+          <PanelLeft className="h-4 w-4 rotate-180" />
+          <span className="whitespace-nowrap opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100">
+            <Trans>Exit Focus Canvas</Trans>
+          </span>
+        </button>
+      )}
+      <CommandPalette
+        open={paletteOpen}
+        shortcutsOnly={shortcutsOnly}
+        initialQuery={paletteInitialQuery}
+        actions={actionCatalog}
+        recentActionIds={recentActionIds}
+        assets={paletteAssets}
+        onOpenChange={changePaletteOpen}
+        onRunAction={runPaletteAction}
+        onChooseAsset={choosePaletteAsset}
+      />
       {previewImageId !== null && (
         <LightboxViewer
           images={(data.images ?? []).filter((i) => i.placed && !i.trashed)}
