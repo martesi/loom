@@ -4,9 +4,29 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import {
+  clearFirstAttemptMarker,
   getAttemptDirectory,
   restoreFixtureRepos,
 } from './fixture-isolation.ts'
+
+test('clears stale markers before a first attempt and preserves retry markers', async () => {
+  const tempRoot = await mkdtemp(
+    path.join(os.tmpdir(), 'loom-e2e-retry-marker-')
+  )
+  const markerPath = path.join(tempRoot, 'first-attempt.json')
+
+  try {
+    await writeFile(markerPath, 'stale marker')
+    await clearFirstAttemptMarker(markerPath, 0)
+    await assert.rejects(stat(markerPath))
+
+    await writeFile(markerPath, 'current attempt marker')
+    await clearFirstAttemptMarker(markerPath, 1)
+    assert.equal(await readFile(markerPath, 'utf8'), 'current attempt marker')
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true })
+  }
+})
 
 test('restores each fixture repo from its pristine template', async () => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'loom-e2e-fixtures-'))

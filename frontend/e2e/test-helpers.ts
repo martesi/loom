@@ -16,11 +16,17 @@ const fixtureAttemptFile = path.resolve(
 async function fixtureRoots() {
   const roots = JSON.parse(await readFile(fixtureRootFile, 'utf8')) as {
     browseRoot: string
+    configRoot: string
   }
   const { attemptDirectory } = JSON.parse(
     await readFile(fixtureAttemptFile, 'utf8')
   ) as { attemptDirectory: string }
   return { ...roots, attemptDirectory }
+}
+
+export async function fixtureConfigPath(...segments: string[]) {
+  const { configRoot } = await fixtureRoots()
+  return path.join(configRoot, ...segments)
 }
 
 export async function fixturePath(repoName: string, ...segments: string[]) {

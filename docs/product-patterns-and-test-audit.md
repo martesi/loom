@@ -128,6 +128,20 @@ their application sources were not cloned.
   Playwright attempt was skipped at 2,003 of 2,048 task slots; after usage fell
   to 1,600, the full server-mode suite passed 43/43 in 1.4 minutes through the
   Nix E2E environment.
+- Round 6 adds a Playwright retry integration case: its first attempt opens a
+  real fixture repo, confirms app recent-repo config was written, mutates the
+  fixture and generates a file, then writes an external marker and deliberately
+  fails. The retry requires that marker and verifies the prior attempt folder
+  is gone, the original image bytes are restored, and `.loom`, generated
+  output, and app config are gone. The auto fixture clears stale markers
+  before reading roots or restoring fixtures, so setup failures and reused run
+  IDs cannot carry a previous marker into a retry. The fixture implementation
+  also documents its single-worker requirement: restoration removes shared
+  browse/config roots and helpers read one shared attempt file. Run this suite
+  with `workers: 1`. Round 6 verification: full Playwright completed with 43
+  passed and the retry test's expected first-fail/second-pass flaky result;
+  harness tests 5/5, frontend unit tests 4/4, Go tests, Biome, and E2E
+  typecheck passed.
 
 ## Sources
 

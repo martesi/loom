@@ -28,3 +28,10 @@ export function getAttemptDirectory(testId: string, retry: number) {
   const safeTestId = testId.replace(/[^a-zA-Z0-9_-]/g, '-')
   return `attempt-${safeTestId}-retry-${retry}`
 }
+
+export async function clearFirstAttemptMarker(
+  markerPath: string,
+  retry: number
+) {
+  if (retry === 0) await rm(markerPath, { force: true })
+}
