@@ -164,11 +164,7 @@ export function ShelfPanel({
         </div>
         <Tooltip
           side={side === 'left' ? 'right' : 'left'}
-          label={
-            pinned
-              ? t`Keep ${title} open`
-              : t`Allow ${title} to close after actions`
-          }
+          label={pinned ? t`Unpin ${title} drawer` : t`Pin ${title} drawer`}
         >
           <button
             type="button"

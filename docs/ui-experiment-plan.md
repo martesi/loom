@@ -185,6 +185,8 @@ the palette and visible controls.
 | `Mod` + drag from image A to image B or set | Canvas | Create relationship from A; preserve rejection feedback |
 | Arrow keys / Escape | Lightbox | Previous / next image; close preview |
 
+Preview remains available through the dock and command palette without a dedicated keyboard shortcut.
+
 Do not bind `Mod+R` or `Mod+P` in this experiment. Avoid single-letter global
 commands. Do not intercept browser/system editing shortcuts while focus is in
 an input, textarea, select, contenteditable region, or modal editor. Keep

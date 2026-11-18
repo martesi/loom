@@ -92,6 +92,41 @@ test.describe('contextual Canvas Dock', () => {
     )
   })
 
+  test('Space activates the focused Preview button and pans from the canvas background', async ({
+    page,
+  }) => {
+    await openFixtureRepo(page, 'dock-fixtures', { drawers: 'closed' })
+    await placeAssets(page, ['dock-alpha.png'])
+    await selectImageNodes(page, [0])
+
+    const preview = page.getByTestId('dock-preview')
+    await page.getByRole('main', { name: 'Canvas' }).focus()
+    for (let index = 0; index < 30; index += 1) {
+      if (await preview.evaluate((button) => button === document.activeElement))
+        break
+      await page.keyboard.press('Tab')
+    }
+    await expect(preview).toBeFocused()
+    await page.keyboard.press('Space')
+    await expect(page.locator('.yarl__portal')).toBeVisible()
+    await page.keyboard.press('Escape')
+
+    await page.locator('.react-flow__pane').click({
+      position: { x: 80, y: 300 },
+    })
+    await page.getByRole('main', { name: 'Canvas' }).focus()
+    const viewport = page.locator('.react-flow__viewport')
+    const beforePan = await viewport.getAttribute('style')
+    await page.mouse.move(80, 300)
+    await page.keyboard.down('Space')
+    await page.mouse.down()
+    await page.mouse.move(160, 360, { steps: 5 })
+    await page.mouse.up()
+    await page.keyboard.up('Space')
+
+    await expect.poll(() => viewport.getAttribute('style')).not.toBe(beforePan)
+  })
+
   test('Align Horizontally and Vertically actions work accurately', async ({
     page,
   }) => {

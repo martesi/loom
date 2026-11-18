@@ -1768,12 +1768,24 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     const down = (event: KeyboardEvent) => {
       const state = keyboardState.current
       const target = event.target
-      const inEditable =
-        target instanceof HTMLElement &&
-        !!target.closest(
-          'input,textarea,select,[contenteditable=true],[role=dialog]'
-        )
-      if (event.code === 'Space' && !inEditable && !state.paletteOpen) {
+      const targetElement = target instanceof Element ? target : null
+      const inEditable = !!targetElement?.closest(
+        'input,textarea,select,[contenteditable=true],[role=dialog]'
+      )
+      const isInteractiveTarget = !!targetElement?.closest(
+        'button,a[href],input,textarea,select,summary,[contenteditable=true],[role=button],[role^=menuitem],[role=option],[role=checkbox],[role=radio],[role=switch],[role=tab],[role=combobox],[role=listbox],[role=slider],[role=spinbutton]'
+      )
+      const isCanvasSurface =
+        target === document.body ||
+        target === document.documentElement ||
+        !!targetElement?.closest('main,.react-flow')
+      if (
+        event.code === 'Space' &&
+        !inEditable &&
+        !isInteractiveTarget &&
+        isCanvasSurface &&
+        !state.paletteOpen
+      ) {
         event.preventDefault()
         setSpace(true)
         return

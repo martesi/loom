@@ -81,18 +81,22 @@ test.describe('floating Canvas drawers', () => {
     await page.keyboard.press('ControlOrMeta+b')
     await expect(assets).toHaveAttribute('data-state', 'open')
 
-    await page.getByTestId('pin-shelf-left').click()
-    await expect(page.getByTestId('pin-shelf-left')).toHaveAttribute(
-      'aria-pressed',
-      'true'
+    const pin = page.getByTestId('pin-shelf-left')
+    await pin.hover()
+    await expect(page.getByTestId('base-tooltip-popup')).toHaveText(
+      'Pin Assets drawer'
+    )
+    await pin.click()
+    await expect(pin).toHaveAttribute('aria-pressed', 'true')
+    await page.mouse.move(0, 0)
+    await pin.hover()
+    await expect(page.getByTestId('base-tooltip-popup')).toHaveText(
+      'Unpin Assets drawer'
     )
     await dropAsset(page, 'dock-alpha.png', { x: 420, y: 180 })
     await expect(assets).toHaveAttribute('data-state', 'open')
-    await page.getByTestId('pin-shelf-left').click()
-    await expect(page.getByTestId('pin-shelf-left')).toHaveAttribute(
-      'aria-pressed',
-      'false'
-    )
+    await pin.click()
+    await expect(pin).toHaveAttribute('aria-pressed', 'false')
     await dropAsset(page, 'dock-beta.png', { x: 640, y: 180 })
     await expect(assets).toHaveAttribute('data-state', 'closed')
     await expect(page.getByRole('main', { name: 'Canvas' })).toBeFocused()
