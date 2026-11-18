@@ -32,8 +32,8 @@ export default defineConfig({
     timeout: 10_000,
   },
   forbidOnly: !!process.env.CI,
-  // Fixtures are mutable; retries would reuse state until attempts are isolated.
-  retries: 0,
+  // Test fixtures are restored from immutable templates before each attempt.
+  retries: process.env.CI ? 1 : 0,
   reporter: [
     ['list'],
     [

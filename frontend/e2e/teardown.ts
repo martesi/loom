@@ -10,7 +10,8 @@ const runDir = path.resolve(
 
 export default async function teardown() {
   await Promise.all([
-    rm(path.join(runDir, 'fixture-root.txt'), { force: true }),
+    rm(path.join(runDir, 'fixture-root.json'), { force: true }),
+    rm(path.join(runDir, 'fixture-attempt.json'), { force: true }),
     rm(path.join(runDir, 'fixtures'), { force: true, recursive: true }),
   ])
 }

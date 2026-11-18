@@ -1,5 +1,9 @@
-import { expect, test } from '@playwright/test'
-import { fixturePath, openFixtureRepo } from './test-helpers'
+import { expect, test } from './test-fixtures'
+import {
+  enterFixtureAttemptFolder,
+  fixturePath,
+  openFixtureRepo,
+} from './test-helpers'
 
 test('server health, folder picker navigation, recent repos, and reload restoration', async ({
   page,
@@ -16,6 +20,7 @@ test('server health, folder picker navigation, recent repos, and reload restorat
     .click()
   const picker = page.getByRole('dialog')
   await expect(picker).toBeVisible()
+  await enterFixtureAttemptFolder(picker)
   await picker.getByRole('button', { name: 'library-fixtures' }).click()
   await expect(picker.getByRole('button', { name: 'nested' })).toBeVisible()
   await picker.getByRole('button', { name: 'nested' }).click()

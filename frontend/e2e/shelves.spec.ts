@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './test-fixtures'
 import { openFixtureRepo } from './test-helpers'
 
 test.describe('ShelfPanel Drawer Architecture', () => {

@@ -6,12 +6,33 @@ import { getE2ERunId } from './run-context'
 const runId = getE2ERunId()
 const fixtureRootFile = path.resolve(
   import.meta.dirname,
-  `../../.cache/e2e/runs/${runId}/fixture-root.txt`
+  `../../.cache/e2e/runs/${runId}/fixture-root.json`
+)
+const fixtureAttemptFile = path.resolve(
+  import.meta.dirname,
+  `../../.cache/e2e/runs/${runId}/fixture-attempt.json`
 )
 
+async function fixtureRoots() {
+  const roots = JSON.parse(await readFile(fixtureRootFile, 'utf8')) as {
+    browseRoot: string
+  }
+  const { attemptDirectory } = JSON.parse(
+    await readFile(fixtureAttemptFile, 'utf8')
+  ) as { attemptDirectory: string }
+  return { ...roots, attemptDirectory }
+}
+
 export async function fixturePath(repoName: string, ...segments: string[]) {
-  const root = (await readFile(fixtureRootFile, 'utf8')).trim()
-  return path.join(root, repoName, ...segments)
+  const { browseRoot, attemptDirectory } = await fixtureRoots()
+  return path.join(browseRoot, attemptDirectory, repoName, ...segments)
+}
+
+export async function enterFixtureAttemptFolder(picker: Locator) {
+  const { attemptDirectory } = await fixtureRoots()
+  await picker
+    .getByRole('button', { name: attemptDirectory, exact: true })
+    .click()
 }
 
 export async function openFixtureRepo(page: Page, repoName: string) {
@@ -25,6 +46,7 @@ export async function openFixtureRepo(page: Page, repoName: string) {
 
   const picker = page.getByRole('dialog')
   await expect(picker).toBeVisible()
+  await enterFixtureAttemptFolder(picker)
   await picker
     .getByRole('button', { name: new RegExp(`^${repoName}(?:\\s+repo)?$`) })
     .click()

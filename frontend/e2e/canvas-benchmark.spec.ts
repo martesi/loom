@@ -1,7 +1,8 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { type Browser, expect, type Page, test } from '@playwright/test'
+import type { Browser, Page } from '@playwright/test'
+import { expect, test } from './test-fixtures'
 import { assets, imageNodes, openFixtureRepo } from './test-helpers'
 
 const photoCount = 1000

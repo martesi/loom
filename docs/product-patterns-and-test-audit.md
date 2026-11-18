@@ -105,9 +105,10 @@ their application sources were not cloned.
   `test:agent` command selects an Arca profile separate from the default. That
   profile has a fixed data directory and CDP port, so concurrent
   `test:agent` runs are unsupported; run agent-browser checks one at a time.
-- CI retries are disabled until each test attempt gets a fresh copy of its
-  mutable fixture repo. A retry currently could inherit files and `.loom` state
-  from the failed attempt.
+- Mutable fixture repos are copied to a unique path from immutable templates
+  before every test attempt. App config is also cleared so repo databases,
+  recent-repo state, and generated files cannot leak into retries; CI allows one
+  retry while local runs remain single-attempt.
 - The Sources, self-link, and collapsed-set source cases now have direct
   browser assertions. The collapsed-set case also checks that no relationship
   preview appears while the Ctrl-drag is in progress.
@@ -120,8 +121,13 @@ their application sources were not cloned.
   action, and one relationship gesture produced no edge. At the time, the
   container had 1,864 of 2,048 task slots in use. Isolated Assets and shelf
   tests passed 10/10, the relationship gesture passed 1/1, and the multi-asset
-  selection assertion passed 1/1. Re-run the full suite with more process
-  headroom before treating this checkout's E2E status as green.
+  selection assertion passed 1/1. This left E2E status inconclusive until the
+  headroom-available rerun in Round 5 below.
+- Round 5 adds a harness unit test proving attempts use unique fixture paths,
+  and config, `.loom` state, and generated files are cleared. The initial full
+  Playwright attempt was skipped at 2,003 of 2,048 task slots; after usage fell
+  to 1,600, the full server-mode suite passed 43/43 in 1.4 minutes through the
+  Nix E2E environment.
 
 ## Sources
 

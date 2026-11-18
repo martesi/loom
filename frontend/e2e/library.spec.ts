@@ -1,5 +1,5 @@
 import { rm, writeFile } from 'node:fs/promises'
-import { expect, test } from '@playwright/test'
+import { expect, test } from './test-fixtures'
 import {
   asset,
   assets,
