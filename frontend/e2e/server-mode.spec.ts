@@ -51,6 +51,7 @@ test('direct openRepo bootstraps a canvas and naked canvas route redirects', asy
   await page.goto(`/?openRepo=${encodeURIComponent(directPath)}`)
   await expect(page).toHaveURL(/\/canvas$/)
   await expect(page.getByRole('heading', { name: 'Canvas' })).toBeVisible()
+  await page.getByTestId('toggle-assets-shelf').click()
   await expect(
     page.getByRole('option', { name: 'direct-alpha.png' })
   ).toBeVisible()
@@ -93,11 +94,11 @@ test('server repo switcher opens another recent repo in a new tab', async ({
   await newPage.close()
 })
 
-test('side panels collapse into overlays on compact viewports', async ({
+test('drawers overlay the full Canvas and switch sides on compact viewports', async ({
   page,
 }) => {
-  await page.setViewportSize({ width: 1024, height: 700 })
-  await openFixtureRepo(page, 'responsive-fixtures')
+  await page.setViewportSize({ width: 390, height: 700 })
+  await openFixtureRepo(page, 'responsive-fixtures', { drawers: 'closed' })
 
   const canvas = page.getByRole('main', { name: 'Canvas' })
   await expect(
@@ -106,15 +107,26 @@ test('side panels collapse into overlays on compact viewports', async ({
   await expect(
     page.getByRole('button', { name: 'Inspector', exact: true })
   ).toHaveAttribute('aria-expanded', 'false')
-  await expect.poll(async () => (await canvas.boundingBox())?.width).toBe(1024)
+  await expect.poll(async () => (await canvas.boundingBox())?.width).toBe(390)
 
   await page.getByRole('button', { name: 'Assets', exact: true }).click()
   await expect(
     page.getByRole('button', { name: 'Assets', exact: true })
   ).toHaveAttribute('aria-expanded', 'true')
-  await expect.poll(async () => (await canvas.boundingBox())?.width).toBe(1024)
+  await expect.poll(async () => (await canvas.boundingBox())?.width).toBe(390)
 
   await page.getByRole('button', { name: 'Inspector', exact: true }).click()
+  await expect(
+    page.getByRole('button', { name: 'Assets', exact: true })
+  ).toHaveAttribute('aria-expanded', 'false')
+  await expect(page.locator('aside[aria-label="Assets"]')).toHaveAttribute(
+    'data-state',
+    'closed'
+  )
+  await expect(page.locator('aside[aria-label="Inspector"]')).toHaveAttribute(
+    'data-state',
+    'open'
+  )
   await expect(
     page.getByText('Select an asset, set, or relationship.')
   ).toBeVisible()
@@ -122,7 +134,7 @@ test('side panels collapse into overlays on compact viewports', async ({
   await page.setViewportSize({ width: 1400, height: 700 })
   await expect(
     page.getByRole('button', { name: 'Assets', exact: true })
-  ).toHaveAttribute('aria-expanded', 'true')
+  ).toHaveAttribute('aria-expanded', 'false')
   await expect(
     page.getByRole('button', { name: 'Inspector', exact: true })
   ).toHaveAttribute('aria-expanded', 'true')

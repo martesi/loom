@@ -1,5 +1,6 @@
 import { expect, test } from './test-fixtures'
 import {
+  autoArrangeCanvas,
   imageNodes,
   nodeBox,
   openFixtureRepo,
@@ -117,9 +118,8 @@ test.describe('Physical Card & Set Stack Metaphors, Studio Palette', () => {
     await expect(resBadge).toBeVisible()
     await expect(resBadge).toHaveText(/\d+×\d+/)
 
-    const quickAction = hud.getByTestId('quick-action-pill')
-    await expect(quickAction).toBeVisible()
-    await expect(quickAction).toHaveText('Quick Action')
+    await expect(hud.getByTestId('image-preview-action')).toBeVisible()
+    await expect(hud.getByTestId('image-more-action')).toBeVisible()
 
     const fileName = hud.getByTestId('image-node-filename')
     await expect(fileName).toBeVisible()
@@ -142,11 +142,11 @@ test.describe('Physical Card & Set Stack Metaphors, Studio Palette', () => {
       'group-beta.png',
       'group-gamma.png',
     ])
-    await page.getByRole('button', { name: 'Auto-arrange' }).click()
+    await autoArrangeCanvas(page)
     await page.getByRole('button', { name: 'Reset 100%' }).click()
 
     await selectImageNodes(page, [0, 1])
-    await page.getByTestId('dock-create-set').click()
+    await page.getByTestId('hud-create-set').click()
 
     const group = page.locator('.react-flow__node-group')
     await expect(group).toHaveCount(1)
@@ -197,11 +197,11 @@ test.describe('Physical Card & Set Stack Metaphors, Studio Palette', () => {
       'group-beta.png',
       'group-gamma.png',
     ])
-    await page.getByRole('button', { name: 'Auto-arrange' }).click()
+    await autoArrangeCanvas(page)
     await page.getByRole('button', { name: 'Reset 100%' }).click()
 
     await selectImageNodes(page, [0, 1])
-    await page.getByTestId('dock-create-set').click()
+    await page.getByTestId('hud-create-set').click()
 
     const group = page.locator('.react-flow__node-group')
     await expect(group).toHaveCount(1)

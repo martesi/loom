@@ -2,9 +2,12 @@ import type { Locator, Page } from '@playwright/test'
 import { expect, test } from './test-fixtures'
 import {
   asset,
+  autoArrangeCanvas,
   ctrlDrag,
+  dropAsset,
   imageNodes,
   nodeBox,
+  openAssetsShelf,
   openFixtureRepo,
   placeAssets,
   selectImageNodes,
@@ -31,7 +34,7 @@ test('relationships reject cycles, support ctrl-click selection, and delete as e
     'relation-beta.png',
     'relation-gamma.png',
   ])
-  await page.getByRole('button', { name: 'Auto-arrange' }).click()
+  await autoArrangeCanvas(page)
   await page.getByRole('button', { name: 'Reset 100%' }).click()
 
   const nodes = imageNodes(page)
@@ -82,7 +85,7 @@ test('relationships reject cycles, support ctrl-click selection, and delete as e
   await page.keyboard.up('Control')
   await expect(page.locator('.react-flow__edge')).toHaveCount(1)
 
-  await page.getByRole('button', { name: 'Auto-arrange' }).click()
+  await autoArrangeCanvas(page)
   await expect
     .poll(async () => {
       const source = await nodeBox(nodes.nth(0))
@@ -145,7 +148,7 @@ test('collapsed sets cannot be relationship sources', async ({ page }) => {
   ])
   await page.getByRole('button', { name: 'Reset 100%' }).click()
   await selectImageNodes(page, [0, 1])
-  await page.getByRole('button', { name: 'Create set', exact: true }).click()
+  await page.getByTestId('hud-create-set').click()
 
   const group = page.locator('.react-flow__node-group')
   await expect(group).toHaveCount(1)
@@ -216,7 +219,7 @@ test('auto-arrange respects resized node bounds', async ({ page }) => {
   await expect
     .poll(async () => (await nodeBox(nodes.first())).width)
     .toBeGreaterThan(beforeResize.width + 150)
-  await page.getByRole('button', { name: 'Auto-arrange' }).click()
+  await autoArrangeCanvas(page)
 
   await expect
     .poll(async () => {
@@ -231,12 +234,7 @@ test('auto-arrange respects resized node bounds', async ({ page }) => {
     })
     .toBe(true)
 
-  await asset(page, 'arrange-gamma.png').dragTo(
-    page.locator('.react-flow__pane'),
-    {
-      targetPosition: { x: 500, y: 450 },
-    }
-  )
+  await dropAsset(page, 'arrange-gamma.png', { x: 500, y: 450 })
   await expect(nodes).toHaveCount(3)
   await selectImageNodes(page, [1, 2])
   await nodes.nth(1).click({ button: 'right' })
@@ -263,10 +261,10 @@ test('sets persist metadata and movement, accept source links, expand, and disso
     'group-beta.png',
     'group-gamma.png',
   ])
-  await page.getByRole('button', { name: 'Auto-arrange' }).click()
+  await autoArrangeCanvas(page)
   await page.getByRole('button', { name: 'Reset 100%' }).click()
   await selectImageNodes(page, [0, 1])
-  await page.getByRole('button', { name: 'Create set', exact: true }).click()
+  await page.getByTestId('hud-create-set').click()
 
   let group = page.locator('.react-flow__node-group')
   await expect(group).toHaveCount(1)
@@ -353,6 +351,7 @@ test('sets persist metadata and movement, accept source links, expand, and disso
 
   group = page.locator('.react-flow__node-group')
   await group.click()
+  await page.getByTestId('toggle-inspector-shelf').click()
   await page.getByRole('button', { name: 'Dissolve set' }).click()
   await expect(page.locator('.react-flow__node-group')).toHaveCount(0)
   await expect(imageNodes(page)).toHaveCount(3)
@@ -364,15 +363,16 @@ test('dragging an unplaced Assets item onto a set places it and adds membership'
 }) => {
   await openFixtureRepo(page, 'group-drop-fixtures')
   await placeAssets(page, ['group-alpha.png', 'group-beta.png'])
-  await page.getByRole('button', { name: 'Auto-arrange' }).click()
+  await autoArrangeCanvas(page)
   await page.getByRole('button', { name: 'Reset 100%' }).click()
   await selectImageNodes(page, [0, 1])
-  await page.getByRole('button', { name: 'Create set', exact: true }).click()
+  await page.getByTestId('hud-create-set').click()
 
   const group = page.locator('.react-flow__node-group')
   await expect(group).toHaveCount(1)
   await expect(imageNodes(page)).toHaveCount(0)
 
+  await openAssetsShelf(page)
   await asset(page, 'group-gamma.png').dragTo(group)
   await expect(group).toContainText('3')
   await expect(imageNodes(page)).toHaveCount(0)
@@ -426,17 +426,20 @@ test('set shortcut and undo/redo work without stealing text-input undo', async (
   await openFixtureRepo(page, 'shortcut-fixtures')
   await placeAssets(page, ['shortcut-alpha.png'])
   await imageNodes(page).first().click()
+  await page.getByTestId('open-command-palette').click()
+  const paletteSearch = page.getByRole('combobox', { name: 'Search commands' })
+  await paletteSearch.fill('Create set')
   await expect(
-    page.getByRole('button', { name: 'Create set', exact: true })
-  ).toBeDisabled()
+    page.getByRole('option', { name: /Select at least two ungrouped/ })
+  ).toHaveAttribute('aria-disabled', 'true')
+  await page.keyboard.press('Escape')
 
-  await placeAssets(page, ['shortcut-beta.png'], { x: 360, y: 180 })
-  await page.getByRole('button', { name: 'Auto-arrange' }).click()
+  await dropAsset(page, 'shortcut-beta.png', { x: 360, y: 180 })
+  await expect(imageNodes(page)).toHaveCount(2)
+  await autoArrangeCanvas(page)
   await page.getByRole('button', { name: 'Reset 100%' }).click()
   await selectImageNodes(page, [0, 1])
-  await expect(
-    page.getByRole('button', { name: 'Create set', exact: true })
-  ).toBeEnabled()
+  await expect(page.getByTestId('hud-create-set')).toBeEnabled()
 
   await page.keyboard.press('Control+g')
   await expect(page.locator('.react-flow__node-group')).toHaveCount(1)
@@ -449,6 +452,7 @@ test('set shortcut and undo/redo work without stealing text-input undo', async (
   await page.keyboard.press('Control+y')
   await expect(page.locator('.react-flow__node-group')).toHaveCount(1)
 
+  await openAssetsShelf(page)
   const search = page.getByRole('textbox', { name: 'Search assets' })
   await search.fill('shortcut')
   await search.press('Control+z')

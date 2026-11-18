@@ -74,12 +74,24 @@ export async function openFixtureRepo(
     await page.getByTestId('toggle-inspector-shelf').click()
 }
 
+export async function autoArrangeCanvas(page: Page) {
+  await page.getByTestId('dock-more').click()
+  await page.getByTestId('dock-auto-arrange').click()
+}
+
 export function assets(page: Page) {
   return page.getByRole('listbox', { name: 'Assets' }).getByRole('option')
 }
 
 export function asset(page: Page, fileName: string) {
   return assets(page).filter({ hasText: fileName })
+}
+
+export async function openAssetsShelf(page: Page) {
+  const drawer = page.locator('aside[aria-label="Assets"]')
+  if ((await drawer.getAttribute('data-visible')) === 'true') return
+  await page.getByTestId('shelf-edge-trigger-left').click()
+  await expect(drawer).toHaveAttribute('data-visible', 'true')
 }
 
 export function imageNodes(page: Page) {
@@ -100,10 +112,7 @@ export async function dropAssetRow(
   targetPosition: { x: number; y: number }
 ) {
   const drawer = page.locator('aside[aria-label="Assets"]')
-  if ((await drawer.getAttribute('data-visible')) !== 'true') {
-    await page.getByTestId('shelf-edge-trigger-left').click()
-    await expect(drawer).toHaveAttribute('data-visible', 'true')
-  }
+  await openAssetsShelf(page)
   await expect(source).toHaveCount(1)
   const pane = page.locator('.react-flow__pane')
   const paneBox = await pane.boundingBox()
@@ -113,8 +122,8 @@ export async function dropAssetRow(
   const safeX =
     paneBox &&
     drawerBox &&
-    targetPosition.x + paneBox.x < drawerBox.x + drawerBox.width
-      ? drawerBox.x + drawerBox.width + 24 - paneBox.x
+    paneBox.x + targetPosition.x < drawerBox.x + drawerBox.width
+      ? targetPosition.x + drawerBox.width + 24
       : targetPosition.x
   await source.dragTo(pane, {
     targetPosition: { x: safeX, y: targetPosition.y },

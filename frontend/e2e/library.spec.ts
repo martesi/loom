@@ -3,8 +3,10 @@ import { expect, test } from './test-fixtures'
 import {
   asset,
   assets,
+  dropAsset,
   fixturePath,
   imageNodes,
+  openAssetsShelf,
   openFixtureRepo,
   placeAssets,
 } from './test-helpers'
@@ -37,8 +39,11 @@ test('library selection, search, placement filters, and folder navigation', asyn
   await page.keyboard.press('Control+a')
   await expect(page.locator('[role=option][aria-selected=true]')).toHaveCount(4)
 
-  await page.locator('.react-flow__pane').click({ position: { x: 20, y: 20 } })
+  await page
+    .locator('.react-flow__pane')
+    .click({ position: { x: 500, y: 400 } })
   await placeAssets(page, ['root-alpha.png'])
+  await openAssetsShelf(page)
   await filters.click()
   await page.getByRole('combobox', { name: 'Placement' }).selectOption('placed')
   await expect(assets(page)).toHaveCount(1)
@@ -79,7 +84,7 @@ test('library selection, search, placement filters, and folder navigation', asyn
   await expect(asset(page, 'renamed-gamma.png')).toBeVisible()
   await expect(asset(page, 'folder-gamma.png')).toHaveCount(0)
 
-  await page.getByRole('button', { name: /Repository/ }).click()
+  await page.getByRole('button', { name: 'Repository', exact: true }).click()
   await expect(asset(page, 'renamed-gamma.png')).toBeVisible()
 })
 
@@ -106,19 +111,14 @@ test('asset selection survives view switches and multi-row drag transfers select
   await asset(page, 'root-alpha.png').dragTo(
     page.locator('.react-flow__pane'),
     {
-      targetPosition: { x: 180, y: 160 },
+      targetPosition: { x: 500, y: 160 },
     }
   )
   await expect(imageNodes(page)).toHaveCount(2)
   await expect(selectedAssets).toHaveCount(0)
   await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
 
-  await asset(page, 'root-alpha.png').dragTo(
-    page.locator('.react-flow__pane'),
-    {
-      targetPosition: { x: 480, y: 220 },
-    }
-  )
+  await dropAsset(page, 'root-alpha.png', { x: 480, y: 220 })
   await expect(imageNodes(page)).toHaveCount(2)
 })
 
@@ -191,12 +191,21 @@ test('rescan discovers new files and exposes missing files', async ({
 
   const addedPath = await fixturePath('rescan-fixtures', 'rescan-added.png')
   await writeFile(addedPath, fixturePng)
-  await page.getByRole('button', { name: 'Rescan' }).click()
+  await page.getByTestId('repository-actions').click()
+  await page
+    .getByRole('menu', { name: 'Repository actions' })
+    .getByRole('menuitem', { name: 'Rescan repository' })
+    .click()
   await expect(asset(page, 'rescan-added.png')).toBeVisible()
 
   await placeAssets(page, ['rescan-alpha.png'])
   await rm(await fixturePath('rescan-fixtures', 'rescan-alpha.png'))
-  await page.getByRole('button', { name: 'Rescan' }).click()
+  await page.getByTestId('repository-actions').click()
+  await page
+    .getByRole('menu', { name: 'Repository actions' })
+    .getByRole('menuitem', { name: 'Rescan repository' })
+    .click()
+  await openAssetsShelf(page)
   await page.getByRole('button', { name: /^Filters/ }).click()
   await page
     .getByRole('combobox', { name: 'Asset state' })

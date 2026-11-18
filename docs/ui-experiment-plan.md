@@ -1,6 +1,6 @@
 # UI experiment plan: canvas first, contextual chrome
 
-**Status:** Plan only; implementation waits for user approval.  
+**Status:** Approved for implementation on `loom-ui-experiment`.
 **Scope:** Visual and interaction changes to Loom's existing Canvas route.  
 **Research date:** 2026-11-18.
 
@@ -273,6 +273,6 @@ approval and a later verification pass are separate steps.
 
 ## Approval boundary
 
-This document is the proposed experiment only. No source files or tests were
-changed for this plan. Implementation should start only after the user approves
-the direction and action/shortcut catalog.
+The original approval gate is satisfied by the user's continuation instruction
+for this branch. Keep implementation within the scope and behavior contract
+above.
