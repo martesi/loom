@@ -68,7 +68,7 @@ msgstr "{resultCount} results"
 #~ msgid "+ add"
 #~ msgstr "+ add"
 
-#: src/components/canvas/use-saved-asset-views.ts:105
+#: src/components/canvas/use-saved-asset-views.ts:112
 msgid "A saved view with that name already exists"
 msgstr "A saved view with that name already exists"
 
@@ -211,7 +211,7 @@ msgstr "Arrange the selected subgraph, or the full Canvas when fewer than two it
 msgid "Asset"
 msgstr "Asset"
 
-#: src/components/canvas/asset-gallery.tsx:110
+#: src/components/canvas/asset-gallery.tsx:138
 msgid "Asset gallery"
 msgstr "Asset gallery"
 
@@ -1172,7 +1172,7 @@ msgstr "Next image"
 msgid "No assets in this folder."
 msgstr "No assets in this folder."
 
-#: src/components/canvas/asset-gallery.tsx:222
+#: src/components/canvas/asset-gallery.tsx:250
 #: src/components/canvas/asset-list.tsx:43
 msgid "No assets match these filters."
 msgstr "No assets match these filters."
@@ -1611,6 +1611,10 @@ msgstr "Saved asset view"
 #: src/components/canvas/asset-view-controls.tsx:105
 msgid "Saved view name"
 msgstr "Saved view name"
+
+#: src/components/canvas/use-saved-asset-views.ts:57
+msgid "Saved views could not be loaded because the saved data is invalid."
+msgstr "Saved views could not be loaded because the saved data is invalid."
 
 #: src/components/canvas/asset-view-controls.tsx:58
 msgid "Saved views could not be loaded."

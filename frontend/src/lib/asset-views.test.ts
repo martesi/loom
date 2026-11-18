@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import type { LibraryRow } from '../../bindings/loom/internal/service'
 import {
   DEFAULT_ASSET_VIEWS,
+  InvalidAssetViewsError,
   matchesAssetView,
   parseAssetViews,
   serializeAssetViews,
@@ -48,7 +49,10 @@ describe('asset views', () => {
     expect(parseAssetViews(serializeAssetViews(DEFAULT_ASSET_VIEWS))).toEqual(
       DEFAULT_ASSET_VIEWS
     )
-    expect(() => parseAssetViews('{"not":"views"}')).toThrow()
+    expect(() => parseAssetViews('{"not":"views"}')).toThrow(
+      InvalidAssetViewsError
+    )
+    expect(() => parseAssetViews('{"corrupt')).toThrow(InvalidAssetViewsError)
   })
 
   it('matches placement and sorts by name or recency', () => {

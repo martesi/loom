@@ -42,11 +42,23 @@ export function serializeAssetViews(views: AssetView[]) {
   return JSON.stringify(views)
 }
 
-export function parseAssetViews(serialized: string): AssetView[] {
-  const value: unknown = JSON.parse(serialized)
-  if (!Array.isArray(value) || !value.every(isAssetView)) {
-    throw new Error('Saved asset views have an invalid format')
+export class InvalidAssetViewsError extends Error {
+  constructor() {
+    super()
+    this.name = 'InvalidAssetViewsError'
   }
+}
+
+export function parseAssetViews(serialized: string): AssetView[] {
+  let value: unknown
+  // JSON.parse only reports syntax failures by throwing an untyped SyntaxError.
+  try {
+    value = JSON.parse(serialized)
+  } catch {
+    throw new InvalidAssetViewsError()
+  }
+  if (!Array.isArray(value) || !value.every(isAssetView))
+    throw new InvalidAssetViewsError()
   return value
 }
 

@@ -106,6 +106,15 @@ const fixtureRepos = [
     files: ['inspect-alpha.png', 'inspect-beta.png'],
   },
   {
+    name: 'gallery-keyboard-fixtures',
+    files: [
+      'gallery-alpha.png',
+      'gallery-beta.png',
+      'gallery-gamma.png',
+      'gallery-delta.png',
+    ],
+  },
+  {
     name: 'relationship-fixtures',
     files: ['relation-alpha.png', 'relation-beta.png', 'relation-gamma.png'],
   },

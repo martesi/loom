@@ -58,6 +58,35 @@ export function AssetGallery({
     )
       return
     event.preventDefault()
+
+    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      const visualRows = [
+        ...(grid.current?.querySelectorAll<HTMLElement>('[role="row"]') ?? []),
+      ]
+      const currentRow =
+        event.currentTarget.closest<HTMLElement>('[role="row"]')
+      if (!currentRow) return
+      const rowIndex = visualRows.indexOf(currentRow)
+      const targetRow =
+        visualRows[rowIndex + (event.key === 'ArrowDown' ? 1 : -1)]
+      if (!targetRow) return
+
+      const current = event.currentTarget.getBoundingClientRect()
+      const centerX = current.left + current.width / 2
+      const targetCards = [
+        ...targetRow.querySelectorAll<HTMLButtonElement>('[data-gallery-card]'),
+      ]
+      targetCards.sort((left, right) => {
+        const leftRect = left.getBoundingClientRect()
+        const rightRect = right.getBoundingClientRect()
+        const leftCenter = leftRect.left + leftRect.width / 2
+        const rightCenter = rightRect.left + rightRect.width / 2
+        return Math.abs(leftCenter - centerX) - Math.abs(rightCenter - centerX)
+      })
+      targetCards[0]?.focus()
+      return
+    }
+
     const current = event.currentTarget.getBoundingClientRect()
     const center = {
       x: current.left + current.width / 2,

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { SettingsService } from '../../../bindings/loom/internal/service'
 import {
   type AssetView,
+  InvalidAssetViewsError,
   parseAssetViews,
   serializeAssetViews,
 } from '../../lib/asset-views'
@@ -50,7 +51,13 @@ export function useSavedAssetViews(
         if (cancelled) return
         loadedRef.current = false
         setLoadError(true)
-        errorHandler.current(error)
+        errorHandler.current(
+          error instanceof InvalidAssetViewsError
+            ? new Error(
+                t`Saved views could not be loaded because the saved data is invalid.`
+              )
+            : error
+        )
       })
     return () => {
       cancelled = true

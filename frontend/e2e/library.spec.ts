@@ -225,6 +225,44 @@ test('Assets gallery controls and saved views persist and switch from the palett
   await expect(page.getByRole('status')).toContainText('View saved')
 })
 
+test('gallery vertical navigation moves between rows with unequal card heights', async ({
+  page,
+}) => {
+  await openFixtureRepo(page, 'gallery-keyboard-fixtures')
+  await page.getByRole('button', { name: 'Gallery view' }).click()
+  await page.getByRole('button', { name: 'Smaller gallery cards' }).click()
+
+  const gallery = page.getByRole('grid', { name: 'Asset gallery' })
+  const firstRow = gallery.getByRole('row').first()
+  const firstCard = firstRow.getByRole('button').first()
+  await firstCard.click()
+
+  const inspector = page.getByLabel('Inspector')
+  await inspector.getByLabel('Add tag').fill('keyboard-height')
+  await inspector.getByRole('button', { name: 'Add', exact: true }).click()
+  await inspector
+    .getByLabel('Prompt')
+    .fill('A prompt that adds height to this card')
+  await inspector.getByRole('button', { name: 'Save prompt' }).click()
+
+  await page.getByRole('checkbox', { name: 'Tags' }).check()
+  await page.getByRole('checkbox', { name: 'Prompt' }).check()
+  await expect(gallery.getByRole('row').nth(1)).toBeVisible()
+  const firstRowCards = firstRow.getByRole('button')
+  expect(await firstRowCards.count()).toBeGreaterThan(1)
+  const heights = await firstRowCards.evaluateAll((cards) =>
+    cards.map((card) => card.getBoundingClientRect().height)
+  )
+  expect(Math.max(...heights)).toBeGreaterThan(Math.min(...heights))
+
+  const shortestIndex = heights.indexOf(Math.min(...heights))
+  await firstRowCards.nth(shortestIndex).focus()
+  await page.keyboard.press('ArrowDown')
+  await expect(
+    gallery.getByRole('row').nth(1).locator('[data-gallery-card]:focus')
+  ).toHaveCount(1)
+})
+
 test('asset selection survives view switches and multi-row drag transfers selection to Canvas', async ({
   page,
 }) => {
