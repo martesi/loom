@@ -41,17 +41,23 @@ export function Landing({
           </p>
           <div className="grid w-full gap-2 rounded-md border border-black/6 bg-surface p-3 text-[11.5px] leading-relaxed text-ink-muted">
             <p>
-              <strong className="text-ink">Assets</strong>{' '}
+              <strong className="text-ink">
+                <Trans>Assets</Trans>
+              </strong>{' '}
               <Trans>browse every file, including unplaced images.</Trans>
             </p>
             <p>
-              <strong className="text-ink">Canvas</strong>{' '}
+              <strong className="text-ink">
+                <Trans>Canvas</Trans>
+              </strong>{' '}
               <Trans>
                 organizes selected images and source → derived links.
               </Trans>
             </p>
             <p>
-              <strong className="text-ink">Inspector</strong>{' '}
+              <strong className="text-ink">
+                <Trans>Inspector</Trans>
+              </strong>{' '}
               <Trans>edits metadata for the current selection.</Trans>
             </p>
           </div>

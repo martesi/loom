@@ -13,8 +13,10 @@ msgstr ""
 "Language-Team: \n"
 "Plural-Forms: \n"
 
+#. placeholder {0}: assetIds.length
 #. placeholder {0}: images.length
 #: src/components/canvas/detail-panel.tsx:305
+#: src/components/compression-dialog.tsx:150
 msgid "{0, plural, one {# asset selected} other {# assets selected}}"
 msgstr "{0, plural, one {# asset selected} other {# assets selected}}"
 
@@ -26,9 +28,18 @@ msgid "{0, plural, one {# asset} other {# assets}}"
 msgstr "{0, plural, one {# asset} other {# assets}}"
 
 #. placeholder {0}: repo.imageCount
-#: src/routes/landing.tsx:112
+#: src/routes/landing.tsx:118
 msgid "{0} images"
 msgstr "{0} images"
+
+#: src/components/compression-dialog.tsx:116
+msgid "{compressed} compressed"
+msgstr "{compressed} compressed"
+
+#. placeholder {0}: failures.length
+#: src/components/compression-dialog.tsx:115
+msgid "{compressed} compressed, {0} failed"
+msgstr "{compressed} compressed, {0} failed"
 
 #: src/components/canvas/group-node.tsx:65
 msgid "{count, plural, one {Set · # asset} other {Set · # assets}}"
@@ -135,6 +146,7 @@ msgstr "Asset state"
 #: src/components/canvas/library-panel.tsx:370
 #: src/routes/canvas.tsx:819
 #: src/routes/canvas.tsx:882
+#: src/routes/landing.tsx:45
 msgid "Assets"
 msgstr "Assets"
 
@@ -203,7 +215,7 @@ msgstr "Auto-arrange Subgraph"
 #~ msgid "Boards are scoped canvases you place images onto explicitly. Create one to start arranging images."
 #~ msgstr "Boards are scoped canvases you place images onto explicitly. Create one to start arranging images."
 
-#: src/routes/landing.tsx:45
+#: src/routes/landing.tsx:47
 msgid "browse every file, including unplaced images."
 msgstr "browse every file, including unplaced images."
 
@@ -214,6 +226,7 @@ msgstr "Cancel"
 
 #: src/routes/canvas.tsx:835
 #: src/routes/canvas.tsx:904
+#: src/routes/landing.tsx:51
 msgid "Canvas"
 msgstr "Canvas"
 
@@ -234,12 +247,17 @@ msgstr "Choose a folder"
 #~ msgstr "Click a node to set as source — Esc to cancel"
 
 #: src/components/canvas/lightbox.tsx:23
+#: src/components/compression-dialog.tsx:145
 msgid "Close"
 msgstr "Close"
 
-#: src/components/canvas/set-comparison-dialog.tsx:91
+#: src/components/canvas/set-comparison-dialog.tsx:95
 msgid "Close comparison"
 msgstr "Close comparison"
+
+#: src/components/compression-dialog.tsx:140
+msgid "Close operation"
+msgstr "Close operation"
 
 #: src/components/board/group-node.tsx:133
 #~ msgid "Collapse"
@@ -270,17 +288,46 @@ msgstr "Compare"
 #~ msgid "Compare {0}"
 #~ msgstr "Compare {0}"
 
-#: src/components/canvas/set-comparison-dialog.tsx:45
+#: src/components/canvas/set-comparison-dialog.tsx:46
 msgid "Compare {name}"
 msgstr "Compare {name}"
 
-#: src/components/canvas/set-comparison-dialog.tsx:45
+#: src/components/canvas/set-comparison-dialog.tsx:48
 msgid "Compare set"
 msgstr "Compare set"
+
+#: src/components/compression-dialog.tsx:257
+msgid "Compress"
+msgstr "Compress"
+
+#: src/components/compression-dialog.tsx:131
+#: src/components/compression-dialog.tsx:136
+msgid "Compress images"
+msgstr "Compress images"
 
 #: src/components/canvas/library-panel.tsx:519
 msgid "Compress…"
 msgstr "Compress…"
+
+#: src/components/compression-dialog.tsx:257
+msgid "Compressing…"
+msgstr "Compressing…"
+
+#: src/components/compression-dialog.tsx:182
+msgid "Compression format"
+msgstr "Compression format"
+
+#: src/components/compression-dialog.tsx:199
+msgid "Compression quality"
+msgstr "Compression quality"
+
+#: src/components/compression-dialog.tsx:161
+msgid "Compression result"
+msgstr "Compression result"
+
+#: src/components/compression-dialog.tsx:65
+msgid "Could not load saved settings. Review the defaults before compressing."
+msgstr "Could not load saved settings. Review the defaults before compressing."
 
 #: src/routes/board.tsx:552
 #: src/routes/board.tsx:557
@@ -301,7 +348,7 @@ msgstr "Couldn't redo"
 msgid "Couldn't undo"
 msgstr "Couldn't undo"
 
-#: src/components/canvas/set-comparison-dialog.tsx:111
+#: src/components/canvas/set-comparison-dialog.tsx:115
 msgid "Cover"
 msgstr "Cover"
 
@@ -309,7 +356,11 @@ msgstr "Cover"
 #~ msgid "Create board"
 #~ msgstr "Create board"
 
-#: src/routes/landing.tsx:63
+#: src/components/compression-dialog.tsx:170
+msgid "Create compressed copy"
+msgstr "Create compressed copy"
+
+#: src/routes/landing.tsx:69
 msgid "Create New Repo"
 msgstr "Create New Repo"
 
@@ -376,7 +427,7 @@ msgstr "Dissolve set"
 msgid "Drag an asset from Assets onto the canvas."
 msgstr "Drag an asset from Assets onto the canvas."
 
-#: src/components/canvas/set-comparison-dialog.tsx:48
+#: src/components/canvas/set-comparison-dialog.tsx:52
 msgid "Drag any image to pan all views. Zoom applies to every variant."
 msgstr "Drag any image to pan all views. Zoom applies to every variant."
 
@@ -384,7 +435,7 @@ msgstr "Drag any image to pan all views. Zoom applies to every variant."
 #~ msgid "Drag from a node's edge to link images — a dedicated link tool arrives in a later stage"
 #~ msgstr "Drag from a node's edge to link images — a dedicated link tool arrives in a later stage"
 
-#: src/routes/landing.tsx:55
+#: src/routes/landing.tsx:61
 msgid "edits metadata for the current selection."
 msgstr "edits metadata for the current selection."
 
@@ -444,6 +495,10 @@ msgstr "Focused the window showing \"{targetName}\"."
 msgid "Folders"
 msgstr "Folders"
 
+#: src/components/compression-dialog.tsx:179
+msgid "Format"
+msgstr "Format"
+
 #: src/components/canvas/detail-panel.tsx:465
 msgid "Go to"
 msgstr "Go to"
@@ -486,6 +541,7 @@ msgstr "Import media or drop files onto the canvas."
 
 #: src/routes/canvas.tsx:857
 #: src/routes/canvas.tsx:1377
+#: src/routes/landing.tsx:59
 msgid "Inspector"
 msgstr "Inspector"
 
@@ -514,7 +570,7 @@ msgstr "Kind"
 msgid "Locate"
 msgstr "Locate"
 
-#: src/routes/landing.tsx:77
+#: src/routes/landing.tsx:83
 msgid "Loom"
 msgstr "Loom"
 
@@ -525,6 +581,26 @@ msgstr "Loom"
 #: src/components/board/settings-modal.tsx:71
 #~ msgid "Manual"
 #~ msgstr "Manual"
+
+#: src/components/compression-dialog.tsx:226
+msgid "Max height"
+msgstr "Max height"
+
+#: src/components/compression-dialog.tsx:211
+msgid "Max width"
+msgstr "Max width"
+
+#: src/components/compression-dialog.tsx:229
+msgid "Maximum height"
+msgstr "Maximum height"
+
+#: src/components/compression-dialog.tsx:214
+msgid "Maximum width"
+msgstr "Maximum width"
+
+#: src/components/compression-dialog.tsx:100
+msgid "Media transcode returned no result"
+msgstr "Media transcode returned no result"
 
 #: src/components/board/group-node.tsx:194
 #~ msgid "members"
@@ -567,7 +643,7 @@ msgstr "Negative prompt (optional)"
 #~ msgid "New board…"
 #~ msgstr "New board…"
 
-#: src/routes/landing.tsx:85
+#: src/routes/landing.tsx:91
 msgid "New Repo"
 msgstr "New Repo"
 
@@ -641,8 +717,8 @@ msgstr "Open {title} shelf"
 msgid "Open an image folder as a local Loom repository. Assets stay on disk, and only the images you place appear on the Canvas."
 msgstr "Open an image folder as a local Loom repository. Assets stay on disk, and only the images you place appear on the Canvas."
 
-#: src/routes/landing.tsx:60
-#: src/routes/landing.tsx:82
+#: src/routes/landing.tsx:66
+#: src/routes/landing.tsx:88
 msgid "Open Folder"
 msgstr "Open Folder"
 
@@ -654,9 +730,14 @@ msgstr "Open Folder"
 msgid "Open this folder"
 msgstr "Open this folder"
 
-#: src/routes/landing.tsx:49
+#: src/routes/landing.tsx:53
 msgid "organizes selected images and source → derived links."
 msgstr "organizes selected images and source → derived links."
+
+#: src/components/compression-dialog.tsx:218
+#: src/components/compression-dialog.tsx:233
+msgid "Original"
+msgstr "Original"
 
 #: src/components/canvas/library-panel.tsx:250
 msgid "placed"
@@ -685,11 +766,15 @@ msgstr "Prompt"
 msgid "Prompt text…"
 msgstr "Prompt text…"
 
+#: src/components/compression-dialog.tsx:196
+msgid "Quality: {quality}"
+msgstr "Quality: {quality}"
+
 #: src/components/canvas/image-node.tsx:110
 msgid "Quick Action"
 msgstr "Quick Action"
 
-#: src/routes/landing.tsx:91
+#: src/routes/landing.tsx:97
 msgid "Recent"
 msgstr "Recent"
 
@@ -735,6 +820,14 @@ msgstr "Rename file"
 msgid "Rename…"
 msgstr "Rename…"
 
+#: src/components/compression-dialog.tsx:173
+msgid "Replace original"
+msgstr "Replace original"
+
+#: src/components/compression-dialog.tsx:242
+msgid "Replacement keeps the asset ID and can be undone."
+msgstr "Replacement keeps the asset ID and can be undone."
+
 #: src/components/repo-picker-modal.tsx:96
 msgid "repo"
 msgstr "repo"
@@ -751,7 +844,7 @@ msgstr "Rescan"
 #~ msgid "Rescan folder for new images"
 #~ msgstr "Rescan folder for new images"
 
-#: src/components/canvas/set-comparison-dialog.tsx:88
+#: src/components/canvas/set-comparison-dialog.tsx:92
 msgid "Reset"
 msgstr "Reset"
 
@@ -766,6 +859,10 @@ msgstr "Resize {title} shelf"
 #: src/components/canvas/detail-panel.tsx:434
 msgid "Restore from trash"
 msgstr "Restore from trash"
+
+#: src/components/compression-dialog.tsx:158
+msgid "Result"
+msgstr "Result"
 
 #: src/components/canvas/prompt-picker.tsx:78
 msgid "Reuse a prompt"
@@ -977,7 +1074,7 @@ msgstr "Unplaced"
 #~ msgid "Untitled set"
 #~ msgstr "Untitled set"
 
-#: src/components/canvas/set-comparison-dialog.tsx:119
+#: src/components/canvas/set-comparison-dialog.tsx:123
 msgid "Use as cover"
 msgstr "Use as cover"
 
@@ -985,12 +1082,12 @@ msgstr "Use as cover"
 msgid "Welcome to Loom"
 msgstr "Welcome to Loom"
 
-#: src/components/canvas/set-comparison-dialog.tsx:72
+#: src/components/canvas/set-comparison-dialog.tsx:76
 #: src/components/canvas/zoom-controls.tsx:32
 msgid "Zoom in"
 msgstr "Zoom in"
 
-#: src/components/canvas/set-comparison-dialog.tsx:56
+#: src/components/canvas/set-comparison-dialog.tsx:60
 #: src/components/canvas/zoom-controls.tsx:21
 msgid "Zoom out"
 msgstr "Zoom out"
