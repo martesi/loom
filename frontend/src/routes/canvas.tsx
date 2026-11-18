@@ -14,13 +14,7 @@ import {
   useReactFlow,
 } from '@xyflow/react'
 import { Command, MoreHorizontal, PanelLeft, PanelRight } from 'lucide-react'
-import {
-  type MouseEvent,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import '@xyflow/react/dist/style.css'
 import {
   type CanvasData,
@@ -43,14 +37,13 @@ import { ImageNode } from '../components/canvas/image-node'
 import { LibraryPanel } from '../components/canvas/library-panel'
 import { LightboxViewer } from '../components/canvas/lightbox'
 import { RepoSelect } from '../components/canvas/repo-select'
-import { SelectionHud } from '../components/canvas/selection-hud'
 import { ShelfPanel } from '../components/canvas/shelf-panel'
 import { CompressionDialog } from '../components/compression-dialog'
 import { type MenuAction, PositionedMenu } from '../components/menu'
 import { Button } from '../components/ui/button'
+import { Tooltip } from '../components/ui/tooltip'
 import {
   type CanvasAction,
-  displayShortcut,
   isMacPlatform,
   shortcutMatches,
 } from '../lib/action-catalog'
@@ -72,6 +65,41 @@ export function CanvasWorkspace({ repo }: { repo: RepoInfo }) {
 function Canvas({ repo }: { repo: RepoInfo }) {
   const flow = useReactFlow(),
     host = useRef<HTMLDivElement>(null)
+  const inverseZoom = useRef(1)
+  const updateZoomCompensation = useCallback((zoom: number) => {
+    const scale = Math.max(1, 1 / zoom)
+    if (scale === inverseZoom.current) return
+    inverseZoom.current = scale
+    host.current
+      ?.querySelectorAll<HTMLElement>(
+        '.react-flow__node-image:hover [data-testid="image-node-metadata"], .react-flow__node-image:focus-within [data-testid="image-node-metadata"]'
+      )
+      .forEach((element) => {
+        element.style.setProperty('--canvas-inverse-zoom', String(scale))
+      })
+  }, [])
+  useEffect(() => {
+    const root = host.current
+    if (!root) return
+    const syncActiveMetadata = (event: Event) => {
+      if (!(event.target instanceof Element)) return
+      const node = event.target.closest('.react-flow__node-image')
+      const metadata = node?.querySelector<HTMLElement>(
+        '[data-testid="image-node-metadata"]'
+      )
+      if (metadata)
+        metadata.style.setProperty(
+          '--canvas-inverse-zoom',
+          String(inverseZoom.current)
+        )
+    }
+    root.addEventListener('pointerover', syncActiveMetadata)
+    root.addEventListener('focusin', syncActiveMetadata)
+    return () => {
+      root.removeEventListener('pointerover', syncActiveMetadata)
+      root.removeEventListener('focusin', syncActiveMetadata)
+    }
+  }, [])
   const isMac = isMacPlatform()
   const [data, setData] = useState<CanvasData>({
     images: [],
@@ -80,6 +108,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   })
   const [nodes, setNodes] = useState<Node[]>([]),
     [edges, setEdges] = useState<Edge[]>([])
+  const dropTargets = useRef<Node[]>([])
   const [selection, setSelection] = useState<Selection>(emptySelection),
     [expanded, setExpanded] = useState<number | null>(null)
   const [assetSelectionRecords, setAssetSelectionRecords] = useState<{
@@ -249,6 +278,18 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     valid: boolean
     kind: 'relationship' | 'set'
   } | null>(null)
+  const targetRef = useRef(target)
+  const updateTarget = useCallback((next: typeof target) => {
+    const current = targetRef.current
+    if (
+      current?.id === next?.id &&
+      current?.valid === next?.valid &&
+      current?.kind === next?.kind
+    )
+      return
+    targetRef.current = next
+    setTarget(next)
+  }, [])
   const report = (e: unknown) => {
     console.error('canvas operation failed', e)
     setError(e instanceof Error ? e.message : String(e))
@@ -298,7 +339,10 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       .then(([d, v]) => {
         if (d) setData(d)
         setRefresh((n) => n + 1)
-        if (v) void flow.setViewport(v)
+        if (v) {
+          updateZoomCompensation(v.zoom)
+          void flow.setViewport(v)
+        }
         setReady(true)
         if (
           !v &&
@@ -307,7 +351,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
           setTimeout(() => void flow.fitView({ padding: 0.2, maxZoom: 1 }), 100)
       })
       .catch(callbacks.current.report)
-  }, [repo.path, flow])
+  }, [repo.path, flow, updateZoomCompensation])
   useEffect(() => {
     const placed = (data.images ?? []).filter((i) => i.placed && !i.trashed)
     const collapsed = (data.groups ?? []).filter(
@@ -335,22 +379,6 @@ function Canvas({ repo }: { repo: RepoInfo }) {
           showFileName: true,
           width: i.width,
           height: i.height,
-          onPreview: () => setPreviewImageId(i.id),
-          onMore: (event: MouseEvent<HTMLButtonElement>) => {
-            const bounds = event.currentTarget.getBoundingClientRect()
-            setSelection({
-              surface: 'canvas',
-              ids: [i.id],
-              edges: [],
-              group: null,
-            })
-            setMenu({
-              kind: 'node',
-              x: event.clientX || bounds.left,
-              y: event.clientY || bounds.bottom,
-              nodeId: String(i.id),
-            })
-          },
           onResizeEnd: (x: number, y: number, w: number, h: number) =>
             callbacks.current.run(async () => {
               await ImageService.SetPosition(repo.path, i.id, x, y)
@@ -377,6 +405,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
         },
       }
     })
+    dropTargets.current = groups
     setNodes([...imageNodes, ...groups])
     const placedIds = new Set(placed.map((i) => i.id))
     setEdges(
@@ -396,9 +425,13 @@ function Canvas({ repo }: { repo: RepoInfo }) {
         })
     )
   }, [data, expanded, repo.path])
+  const selectedImageIds = useMemo(
+    () => new Set(selection.ids),
+    [selection.ids]
+  )
   function isCanvasNodeSelected(node: Node) {
     if (selection.surface !== 'canvas') return false
-    if (node.type !== 'group') return selection.ids.includes(Number(node.id))
+    if (node.type !== 'group') return selectedImageIds.has(Number(node.id))
     const groupId = Number(node.id.slice(4))
     const members = groupMembers(groupId).filter((id) =>
       (data.images ?? []).some(
@@ -407,19 +440,37 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     )
     return (
       selection.group === groupId ||
-      (members.length > 0 && members.every((id) => selection.ids.includes(id)))
+      (members.length > 0 && members.every((id) => selectedImageIds.has(id)))
     )
   }
-  const displayNodes = nodes.map((n) => ({
-    ...n,
-    selected: isCanvasNodeSelected(n),
-    className:
-      target?.id === n.id
+  const previousDisplayNodes = useRef(new Map<string, Node>())
+  const displayNodes = nodes.map((node) => {
+    const selected = isCanvasNodeSelected(node)
+    const className =
+      target?.id === node.id
         ? target.valid
           ? 'ring-4 ring-green-500'
           : 'ring-4 ring-red-500'
-        : '',
-  }))
+        : ''
+    const previous = previousDisplayNodes.current.get(node.id)
+    if (
+      previous &&
+      previous.data === node.data &&
+      previous.position === node.position &&
+      previous.measured === node.measured &&
+      previous.width === node.width &&
+      previous.height === node.height &&
+      previous.selected === selected &&
+      previous.className === className &&
+      previous.dragging === node.dragging &&
+      previous.zIndex === node.zIndex
+    )
+      return previous
+    return { ...node, selected, className }
+  })
+  previousDisplayNodes.current = new Map(
+    displayNodes.map((node) => [node.id, node])
+  )
   const displayEdges: Edge[] = edges.map((e) => {
     const selected =
       selection.surface === 'canvas' && selection.edges.includes(Number(e.id))
@@ -641,9 +692,44 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     await ImageService.SetPositions(repo.path, updates)
     await reload()
   }
-  const selectedCanvasNodeIds = displayNodes
-    .filter((node) => node.selected)
-    .map((node) => node.id)
+  const selectedCanvasNodeIds = useMemo(() => {
+    if (selection.surface !== 'canvas') return []
+    const placedImageIds = new Set(
+      (data.images ?? [])
+        .filter((image) => image.placed && !image.trashed)
+        .map((image) => image.id)
+    )
+    const collapsedGroups = (data.groups ?? []).filter(
+      (group) =>
+        group.id !== expanded &&
+        (group.memberIds ?? []).some((id) => placedImageIds.has(id))
+    )
+    const groupedImageIds = new Set(
+      collapsedGroups.flatMap((group) => group.memberIds ?? [])
+    )
+    const selected = selection.ids
+      .filter((id) => placedImageIds.has(id) && !groupedImageIds.has(id))
+      .map(String)
+    for (const group of collapsedGroups) {
+      const members = (group.memberIds ?? []).filter((id) =>
+        placedImageIds.has(id)
+      )
+      if (
+        selection.group === group.id ||
+        (members.length > 0 && members.every((id) => selectedImageIds.has(id)))
+      )
+        selected.push(`set-${group.id}`)
+    }
+    return selected
+  }, [
+    data.groups,
+    data.images,
+    expanded,
+    selectedImageIds,
+    selection.group,
+    selection.surface,
+    selection.ids,
+  ])
   async function alignHorizontal() {
     const selected = displayNodes.filter((n) => n.selected)
     if (selected.length < 2) return
@@ -723,17 +809,6 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     } else {
       setPreviewImageId(Number(node.id))
     }
-  }
-  function handleMore(nodesToShow: Node[]) {
-    const first = nodesToShow[0]
-    if (!first) return
-    const position = flow.flowToScreenPosition(first.position)
-    setMenu({
-      kind: nodesToShow.length > 1 ? 'selection' : 'node',
-      x: position.x,
-      y: position.y,
-      nodeId: nodesToShow.length === 1 ? first.id : undefined,
-    })
   }
   async function fitAll() {
     await flow.fitView({ padding: 0.2 })
@@ -1604,6 +1679,12 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     const action = actionById.get(id)
     if (action) void executeAction(action)
   }
+  const dockActionRef = useRef(executeActionById)
+  dockActionRef.current = executeActionById
+  const runDockAction = useCallback(
+    (id: string) => dockActionRef.current(id),
+    []
+  )
   function runPaletteAction(action: CanvasAction) {
     changePaletteOpen(false)
     requestAnimationFrame(() => {
@@ -1848,10 +1929,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             executeActionById(pinned ? 'pin-assets' : 'unpin-assets')
           }
           focusHidden={focusCanvas}
-          shortcutHint={displayShortcut(
-            actionById.get('toggle-assets')?.shortcut ?? '',
-            isMac
-          )}
+          shortcutHint={actionById.get('toggle-assets')?.shortcut}
         >
           <LibraryPanel
             path={repo.path}
@@ -1908,14 +1986,14 @@ function Canvas({ repo }: { repo: RepoInfo }) {
           onPointerCancel={() => {
             relation.current = null
             setRelationshipPreview(null)
-            setTarget(null)
+            updateTarget(null)
           }}
           onPointerMove={(event) => {
             const drag = relation.current
             if (!drag) return
             if (!isRelationshipDrag(drag, event.clientX, event.clientY)) {
               setRelationshipPreview(null)
-              setTarget(null)
+              updateTarget(null)
               return
             }
             const id = targetAt(event.clientX, event.clientY)
@@ -1929,7 +2007,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
                 y2: event.clientY - rect.top,
                 valid,
               })
-            setTarget(
+            updateTarget(
               id
                 ? {
                     id,
@@ -1946,7 +2024,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             event.preventDefault()
             relation.current = null
             setRelationshipPreview(null)
-            setTarget(null)
+            updateTarget(null)
             const id = targetAt(event.clientX, event.clientY)
             if (!isRelationshipDrag(drag, event.clientX, event.clientY)) {
               setSelection((current) => ({
@@ -2075,6 +2153,22 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             panOnDrag={space ? [0, 1, 2] : [1, 2]}
             nodesDraggable={!space}
             onNodesChange={(changes) => {
+              if (dropTargets.current.length) {
+                const movedGroups = new Map(
+                  changes.flatMap((change) =>
+                    change.type === 'position' &&
+                    change.position &&
+                    change.id.startsWith('set-')
+                      ? [[change.id, change.position] as const]
+                      : []
+                  )
+                )
+                if (movedGroups.size)
+                  dropTargets.current = dropTargets.current.map((group) => {
+                    const position = movedGroups.get(group.id)
+                    return position ? { ...group, position } : group
+                  })
+              }
               setNodes((n) => applyNodeChanges(changes, n))
               const selected = changes.filter((c) => c.type === 'select')
               if (selected.length)
@@ -2165,15 +2259,26 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             }}
             onNodeDrag={(_, node) => {
               if (node.type !== 'image') return
-              const group = flow
-                .getIntersectingNodes(node)
-                .find((candidate) => candidate.type === 'group')
-              setTarget(
+              const group = dropTargets.current.find((candidate) => {
+                const nodeWidth = node.measured?.width ?? node.width ?? 150
+                const nodeHeight = node.measured?.height ?? node.height ?? 110
+                const groupWidth =
+                  candidate.measured?.width ?? candidate.width ?? 160
+                const groupHeight =
+                  candidate.measured?.height ?? candidate.height ?? 128
+                return (
+                  node.position.x < candidate.position.x + groupWidth &&
+                  node.position.x + nodeWidth > candidate.position.x &&
+                  node.position.y < candidate.position.y + groupHeight &&
+                  node.position.y + nodeHeight > candidate.position.y
+                )
+              })
+              updateTarget(
                 group ? { id: group.id, valid: true, kind: 'set' } : null
               )
             }}
             onNodeDragStop={(_, node, moved) => {
-              setTarget(null)
+              updateTarget(null)
               run(async () => {
                 if (node.type === 'group') {
                   const group = (data.groups ?? []).find(
@@ -2224,6 +2329,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
               if (ready)
                 void ImageService.SetViewport(repo.path, v).catch(report)
             }}
+            onMove={(_, viewport) => updateZoomCompensation(viewport.zoom)}
             onPaneContextMenu={(event) => {
               event.preventDefault()
               setMenu({ kind: 'pane', x: event.clientX, y: event.clientY })
@@ -2320,38 +2426,32 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             />
           )}
           {!focusCanvas && (
-            <SelectionHud
-              selectedNodes={displayNodes.filter((n) => n.selected)}
-              hostRef={host}
-              canCreateSet={canCreateSet}
-              onCreateSet={() => executeActionById('create-set')}
-              onAlignHorizontal={() => executeActionById('align-horizontal')}
-              onAlignVertical={() => executeActionById('align-vertical')}
-              onArrangeSubgraph={() =>
-                executeActionById('auto-arrange-selection')
-              }
-              onUnplace={() => executeActionById('unplace-selection')}
-              onPreview={() => executeActionById('preview-selection')}
-              onLocate={() => executeActionById('locate-selection')}
-              onMore={handleMore}
-            />
-          )}
-          {!focusCanvas && (
             <CanvasDock
+              mode={
+                selectedCanvasNodeIds.length > 1
+                  ? 'multiple'
+                  : selectedCanvasNodeIds.length === 1
+                    ? 'single'
+                    : 'idle'
+              }
+              selectionCount={selectedCanvasNodeIds.length}
               canFitAll={displayNodes.length > 0}
-              canFitSelection={displayNodes.some((n) => n.selected)}
-              canAutoArrange={displayNodes.length >= 2}
+              canFitSelection={selectedCanvasNodeIds.length > 0}
+              canAutoArrange={
+                displayNodes.length >= 2 || selectedCanvasNodeIds.length > 1
+              }
+              canCreateSet={canCreateSet}
               shortcuts={{
                 fitAll: actionById.get('fit-all')?.shortcut ?? '',
                 fitSelection: actionById.get('fit-selection')?.shortcut ?? '',
                 resetZoom: actionById.get('reset-zoom')?.shortcut ?? '',
                 autoArrange:
                   actionById.get('auto-arrange-active')?.shortcut ?? '',
+                createSet: actionById.get('create-set')?.shortcut ?? '',
+                inspect: actionById.get('toggle-inspector')?.shortcut ?? '',
+                unplace: actionById.get('unplace-selection')?.shortcut ?? '',
               }}
-              onFitAll={() => executeActionById('fit-all')}
-              onFitSelection={() => executeActionById('fit-selection')}
-              onResetZoom={() => executeActionById('reset-zoom')}
-              onAutoArrange={() => executeActionById('auto-arrange-active')}
+              onAction={runDockAction}
             />
           )}
         </main>
@@ -2368,10 +2468,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             executeActionById(pinned ? 'pin-inspector' : 'unpin-inspector')
           }
           focusHidden={focusCanvas}
-          shortcutHint={displayShortcut(
-            actionById.get('toggle-inspector')?.shortcut ?? '',
-            isMac
-          )}
+          shortcutHint={actionById.get('toggle-inspector')?.shortcut}
         >
           <DetailPanel
             open={inspectorOpen}
@@ -2406,60 +2503,78 @@ function Canvas({ repo }: { repo: RepoInfo }) {
           <Trans>Canvas</Trans>
         </h1>
         <RepoSelect repo={repo} openRequest={repoOpenRequest} />
-        <button
-          type="button"
-          aria-label={t`Show commands`}
-          title={t`Show commands (${displayShortcut(actionById.get('show-commands')?.shortcut ?? '', isMac)})`}
-          data-testid="open-command-palette"
-          onClick={() => openPalette(false)}
-          className="inline-flex h-9 w-9 items-center justify-center rounded-full text-ink/75 transition-colors hover:bg-black/[0.06] hover:text-ink focus-visible:ring-2 focus-visible:ring-primary/40"
+        <Tooltip
+          label={t`Show commands`}
+          shortcut={actionById.get('show-commands')?.shortcut}
         >
-          <Command className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          aria-label={t`Assets`}
-          aria-expanded={assetsOpen}
-          title={t`Toggle Assets shelf (${displayShortcut(actionById.get('toggle-assets')?.shortcut ?? '', isMac)})`}
-          data-testid="toggle-assets-shelf"
-          onClick={() => executeActionById('toggle-assets')}
-          className={cn(
-            'inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors focus-visible:ring-2 focus-visible:ring-primary/40',
-            assetsOpen
-              ? 'bg-primary-soft text-ink'
-              : 'text-ink/75 hover:bg-black/[0.06] hover:text-ink'
-          )}
-        >
-          <PanelLeft className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          aria-label={t`Inspector`}
-          aria-expanded={inspectorOpen}
-          title={t`Toggle Inspector shelf (${displayShortcut(actionById.get('toggle-inspector')?.shortcut ?? '', isMac)})`}
-          data-testid="toggle-inspector-shelf"
-          onClick={() => executeActionById('toggle-inspector')}
-          className={cn(
-            'inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors focus-visible:ring-2 focus-visible:ring-primary/40',
-            inspectorOpen
-              ? 'bg-primary-soft text-ink'
-              : 'text-ink/75 hover:bg-black/[0.06] hover:text-ink'
-          )}
-        >
-          <PanelRight className="h-4 w-4" />
-        </button>
-        <div className="relative">
           <button
             type="button"
-            aria-label={t`Repository actions`}
-            aria-haspopup="menu"
-            aria-expanded={repoMenuOpen}
-            data-testid="repository-actions"
-            onClick={() => setRepoMenuOpen((open) => !open)}
+            aria-label={t`Show commands`}
+            data-testid="open-command-palette"
+            onClick={() => openPalette(false)}
             className="inline-flex h-9 w-9 items-center justify-center rounded-full text-ink/75 transition-colors hover:bg-black/[0.06] hover:text-ink focus-visible:ring-2 focus-visible:ring-primary/40"
           >
-            <MoreHorizontal className="h-4 w-4" />
+            <Command className="h-4 w-4" />
           </button>
+        </Tooltip>
+        <Tooltip
+          label={t`Toggle Assets`}
+          shortcut={actionById.get('toggle-assets')?.shortcut}
+          side="bottom"
+        >
+          <button
+            type="button"
+            aria-label={t`Assets`}
+            aria-pressed={assetsOpen}
+            aria-expanded={assetsOpen}
+            data-testid="toggle-assets-shelf"
+            onClick={() => executeActionById('toggle-assets')}
+            className={cn(
+              'inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors focus-visible:ring-2 focus-visible:ring-primary/40',
+              assetsOpen
+                ? 'bg-primary-soft text-ink'
+                : 'text-ink/75 hover:bg-black/[0.06] hover:text-ink'
+            )}
+          >
+            <PanelLeft className="h-4 w-4" />
+          </button>
+        </Tooltip>
+        <Tooltip
+          label={t`Toggle Inspector`}
+          shortcut={actionById.get('toggle-inspector')?.shortcut}
+          side="bottom"
+        >
+          <button
+            type="button"
+            aria-label={t`Inspector`}
+            aria-pressed={inspectorOpen}
+            aria-expanded={inspectorOpen}
+            data-testid="toggle-inspector-shelf"
+            onClick={() => executeActionById('toggle-inspector')}
+            className={cn(
+              'inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors focus-visible:ring-2 focus-visible:ring-primary/40',
+              inspectorOpen
+                ? 'bg-primary-soft text-ink'
+                : 'text-ink/75 hover:bg-black/[0.06] hover:text-ink'
+            )}
+          >
+            <PanelRight className="h-4 w-4" />
+          </button>
+        </Tooltip>
+        <div className="relative">
+          <Tooltip label={t`Repository actions`}>
+            <button
+              type="button"
+              aria-label={t`Repository actions`}
+              aria-haspopup="menu"
+              aria-expanded={repoMenuOpen}
+              data-testid="repository-actions"
+              onClick={() => setRepoMenuOpen((open) => !open)}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full text-ink/75 transition-colors hover:bg-black/[0.06] hover:text-ink focus-visible:ring-2 focus-visible:ring-primary/40"
+            >
+              <MoreHorizontal className="h-4 w-4" />
+            </button>
+          </Tooltip>
           {repoMenuOpen && (
             <div
               role="menu"
@@ -2507,18 +2622,22 @@ function Canvas({ repo }: { repo: RepoInfo }) {
         />
       </div>
       {focusCanvas && (
-        <button
-          type="button"
-          aria-label={t`Exit Focus Canvas mode`}
-          title={t`Exit Focus Canvas (${displayShortcut(actionById.get('toggle-focus-canvas')?.shortcut ?? '', isMac)})`}
-          onClick={toggleFocusMode}
-          className="group absolute left-0 top-1/2 z-40 flex h-12 w-2 -translate-y-1/2 items-center gap-2 overflow-hidden rounded-r-full border border-border bg-card/70 px-1 text-xs font-medium text-ink opacity-55 shadow-lg backdrop-blur transition-[width,opacity] hover:w-48 hover:bg-card/90 hover:opacity-100 focus-visible:w-48 focus-visible:bg-card/90 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 motion-reduce:transition-none"
+        <Tooltip
+          label={t`Exit Focus Canvas`}
+          shortcut={actionById.get('toggle-focus-canvas')?.shortcut}
         >
-          <PanelLeft className="h-4 w-4 rotate-180" />
-          <span className="whitespace-nowrap opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100">
-            <Trans>Exit Focus Canvas</Trans>
-          </span>
-        </button>
+          <button
+            type="button"
+            aria-label={t`Exit Focus Canvas mode`}
+            onClick={toggleFocusMode}
+            className="group absolute left-0 top-1/2 z-40 flex h-12 w-2 -translate-y-1/2 items-center gap-2 overflow-hidden rounded-r-full border border-border bg-card/70 px-1 text-xs font-medium text-ink opacity-55 shadow-lg backdrop-blur transition-[width,opacity] hover:w-48 hover:bg-card/90 hover:opacity-100 focus-visible:w-48 focus-visible:bg-card/90 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 motion-reduce:transition-none"
+          >
+            <PanelLeft className="h-4 w-4 rotate-180" />
+            <span className="whitespace-nowrap opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100">
+              <Trans>Exit Focus Canvas</Trans>
+            </span>
+          </button>
+        </Tooltip>
       )}
       <CommandPalette
         open={paletteOpen}

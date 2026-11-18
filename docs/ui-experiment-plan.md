@@ -32,33 +32,29 @@ purge meanings defined in [`r/ui.md`](../r/ui.md).
 
 ## Current implementation
 
-- `frontend/src/routes/canvas.tsx` renders a full-width header above a flex row
-  containing `ShelfPanel`, the React Flow `<main>`, and a second `ShelfPanel`.
-  On wide displays the shelves are layout siblings; each starts at 320 px and
-  can be resized from 240 to 480 px. At widths below 1100 px they overlay the
-  route instead. Thus opening both wide-screen shelves covers 640 px of the
-  available row by reducing the Canvas width.
-- `ShelfPanel` already has close buttons, edge triggers, resize separators, and
-  keyboard resizing. Closed shelves have zero width. Its content is provided by
-  `LibraryPanel` and `DetailPanel`, which can remain the sources of their current
-  catalog and metadata behavior during this experiment.
-- `CanvasDock` is a five-action bottom toolbar: Fit all, Fit selection, Reset
-  100%, Auto-arrange, and Create set. `SelectionHud` appears for a Canvas
-  selection and exposes Preview, Locate, Unplace, Create set, Align, and
-  Auto-arrange Subgraph as applicable.
-- `ImageNode` already has a hover overlay, but its “Quick Action” pill is
-  currently non-interactive. This is the natural place to trial real hover and
-  keyboard-focus actions without adding another always-visible toolbar.
-- The route header currently provides repository selection, Rescan, Import, and
-  the Assets / Inspector toggles. There is no command palette today.
+- `frontend/src/routes/canvas.tsx` renders the React Flow host full bleed, with
+  the top island, drawers, and Canvas Dock overlaid outside the zoomable node
+  layer. Drawer resizing and visibility do not change the host rectangle.
+- `ShelfPanel` is a floating view with a header collapse button, pin control,
+  resize separator, and keyboard resizing. Its content remains provided by
+  `LibraryPanel` and `DetailPanel`.
+- The top island's PanelLeft and PanelRight buttons are the only drawer triggers.
+  `Mod+B`, `Mod+I`, and the command palette remain alternate command paths.
+- `CanvasDock` morphs between idle, single-selection, and multi-selection
+  actions. Selection controls stay in this viewport overlay instead of
+  following a moving node.
+- `ImageNode` reveals only resolution and filename metadata on hover or focus.
+  Preview, Locate, Inspect, and mutation actions live in the contextual dock.
+- The top island provides repository selection, command palette, drawer
+  toggles, and repository actions including Rescan and Import.
 - Existing keyboard behavior includes `Mod+B` (Assets), `Mod+I` (Inspector),
   surface-scoped `Mod+A`, copy / converted copy / paste, Delete / Shift+Delete,
   `Shift+1`, `Shift+2`, `Shift+A`, `Mod+0`, `Mod+G`, Space-drag pan, and
   `Mod`-drag relationship creation. Undo / redo is wired through
   `useUndoShortcuts`.
-- `frontend/e2e/shelves.spec.ts` asserts panel widths, open/closed state, edge
-  triggers, resizing, and toggles. `canvas-dock.spec.ts` asserts the dock's
-  five controls, hover HUD behavior, hit areas, and viewport shortcuts. Canvas,
+- `frontend/e2e/shelves.spec.ts` asserts overlay bounds, open/closed state,
+  top-island triggers, resizing, and toggles. `canvas-dock.spec.ts` asserts
+  contextual dock modes, hit areas, and viewport shortcuts. Canvas,
   library, relationship, set, clipboard, and lifecycle behavior already has
   broad Playwright coverage, summarized in
   [`product-patterns-and-test-audit.md`](product-patterns-and-test-audit.md).
@@ -75,40 +71,46 @@ purge meanings defined in [`r/ui.md`](../r/ui.md).
    selector, command-palette trigger, and Assets / Inspector toggles. Put Import
    and Rescan under a small repository/actions menu so they stay discoverable
    without occupying a permanent row.
-3. Keep slim, labeled edge tabs for Assets and Inspector when their drawers are
-   closed. Hover or keyboard focus may reveal the tab label; click, Enter, or
-   the existing `Mod+B` / `Mod+I` shortcut opens the drawer. Do not make hover
-   the only way to open it.
+3. Use the top island's PanelLeft and PanelRight buttons as the single visible
+   drawer-control set. Do not render edge tabs. The existing `Mod+B` / `Mod+I`
+   shortcuts and palette commands also open the drawers.
 4. Default both drawers closed when entering the Canvas. Opening either overlays
    the graph; the other drawer can be opened independently. The user can pin an
    open drawer to keep it visible across Canvas interactions. Retain resizable
    widths and the accessible separator while the drawer is open.
-5. The Inspector follows the active selection even when closed. Selecting a
-   node does not unexpectedly open it; the selection HUD and palette provide
-   contextual actions, and `Mod+I` opens the full metadata view when wanted.
+5. Inspector content always follows the active selection, whether the drawer is
+   open or closed. Pinning controls whether the view stays visible across
+   interactions; it does not gate which selection supplies its content. With no
+   selection, show guidance for selecting items, `Mod+A`, and `@` asset search.
 
 ### Auto-hide and contextual controls
 
 | Event | Assets | Inspector | Other controls |
 | --- | --- | --- | --- |
-| Open from edge tab, top island, shortcut, or palette | Opens as an overlay; retains search, folder, and filters. | Opens with the current selection. | Restore focus to the control that opened it when closed. |
+| Open from top-island button, shortcut, or palette | Opens as an overlay; retains search, folder, and filters. | Opens with the current selection. | Restore focus to the control that opened it when closed. |
 | Click or pan on Canvas while an unpinned drawer is open | Remains open while browsing; closes after a successful Assets-to-Canvas drop. | Closes when the Canvas background clears selection. A selected node does not force it open. | Never close during an active pointer drag. |
-| Click its close button or press Escape with no higher-priority dialog/menu | Closes. | Closes. | Keep edge tabs available. Escape first closes a modal, palette, or context menu. |
+| Click its collapse button or press Escape with no higher-priority dialog/menu | Closes. | Closes. | Keep the top-island toggles available. Escape first closes a modal, palette, or context menu. |
 | Pin an open drawer | Remains open during Canvas clicks, selection changes, and pointer exit until explicitly closed/unpinned. | Same. | Expose pin state in the button name and `aria-pressed`. |
-| Enter Focus Canvas mode (`Mod+\`) | Hidden; pin state is retained. | Hidden; pin state is retained. | Hide top island, dock, edge tabs, and selection HUD. The palette and shortcut remain available; edge hover/focus or the shortcut exits the mode. |
+| Enter Focus Canvas mode (`Mod+\`) | Hidden; pin state is retained. | Hidden; pin state is retained. | Hide top island and dock. The palette and shortcut remain available; its shortcut exits the mode. |
 
-On image hover and keyboard focus, replace the placeholder “Quick Action” pill
-with a small action strip for Preview and More. Keep the resolution badge and
-filename treatment. Keep the selection HUD for Canvas selection, but put
-secondary actions under More if the current row of buttons competes with the
-image. Do not put controls over the image in a way that blocks dragging,
-selection, or relationship gestures. Touch users get the same actions from
-selection and the context menu, without hover requirements.
+### Selection actions: contextual dock instead of hover strips
 
-Simplify the persistent dock to Fit all, Fit selection when enabled, and Reset
-100%. Put Auto-arrange in a small overflow menu and keep Create set in the
-multi-selection HUD and palette. Preserve the existing action IDs where they
-still represent the same action; the visual grouping can change.
+Use the contextual Canvas Dock for Preview, Locate, Inspect, and selection
+actions. Keep image hover/focus metadata informative and action-free so the card
+surface stays available for dragging, selection, and relationship gestures.
+Scale the hovered or focused metadata block inversely with zoom using a CSS
+variable updated by the xyflow viewport callback; do not subscribe every image
+node to viewport React state for this compensation.
+This follows Gemini's teardown recommendation. A NodeToolbar prototype placed
+its toolbar above the viewport (`y = -48`) for a node near the top edge; the
+selection dock stays anchored to the viewport and avoids covering image content
+or competing with pan, zoom, and occlusion behavior.
+
+Morph the dock by selection: idle view controls when nothing is selected,
+single-selection Preview / Locate / Inspect / Fit selection / Unplace, and
+multi-selection Create Set / Align / Arrange / Unplace. Preserve the existing
+action IDs where they represent the same action; keep the dock fixed to the
+viewport instead of tracking nodes.
 
 ## Command palette
 
@@ -201,10 +203,10 @@ an input, textarea, select, contenteditable region, or modal editor. Keep
    the full-width header into the floating island. Preserve the current
    separators, resizing bounds, selection ownership, and drag/drop data
    transfer.
-3. **Add progressive controls and reveal rules.** Keep CanvasDock and
-   SelectionHud actions wired through the catalog. Replace the image-node
-   placeholder with real hover/focus actions. Add pin state, auto-hide rules,
-   edge tabs, and Focus Canvas mode. Keep all non-hover alternatives available.
+3. **Add progressive controls and reveal rules.** Wire the contextual Canvas
+   Dock through the catalog. Keep image hover/focus limited to metadata. Add pin
+   state, auto-hide rules, top-island drawer toggles, and Focus Canvas mode.
+   Keep all commands available through shortcuts and the palette.
 4. **Add the palette and asset search mode.** Use the existing Base UI dialog
    dependency if suitable; otherwise use current dialog primitives. Reuse the
    shared action catalog for results and shortcut hints. Keep asset search on
@@ -219,13 +221,13 @@ an input, textarea, select, contenteditable region, or modal editor. Keep
 - Implement the palette as an accessible dialog with a labeled combobox and
   result list. Support arrow-key navigation, Enter, Escape, visible active
   result, match-count announcement, focus trap, and focus restoration.
-- Give edge tabs, pin toggles, drawer controls, HUD actions, and icon-only
-  controls accessible names and visible focus indicators. Use `aria-expanded`
+- Give top-island toggles, pin buttons, drawer controls, dock actions, and
+  icon-only controls accessible names and visible focus indicators. Use `aria-expanded`
   / `aria-pressed` for open and pinned state. A drawer hidden visually must not
   leave its controls in the tab order.
-- Treat hover as an enhancement. The same actions must work through keyboard
-  focus, selection, context menus, and palette. On touch, use tap to reveal the
-  contextual action row. Respect reduced-motion preferences.
+- Treat hover as an enhancement. Image metadata appears on hover and keyboard
+  focus; selection actions work through the dock, context menus, and palette.
+  Respect reduced-motion preferences.
 - Keep the interaction usable at narrow widths: drawers overlay the Canvas,
   one drawer at a time by default, and the palette fits the viewport. Do not
   assume hover or a mouse.
@@ -249,20 +251,20 @@ Add focused Playwright coverage for:
 - Canvas host bounds remain unchanged when either or both drawers open, close,
   resize, or auto-hide; overlays do not intercept graph gestures outside their
   bounds.
-- Initial closed state, edge-tab click/focus/tap, keyboard toggles, pin/unpin,
+- Initial closed state, top-island toggles, keyboard toggles, pin/unpin,
   action-completion auto-hide, and no hide during drag or while focus is inside
   a drawer.
-- Focus Canvas mode hides controls and can be exited with its shortcut and edge
-  affordance; Escape follows the documented layered behavior.
+- Focus Canvas mode hides controls and can be exited with its shortcut; Escape
+  follows the documented layered behavior.
 - Palette opens from shortcut and button; fuzzy word/acronym/substring
   matching, category/alias matching, asset `@` search, result execution,
   disabled reasons, destructive confirmation, and focus restoration work.
 - Every palette shortcut hint matches the active keyboard binding on macOS and
   Windows/Linux. Typing in search, prompt, tag, and rename fields does not
   trigger global commands.
-- Existing CanvasDock and SelectionHud actions still invoke their original
-  behaviors through the catalog; hover controls work with pointer and keyboard,
-  while touch has a tap/context-menu path.
+- The contextual Canvas Dock actions still invoke their original behaviors
+  through the catalog; image metadata appears on pointer and keyboard focus,
+  while selection actions remain available without hover.
 - Responsive drawer/palette behavior at narrow widths, screen-reader labels,
   reduced motion, and no keyboard focus into hidden controls.
 

@@ -1,5 +1,6 @@
 import { plural, t } from '@lingui/core/macro'
 import { Plural, Trans } from '@lingui/react/macro'
+import { Info } from 'lucide-react'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import {
   type CanvasData,
@@ -10,10 +11,9 @@ import {
 } from '../../../bindings/loom/internal/service'
 import type { Selection } from '../../lib/selection'
 import { Button } from '../ui/button'
+import { Input } from '../ui/input'
+import { ShortcutKeys } from '../ui/tooltip'
 import { SetComparisonDialog } from './set-comparison-dialog'
-
-const fieldClass =
-  'h-8 w-full rounded-sm border border-black/12 bg-card px-2 text-xs text-ink outline-none focus-visible:ring-2 focus-visible:ring-primary/40'
 
 function Section({
   title,
@@ -223,19 +223,19 @@ export function DetailPanel({
         <h2 className="text-sm font-semibold text-ink">
           <Trans>Set</Trans>
         </h2>
-        <label className="grid gap-1 text-ink-muted">
+        <label htmlFor="set-name-input" className="grid gap-1 text-ink-muted">
           <Trans>Set name</Trans>
-          <input
-            className={fieldClass}
+          <Input
+            id="set-name-input"
             name="set-name"
             key={`${group.id}-name-${group.name}`}
             defaultValue={group.name}
           />
         </label>
-        <label className="grid gap-1 text-ink-muted">
+        <label htmlFor="set-kind-input" className="grid gap-1 text-ink-muted">
           <Trans>Kind</Trans>
-          <input
-            className={fieldClass}
+          <Input
+            id="set-kind-input"
             name="set-kind"
             key={`${group.id}-kind-${group.kind}`}
             defaultValue={group.kind}
@@ -317,11 +317,40 @@ export function DetailPanel({
           ))}
       </div>
     )
-  if (!images.length)
+  if (!images.length && selection.ids.length > 0 && !imageDataLoaded)
     return (
       <p className="p-3 text-xs text-ink-muted">
-        <Trans>Select an asset, set, or relationship.</Trans>
+        <Trans>Loading selection…</Trans>
       </p>
+    )
+  if (!images.length)
+    return (
+      <div className="flex min-h-full flex-col items-center justify-center p-6 text-center text-ink-muted">
+        <Info className="mb-2 h-8 w-8 text-ink-subtle/50" />
+        <h3 className="mb-1 text-xs font-semibold text-ink">
+          <Trans>No Selection</Trans>
+        </h3>
+        <p className="max-w-[200px] text-[11px] leading-relaxed text-ink-subtle">
+          <Trans>
+            Select an image, set, or relationship on the Canvas or in Assets to
+            view metadata and links.
+          </Trans>
+        </p>
+        <div className="mt-4 flex flex-col gap-1.5 text-[10px] text-ink-subtle">
+          <div className="flex items-center gap-2">
+            <ShortcutKeys shortcut="Mod+A" />
+            <span>
+              <Trans>Select all on active surface</Trans>
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <ShortcutKeys shortcut="@" />
+            <span>
+              <Trans>Search assets in palette</Trans>
+            </span>
+          </div>
+        </div>
+      </div>
     )
   const image = images.length === 1 ? images[0] : null
   const incoming = image
@@ -383,8 +412,7 @@ export function DetailPanel({
                 ).catch(errors.current)
               }}
             >
-              <input
-                className={fieldClass}
+              <Input
                 name="asset-path"
                 aria-label={t`File path`}
                 defaultValue={image.fileName}
@@ -438,8 +466,7 @@ export function DetailPanel({
               .catch(errors.current)
           }}
         >
-          <input
-            className={fieldClass}
+          <Input
             name="new-tag"
             aria-label={t`Add tag`}
             placeholder={t`Add tag`}

@@ -4,6 +4,7 @@ import { ChevronRight, X } from 'lucide-react'
 import Lightbox, { useController } from 'yet-another-react-lightbox'
 import 'yet-another-react-lightbox/styles.css'
 import type { ImageInfo } from '../../../bindings/loom/internal/service'
+import { Tooltip } from '../ui/tooltip'
 
 // The library's own toolbar close button and next-nav arrow are both
 // right-anchored (`right: 0`) inside the slide area — LightboxViewer's
@@ -17,28 +18,48 @@ import type { ImageInfo } from '../../../bindings/loom/internal/service'
 function LightboxCloseButton() {
   const { close } = useController()
   return (
-    <button
-      type="button"
-      onClick={close}
-      title={t`Close`}
-      className="fixed right-[316px] top-4 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white/90 transition-colors hover:bg-white/20"
-    >
-      <X className="h-4 w-4" />
-    </button>
+    <Tooltip label={t`Close preview`} shortcut="Escape">
+      <button
+        type="button"
+        aria-label={t`Close preview`}
+        onClick={close}
+        className="fixed right-[316px] top-4 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white/90 transition-colors hover:bg-white/20"
+      >
+        <X className="h-4 w-4" />
+      </button>
+    </Tooltip>
+  )
+}
+
+function LightboxPreviousButton() {
+  const { prev } = useController()
+  return (
+    <Tooltip label={t`Previous image`} shortcut="ArrowLeft">
+      <button
+        type="button"
+        aria-label={t`Previous image`}
+        onClick={() => prev()}
+        className="fixed left-4 top-1/2 z-10 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-white/90 transition-colors hover:bg-white/20"
+      >
+        <ChevronRight className="h-5 w-5 rotate-180" />
+      </button>
+    </Tooltip>
   )
 }
 
 function LightboxNextButton() {
   const { next } = useController()
   return (
-    <button
-      type="button"
-      onClick={() => next()}
-      title={t`Next`}
-      className="fixed right-[316px] top-1/2 z-10 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-white/90 transition-colors hover:bg-white/20"
-    >
-      <ChevronRight className="h-5 w-5" />
-    </button>
+    <Tooltip label={t`Next image`} shortcut="ArrowRight">
+      <button
+        type="button"
+        aria-label={t`Next image`}
+        onClick={() => next()}
+        className="fixed right-[316px] top-1/2 z-10 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-white/90 transition-colors hover:bg-white/20"
+      >
+        <ChevronRight className="h-5 w-5" />
+      </button>
+    </Tooltip>
   )
 }
 
@@ -89,6 +110,7 @@ export function LightboxViewer({
       }}
       render={{
         buttonClose: () => <LightboxCloseButton />,
+        buttonPrev: () => <LightboxPreviousButton />,
         buttonNext: () => <LightboxNextButton />,
         controls: () =>
           current ? (

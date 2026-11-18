@@ -1,13 +1,14 @@
 import { Dialog } from '@base-ui-components/react/dialog'
 import { t } from '@lingui/core/macro'
+import { Command, Search } from 'lucide-react'
 import { useEffect, useId, useState } from 'react'
 import {
   type CanvasAction,
-  displayShortcut,
   fuzzyMatch,
-  isMacPlatform,
   searchActions,
 } from '../../lib/action-catalog'
+import { Input } from '../ui/input'
+import { ShortcutKeys } from '../ui/tooltip'
 
 export interface PaletteAsset {
   id: number
@@ -151,27 +152,44 @@ export function CommandPalette({
           <Dialog.Description className="sr-only">
             {t`Search commands or type at sign to search repository assets.`}
           </Dialog.Description>
-          <input
-            role="combobox"
-            aria-label={
-              shortcutsOnly ? t`Search keyboard shortcuts` : t`Search commands`
-            }
-            aria-autocomplete="list"
-            aria-expanded="true"
-            aria-controls={listId}
-            aria-activedescendant={activeOptionId}
-            placeholder={
-              shortcutsOnly
-                ? t`Search shortcuts`
-                : t`Search commands or @ assets`
-            }
-            value={query}
-            onChange={(event) => {
-              setQuery(event.target.value)
-              setActiveIndex(0)
-            }}
-            className="h-14 w-full border-b border-border bg-transparent px-5 text-base text-ink outline-none placeholder:text-ink-subtle focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40"
-          />
+          <div
+            data-testid="command-palette-input-shell"
+            className="flex h-11 shrink-0 items-center border-b border-border px-3.5"
+          >
+            {assetMode ? (
+              <span className="mr-2 shrink-0 text-sm font-semibold text-ink-subtle">
+                @
+              </span>
+            ) : trimmed.startsWith('>') ? (
+              <Command className="mr-2 h-4 w-4 shrink-0 text-ink-subtle" />
+            ) : (
+              <Search className="mr-2 h-4 w-4 shrink-0 text-ink-subtle" />
+            )}
+            <Input
+              data-testid="command-palette-input"
+              role="combobox"
+              aria-label={
+                shortcutsOnly
+                  ? t`Search keyboard shortcuts`
+                  : t`Search commands`
+              }
+              aria-autocomplete="list"
+              aria-expanded="true"
+              aria-controls={listId}
+              aria-activedescendant={activeOptionId}
+              placeholder={
+                shortcutsOnly
+                  ? t`Search shortcuts`
+                  : t`Search commands or @ assets`
+              }
+              value={query}
+              onChange={(event) => {
+                setQuery(event.target.value)
+                setActiveIndex(0)
+              }}
+              className="h-11 rounded-none border-0 bg-transparent px-1 text-sm font-normal text-ink placeholder:text-ink-subtle focus:outline-none focus:ring-0 focus-visible:ring-0"
+            />
+          </div>
           <div className="flex items-center justify-between px-4 py-2 text-[11px] text-ink-muted">
             <span>
               {assetMode
@@ -245,9 +263,7 @@ export function CommandPalette({
                     </span>
                     <span className="flex shrink-0 flex-col items-end gap-1 text-[10px] text-ink-subtle">
                       {action.shortcut && (
-                        <kbd className="rounded border border-black/10 bg-black/[0.03] px-1.5 py-1 font-mono">
-                          {displayShortcut(action.shortcut, isMacPlatform())}
-                        </kbd>
+                        <ShortcutKeys shortcut={action.shortcut} />
                       )}
                       <span>{action.context}</span>
                     </span>
