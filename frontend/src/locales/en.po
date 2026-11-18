@@ -68,6 +68,10 @@ msgstr "{resultCount} results"
 #~ msgid "+ add"
 #~ msgstr "+ add"
 
+#: src/components/canvas/use-saved-asset-views.ts:105
+msgid "A saved view with that name already exists"
+msgstr "A saved view with that name already exists"
+
 #: src/components/canvas/library-panel.tsx:320
 msgid "active"
 msgstr "active"

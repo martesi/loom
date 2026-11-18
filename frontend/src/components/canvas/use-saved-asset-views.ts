@@ -1,3 +1,4 @@
+import { t } from '@lingui/core/macro'
 import { useEffect, useRef, useState } from 'react'
 import { SettingsService } from '../../../bindings/loom/internal/service'
 import {
@@ -101,7 +102,7 @@ export function useSavedAssetViews(
             candidate.name.toLocaleLowerCase() === view.name.toLocaleLowerCase()
         )
       )
-        throw new Error('A saved view with that name already exists')
+        throw new Error(t`A saved view with that name already exists`)
       const next = existing
         ? current.map((candidate) =>
             candidate.id === existing.id ? view : candidate
