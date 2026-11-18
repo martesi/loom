@@ -1,3 +1,4 @@
+import { t } from '@lingui/core/macro'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { cn } from '../../lib/utils'
@@ -136,8 +137,12 @@ export function ShelfPanel({
           </div>
           <button
             type="button"
-            aria-label={`Collapse ${title} shelf`}
-            title={`Collapse ${title}${shortcutHint ? ` (${shortcutHint})` : ''}`}
+            aria-label={t`Collapse ${title} shelf`}
+            title={
+              shortcutHint
+                ? t`Collapse ${title} (${shortcutHint})`
+                : t`Collapse ${title}`
+            }
             data-testid={`collapse-shelf-${side}`}
             onClick={() => onOpenChange(false)}
             className="inline-flex h-8 w-8 items-center justify-center rounded-sm text-ink/70 hover:text-ink hover:bg-black/[0.05] transition-colors focus-visible:ring-2 focus-visible:ring-primary/40"
@@ -163,7 +168,7 @@ export function ShelfPanel({
             aria-valuenow={panelWidth}
             aria-valuemin={minWidth}
             aria-valuemax={maxWidth}
-            aria-label={`Resize ${title} shelf`}
+            aria-label={t`Resize ${title} shelf`}
             data-testid={`shelf-resize-handle-${side}`}
             onPointerDown={handlePointerDown}
             onKeyDown={handleKeyDown}
@@ -183,8 +188,10 @@ export function ShelfPanel({
       {!open && (
         <button
           type="button"
-          aria-label={`Open ${title} shelf`}
-          title={`Open ${title}${shortcutHint ? ` (${shortcutHint})` : ''}`}
+          aria-label={t`Open ${title} shelf`}
+          title={
+            shortcutHint ? t`Open ${title} (${shortcutHint})` : t`Open ${title}`
+          }
           data-testid={`shelf-edge-trigger-${side}`}
           onClick={() => onOpenChange(true)}
           className={cn(

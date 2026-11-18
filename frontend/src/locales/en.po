@@ -13,6 +13,11 @@ msgstr ""
 "Language-Team: \n"
 "Plural-Forms: \n"
 
+#. placeholder {0}: images.length
+#: src/components/canvas/detail-panel.tsx:305
+msgid "{0, plural, one {# asset selected} other {# assets selected}}"
+msgstr "{0, plural, one {# asset selected} other {# assets selected}}"
+
 #. placeholder {0}: (group.memberIds ?? []).length
 #. placeholder {0}: rows.length
 #: src/components/canvas/detail-panel.tsx:144
@@ -41,7 +46,7 @@ msgstr "active"
 #~ msgid "Active"
 #~ msgstr "Active"
 
-#: src/components/canvas/detail-panel.tsx:341
+#: src/components/canvas/detail-panel.tsx:344
 msgid "Add"
 msgstr "Add"
 
@@ -53,8 +58,8 @@ msgstr "Add a tag…"
 #~ msgid "Add prompt…"
 #~ msgstr "Add prompt…"
 
-#: src/components/canvas/detail-panel.tsx:333
-#: src/components/canvas/detail-panel.tsx:334
+#: src/components/canvas/detail-panel.tsx:336
+#: src/components/canvas/detail-panel.tsx:337
 msgid "Add tag"
 msgstr "Add tag"
 
@@ -101,7 +106,8 @@ msgstr "All placements"
 msgid "All tags"
 msgstr "All tags"
 
-#: src/components/canvas/detail-panel.tsx:414
+#: src/components/canvas/detail-panel.tsx:417
+#: src/routes/canvas.tsx:786
 msgid "Archive"
 msgstr "Archive"
 
@@ -127,6 +133,8 @@ msgstr "Asset state"
 #~ msgstr "assets"
 
 #: src/components/canvas/library-panel.tsx:370
+#: src/routes/canvas.tsx:819
+#: src/routes/canvas.tsx:882
 msgid "Assets"
 msgstr "Assets"
 
@@ -154,10 +162,13 @@ msgstr "Auto-arrange"
 #~ msgid "Auto-arrange board"
 #~ msgstr "Auto-arrange board"
 
-#: src/components/board/canvas-toolbar.tsx:82
-#: src/routes/board.tsx:1200
-#~ msgid "Auto-arrange selection"
-#~ msgstr "Auto-arrange selection"
+#: src/routes/canvas.tsx:719
+msgid "Auto-arrange canvas"
+msgstr "Auto-arrange canvas"
+
+#: src/routes/canvas.tsx:735
+msgid "Auto-arrange selection"
+msgstr "Auto-arrange selection"
 
 #: src/components/canvas/selection-hud.tsx:219
 msgid "Auto-arrange Subgraph"
@@ -201,9 +212,10 @@ msgstr "browse every file, including unplaced images."
 msgid "Cancel"
 msgstr "Cancel"
 
-#: src/components/top-nav.tsx:43
-#~ msgid "Canvas"
-#~ msgstr "Canvas"
+#: src/routes/canvas.tsx:835
+#: src/routes/canvas.tsx:904
+msgid "Canvas"
+msgstr "Canvas"
 
 #: src/components/canvas/canvas-dock.tsx:73
 msgid "Canvas Actions"
@@ -225,17 +237,46 @@ msgstr "Choose a folder"
 msgid "Close"
 msgstr "Close"
 
+#: src/components/canvas/set-comparison-dialog.tsx:91
+msgid "Close comparison"
+msgstr "Close comparison"
+
 #: src/components/board/group-node.tsx:133
 #~ msgid "Collapse"
 #~ msgstr "Collapse"
 
-#: src/components/canvas/detail-panel.tsx:310
+#: src/components/canvas/shelf-panel.tsx:144
+msgid "Collapse {title}"
+msgstr "Collapse {title}"
+
+#: src/components/canvas/shelf-panel.tsx:143
+msgid "Collapse {title} ({shortcutHint})"
+msgstr "Collapse {title} ({shortcutHint})"
+
+#: src/components/canvas/shelf-panel.tsx:140
+msgid "Collapse {title} shelf"
+msgstr "Collapse {title} shelf"
+
+#: src/components/canvas/detail-panel.tsx:313
 msgid "Common:"
 msgstr "Common:"
 
 #: src/components/canvas/detail-panel.tsx:155
 msgid "Compare"
 msgstr "Compare"
+
+#. placeholder {0}: name || 'set'
+#: src/components/canvas/set-comparison-dialog.tsx:45
+#~ msgid "Compare {0}"
+#~ msgstr "Compare {0}"
+
+#: src/components/canvas/set-comparison-dialog.tsx:45
+msgid "Compare {name}"
+msgstr "Compare {name}"
+
+#: src/components/canvas/set-comparison-dialog.tsx:45
+msgid "Compare set"
+msgstr "Compare set"
 
 #: src/components/canvas/library-panel.tsx:519
 msgid "Compress…"
@@ -260,9 +301,9 @@ msgstr "Couldn't redo"
 msgid "Couldn't undo"
 msgstr "Couldn't undo"
 
-#: src/components/board/group-node.tsx:114
-#~ msgid "Cover"
-#~ msgstr "Cover"
+#: src/components/canvas/set-comparison-dialog.tsx:111
+msgid "Cover"
+msgstr "Cover"
 
 #: src/routes/board-route.tsx:70
 #~ msgid "Create board"
@@ -277,6 +318,7 @@ msgid "Create repo here"
 msgstr "Create repo here"
 
 #: src/components/canvas/canvas-dock.tsx:112
+#: src/routes/canvas.tsx:729
 msgid "Create set"
 msgstr "Create set"
 
@@ -284,6 +326,10 @@ msgstr "Create set"
 #: src/components/canvas/selection-hud.tsx:199
 msgid "Create Set ({0})"
 msgstr "Create Set ({0})"
+
+#: src/routes/canvas.tsx:1067
+msgid "Ctrl/Cmd-drag image → image or set to create a relationship."
+msgstr "Ctrl/Cmd-drag image → image or set to create a relationship."
 
 #: src/components/canvas/detail-panel.tsx:259
 msgid "Ctrl/Cmd-drag this image onto another image or set to create a relationship."
@@ -313,13 +359,26 @@ msgstr "Derived from"
 #~ msgid "Detail"
 #~ msgstr "Detail"
 
+#: src/routes/canvas.tsx:876
+msgid "Dismiss"
+msgstr "Dismiss"
+
 #: src/components/board/settings-modal.tsx:84
 #~ msgid "Display"
 #~ msgstr "Display"
 
 #: src/components/canvas/detail-panel.tsx:172
+#: src/routes/canvas.tsx:759
 msgid "Dissolve set"
 msgstr "Dissolve set"
+
+#: src/routes/canvas.tsx:1060
+msgid "Drag an asset from Assets onto the canvas."
+msgstr "Drag an asset from Assets onto the canvas."
+
+#: src/components/canvas/set-comparison-dialog.tsx:48
+msgid "Drag any image to pan all views. Zoom applies to every variant."
+msgstr "Drag any image to pan all views. Zoom applies to every variant."
 
 #: src/components/board/canvas-toolbar.tsx:69
 #~ msgid "Drag from a node's edge to link images — a dedicated link tool arrives in a later stage"
@@ -341,9 +400,9 @@ msgstr "File"
 #~ msgid "File explorer"
 #~ msgstr "File explorer"
 
-#: src/components/board/detail-panel.tsx:231
-#~ msgid "File not found on disk"
-#~ msgstr "File not found on disk"
+#: src/components/canvas/image-node.tsx:86
+msgid "File not found on disk"
+msgstr "File not found on disk"
 
 #: src/components/canvas/detail-panel.tsx:282
 msgid "File path"
@@ -352,6 +411,10 @@ msgstr "File path"
 #: src/components/canvas/library-panel.tsx:212
 msgid "Filters"
 msgstr "Filters"
+
+#: src/routes/canvas.tsx:772
+msgid "Find in assets"
+msgstr "Find in assets"
 
 #: src/routes/board.tsx:1106
 #~ msgid "Find in list"
@@ -381,7 +444,7 @@ msgstr "Focused the window showing \"{targetName}\"."
 msgid "Folders"
 msgstr "Folders"
 
-#: src/components/canvas/detail-panel.tsx:462
+#: src/components/canvas/detail-panel.tsx:465
 msgid "Go to"
 msgstr "Go to"
 
@@ -412,6 +475,19 @@ msgstr "Go to source"
 #: src/components/board/detail-panel.tsx:172
 #~ msgid "images selected"
 #~ msgstr "images selected"
+
+#: src/routes/canvas.tsx:839
+msgid "Import"
+msgstr "Import"
+
+#: src/routes/canvas.tsx:1062
+msgid "Import media or drop files onto the canvas."
+msgstr "Import media or drop files onto the canvas."
+
+#: src/routes/canvas.tsx:857
+#: src/routes/canvas.tsx:1377
+msgid "Inspector"
+msgstr "Inspector"
 
 #: src/components/canvas/detail-panel.tsx:135
 msgid "Kind"
@@ -463,7 +539,7 @@ msgstr "missing"
 msgid "Missing"
 msgstr "Missing"
 
-#: src/components/canvas/detail-panel.tsx:381
+#: src/components/canvas/detail-panel.tsx:384
 msgid "Mixed prompts — enter text to replace all"
 msgstr "Mixed prompts — enter text to replace all"
 
@@ -524,7 +600,7 @@ msgstr "No assets yet. Import files or rescan the repository."
 #~ msgid "No images match."
 #~ msgstr "No images match."
 
-#: src/components/canvas/detail-panel.tsx:380
+#: src/components/canvas/detail-panel.tsx:383
 msgid "No prompt"
 msgstr "No prompt"
 
@@ -540,14 +616,26 @@ msgstr "No subfolders here."
 msgid "No tags yet"
 msgstr "No tags yet"
 
-#: src/components/canvas/detail-panel.tsx:311
-#: src/components/canvas/detail-panel.tsx:440
+#: src/components/canvas/detail-panel.tsx:314
+#: src/components/canvas/detail-panel.tsx:443
 msgid "None"
 msgstr "None"
 
 #: src/components/canvas/repo-select.tsx:128
 msgid "Open"
 msgstr "Open"
+
+#: src/components/canvas/shelf-panel.tsx:193
+msgid "Open {title}"
+msgstr "Open {title}"
+
+#: src/components/canvas/shelf-panel.tsx:193
+msgid "Open {title} ({shortcutHint})"
+msgstr "Open {title} ({shortcutHint})"
+
+#: src/components/canvas/shelf-panel.tsx:191
+msgid "Open {title} shelf"
+msgstr "Open {title} shelf"
 
 #: src/routes/landing.tsx:37
 msgid "Open an image folder as a local Loom repository. Assets stay on disk, and only the images you place appear on the Canvas."
@@ -587,8 +675,8 @@ msgstr "Placement"
 msgid "Preview"
 msgstr "Preview"
 
-#: src/components/canvas/detail-panel.tsx:345
-#: src/components/canvas/detail-panel.tsx:371
+#: src/components/canvas/detail-panel.tsx:348
+#: src/components/canvas/detail-panel.tsx:374
 #: src/components/canvas/lightbox.tsx:101
 msgid "Prompt"
 msgstr "Prompt"
@@ -596,6 +684,10 @@ msgstr "Prompt"
 #: src/components/canvas/prompt-picker.tsx:117
 msgid "Prompt text…"
 msgstr "Prompt text…"
+
+#: src/components/canvas/image-node.tsx:110
+msgid "Quick Action"
+msgstr "Quick Action"
 
 #: src/routes/landing.tsx:91
 msgid "Recent"
@@ -616,8 +708,13 @@ msgstr "Recent"
 #~ msgid "Remove from board"
 #~ msgstr "Remove from board"
 
+#: src/routes/canvas.tsx:740
+#: src/routes/canvas.tsx:780
+msgid "Remove from canvas"
+msgstr "Remove from canvas"
+
 #: src/components/canvas/detail-panel.tsx:210
-#: src/components/canvas/detail-panel.tsx:473
+#: src/components/canvas/detail-panel.tsx:476
 msgid "Remove relationship"
 msgstr "Remove relationship"
 
@@ -646,15 +743,27 @@ msgstr "repo"
 msgid "Repository"
 msgstr "Repository"
 
+#: src/routes/canvas.tsx:837
+msgid "Rescan"
+msgstr "Rescan"
+
 #: src/components/board/settings-modal.tsx:101
 #~ msgid "Rescan folder for new images"
 #~ msgstr "Rescan folder for new images"
+
+#: src/components/canvas/set-comparison-dialog.tsx:88
+msgid "Reset"
+msgstr "Reset"
 
 #: src/components/canvas/canvas-dock.tsx:96
 msgid "Reset 100%"
 msgstr "Reset 100%"
 
-#: src/components/canvas/detail-panel.tsx:431
+#: src/components/canvas/shelf-panel.tsx:171
+msgid "Resize {title} shelf"
+msgstr "Resize {title} shelf"
+
+#: src/components/canvas/detail-panel.tsx:434
 msgid "Restore from trash"
 msgstr "Restore from trash"
 
@@ -662,7 +771,7 @@ msgstr "Restore from trash"
 msgid "Reuse a prompt"
 msgstr "Reuse a prompt"
 
-#: src/components/canvas/detail-panel.tsx:389
+#: src/components/canvas/detail-panel.tsx:392
 msgid "Save prompt"
 msgstr "Save prompt"
 
@@ -683,6 +792,10 @@ msgstr "Search assets"
 #~ msgid "Select (default)"
 #~ msgstr "Select (default)"
 
+#: src/routes/canvas.tsx:1073
+msgid "Select 2+ images, then Create set or press Ctrl/Cmd+G."
+msgstr "Select 2+ images, then Create set or press Ctrl/Cmd+G."
+
 #: src/components/board/floating-panel.tsx:142
 #~ msgid "Select a single image on the canvas to see its details — the detail tab itself is still a placeholder."
 #~ msgstr "Select a single image on the canvas to see its details — the detail tab itself is still a placeholder."
@@ -695,9 +808,9 @@ msgstr "Search assets"
 #~ msgid "Select a single image on the canvas, or ctrl/cmd+click a row in Library or Explorer, to see its details here."
 #~ msgstr "Select a single image on the canvas, or ctrl/cmd+click a row in Library or Explorer, to see its details here."
 
-#: src/routes/board.tsx:1247
-#~ msgid "Select all"
-#~ msgstr "Select all"
+#: src/routes/canvas.tsx:705
+msgid "Select all"
+msgstr "Select all"
 
 #: src/components/canvas/detail-panel.tsx:219
 msgid "Select an asset, set, or relationship."
@@ -755,13 +868,21 @@ msgstr "Show in Folders"
 msgid "Sources"
 msgstr "Sources"
 
-#: src/components/canvas/detail-panel.tsx:393
+#: src/routes/canvas.tsx:1056
+msgid "Start with an asset"
+msgstr "Start with an asset"
+
+#: src/components/canvas/detail-panel.tsx:396
 msgid "State"
 msgstr "State"
 
 #: src/components/board/library-panel.tsx:551
 #~ msgid "Status"
 #~ msgstr "Status"
+
+#: src/components/canvas/repo-select.tsx:103
+msgid "Switch repository"
+msgstr "Switch repository"
 
 #: src/components/canvas/repo-select.tsx:86
 msgid "Switched to existing window"
@@ -771,7 +892,7 @@ msgstr "Switched to existing window"
 msgid "Tag filter"
 msgstr "Tag filter"
 
-#: src/components/canvas/detail-panel.tsx:308
+#: src/components/canvas/detail-panel.tsx:311
 #: src/components/canvas/lightbox.tsx:109
 msgid "Tags"
 msgstr "Tags"
@@ -780,23 +901,26 @@ msgstr "Tags"
 #~ msgid "Tags: any"
 #~ msgstr "Tags: any"
 
-#: src/components/board/explorer-panel.tsx:404
-#: src/components/board/library-panel.tsx:320
-#: src/components/board/library-panel.tsx:430
-#: src/components/board/library-panel.tsx:691
-#: src/routes/board.tsx:1163
-#~ msgid "Trash"
-#~ msgstr "Trash"
+#: src/routes/canvas.tsx:821
+msgid "Toggle Assets shelf (Cmd+B)"
+msgstr "Toggle Assets shelf (Cmd+B)"
+
+#: src/routes/canvas.tsx:859
+msgid "Toggle Inspector shelf (Cmd+I)"
+msgstr "Toggle Inspector shelf (Cmd+I)"
+
+#: src/routes/canvas.tsx:794
+msgid "Trash"
+msgstr "Trash"
 
 #. placeholder {0}: selectedRows.length
 #: src/components/board/explorer-panel.tsx:368
 #~ msgid "Trash {0} files"
 #~ msgstr "Trash {0} files"
 
-#: src/components/board/canvas-toolbar.tsx:98
-#: src/routes/board.tsx:1221
-#~ msgid "Trash selection"
-#~ msgstr "Trash selection"
+#: src/routes/canvas.tsx:746
+msgid "Trash selection"
+msgstr "Trash selection"
 
 #: src/components/canvas/library-panel.tsx:234
 msgid "trashed"
@@ -807,7 +931,8 @@ msgstr "trashed"
 msgid "Trashed"
 msgstr "Trashed"
 
-#: src/components/canvas/detail-panel.tsx:412
+#: src/components/canvas/detail-panel.tsx:415
+#: src/routes/canvas.tsx:786
 msgid "Unarchive"
 msgstr "Unarchive"
 
@@ -852,14 +977,20 @@ msgstr "Unplaced"
 #~ msgid "Untitled set"
 #~ msgstr "Untitled set"
 
+#: src/components/canvas/set-comparison-dialog.tsx:119
+msgid "Use as cover"
+msgstr "Use as cover"
+
 #: src/routes/landing.tsx:34
 msgid "Welcome to Loom"
 msgstr "Welcome to Loom"
 
+#: src/components/canvas/set-comparison-dialog.tsx:72
 #: src/components/canvas/zoom-controls.tsx:32
 msgid "Zoom in"
 msgstr "Zoom in"
 
+#: src/components/canvas/set-comparison-dialog.tsx:56
 #: src/components/canvas/zoom-controls.tsx:21
 msgid "Zoom out"
 msgstr "Zoom out"

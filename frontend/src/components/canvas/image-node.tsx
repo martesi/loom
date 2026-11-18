@@ -1,3 +1,5 @@
+import { t } from '@lingui/core/macro'
+import { Trans } from '@lingui/react/macro'
 import { Handle, type NodeProps, NodeResizer, Position } from '@xyflow/react'
 import { useState } from 'react'
 import { DEFAULT_NODE_HEIGHT, DEFAULT_NODE_WIDTH } from '../../lib/node-size'
@@ -81,7 +83,7 @@ export function ImageNode({ data, selected, width, height }: NodeProps) {
         )}
         {missing && (
           <div
-            title="File not found on disk"
+            title={t`File not found on disk`}
             className="absolute right-1.5 top-1.5 z-20 flex h-[18px] w-[18px] items-center justify-center rounded-full bg-danger text-[11px] font-bold text-white shadow-sm"
           >
             !
@@ -105,7 +107,7 @@ export function ImageNode({ data, selected, width, height }: NodeProps) {
               data-testid="quick-action-pill"
               className="flex items-center gap-1 rounded-full bg-black/70 px-2 py-0.5 text-[10px] font-medium text-white/95 backdrop-blur-md shadow-sm border border-white/10"
             >
-              Quick Action
+              <Trans>Quick Action</Trans>
             </span>
           </div>
 

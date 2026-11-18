@@ -302,7 +302,10 @@ export function DetailPanel({
         </>
       ) : (
         <strong className="text-sm text-ink">
-          {images.length} assets selected
+          {plural(images.length, {
+            one: '# asset selected',
+            other: '# assets selected',
+          })}
         </strong>
       )}
       <Section title={<Trans>Tags</Trans>}>

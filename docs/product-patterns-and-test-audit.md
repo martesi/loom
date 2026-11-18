@@ -76,9 +76,11 @@ their application sources were not cloned.
    Canvas dock, Selection HUD, common Inspector actions, section headings, and
    form accessibility labels. Round 3 adds pluralized set and asset counts,
    plus the Assets shelf's mode, search, filter, choice, and empty-state text.
-   English remains the only shipped locale; remaining literal labels in other
-   Canvas and Assets paths, including filter chips and selection summaries,
-   still need extraction before another locale is added.
+   Round 4 extracts the remaining Canvas route, shelf controls, node hints,
+   repository switcher, and set-comparison dialog labels. The Inspector's
+   multi-asset selection summary is pluralized as well. English remains the
+   only shipped locale; the catalog has 152 active English messages and 80
+   obsolete entries retained by extraction.
 
 ## Existing evidence and remaining work
 
@@ -109,8 +111,17 @@ their application sources were not cloned.
 - The Sources, self-link, and collapsed-set source cases now have direct
   browser assertions. The collapsed-set case also checks that no relationship
   preview appears while the Ctrl-drag is in progress.
-- Round 3's Lingui extraction contains 201 English messages. Set and asset
-  counts are full plural messages, including the set badge's surrounding text.
+- Round 3's Lingui extraction reported 201 catalog entries. Round 4 reports 232
+  total entries, including 80 obsolete entries and 152 active messages. Set,
+  asset, and multi-selection counts use plural messages.
+- Round 4 Go tests, frontend typecheck, Biome, unit tests, and production build
+  passed. The full Playwright run passed 29 of 43 tests; 12 failed at browser
+  page creation with `Target crashed`, one timed out waiting for a browser
+  action, and one relationship gesture produced no edge. At the time, the
+  container had 1,864 of 2,048 task slots in use. Isolated Assets and shelf
+  tests passed 10/10, the relationship gesture passed 1/1, and the multi-asset
+  selection assertion passed 1/1. Re-run the full suite with more process
+  headroom before treating this checkout's E2E status as green.
 
 ## Sources
 

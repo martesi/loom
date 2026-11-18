@@ -1,4 +1,6 @@
 import { Dialog } from '@base-ui-components/react/dialog'
+import { t } from '@lingui/core/macro'
+import { Trans } from '@lingui/react/macro'
 import { X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { ImageInfo } from '../../../bindings/loom/internal/service'
@@ -40,15 +42,22 @@ export function SetComparisonDialog({
           <header className="flex flex-wrap items-center gap-3 border-b border-white/10 px-4 py-3">
             <div className="min-w-48 flex-1">
               <Dialog.Title className="truncate text-sm font-semibold">
-                Compare {name || 'set'}
+                {name ? (
+                  <Trans>Compare {name}</Trans>
+                ) : (
+                  <Trans>Compare set</Trans>
+                )}
               </Dialog.Title>
               <Dialog.Description className="text-xs text-white/50">
-                Drag any image to pan all views. Zoom applies to every variant.
+                <Trans>
+                  Drag any image to pan all views. Zoom applies to every
+                  variant.
+                </Trans>
               </Dialog.Description>
             </div>
             <button
               type="button"
-              aria-label="Zoom out"
+              aria-label={t`Zoom out`}
               onClick={() =>
                 setView((current) => ({
                   ...current,
@@ -64,7 +73,7 @@ export function SetComparisonDialog({
             </span>
             <button
               type="button"
-              aria-label="Zoom in"
+              aria-label={t`Zoom in`}
               onClick={() =>
                 setView((current) => ({
                   ...current,
@@ -80,10 +89,10 @@ export function SetComparisonDialog({
               onClick={() => setView({ zoom: 1, x: 0, y: 0 })}
               className="rounded border border-white/15 px-2 py-1 text-xs hover:bg-white/10"
             >
-              Reset
+              <Trans>Reset</Trans>
             </button>
             <Dialog.Close
-              aria-label="Close comparison"
+              aria-label={t`Close comparison`}
               className="rounded p-2 text-white/70 hover:bg-white/10 hover:text-white"
             >
               <X className="h-4 w-4" />
@@ -103,7 +112,7 @@ export function SetComparisonDialog({
                   </span>
                   {image.id === coverImageId ? (
                     <span className="rounded bg-white/10 px-2 py-1 text-white/70">
-                      Cover
+                      <Trans>Cover</Trans>
                     </span>
                   ) : (
                     <button
@@ -111,7 +120,7 @@ export function SetComparisonDialog({
                       onClick={() => onSetCover(image.id)}
                       className="rounded border border-white/15 px-2 py-1 text-white/70 hover:bg-white/10"
                     >
-                      Use as cover
+                      <Trans>Use as cover</Trans>
                     </button>
                   )}
                 </div>

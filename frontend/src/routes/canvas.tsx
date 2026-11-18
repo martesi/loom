@@ -1,4 +1,6 @@
 import { Dialog } from '@base-ui-components/react/dialog'
+import { t } from '@lingui/core/macro'
+import { Trans } from '@lingui/react/macro'
 import {
   applyEdgeChanges,
   applyNodeChanges,
@@ -700,7 +702,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       return [
         {
           key: 'select-all',
-          label: 'Select all',
+          label: t`Select all`,
           disabled: displayNodes.length === 0,
           onSelect: () =>
             setSelection({
@@ -714,7 +716,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
         },
         {
           key: 'auto-arrange',
-          label: 'Auto-arrange canvas',
+          label: t`Auto-arrange canvas`,
           disabled: displayNodes.length < 2,
           onSelect: () => run(() => arrange()),
         },
@@ -724,24 +726,24 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       return [
         {
           key: 'create-set',
-          label: 'Create set',
+          label: t`Create set`,
           disabled: !canCreateSet,
           onSelect: () => void createSet().catch(report),
         },
         {
           key: 'auto-arrange-selection',
-          label: 'Auto-arrange selection',
+          label: t`Auto-arrange selection`,
           onSelect: () => run(() => arrange(selectedCanvasNodeIds)),
         },
         {
           key: 'remove',
-          label: 'Remove from canvas',
+          label: t`Remove from canvas`,
           separatorBefore: true,
           onSelect: () => run(() => removeCanvasAssets(ids, false)),
         },
         {
           key: 'trash',
-          label: 'Trash selection',
+          label: t`Trash selection`,
           danger: true,
           onSelect: () => run(() => removeCanvasAssets(ids, true)),
         },
@@ -754,7 +756,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       return [
         {
           key: 'dissolve-set',
-          label: 'Dissolve set',
+          label: t`Dissolve set`,
           onSelect: () => run(() => GroupService.Ungroup(repo.path, groupId)),
         },
       ]
@@ -767,7 +769,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     return [
       {
         key: 'find-assets',
-        label: 'Find in assets',
+        label: t`Find in assets`,
         onSelect: () => {
           selectAssets([imageId])
           setReveal({ id: imageId, folder: null })
@@ -775,13 +777,13 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       },
       {
         key: 'remove',
-        label: 'Remove from canvas',
+        label: t`Remove from canvas`,
         separatorBefore: true,
         onSelect: () => run(() => removeCanvasAssets([imageId], false)),
       },
       {
         key: 'archive',
-        label: image.archived ? 'Unarchive' : 'Archive',
+        label: image.archived ? t`Unarchive` : t`Archive`,
         onSelect: () =>
           run(() =>
             ImageService.SetArchived(repo.path, imageId, !image.archived)
@@ -789,7 +791,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       },
       {
         key: 'trash',
-        label: 'Trash',
+        label: t`Trash`,
         danger: true,
         onSelect: () => run(() => removeCanvasAssets([imageId], true)),
       },
@@ -814,9 +816,9 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       <header className="flex items-center gap-2 border-b border-black/10 bg-card px-3 py-2 text-xs">
         <button
           type="button"
-          aria-label="Assets"
+          aria-label={t`Assets`}
           aria-expanded={assetsOpen}
-          title="Toggle Assets shelf (Cmd+B)"
+          title={t`Toggle Assets shelf (Cmd+B)`}
           data-testid="toggle-assets-shelf"
           onClick={() => setAssetsOpen((v) => !v)}
           className={cn(
@@ -829,10 +831,12 @@ function Canvas({ repo }: { repo: RepoInfo }) {
           <PanelLeft className="h-4 w-4" />
         </button>
         <RepoSelect repo={repo} />
-        <h1 className="text-xs font-semibold">Canvas</h1>
-        {toolbar('Rescan', reload)}
+        <h1 className="text-xs font-semibold">
+          <Trans>Canvas</Trans>
+        </h1>
+        {toolbar(t`Rescan`, reload)}
         <label className="inline-flex h-8 cursor-pointer items-center justify-center rounded-sm border border-black/16 px-3 text-xs font-semibold text-ink transition-colors hover:bg-black/[0.03] focus-within:ring-2 focus-within:ring-primary/40">
-          Import
+          <Trans>Import</Trans>
           <input
             type="file"
             multiple
@@ -850,9 +854,9 @@ function Canvas({ repo }: { repo: RepoInfo }) {
         <div className="flex-1" />
         <button
           type="button"
-          aria-label="Inspector"
+          aria-label={t`Inspector`}
           aria-expanded={inspectorOpen}
-          title="Toggle Inspector shelf (Cmd+I)"
+          title={t`Toggle Inspector shelf (Cmd+I)`}
           data-testid="toggle-inspector-shelf"
           onClick={() => setInspectorOpen((v) => !v)}
           className={cn(
@@ -869,13 +873,13 @@ function Canvas({ repo }: { repo: RepoInfo }) {
         <div role="alert" className="bg-red-100 p-2 text-sm">
           {error}
           <button type="button" onClick={() => setError('')}>
-            Dismiss
+            <Trans>Dismiss</Trans>
           </button>
         </div>
       )}
       <div className="relative flex min-h-0 flex-1">
         <ShelfPanel
-          title="Assets"
+          title={t`Assets`}
           side="left"
           open={assetsOpen}
           onOpenChange={setAssetsOpen}
@@ -897,7 +901,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
         </ShelfPanel>
         <main
           ref={host}
-          aria-label="Canvas"
+          aria-label={t`Canvas`}
           className="relative min-w-0 flex-1"
           onClickCapture={(event) => {
             if (
@@ -1049,18 +1053,27 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center px-8">
               <div className="w-full max-w-sm rounded-xl border border-black/8 bg-card/90 p-5 shadow-sm backdrop-blur-sm">
                 <h2 className="text-sm font-semibold text-ink">
-                  Start with an asset
+                  <Trans>Start with an asset</Trans>
                 </h2>
                 <p className="mt-1 text-xs leading-relaxed text-ink-muted">
-                  {(data.images ?? []).length
-                    ? 'Drag an asset from Assets onto the canvas.'
-                    : 'Import media or drop files onto the canvas.'}
+                  {(data.images ?? []).length ? (
+                    <Trans>Drag an asset from Assets onto the canvas.</Trans>
+                  ) : (
+                    <Trans>Import media or drop files onto the canvas.</Trans>
+                  )}
                 </p>
                 <div className="mt-4 grid gap-2 text-xs text-ink-muted">
                   <p>
-                    Ctrl/Cmd-drag image → image or set to create a relationship.
+                    <Trans>
+                      Ctrl/Cmd-drag image → image or set to create a
+                      relationship.
+                    </Trans>
                   </p>
-                  <p>Select 2+ images, then Create set or press Ctrl/Cmd+G.</p>
+                  <p>
+                    <Trans>
+                      Select 2+ images, then Create set or press Ctrl/Cmd+G.
+                    </Trans>
+                  </p>
                 </div>
               </div>
             </div>
@@ -1361,7 +1374,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
           />
         </main>
         <ShelfPanel
-          title="Inspector"
+          title={t`Inspector`}
           side="right"
           open={inspectorOpen}
           onOpenChange={setInspectorOpen}

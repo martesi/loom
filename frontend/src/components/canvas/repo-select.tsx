@@ -100,7 +100,7 @@ export function RepoSelect({ repo }: RepoSelectProps) {
       onOpenChange={handleOpenChange}
     >
       <SelectTrigger
-        aria-label="Switch repository"
+        aria-label={t`Switch repository`}
         className="w-52 max-w-[40vw]"
       >
         <SelectValue />

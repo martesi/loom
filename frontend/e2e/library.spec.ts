@@ -94,6 +94,9 @@ test('asset selection survives view switches and multi-row drag transfers select
   await asset(page, 'root-alpha.png').click()
   await asset(page, 'root-beta.png').click({ modifiers: ['Control'] })
   await expect(selectedAssets).toHaveCount(2)
+  await expect(
+    page.getByText('2 assets selected', { exact: true })
+  ).toBeVisible()
 
   await page.getByRole('button', { name: 'Folders', exact: true }).click()
   await expect(selectedAssets).toHaveCount(2)
