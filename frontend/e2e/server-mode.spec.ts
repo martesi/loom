@@ -128,7 +128,7 @@ test('drawers overlay the full Canvas and switch sides on compact viewports', as
     'open'
   )
   await expect(
-    page.getByText('Select an asset, set, or relationship.')
+    page.getByRole('heading', { name: 'No Selection', exact: true })
   ).toBeVisible()
 
   await page.setViewportSize({ width: 1400, height: 700 })

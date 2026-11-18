@@ -146,7 +146,7 @@ const fixtureRepos = [
   },
   { name: 'media-fixtures', files: ['media-alpha.png'] },
   { name: 'image-tools-fixtures', files: ['image-tools-alpha.png'] },
-  // Dedicated fixtures for CanvasDock & SelectionHud
+  // Dedicated fixtures for the contextual Canvas Dock
   { name: 'dock-fixtures', files: ['dock-alpha.png', 'dock-beta.png'] },
   { name: 'dock-rel-fixtures', files: ['rel-alpha.png', 'rel-beta.png'] },
   {

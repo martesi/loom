@@ -17,6 +17,12 @@ test.describe('Canvas command palette', () => {
     const dialog = page.getByRole('dialog', { name: 'Command palette' })
     const search = page.getByRole('combobox', { name: 'Search commands' })
     await expect(dialog).toBeVisible()
+    const inputShell = page.getByTestId('command-palette-input-shell')
+    await expect(inputShell).toHaveClass(/h-11/)
+    await expect(inputShell).toHaveClass(/border-b/)
+    await expect(inputShell.locator('svg')).toBeVisible()
+    await expect(search).toHaveClass(/text-sm/)
+    expect((await search.boundingBox())?.height).toBe(44)
     await search.fill('> zoom extents')
     await expect(page.getByRole('option', { name: /Fit all/ })).toBeVisible()
     await expect(page.locator('[role=status]')).toContainText('results')
@@ -243,7 +249,7 @@ test.describe('Canvas command palette', () => {
 
     await inspector.getByTestId('collapse-shelf-right').click()
     await expect(inspector).toHaveAttribute('data-state', 'closed')
-    await page.getByTestId('shelf-edge-trigger-right').click()
+    await page.getByTestId('toggle-inspector-shelf').click()
     await expect(inspector).toHaveAttribute('data-state', 'open')
     await expect(inspector.getByRole('button').first()).toBeFocused()
   })
@@ -309,7 +315,7 @@ test.describe('Canvas command palette', () => {
 
     await inspector.getByTestId('collapse-shelf-right').click()
     await expect(inspector).toHaveAttribute('data-state', 'closed')
-    await page.getByTestId('shelf-edge-trigger-right').click()
+    await page.getByTestId('toggle-inspector-shelf').click()
     await expect(inspector).toHaveAttribute('data-state', 'open')
     await expect(inspector.getByTestId('pin-shelf-right')).toBeFocused()
 
@@ -339,7 +345,7 @@ test.describe('Canvas command palette', () => {
     releaseImageFailure()
     await expect(page.getByRole('alert')).toBeVisible()
     await inspector.getByTestId('collapse-shelf-right').click()
-    await page.getByTestId('shelf-edge-trigger-right').click()
+    await page.getByTestId('toggle-inspector-shelf').click()
     await expect(inspector.getByTestId('pin-shelf-right')).toBeFocused()
   })
 
@@ -349,9 +355,9 @@ test.describe('Canvas command palette', () => {
     await openFixtureRepo(page, 'group-fixtures')
     await placeAssets(page, ['group-alpha.png', 'group-beta.png'])
     await autoArrangeCanvas(page)
-    await page.getByRole('button', { name: 'Reset 100%' }).click()
+    await page.keyboard.press('ControlOrMeta+0')
     await selectImageNodes(page, [0, 1])
-    await page.getByTestId('hud-create-set').click()
+    await page.getByTestId('dock-create-set').click()
 
     const inspector = page.locator('aside[aria-label="Inspector"]')
     const group = page.locator('.react-flow__node-group')
@@ -369,7 +375,7 @@ test.describe('Canvas command palette', () => {
     await expect(paletteTrigger).toBeFocused()
     await inspector.getByTestId('collapse-shelf-right').click()
     await expect(inspector).toHaveAttribute('data-state', 'closed')
-    await page.getByTestId('shelf-edge-trigger-right').click()
+    await page.getByTestId('toggle-inspector-shelf').click()
     await expect(inspector).toHaveAttribute('data-state', 'open')
     await expect(inspector.getByTestId('pin-shelf-right')).toBeFocused()
   })
@@ -476,7 +482,7 @@ test.describe('Canvas command palette', () => {
     await expect(controls).toHaveAttribute('aria-hidden', 'true')
     await expect(controls).toHaveAttribute('inert', '')
     await expect(page.getByTestId('canvas-dock')).toHaveCount(0)
-    await expect(page.getByTestId('shelf-edge-trigger-left')).toHaveCount(0)
+    await expect(page.getByTestId('toggle-assets-shelf')).toHaveCount(1)
     await expect(page.locator('aside[aria-label="Assets"]')).toHaveAttribute(
       'data-visible',
       'false'

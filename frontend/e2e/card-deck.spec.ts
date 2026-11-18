@@ -51,7 +51,7 @@ test.describe('Physical Card & Set Stack Metaphors, Studio Palette', () => {
   }) => {
     await openFixtureRepo(page, 'card-fixtures')
     await placeAssets(page, ['card-alpha.png'])
-    await page.getByRole('button', { name: 'Reset 100%' }).click()
+    await page.keyboard.press('ControlOrMeta+0')
 
     const node = imageNodes(page).first()
     await expect(node).toBeVisible()
@@ -91,12 +91,12 @@ test.describe('Physical Card & Set Stack Metaphors, Studio Palette', () => {
     await expect(card).toHaveClass(/ring-offset-background/)
   })
 
-  test('hover over ImageNode reveals metadata overlay with zero layout shift', async ({
+  test('hover over ImageNode reveals readable metadata without covering the card actions', async ({
     page,
   }) => {
     await openFixtureRepo(page, 'card-hover-fixtures')
     await placeAssets(page, ['hover-alpha.png'])
-    await page.getByRole('button', { name: 'Reset 100%' }).click()
+    await page.keyboard.press('ControlOrMeta+0')
 
     const node = imageNodes(page).first()
     const card = node.getByTestId('image-node-card')
@@ -118,12 +118,17 @@ test.describe('Physical Card & Set Stack Metaphors, Studio Palette', () => {
     await expect(resBadge).toBeVisible()
     await expect(resBadge).toHaveText(/\d+×\d+/)
 
-    await expect(hud.getByTestId('image-preview-action')).toBeVisible()
-    await expect(hud.getByTestId('image-more-action')).toBeVisible()
+    await expect(hud.getByTestId('image-preview-action')).toHaveCount(0)
+    await expect(hud.getByTestId('image-more-action')).toHaveCount(0)
 
     const fileName = hud.getByTestId('image-node-filename')
     await expect(fileName).toBeVisible()
     await expect(fileName).toHaveText('hover-alpha.png')
+    await expect(resBadge).toHaveClass(/text-\[11px\]/)
+    await expect(resBadge).toHaveClass(/bg-black\/80/)
+    await expect(fileName).toHaveClass(/text-xs/)
+    await expect(fileName).toHaveClass(/bg-black\/80/)
+    await expect(fileName).toHaveClass(/backdrop-blur-md/)
 
     // Measure bounding box after hover to verify zero layout shift
     const boxAfter = await nodeBox(card)
@@ -131,6 +136,53 @@ test.describe('Physical Card & Set Stack Metaphors, Studio Palette', () => {
     expect(Math.abs(boxAfter.y - boxBefore.y)).toBeLessThan(1)
     expect(Math.abs(boxAfter.width - boxBefore.width)).toBeLessThan(1)
     expect(Math.abs(boxAfter.height - boxBefore.height)).toBeLessThan(1)
+
+    const badgeBeforeZoom = await resBadge.boundingBox()
+    const filenameBeforeZoom = await fileName.boundingBox()
+    const metadata = hud.getByTestId('image-node-metadata')
+    const cardBounds = await card.boundingBox()
+    expect(badgeBeforeZoom).not.toBeNull()
+    expect(filenameBeforeZoom).not.toBeNull()
+    expect(cardBounds).not.toBeNull()
+    if (!cardBounds || !badgeBeforeZoom || !filenameBeforeZoom) return
+    await page.mouse.move(
+      cardBounds.x + cardBounds.width / 2,
+      cardBounds.y + cardBounds.height / 2
+    )
+    for (let step = 0; step < 6; step += 1) await page.mouse.wheel(0, 500)
+
+    const viewportZoom = () =>
+      page.locator('.react-flow__viewport').evaluate((viewport) => {
+        const match = viewport.getAttribute('style')?.match(/scale\(([\d.]+)/)
+        return match ? Number(match[1]) : 1
+      })
+    await expect.poll(viewportZoom).toBeLessThanOrEqual(0.5)
+    await expect
+      .poll(() =>
+        metadata.evaluate((element) =>
+          Number(
+            (element as HTMLElement).style.getPropertyValue(
+              '--canvas-inverse-zoom'
+            )
+          )
+        )
+      )
+      .toBeGreaterThanOrEqual(2)
+    const badgeAfterZoom = await resBadge.boundingBox()
+    const filenameAfterZoom = await fileName.boundingBox()
+    expect(badgeAfterZoom).not.toBeNull()
+    expect(filenameAfterZoom).not.toBeNull()
+    if (badgeAfterZoom && filenameAfterZoom) {
+      expect(
+        Math.abs(badgeAfterZoom.height - badgeBeforeZoom.height)
+      ).toBeLessThan(1.5)
+      expect(
+        Math.abs(filenameAfterZoom.height - filenameBeforeZoom.height)
+      ).toBeLessThan(1.5)
+      expect(badgeAfterZoom.y + badgeAfterZoom.height).toBeLessThanOrEqual(
+        filenameAfterZoom.y
+      )
+    }
   })
 
   test('GroupNode renders physical tactile deck offset cards and frosted count pill badge', async ({
@@ -143,10 +195,10 @@ test.describe('Physical Card & Set Stack Metaphors, Studio Palette', () => {
       'group-gamma.png',
     ])
     await autoArrangeCanvas(page)
-    await page.getByRole('button', { name: 'Reset 100%' }).click()
+    await page.keyboard.press('ControlOrMeta+0')
 
     await selectImageNodes(page, [0, 1])
-    await page.getByTestId('hud-create-set').click()
+    await page.getByTestId('dock-create-set').click()
 
     const group = page.locator('.react-flow__node-group')
     await expect(group).toHaveCount(1)
@@ -198,10 +250,10 @@ test.describe('Physical Card & Set Stack Metaphors, Studio Palette', () => {
       'group-gamma.png',
     ])
     await autoArrangeCanvas(page)
-    await page.getByRole('button', { name: 'Reset 100%' }).click()
+    await page.keyboard.press('ControlOrMeta+0')
 
     await selectImageNodes(page, [0, 1])
-    await page.getByTestId('hud-create-set').click()
+    await page.getByTestId('dock-create-set').click()
 
     const group = page.locator('.react-flow__node-group')
     await expect(group).toHaveCount(1)

@@ -211,7 +211,9 @@ test('rescan discovers new files and exposes missing files', async ({
     .getByRole('combobox', { name: 'Asset state' })
     .selectOption('missing')
   await expect(asset(page, 'rescan-alpha.png')).toBeVisible()
-  await expect(page.getByTitle('File not found on disk')).toBeVisible()
+  await expect(
+    page.getByRole('img', { name: 'File not found on disk' })
+  ).toBeVisible()
 })
 
 test('show in folders reveals the selected asset location', async ({

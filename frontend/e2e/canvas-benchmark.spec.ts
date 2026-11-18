@@ -3,7 +3,12 @@ import os from 'node:os'
 import path from 'node:path'
 import type { Browser, Page } from '@playwright/test'
 import { expect, test } from './test-fixtures'
-import { assets, imageNodes, openFixtureRepo } from './test-helpers'
+import {
+  assets,
+  dropAssetRow,
+  imageNodes,
+  openFixtureRepo,
+} from './test-helpers'
 
 const photoCount = 1000
 const resultPath = path.resolve(
@@ -22,13 +27,9 @@ test('1k-photo Canvas latency and resource benchmark', async ({
   await expect(assets(page)).toHaveCount(10)
   await assets(page).first().click()
   await page.keyboard.press('Control+a')
-  await assets(page)
-    .first()
-    .dragTo(page.locator('.react-flow__pane'), {
-      targetPosition: { x: 200, y: 160 },
-    })
+  await dropAssetRow(page, assets(page).first(), { x: 200, y: 160 })
   await expect(imageNodes(page)).toHaveCount(10)
-  await page.getByRole('button', { name: 'Fit all', exact: true }).click()
+  await page.keyboard.press('Shift+1')
   const baselineInteractions = await measureInteractions(page, 10)
 
   await openFixtureRepo(page, 'benchmark-1k-fixtures')
@@ -41,11 +42,7 @@ test('1k-photo Canvas latency and resource benchmark', async ({
   )
 
   const placementStarted = performance.now()
-  await assets(page)
-    .first()
-    .dragTo(page.locator('.react-flow__pane'), {
-      targetPosition: { x: 200, y: 160 },
-    })
+  await dropAssetRow(page, assets(page).first(), { x: 200, y: 160 })
   await expect(imageNodes(page)).toHaveCount(photoCount, { timeout: 120_000 })
   const placementMs = performance.now() - placementStarted
   console.log(
@@ -61,9 +58,9 @@ test('1k-photo Canvas latency and resource benchmark', async ({
     `Reloaded and rendered ${photoCount} photos in ${reloadRenderMs.toFixed(1)} ms`
   )
 
-  await page.getByRole('button', { name: 'Reset 100%', exact: true }).click()
+  await page.keyboard.press('ControlOrMeta+0')
   const fitStarted = performance.now()
-  await page.getByRole('button', { name: 'Fit all', exact: true }).click()
+  await page.keyboard.press('Shift+1')
   await page.evaluate(
     () =>
       new Promise<void>((resolve) =>
@@ -177,7 +174,7 @@ async function measureInteractions(page: Page, selectionSize: number) {
   const zoomInputToPaint = await zoomPaint
   await expect(viewport).not.toHaveAttribute('style', beforeZoom ?? '')
 
-  await page.getByRole('button', { name: 'Fit all', exact: true }).click()
+  await page.keyboard.press('Shift+1')
   const node = await visibleNode(page)
   const singleNodeDragInputToPaint = await dragNodeAndMeasure(
     page,

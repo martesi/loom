@@ -1,7 +1,28 @@
 import { expect, test } from './test-fixtures'
-import { asset, dropAsset, openFixtureRepo } from './test-helpers'
+import {
+  asset,
+  dropAsset,
+  imageNodes,
+  openFixtureRepo,
+  placeAssets,
+} from './test-helpers'
 
 test.describe('floating Canvas drawers', () => {
+  test('icon-only floating controls show framework tooltips with separate shortcut keys', async ({
+    page,
+  }) => {
+    await openFixtureRepo(page, 'shelves-fixtures', { drawers: 'closed' })
+    await page.getByTestId('open-command-palette').hover()
+
+    const tooltip = page.getByTestId('base-tooltip-popup')
+    await expect(tooltip).toBeVisible()
+    await expect(tooltip).toContainText('Show commands')
+    const keys = tooltip.locator('[data-slot="kbd"]')
+    await expect(keys).toHaveCount(2)
+    await expect(keys.nth(0)).toHaveText('Ctrl')
+    await expect(keys.nth(1)).toHaveText('K')
+  })
+
   test('starts closed and never changes the full-viewport Canvas bounds', async ({
     page,
   }) => {
@@ -13,10 +34,12 @@ test.describe('floating Canvas drawers', () => {
     const inspector = page.locator('aside[aria-label="Inspector"]')
     await expect(assets).toHaveAttribute('data-state', 'closed')
     await expect(inspector).toHaveAttribute('data-state', 'closed')
-    await expect(page.getByTestId('toggle-assets-shelf')).toHaveAttribute(
-      'aria-expanded',
-      'false'
-    )
+    const assetsToggle = page.getByTestId('toggle-assets-shelf')
+    const inspectorToggle = page.getByTestId('toggle-inspector-shelf')
+    await expect(assetsToggle).toBeVisible()
+    await expect(inspectorToggle).toBeVisible()
+    await expect(page.getByTestId('shelf-edge-trigger-left')).toHaveCount(0)
+    await expect(page.getByTestId('shelf-edge-trigger-right')).toHaveCount(0)
 
     const originalBounds = await canvas.boundingBox()
     expect(originalBounds).toMatchObject({
@@ -25,10 +48,12 @@ test.describe('floating Canvas drawers', () => {
       width: 1280,
       height: 800,
     })
-    await page.getByTestId('shelf-edge-trigger-left').click()
+    await assetsToggle.click()
     await expect(assets).toHaveAttribute('data-state', 'open')
-    await page.getByTestId('toggle-inspector-shelf').click()
+    await inspectorToggle.click()
     await expect(inspector).toHaveAttribute('data-state', 'open')
+    await expect(assetsToggle).toHaveAttribute('aria-pressed', 'true')
+    await expect(inspectorToggle).toHaveAttribute('aria-expanded', 'true')
     await expect(assets).toHaveAttribute('data-visible', 'true')
 
     const resizedBounds = await canvas.boundingBox()
@@ -42,14 +67,14 @@ test.describe('floating Canvas drawers', () => {
     expect(await canvas.boundingBox()).toEqual(originalBounds)
   })
 
-  test('supports edge, shortcut, pin, and successful-drop auto-hide paths', async ({
+  test('supports top-island, shortcut, pin, and successful-drop auto-hide paths', async ({
     page,
   }) => {
     await page.setViewportSize({ width: 1280, height: 800 })
     await openFixtureRepo(page, 'dock-fixtures', { drawers: 'closed' })
     const assets = page.locator('aside[aria-label="Assets"]')
 
-    await page.getByTestId('shelf-edge-trigger-left').click()
+    await page.getByTestId('toggle-assets-shelf').click()
     await expect(assets).toHaveAttribute('data-state', 'open')
     await page.keyboard.press('ControlOrMeta+b')
     await expect(assets).toHaveAttribute('data-state', 'closed')
@@ -138,15 +163,24 @@ test.describe('floating Canvas drawers', () => {
     await expect(assets).toHaveAttribute('data-state', 'closed')
   })
 
-  test('auto-hides the unpinned Inspector when Canvas selection clears', async ({
+  test('unpinned Inspector follows the active selection and auto-hides when it clears', async ({
     page,
   }) => {
     await page.setViewportSize({ width: 1280, height: 800 })
     await openFixtureRepo(page, 'dock-fixtures', { drawers: 'closed' })
     const inspector = page.locator('aside[aria-label="Inspector"]')
 
-    await dropAsset(page, 'dock-alpha.png', { x: 420, y: 180 })
     await page.getByTestId('toggle-inspector-shelf').click()
+    await expect(inspector.getByText('No Selection')).toBeVisible()
+    await expect(
+      inspector.getByText('Select all on active surface')
+    ).toBeVisible()
+    await expect(inspector.getByText('Search assets in palette')).toBeVisible()
+    await page.getByTestId('toggle-inspector-shelf').click()
+
+    await placeAssets(page, ['dock-alpha.png', 'dock-beta.png'])
+    await imageNodes(page).nth(0).click()
+    await page.keyboard.press('ControlOrMeta+i')
     await expect(inspector).toHaveAttribute('data-state', 'open')
     await expect
       .poll(() =>
@@ -155,6 +189,16 @@ test.describe('floating Canvas drawers', () => {
         )
       )
       .toBe('Inspector')
+    await expect(
+      inspector.getByText('dock-alpha.png', { exact: true })
+    ).toBeVisible()
+    await imageNodes(page).nth(1).click()
+    await expect(
+      inspector.getByText('dock-beta.png', { exact: true })
+    ).toBeVisible()
+    await expect(
+      inspector.getByText('dock-alpha.png', { exact: true })
+    ).toHaveCount(0)
     await page
       .locator('.react-flow__pane')
       .click({ position: { x: 700, y: 460 } })
@@ -167,6 +211,7 @@ test.describe('floating Canvas drawers', () => {
       .locator('.react-flow__pane')
       .click({ position: { x: 700, y: 460 } })
     await expect(inspector).toHaveAttribute('data-state', 'open')
+    await expect(inspector.getByText('No Selection')).toBeVisible()
   })
 
   test('keeps closed drawer controls out of keyboard focus and remains usable on narrow screens', async ({

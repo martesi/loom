@@ -75,8 +75,18 @@ export async function openFixtureRepo(
 }
 
 export async function autoArrangeCanvas(page: Page) {
-  await page.getByTestId('dock-more').click()
-  await page.getByTestId('dock-auto-arrange').click()
+  const subgraphAction = page.getByTestId('dock-arrange-selection')
+  if (await subgraphAction.isVisible()) {
+    await subgraphAction.click()
+    return
+  }
+  const canvasAction = page.getByTestId('dock-auto-arrange')
+  if (!(await canvasAction.isVisible())) {
+    await page
+      .locator('.react-flow__pane')
+      .click({ position: { x: 600, y: 400 } })
+  }
+  await canvasAction.click()
 }
 
 export function assets(page: Page) {
@@ -90,7 +100,7 @@ export function asset(page: Page, fileName: string) {
 export async function openAssetsShelf(page: Page) {
   const drawer = page.locator('aside[aria-label="Assets"]')
   if ((await drawer.getAttribute('data-visible')) === 'true') return
-  await page.getByTestId('shelf-edge-trigger-left').click()
+  await page.getByTestId('toggle-assets-shelf').click()
   await expect(drawer).toHaveAttribute('data-visible', 'true')
 }
 

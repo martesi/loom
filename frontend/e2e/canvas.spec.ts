@@ -51,7 +51,7 @@ test('Assets selection, placement, unplace, trash and viewport persistence', asy
   ).toHaveCount(0)
   await expect(page.locator('[role=option][aria-selected=true]')).toHaveCount(0)
   await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
-  await page.getByRole('button', { name: 'Fit selection', exact: true }).click()
+  await page.keyboard.press('Shift+2')
   await openAssetsShelf(page)
   await rows.first().click()
   await expect(page.locator('[role=option][aria-selected=true]')).toHaveCount(1)
@@ -61,7 +61,7 @@ test('Assets selection, placement, unplace, trash and viewport persistence', asy
   await expect(page.locator('.react-flow__node.selected')).toHaveCount(1)
   await page.keyboard.press('Control+a')
   await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
-  await page.getByRole('button', { name: 'Reset 100%', exact: true }).click()
+  await page.keyboard.press('ControlOrMeta+0')
   await expect(page.locator('.react-flow__viewport')).toHaveAttribute(
     'style',
     /scale\(1\)/
@@ -81,7 +81,7 @@ test('Assets selection, placement, unplace, trash and viewport persistence', asy
       response.url().endsWith('/wails/runtime') &&
       response.request().postData()?.includes('"methodID":248266558') === true
   )
-  await page.getByRole('button', { name: 'Fit all', exact: true }).click()
+  await page.keyboard.press('Shift+1')
   await viewportSaved
   const transform = await viewport.getAttribute('style')
   await page.reload()
@@ -97,7 +97,7 @@ test('canvas context menus and auto-arrange preserve the canvas origin', async (
   await open(page, 'canvas-menu-actions-fixtures')
   await drop(page, 'context-alpha.png', 280, 240)
   await drop(page, 'context-beta.png', 520, 420)
-  await page.getByRole('button', { name: 'Reset 100%', exact: true }).click()
+  await page.keyboard.press('ControlOrMeta+0')
 
   const nodes = canvasNodes(page)
   await expect(nodes).toHaveCount(2)
@@ -182,9 +182,11 @@ test('canvas context menus and auto-arrange preserve the canvas origin', async (
     .getByRole('button', { name: 'Remove from canvas', exact: true })
     .click()
   await expect(nodes).toHaveCount(1)
+  await page.getByTestId('toggle-inspector-shelf').click()
   await expect(
-    page.getByText('Select an asset, set, or relationship.')
+    page.getByRole('heading', { name: 'No Selection', exact: true })
   ).toBeVisible()
+  await page.getByTestId('toggle-inspector-shelf').click()
   await openAssetsShelf(page)
   await expect(assets(page)).toHaveCount(2)
 
@@ -192,8 +194,9 @@ test('canvas context menus and auto-arrange preserve the canvas origin', async (
   await page.getByRole('menu').getByRole('button', { name: 'Trash' }).click()
   await expect(nodes).toHaveCount(0)
   await expect(assets(page)).toHaveCount(1)
+  await page.getByTestId('toggle-inspector-shelf').click()
   await expect(
-    page.getByText('Select an asset, set, or relationship.')
+    page.getByRole('heading', { name: 'No Selection', exact: true })
   ).toBeVisible()
 })
 
@@ -203,7 +206,7 @@ test('explicit relationship gesture, navigation, and semantic sets', async ({
   await open(page, 'menu-linux-fixtures')
   await drop(page, 'menu-alpha.png', 50, 100)
   await drop(page, 'menu-beta.png', 280, 200)
-  await page.getByRole('button', { name: 'Reset 100%', exact: true }).click()
+  await page.keyboard.press('ControlOrMeta+0')
   await expect(page.locator('.react-flow__viewport')).toHaveAttribute(
     'style',
     /scale\(1\)/
@@ -247,6 +250,7 @@ test('explicit relationship gesture, navigation, and semantic sets', async ({
   await page.keyboard.up('Control')
   await expect(page.locator('.react-flow__edge')).toHaveCount(1)
   await nodes.nth(0).click()
+  await page.getByTestId('toggle-inspector-shelf').click()
   await expect(page.getByRole('heading', { name: 'Derived' })).toBeVisible()
   await page.getByRole('button', { name: 'Go to', exact: true }).click()
   await expect(nodes.nth(1)).toHaveClass(/selected/)
@@ -255,7 +259,7 @@ test('explicit relationship gesture, navigation, and semantic sets', async ({
     .click()
   await expect(page.locator('.react-flow__edge')).toHaveCount(0)
   await page.keyboard.press('Control+a')
-  await page.getByTestId('hud-create-set').click()
+  await page.getByTestId('dock-create-set').click()
   await expect(page.locator('.react-flow__node-group')).toHaveCount(1)
   await page.locator('.react-flow__node-group').dblclick()
   await expect(nodes).toHaveCount(2)
@@ -281,7 +285,7 @@ test('Select all highlights a set with an unplaced member', async ({
   await canvasNodes(page).first().click()
   await page.keyboard.press('Control+a')
   await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
-  await page.getByTestId('hud-create-set').click()
+  await page.getByTestId('dock-create-set').click()
 
   const group = page.locator('.react-flow__node-group')
   await expect(group).toHaveCount(1)
@@ -309,7 +313,7 @@ test('marquee selection replaces the Canvas selection', async ({ page }) => {
   await drop(page, 'set-alpha.png', 360, 100)
   await drop(page, 'set-beta.png', 580, 100)
   await drop(page, 'set-gamma.png', 820, 100)
-  await page.getByRole('button', { name: 'Reset 100%', exact: true }).click()
+  await page.keyboard.press('ControlOrMeta+0')
   await expect(page.locator('.react-flow__viewport')).toHaveAttribute(
     'style',
     /scale\(1\)/
