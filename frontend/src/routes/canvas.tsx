@@ -19,6 +19,7 @@ import '@xyflow/react/dist/style.css'
 import {
   type CanvasData,
   GroupService,
+  type ImageInfo,
   ImageService,
   LibraryService,
   PromptService,
@@ -75,6 +76,10 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     [edges, setEdges] = useState<Edge[]>([])
   const [selection, setSelection] = useState<Selection>(emptySelection),
     [expanded, setExpanded] = useState<number | null>(null)
+  const [assetSelectionRecords, setAssetSelectionRecords] = useState<{
+    key: string
+    records: ImageInfo[]
+  }>({ key: '', records: [] })
   const [refresh, setRefresh] = useState(0),
     [error, setError] = useState(''),
     [space, setSpace] = useState(false),
@@ -201,6 +206,33 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     if (result) setData(result)
     setRefresh((n) => n + 1)
   }
+  // Refreshes invalidate cached trash and archive state for selected assets.
+  const assetSelectionKey =
+    selection.surface === 'assets' && selection.ids.length
+      ? `${refresh}:${selection.ids.join(',')}`
+      : ''
+  useEffect(() => {
+    if (!assetSelectionKey) {
+      setAssetSelectionRecords({ key: '', records: [] })
+      return
+    }
+    let cancelled = false
+    const ids = assetSelectionKey.split(':', 2)[1]?.split(',').map(Number) ?? []
+    void Promise.all(ids.map((id) => ImageService.GetImage(repo.path, id)))
+      .then((images) => {
+        if (!cancelled)
+          setAssetSelectionRecords({
+            key: assetSelectionKey,
+            records: images.filter(
+              (image): image is ImageInfo => image !== null
+            ),
+          })
+      })
+      .catch(callbacks.current.report)
+    return () => {
+      cancelled = true
+    }
+  }, [assetSelectionKey, repo.path])
   function run(action: () => Promise<unknown>) {
     void action().then(reload).catch(report)
   }
@@ -371,6 +403,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     if (trash)
       await Promise.all(ids.map((id) => ImageService.TrashImage(repo.path, id)))
     else await ImageService.UnplaceImages(repo.path, ids)
+    await reload()
     setSelection((current) => {
       if (current.surface !== 'canvas') return current
       return {
@@ -675,9 +708,12 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     setFocusCanvas((focused) => !focused)
     requestAnimationFrame(() => host.current?.focus())
   }
-  const selectedImageRecords = (data.images ?? []).filter((image) =>
-    selectedIds().includes(image.id)
-  )
+  const selectedImageRecords =
+    selection.surface === 'assets'
+      ? assetSelectionRecords.key === assetSelectionKey
+        ? assetSelectionRecords.records
+        : []
+      : (data.images ?? []).filter((image) => selectedIds().includes(image.id))
   const selectedRelationships = (data.relationships ?? []).filter(
     (relationship) => selection.edges.includes(relationship.id)
   )
@@ -1618,6 +1654,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     paletteOpen,
     previewImageId,
     purgeIds,
+    repoMenuOpen,
     selection,
   })
   keyboardState.current = {
@@ -1636,6 +1673,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     paletteOpen,
     previewImageId,
     purgeIds,
+    repoMenuOpen,
     selection,
   }
   useEffect(() => {
@@ -1653,7 +1691,6 @@ function Canvas({ repo }: { repo: RepoInfo }) {
         return
       }
       if (
-        inEditable ||
         state.paletteOpen ||
         state.purgeIds ||
         state.compressIds ||
@@ -1661,10 +1698,22 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       )
         return
       if (event.key === 'Escape') {
-        if (state.menu) setMenu(null)
-        else if (state.inspectorOpen && !state.inspectorPinned)
+        if (state.menu) {
+          setMenu(null)
+          event.preventDefault()
+          return
+        }
+        if (state.repoMenuOpen) {
+          setRepoMenuOpen(false)
+          event.preventDefault()
+          return
+        }
+        if (document.querySelector('[role="dialog"]')) return
+        if (document.querySelector('[role="menu"]')) return
+        if (state.inspectorOpen && !state.inspectorPinned)
           state.closeInspector()
         else if (state.assetsOpen && !state.assetsPinned) state.closeAssets()
+        else if (inEditable) return
         else if (
           state.selection.ids.length ||
           state.selection.edges.length ||
@@ -1676,7 +1725,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
         event.preventDefault()
         return
       }
-      if (state.menu) return
+      if (inEditable || state.menu) return
       const action = actionRef.current.find(
         (candidate) =>
           candidate.enabled &&

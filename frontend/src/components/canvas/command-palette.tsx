@@ -82,6 +82,16 @@ export function CommandPalette({
     : []
   const resultCount = assetMode ? assetResults.length : commandResults.length
   const selectedIndex = Math.min(activeIndex, Math.max(0, resultCount - 1))
+  const activeResultId = assetMode
+    ? assetResults[selectedIndex]?.asset.id
+    : commandResults[selectedIndex]?.action.id
+  function optionId(index: number, resultId: string | number) {
+    return `${listId}-option-${encodeURIComponent(search)}-${resultCount}-${index}-${resultId}`
+  }
+  const activeOptionId =
+    activeResultId === undefined
+      ? undefined
+      : optionId(selectedIndex, activeResultId)
 
   useEffect(() => {
     if (open) {
@@ -89,6 +99,13 @@ export function CommandPalette({
       setActiveIndex(0)
     }
   }, [open, initialQuery])
+
+  useEffect(() => {
+    if (!open || !activeOptionId) return
+    document
+      .getElementById(activeOptionId)
+      ?.scrollIntoView({ block: 'nearest' })
+  }, [activeOptionId, open])
 
   function runActive() {
     if (assetMode) {
@@ -142,9 +159,7 @@ export function CommandPalette({
             aria-autocomplete="list"
             aria-expanded="true"
             aria-controls={listId}
-            aria-activedescendant={
-              resultCount ? `${listId}-option-${selectedIndex}` : undefined
-            }
+            aria-activedescendant={activeOptionId}
             placeholder={
               shortcutsOnly
                 ? t`Search shortcuts`
@@ -182,7 +197,7 @@ export function CommandPalette({
                     type="button"
                     role="option"
                     aria-selected={index === selectedIndex}
-                    id={`${listId}-option-${index}`}
+                    id={optionId(index, asset.id)}
                     key={asset.id}
                     onMouseMove={() => setActiveIndex(index)}
                     onClick={() => onChooseAsset(asset)}
@@ -205,7 +220,7 @@ export function CommandPalette({
                     role="option"
                     aria-selected={index === selectedIndex}
                     aria-disabled={!action.enabled}
-                    id={`${listId}-option-${index}`}
+                    id={optionId(index, action.id)}
                     key={action.id}
                     onMouseMove={() => setActiveIndex(index)}
                     onClick={() => action.enabled && onRunAction(action)}

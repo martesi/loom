@@ -1,5 +1,5 @@
 import { expect, test } from './test-fixtures'
-import { dropAsset, openFixtureRepo } from './test-helpers'
+import { asset, dropAsset, openFixtureRepo } from './test-helpers'
 
 test.describe('floating Canvas drawers', () => {
   test('starts closed and never changes the full-viewport Canvas bounds', async ({
@@ -69,6 +69,65 @@ test.describe('floating Canvas drawers', () => {
       'false'
     )
     await dropAsset(page, 'dock-beta.png', { x: 640, y: 180 })
+    await expect(assets).toHaveAttribute('data-state', 'closed')
+  })
+
+  test('Escape closes an unpinned drawer while focus is in its search field', async ({
+    page,
+  }) => {
+    await openFixtureRepo(page, 'library-fixtures', { drawers: 'assets' })
+    const assets = page.locator('aside[aria-label="Assets"]')
+    const search = page.getByRole('textbox', { name: 'Search assets' })
+    const trigger = page.getByTestId('toggle-assets-shelf')
+
+    await search.focus()
+    await expect(search).toBeFocused()
+    await page.keyboard.press('Escape')
+
+    await expect(assets).toHaveAttribute('data-state', 'closed')
+    await expect(trigger).toBeFocused()
+  })
+
+  test('Escape closes palette and menus before an unpinned drawer', async ({
+    page,
+  }) => {
+    await openFixtureRepo(page, 'library-fixtures', { drawers: 'assets' })
+    const assets = page.locator('aside[aria-label="Assets"]')
+
+    await asset(page, 'root-alpha.png').click()
+    await page.keyboard.press('Shift+Delete')
+    const purgeDialog = page.getByRole('dialog', {
+      name: 'Permanently delete 1 asset?',
+    })
+    await expect(purgeDialog).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(purgeDialog).toHaveCount(0)
+    await expect(assets).toHaveAttribute('data-state', 'open')
+
+    await page.getByTestId('toggle-assets-shelf').focus()
+    await page.keyboard.press('ControlOrMeta+k')
+    await expect(page.getByTestId('command-palette')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('command-palette')).toHaveCount(0)
+    await expect(assets).toHaveAttribute('data-state', 'open')
+
+    await page.getByTestId('repository-actions').click()
+    await expect(
+      page.getByRole('menu', { name: 'Repository actions' })
+    ).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(
+      page.getByRole('menu', { name: 'Repository actions' })
+    ).toHaveCount(0)
+    await expect(assets).toHaveAttribute('data-state', 'open')
+
+    await asset(page, 'root-alpha.png').click({ button: 'right' })
+    await expect(page.getByRole('menu')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('menu')).toHaveCount(0)
+    await expect(assets).toHaveAttribute('data-state', 'open')
+
+    await page.keyboard.press('Escape')
     await expect(assets).toHaveAttribute('data-state', 'closed')
   })
 
