@@ -2,6 +2,7 @@ package service
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -12,7 +13,10 @@ import (
 	"loom/internal/store"
 )
 
-type ImageService struct{ Media media.Processor }
+type ImageService struct {
+	Media media.Processor
+	now   func() time.Time
+}
 
 func (s *ImageService) mediaProcessor() media.Processor {
 	if s.Media != nil {
@@ -64,13 +68,14 @@ type CanvasData struct {
 
 // LoadCanvas discovers assets without implicitly placing them.
 func (s *ImageService) LoadCanvas(repoPath string) (*CanvasData, error) {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return nil, err
 	}
+	defer unlock()
 	defer repo.Close()
 
-	if err := purgeExpiredTrash(repo, time.Now()); err != nil {
+	if err := s.purgeExpiredTrash(repo); err != nil {
 		return nil, err
 	}
 
@@ -377,27 +382,128 @@ func (s *ImageService) LinkSourceToGroup(repoPath string, sourceID, groupID int6
 	defer unlock()
 	defer repo.Close()
 
-	memberIDs, err := repo.GroupMemberIDs(groupID)
-	if err != nil {
-		return err
+	if err := repo.PrepareOperationLog(); err != nil {
+		return fmt.Errorf("prepare grouped relationship history: %w", err)
 	}
+	tx, err := repo.DB.Begin()
+	if err != nil {
+		return fmt.Errorf("begin grouped relationship transaction: %w", err)
+	}
+	defer tx.Rollback()
+	rows, err := tx.Query(`SELECT id FROM images WHERE group_id = ? ORDER BY id`, groupID)
+	if err != nil {
+		return fmt.Errorf("query group members: %w", err)
+	}
+	var memberIDs []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return fmt.Errorf("scan group member: %w", errors.Join(err, rows.Close()))
+		}
+		memberIDs = append(memberIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate group members: %w", errors.Join(err, rows.Close()))
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close group member rows: %w", err)
+	}
+	// A set containing its source is invalid, not a request to skip that edge.
 	for _, derivedID := range memberIDs {
 		if derivedID == sourceID {
-			continue
-		}
-		inserted, err := repo.LinkSource(sourceID, derivedID)
-		if err != nil {
-			return err
-		}
-		if !inserted {
-			continue
-		}
-		p := linkStepPayload{SourceID: sourceID, DerivedID: derivedID}
-		if err := recordOp(repo, stepLink, step(stepLink, p), step(stepUnlink, p)); err != nil {
-			return err
+			return fmt.Errorf("cannot link an image to a set that contains itself")
 		}
 	}
+	// Validate every target against the same transaction snapshot before
+	// inserting anything. Existing edges are valid no-ops and are excluded
+	// from the write set.
+	var newLinks []linkStepPayload
+	for _, derivedID := range memberIDs {
+		var sourceExists, targetExists int
+		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images WHERE id = ?)`, sourceID).Scan(&sourceExists); err != nil {
+			return fmt.Errorf("check relationship source: %w", err)
+		}
+		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images WHERE id = ?)`, derivedID).Scan(&targetExists); err != nil {
+			return fmt.Errorf("check group member: %w", err)
+		}
+		if sourceExists == 0 || targetExists == 0 {
+			return fmt.Errorf("relationship target does not exist")
+		}
+		var exists int
+		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM relationships WHERE source_image_id = ? AND derived_image_id = ?)`, sourceID, derivedID).Scan(&exists); err != nil {
+			return fmt.Errorf("check existing relationship: %w", err)
+		}
+		if exists != 0 {
+			continue
+		}
+		cyclic, err := relationshipReachable(tx, derivedID, sourceID)
+		if err != nil {
+			return fmt.Errorf("check relationship cycle: %w", err)
+		}
+		if cyclic {
+			return fmt.Errorf("linking would create a cycle")
+		}
+	}
+	for _, derivedID := range memberIDs {
+		result, err := tx.Exec(`INSERT OR IGNORE INTO relationships (source_image_id, derived_image_id) VALUES (?, ?)`, sourceID, derivedID)
+		if err != nil {
+			return fmt.Errorf("insert grouped relationship: %w", err)
+		}
+		if inserted, err := result.RowsAffected(); err != nil {
+			return fmt.Errorf("count inserted relationships: %w", err)
+		} else if inserted != 0 {
+			newLinks = append(newLinks, linkStepPayload{SourceID: sourceID, DerivedID: derivedID})
+		}
+	}
+	if len(newLinks) > 0 {
+		fwd, err := json.Marshal(step(stepLinks, linksStepPayload{Links: newLinks}))
+		if err != nil {
+			return fmt.Errorf("encode grouped relationship history: %w", err)
+		}
+		inv, err := json.Marshal(step(stepUnlinks, linksStepPayload{Links: newLinks}))
+		if err != nil {
+			return fmt.Errorf("encode grouped relationship inverse: %w", err)
+		}
+		if err := repo.RecordOperationInTx(tx, stepLinks, string(fwd), string(inv)); err != nil {
+			return fmt.Errorf("record grouped relationship history: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit grouped relationship transaction: %w", err)
+	}
 	return nil
+}
+
+func relationshipReachable(tx *sql.Tx, from, to int64) (bool, error) {
+	visited := map[int64]bool{from: true}
+	queue := []int64{from}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		if current == to {
+			return true, nil
+		}
+		rows, err := tx.Query(`SELECT derived_image_id FROM relationships WHERE source_image_id = ?`, current)
+		if err != nil {
+			return false, fmt.Errorf("query relationship reachability: %w", err)
+		}
+		for rows.Next() {
+			var next int64
+			if err := rows.Scan(&next); err != nil {
+				return false, fmt.Errorf("scan relationship reachability: %w", errors.Join(err, rows.Close()))
+			}
+			if !visited[next] {
+				visited[next] = true
+				queue = append(queue, next)
+			}
+		}
+		err = rows.Err()
+		closeErr := rows.Close()
+		if err != nil || closeErr != nil {
+			return false, fmt.Errorf("iterate relationship reachability: %w", errors.Join(err, closeErr))
+		}
+	}
+	return false, nil
 }
 
 func (s *ImageService) UnlinkSource(repoPath string, relationshipID int64) error {

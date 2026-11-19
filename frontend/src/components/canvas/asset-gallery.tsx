@@ -5,6 +5,7 @@ import type { LibraryRow } from '../../../bindings/loom/internal/service'
 import { selectAsset } from '../../lib/selection'
 
 interface Props {
+  path: string
   rows: LibraryRow[]
   selected: number[]
   select: (ids: number[]) => void
@@ -20,6 +21,7 @@ interface Props {
 }
 
 export function AssetGallery({
+  path,
   rows,
   selected,
   select,
@@ -152,9 +154,13 @@ export function AssetGallery({
           }}
         >
           {cardRow.map((row) => {
+            const dimensions =
+              row.width > 0 && row.height > 0
+                ? `${row.width} × ${row.height}`
+                : undefined
             const label = [
               row.fileName,
-              `${row.width} × ${row.height}`,
+              dimensions,
               ...(row.tags ?? []),
               row.promptText,
             ]
@@ -174,7 +180,7 @@ export function AssetGallery({
                   aria-label={label}
                   aria-pressed={selected.includes(row.id)}
                   tabIndex={row.id === focusId ? 0 : -1}
-                  draggable
+                  draggable={!row.missing && !row.trashed}
                   className="group w-full overflow-hidden rounded-md border border-border bg-card text-left outline-none hover:border-primary/40 focus-visible:ring-2 focus-visible:ring-primary/50 aria-pressed:border-primary aria-pressed:bg-primary/5"
                   onKeyDown={moveFocus}
                   onClick={(event) => {
@@ -198,13 +204,28 @@ export function AssetGallery({
                     onContextMenu(ids, event.clientX, event.clientY)
                   }}
                   onDragStart={(event) => {
+                    if (row.missing || row.trashed) {
+                      event.preventDefault()
+                      return
+                    }
                     const ids = selected.includes(row.id) ? selected : [row.id]
                     select(ids)
                     event.dataTransfer.setData(
                       'application/x-loom-assets',
-                      JSON.stringify(ids)
+                      JSON.stringify({ repoPath: path, ids })
+                    )
+                    event.dataTransfer.setData(
+                      'text/plain',
+                      `${ids.length} Loom asset${ids.length === 1 ? '' : 's'}`
                     )
                     event.dataTransfer.effectAllowed = 'copyMove'
+                    const preview = document.createElement('div')
+                    preview.textContent = `${ids.length} asset${ids.length === 1 ? '' : 's'}`
+                    preview.style.cssText =
+                      'position:fixed;top:-1000px;left:-1000px;padding:6px 10px;border-radius:6px;background:#222;color:white;font:12px sans-serif'
+                    document.body.append(preview)
+                    event.dataTransfer.setDragImage(preview, 8, 8)
+                    requestAnimationFrame(() => preview.remove())
                   }}
                 >
                   <img
@@ -223,11 +244,7 @@ export function AssetGallery({
                           {row.fileName}
                         </span>
                       )}
-                      {overlays.dimensions && (
-                        <span>
-                          {row.width} × {row.height}
-                        </span>
-                      )}
+                      {overlays.dimensions && dimensions && <span>{dimensions}</span>}
                       {overlays.tags && !!row.tags?.length && (
                         <span className="truncate">{row.tags.join(', ')}</span>
                       )}

@@ -97,7 +97,9 @@ test('Assets gallery controls and saved views persist and switch from the palett
   await asset(page, 'inspect-alpha.png').click()
   const inspector = page.getByLabel('Inspector')
   await inspector.getByLabel('Add tag').fill('portrait')
-  await inspector.getByRole('button', { name: 'Add', exact: true }).click()
+  await inspector
+    .getByRole('button', { name: 'Add to selected assets', exact: true })
+    .click()
   await inspector.getByLabel('Prompt').fill('soft studio light')
   await inspector.getByRole('button', { name: 'Save prompt' }).click()
 
@@ -241,7 +243,9 @@ test('gallery vertical navigation moves between rows with unequal card heights',
 
   const inspector = page.getByLabel('Inspector')
   await inspector.getByLabel('Add tag').fill('keyboard-height')
-  await inspector.getByRole('button', { name: 'Add', exact: true }).click()
+  await inspector
+    .getByRole('button', { name: 'Add to selected assets', exact: true })
+    .click()
   await inspector
     .getByLabel('Prompt')
     .fill('A prompt that adds height to this card')
@@ -352,15 +356,21 @@ test('inspector edits metadata and library filters follow tag/archive/trash stat
   await page.getByRole('button', { name: /^Filters/ }).click()
 
   await inspector.getByLabel('Add tag').fill('portrait')
-  await inspector.getByRole('button', { name: 'Add', exact: true }).click()
-  await expect(inspector.getByText('Common: portrait')).toBeVisible()
+  await inspector
+    .getByRole('button', { name: 'Add to selected assets', exact: true })
+    .click()
+  await expect(inspector.getByLabel('Tag summary')).toContainText(
+    'portrait — All selected assets'
+  )
 
   await inspector.getByLabel('Prompt').fill('soft studio light')
   await inspector.getByRole('button', { name: 'Save prompt' }).click()
   await expect(inspector.getByLabel('Prompt')).toHaveValue('soft studio light')
 
   await inspector.getByLabel('File path').fill('renamed-alpha.png')
-  await inspector.getByRole('button', { name: 'Move', exact: true }).click()
+  await inspector
+    .getByRole('button', { name: 'Move or rename', exact: true })
+    .click()
   await expect(asset(page, 'renamed-alpha.png')).toBeVisible()
   await expect(asset(page, 'inspect-alpha.png')).toHaveCount(0)
 
@@ -386,8 +396,14 @@ test('inspector edits metadata and library filters follow tag/archive/trash stat
   await expect(asset(page, 'renamed-alpha.png')).toBeVisible()
 
   await asset(page, 'renamed-alpha.png').click()
-  await page.keyboard.press('Delete')
+  await inspector.getByRole('button', { name: 'Move to trash' }).click()
+  const trashDialog = page.getByRole('dialog', {
+    name: 'Move 1 asset to trash?',
+  })
+  await expect(trashDialog).toBeVisible()
+  await trashDialog.getByRole('button', { name: 'Move to trash' }).click()
   await expect(asset(page, 'renamed-alpha.png')).toHaveCount(0)
+  await openAssetsShelf(page)
   await page
     .getByRole('combobox', { name: 'Asset state' })
     .selectOption('trashed')

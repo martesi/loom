@@ -3,8 +3,10 @@ import { Trans } from '@lingui/react/macro'
 import { useRef } from 'react'
 import type { LibraryRow } from '../../../bindings/loom/internal/service'
 import { selectAsset } from '../../lib/selection'
+import { Button } from '../ui/button'
 
 interface Props {
+  path: string
   rows: LibraryRow[]
   selected: number[]
   search: string
@@ -12,11 +14,15 @@ interface Props {
   placement: string
   tagId: number
   mode: string
+  loading: boolean
+  error: boolean
   onSelect: (ids: number[]) => void
   onContextMenu: (ids: number[], x: number, y: number) => void
+  onRetry: () => void
 }
 
 export function AssetList({
+  path,
   rows,
   selected,
   search,
@@ -24,8 +30,11 @@ export function AssetList({
   placement,
   tagId,
   mode,
+  loading,
+  error,
   onSelect,
   onContextMenu,
+  onRetry,
 }: Props) {
   const anchor = useRef<number | null>(null)
   return (
@@ -37,8 +46,21 @@ export function AssetList({
     >
       {rows.length === 0 && (
         <div className="px-3 py-6 text-center text-[11.5px] leading-relaxed text-ink-muted">
-          {mode === 'folders' ? (
+          {loading ? (
+            <Trans>Loading assets…</Trans>
+          ) : error ? (
+            <div className="grid justify-items-center gap-2">
+              <Trans>Could not load assets.</Trans>
+              <Button size="sm" variant="secondary" onClick={onRetry}><Trans>Retry</Trans></Button>
+            </div>
+          ) : mode === 'folders' ? (
             <Trans>No assets in this folder.</Trans>
+          ) : status === 'missing' ? (
+            <Trans>No missing assets match this query.</Trans>
+          ) : status === 'trashed' && !search && !placement && !tagId ? (
+            <Trans>Trash is empty.</Trans>
+          ) : placement === 'unplaced' ? (
+            <Trans>No unplaced assets match. Try All placements.</Trans>
           ) : search || status !== 'active' || placement || tagId ? (
             <Trans>No assets match these filters.</Trans>
           ) : (
@@ -53,7 +75,7 @@ export function AssetList({
           aria-selected={selected.includes(row.id)}
           data-asset-id={row.id}
           key={row.id}
-          draggable
+          draggable={!row.missing && !row.trashed}
           className="flex w-full items-center gap-2 px-2 py-1.5 text-left outline-none hover:bg-black/[0.03] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40 aria-selected:bg-primary/15"
           onClick={(event) => {
             onSelect(
@@ -78,13 +100,27 @@ export function AssetList({
             onContextMenu(ids, event.clientX, event.clientY)
           }}
           onDragStart={(event) => {
+            if (row.missing || row.trashed) {
+              event.preventDefault()
+              return
+            }
             const ids = selected.includes(row.id) ? selected : [row.id]
             onSelect(ids)
             event.dataTransfer.setData(
               'application/x-loom-assets',
-              JSON.stringify(ids)
+              JSON.stringify({ repoPath: path, ids })
             )
+            // Keep the payload useful to native drop targets without changing
+            // Loom's authoritative, repository-scoped asset payload.
+            event.dataTransfer.setData('text/plain', `${ids.length} Loom asset${ids.length === 1 ? '' : 's'}`)
             event.dataTransfer.effectAllowed = 'copyMove'
+            const preview = document.createElement('div')
+            preview.textContent = `${ids.length} asset${ids.length === 1 ? '' : 's'}`
+            preview.style.cssText =
+              'position:fixed;top:-1000px;left:-1000px;padding:6px 10px;border-radius:6px;background:#222;color:white;font:12px sans-serif'
+            document.body.append(preview)
+            event.dataTransfer.setDragImage(preview, 8, 8)
+            requestAnimationFrame(() => preview.remove())
           }}
         >
           <img

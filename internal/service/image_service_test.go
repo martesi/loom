@@ -423,9 +423,9 @@ func TestTrashRetentionPurgesExpiredAndKeepsRecent(t *testing.T) {
 		repo.Close()
 		t.Fatal(err)
 	}
-	now := time.Now().UTC()
+	now := time.Date(2025, time.January, 1, 12, 0, 0, 0, time.UTC)
 	format := "2006-01-02T15:04:05.000Z"
-	if _, err := repo.DB.Exec(`UPDATE images SET trashed_at = ? WHERE id = ?`, now.Add(-trashRetention-time.Hour).Format(format), ids[0]); err != nil {
+	if _, err := repo.DB.Exec(`UPDATE images SET trashed_at = ? WHERE id = ?`, now.Add(-trashRetention).Format(format), ids[0]); err != nil {
 		repo.Close()
 		t.Fatal(err)
 	}
@@ -435,6 +435,7 @@ func TestTrashRetentionPurgesExpiredAndKeepsRecent(t *testing.T) {
 	}
 	repo.Close()
 
+	s.now = func() time.Time { return now }
 	if _, err := s.LoadCanvas(repoPath); err != nil {
 		t.Fatalf("LoadCanvas: %v", err)
 	}

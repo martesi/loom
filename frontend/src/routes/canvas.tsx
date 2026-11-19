@@ -39,6 +39,7 @@ import { LightboxViewer } from '../components/canvas/lightbox'
 import { RepoSelect } from '../components/canvas/repo-select'
 import { ShelfPanel } from '../components/canvas/shelf-panel'
 import { CompressionDialog } from '../components/compression-dialog'
+import { SettingsDialog } from '../components/settings-dialog'
 import { type MenuAction, PositionedMenu } from '../components/menu'
 import { Button } from '../components/ui/button'
 import { Tooltip } from '../components/ui/tooltip'
@@ -48,6 +49,7 @@ import {
   shortcutMatches,
 } from '../lib/action-catalog'
 import type { AssetLayout } from '../lib/asset-views'
+import { parseAssetDragPayload } from '../lib/asset-drag-payload'
 import { copyMedia, filesToMedia, readMedia } from '../lib/clipboard'
 import { computeSubgraphLayout, placeCluster } from '../lib/layout'
 import { emptySelection, type Selection } from '../lib/selection'
@@ -109,9 +111,23 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   })
   const [nodes, setNodes] = useState<Node[]>([]),
     [edges, setEdges] = useState<Edge[]>([])
+  const modifiedMarquee = useRef<{ active: boolean; anchor: number[] }>({
+    active: false,
+    anchor: [],
+  })
   const dropTargets = useRef<Node[]>([])
   const [selection, setSelection] = useState<Selection>(emptySelection),
     [expanded, setExpanded] = useState<number | null>(null)
+  const selectionRef = useRef(selection)
+  selectionRef.current = selection
+  const submissionScope = `${repo.path}\u0000${selection.surface}\u0000${selection.ids.slice().sort((a, b) => a - b).join(',')}\u0000${selection.group ?? ''}`
+  const submissionScopeRef = useRef({ key: submissionScope, revision: 0 })
+  if (submissionScopeRef.current.key !== submissionScope) {
+    submissionScopeRef.current = {
+      key: submissionScope,
+      revision: submissionScopeRef.current.revision + 1,
+    }
+  }
   const [assetSelectionRecords, setAssetSelectionRecords] = useState<{
     key: string
     records: ImageInfo[]
@@ -122,6 +138,11 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     [ready, setReady] = useState(false)
   const [compressIds, setCompressIds] = useState<number[] | null>(null)
   const [purgeIds, setPurgeIds] = useState<number[] | null>(null)
+  const [trashIds, setTrashIds] = useState<number[] | null>(null)
+  const [lifecyclePending, setLifecyclePending] = useState(false)
+  const lifecyclePendingRef = useRef(false)
+  const fieldSubmissionPending = useRef(false)
+  const pendingRecentAction = useRef<string | null>(null)
   const [previewImageId, setPreviewImageId] = useState<number | null>(null)
   const [assetsOpen, setAssetsOpen] = useState(false)
   const [inspectorOpen, setInspectorOpen] = useState(false)
@@ -129,6 +150,9 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   const [inspectorPinned, setInspectorPinned] = useState(false)
   const [focusCanvas, setFocusCanvas] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [settingsSection, setSettingsSection] = useState<
+    'appearance' | 'keyboard' | null
+  >(null)
   const [shortcutsOnly, setShortcutsOnly] = useState(false)
   const [paletteInitialQuery, setPaletteInitialQuery] = useState('')
   const [recentActionIds, setRecentActionIds] = useState<string[]>([])
@@ -148,6 +172,9 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     request: number
   } | null>(null)
   const [paletteAssets, setPaletteAssets] = useState<PaletteAsset[]>([])
+  const [paletteAssetsLoading, setPaletteAssetsLoading] = useState(false)
+  const [paletteAssetsError, setPaletteAssetsError] = useState(false)
+  const [paletteAssetRequest, setPaletteAssetRequest] = useState(0)
   const importInput = useRef<HTMLInputElement>(null)
   const assetsReturnFocus = useRef<HTMLElement | null>(null)
   const inspectorReturnFocus = useRef<HTMLElement | null>(null)
@@ -212,36 +239,67 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     command: 'move-rename-file' | 'add-tag' | 'save-prompt',
     value: string,
     imageIds: number[],
-    fileName?: string
+    fileName?: string,
+    expected?: { owner: Selection['surface']; revision: number }
   ) {
-    const ids = selectedIds()
+    if (fieldSubmissionPending.current) throw new Error(t`A save is already in progress.`)
+    fieldSubmissionPending.current = true
+    try {
+    const revision = submissionScopeRef.current.revision
+    const ids = [...new Set(imageIds)].sort((a, b) => a - b)
+    const currentIds = [...new Set(selectedIds())].sort((a, b) => a - b)
+    const owner = selection.surface
+    const repository = repo.path
     if (
-      !ids.length ||
-      imageIds.length !== ids.length ||
-      ids.some((id) => !imageIds.includes(id))
+      !ids.length || ids.length !== imageIds.length ||
+      ids.some((id, index) => id !== currentIds[index]) ||
+      ids.length !== currentIds.length
     )
-      return
+      throw new Error(t`The selection changed. Review the Inspector and try again.`)
+    const records = await Promise.all(ids.map((id) => ImageService.GetImage(repository, id)))
+    const liveIds = [...new Set([
+      ...selectionRef.current.ids,
+      ...(selectionRef.current.group ? groupMembers(selectionRef.current.group) : []),
+    ])].sort((a, b) => a - b)
+    if (
+      submissionScopeRef.current.revision !== revision ||
+      (expected && (expected.owner !== owner || expected.revision !== revision)) ||
+      selectionRef.current.surface !== owner ||
+      ids.length !== liveIds.length ||
+      ids.some((id, index) => id !== liveIds[index]) ||
+      records.some((record) => !record)
+    )
+      throw new Error(t`The selection changed or some assets are unavailable. No changes were made.`)
     if (command === 'move-rename-file') {
       const path = value.trim()
-      if (ids.length !== 1 || !path || path === fileName) return
-      await ImageService.MoveFile(repo.path, ids[0], path)
+      if (ids.length !== 1 || !path || path === records[0]?.filePath.slice(repository.length + 1)) return
+      const image = records[0]
+      if (!image || image.missing || image.trashed)
+        throw new Error(t`This file cannot be moved in its current state.`)
+       await ImageService.MoveFile(repository, ids[0], path)
       await reload()
       return
     }
     if (command === 'add-tag') {
       const tag = value.trim()
       if (!tag) return
-      await Promise.all(ids.map((id) => TagService.AddTag(repo.path, id, tag)))
+      const results = await Promise.allSettled(ids.map((id) => TagService.AddTag(repository, id, tag)))
+      const failedIds = results.flatMap((result, index) => result.status === 'rejected' ? [ids[index]] : [])
       await reload()
+      if (failedIds.length) throw new Error(t`${ids.length - failedIds.length} of ${ids.length} assets updated; failed asset IDs: ${failedIds.join(', ')}. The current state was refreshed.`)
       return
     }
     if (command === 'save-prompt') {
-      await Promise.all(
-        ids.map((id) =>
-          PromptService.CreateAndAttachPrompt(repo.path, id, '', value, '')
-        )
-      )
+      const results = await Promise.allSettled(ids.map((id) =>
+        value === '' ? PromptService.DetachPrompt(repository, id) :
+          PromptService.CreateAndAttachPrompt(repository, id, '', value, '')
+      ))
+      const failedIds = results.flatMap((result, index) => result.status === 'rejected' ? [ids[index]] : [])
       await reload()
+      if (failedIds.length) throw new Error(t`${ids.length - failedIds.length} of ${ids.length} assets updated; failed asset IDs: ${failedIds.join(', ')}. The current state was refreshed.`)
+    }
+    } finally {
+      fieldSubmissionPending.current = false
     }
   }
   function openPalette(shortcuts = false, initialQuery = '') {
@@ -249,6 +307,9 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     setShortcutsOnly(shortcuts)
     setPaletteInitialQuery(initialQuery)
     setPaletteOpen(true)
+  }
+  function openSettings(section: 'appearance' | 'keyboard' = 'appearance') {
+    setSettingsSection(section)
   }
   function changePaletteOpen(open: boolean) {
     setPaletteOpen(open)
@@ -280,6 +341,8 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     id: string
     valid: boolean
     kind: 'relationship' | 'set'
+    reason?: string
+    members?: number
   } | null>(null)
   const targetRef = useRef(target)
   const updateTarget = useCallback((next: typeof target) => {
@@ -287,7 +350,9 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     if (
       current?.id === next?.id &&
       current?.valid === next?.valid &&
-      current?.kind === next?.kind
+      current?.kind === next?.kind &&
+      current?.reason === next?.reason &&
+      current?.members === next?.members
     )
       return
     targetRef.current = next
@@ -299,10 +364,15 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   }
   const callbacks = useRef({ report, run, selectAssets })
   callbacks.current = { report, run, selectAssets }
-  async function reload() {
+  function reload(): Promise<void>
+  function reload(returnData: true): Promise<CanvasData | null>
+  async function reload(
+    returnData = false
+  ): Promise<void | CanvasData | null> {
     const result = await ImageService.LoadCanvas(repo.path)
     if (result) setData(result)
     setRefresh((n) => n + 1)
+    if (returnData) return result
   }
   // Refreshes invalidate cached trash and archive state for selected assets.
   const assetSelectionKey =
@@ -332,7 +402,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     }
   }, [assetSelectionKey, repo.path])
   function run(action: () => Promise<unknown>) {
-    void action().then(reload).catch(report)
+    void action().then(() => reload()).catch(report)
   }
   useEffect(() => {
     void Promise.all([
@@ -507,38 +577,39 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       ]),
     ]
   }
-  async function removeCanvasAssets(ids: number[], trash: boolean) {
-    if (trash)
-      await Promise.all(ids.map((id) => ImageService.TrashImage(repo.path, id)))
-    else await ImageService.UnplaceImages(repo.path, ids)
-    await reload()
-    setSelection((current) => {
-      if (current.surface !== 'canvas') return current
-      return {
-        ...current,
-        ids: current.ids.filter((id) => !ids.includes(id)),
-        group:
-          current.group &&
-          groupMembers(current.group).some((id) => ids.includes(id))
-            ? null
-            : current.group,
-      }
-    })
-  }
   const canCreateSet =
     selection.surface === 'canvas' &&
     selection.group === null &&
     selection.ids.length >= 2 &&
-    selection.ids.every(
-      (id) => !(data.images ?? []).find((image) => image.id === id)?.groupId
-    )
+    new Set(selection.ids).size === selection.ids.length &&
+    selection.ids.every((id) => {
+      const image = (data.images ?? []).find((item) => item.id === id)
+      return image?.placed && !image.trashed && !image.groupId
+    })
   async function createSet() {
     if (!canCreateSet) return
-    await GroupService.CreateGroup(repo.path, '', '', selection.ids)
-    setSelection(emptySelection)
+    const ids = selection.ids
+    const created = await GroupService.CreateGroup(repo.path, '', '', ids)
+    if (!created) return
     await reload()
+    // Keep the new semantic set selected after its metadata reloads.
+    setSelection({ surface: 'canvas', ids, edges: [], group: created.id })
   }
   const undoActions = useUndoActions(repo.path, reload)
+  useEffect(() => {
+    const timer = window.setInterval(
+      () => {
+        void ImageService.LoadCanvas(repo.path)
+          .then((result) => {
+            if (result) setData(result)
+            setRefresh((current) => current + 1)
+          })
+          .catch((error) => callbacks.current.report(error))
+      },
+      60 * 60 * 1000
+    )
+    return () => window.clearInterval(timer)
+  }, [repo.path])
   async function go(id: number, folder = false) {
     const image = await ImageService.GetImage(repo.path, id)
     if (!image) return
@@ -567,11 +638,13 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     media?: Awaited<ReturnType<typeof readMedia>>,
     surface = selection.surface
   ) {
+    const targetSurface = surface
+    const targetRepo = repo.path
     const point = center()
     const assets = media ?? (await readMedia())
-    const canvas = surface === 'canvas'
+    const canvas = targetSurface === 'canvas'
     const ids = await ImageService.ImportMedia(
-      repo.path,
+      targetRepo,
       assets,
       canvas,
       point.x,
@@ -586,13 +659,21 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     })
     if (!canvas && ids?.length) setReveal({ id: ids[0], folder: null })
   }
+  async function importMedia(media: Awaited<ReturnType<typeof readMedia>>) {
+    const targetRepo = repo.path
+    const ids = await ImageService.ImportMedia(targetRepo, media, false, 0, 0)
+    await reload()
+    setSelection({ surface: 'assets', ids: ids ?? [], edges: [], group: null })
+    if (ids?.length) setReveal({ id: ids[0], folder: null })
+  }
   async function remove(purge: boolean) {
     const ids = selectedIds()
     if (purge) {
       if (ids.length) setPurgeIds(ids)
       return
     } else if (selection.surface === 'assets') {
-      for (const id of ids) await ImageService.TrashImage(repo.path, id)
+      confirmTrash(ids)
+      return
     } else {
       await ImageService.UnplaceImages(repo.path, ids)
       for (const id of selection.edges)
@@ -601,20 +682,92 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     setSelection({ ...selection, ids: [], edges: [], group: null })
     await reload()
   }
+  function confirmTrash(ids: number[]) {
+    if (ids.length) setTrashIds(ids)
+  }
+  async function finishTrash() {
+    if (!trashIds?.length || lifecyclePendingRef.current) return
+    lifecyclePendingRef.current = true
+    setLifecyclePending(true)
+    const outcomes = await Promise.allSettled(
+      trashIds.map((id) => ImageService.TrashImage(repo.path, id))
+    )
+    const failures = outcomes.flatMap((outcome, index) =>
+      outcome.status === 'rejected'
+        ? [{ id: trashIds[index], cause: outcome.reason }]
+        : []
+    )
+    setTrashIds(null)
+    setSelection({ ...selection, ids: [], edges: [], group: null })
+    let refreshError: unknown
+    await reload().then(
+      () => undefined,
+      (cause: unknown) => {
+        refreshError = cause
+      }
+    )
+    for (const failure of failures)
+      console.error('asset trash failed', {
+        assetId: failure.id,
+        cause: failure.cause,
+      })
+    if (refreshError)
+      console.error('asset trash refresh failed', { cause: refreshError })
+    if (failures.length || refreshError) {
+      const details = failures.map(
+        ({ id, cause }) =>
+          `Asset ${id}: ${cause instanceof Error ? cause.message : String(cause)}`
+      )
+      setError(
+        `${trashIds.length - failures.length} of ${trashIds.length} assets moved to Trash.${details.length ? ` ${details.join('; ')}` : ''}${refreshError ? ' Refresh failed; the current state may be stale.' : ' The current state was refreshed.'}`
+      )
+      return
+    }
+    completeLifecycleAction()
+  }
   async function confirmPurge() {
-    if (!purgeIds?.length) return
+    if (!purgeIds?.length || lifecyclePendingRef.current) return
+    lifecyclePendingRef.current = true
+    setLifecyclePending(true)
     await ImageService.PurgeImages(repo.path, purgeIds)
     setPurgeIds(null)
     setSelection({ ...selection, ids: [], edges: [], group: null })
     await reload()
+    completeLifecycleAction()
+  }
+  function completeLifecycleAction() {
+    const actionId = pendingRecentAction.current
+    pendingRecentAction.current = null
+    if (actionId)
+      setRecentActionIds((ids) =>
+        [actionId, ...ids.filter((id) => id !== actionId)].slice(0, 6)
+      )
   }
   function targetAt(x: number, y: number) {
-    return (
-      document
-        .elementFromPoint(x, y)
-        ?.closest<HTMLElement>('.react-flow__node')
-        ?.getAttribute('data-id') ?? null
-    )
+    const set = [
+      ...document.querySelectorAll<HTMLElement>('.react-flow__node-group'),
+    ].find((node) => {
+      const bounds = node.getBoundingClientRect()
+      return (
+        x >= bounds.left &&
+        x <= bounds.right &&
+        y >= bounds.top &&
+        y <= bounds.bottom
+      )
+    })
+    if (set)
+      return (
+        set.closest<HTMLElement>('.react-flow__node')?.getAttribute('data-id') ??
+        null
+      )
+    const nodes = document
+      .elementsFromPoint(x, y)
+      .map((element) => element.closest<HTMLElement>('.react-flow__node'))
+      .filter((node): node is HTMLElement => node !== null)
+    const target =
+      nodes.find((node) => node.classList.contains('react-flow__node-group')) ??
+      nodes[0]
+    return target?.getAttribute('data-id') ?? null
   }
   function isRelationshipDrag(
     drag: { x: number; y: number },
@@ -627,13 +780,20 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     const targets = id.startsWith('set-')
       ? groupMembers(Number(id.slice(4)))
       : [Number(id)]
-    return targets.every((t) => {
+    if (targets.includes(source))
+      return {
+        valid: false,
+        reason: id.startsWith('set-')
+          ? 'A set cannot contain its source image'
+          : 'An image cannot be related to itself',
+      }
+    const cyclic = targets.some((t) => {
       const seen = new Set<number>()
       const stack = [t]
       while (stack.length) {
         const next = stack.pop()
         if (next === undefined) break
-        if (next === source) return false
+        if (next === source) return true
         if (seen.has(next)) continue
         seen.add(next)
         stack.push(
@@ -642,8 +802,11 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             .map((r) => r.derivedImageId)
         )
       }
-      return true
+      return false
     })
+    return cyclic
+      ? { valid: false, reason: 'This relationship would create a cycle' }
+      : { valid: true, reason: undefined }
   }
   async function arrange(nodeIds = nodes.map((node) => node.id)) {
     const clusterNodes = nodes.filter((node) => nodeIds.includes(node.id))
@@ -654,7 +817,12 @@ function Canvas({ repo }: { repo: RepoInfo }) {
         width: node.width ?? node.measured?.width ?? 150,
         height: node.height ?? node.measured?.height ?? 110,
       })),
-      edges.map((edge) => ({ source: edge.source, target: edge.target }))
+      edges
+        .filter(
+          (edge) =>
+            nodeIds.includes(edge.source) && nodeIds.includes(edge.target)
+        )
+        .map((edge) => ({ source: edge.source, target: edge.target }))
     )
     const existing = nodes
       .filter((node) => !nodeIds.includes(node.id))
@@ -692,7 +860,9 @@ function Canvas({ repo }: { repo: RepoInfo }) {
           y: image.canvasY + dy,
         }))
     })
-    await ImageService.SetPositions(repo.path, updates)
+    await ImageService.SetPositions(repo.path, [
+      ...new Map(updates.map((update) => [update.imageId, update])).values(),
+    ])
     await reload()
   }
   const selectedCanvasNodeIds = useMemo(() => {
@@ -755,7 +925,9 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       }
       return [{ imageId: Number(n.id), x: n.position.x, y: avgY }]
     })
-    await ImageService.SetPositions(repo.path, updates)
+    await ImageService.SetPositions(repo.path, [
+      ...new Map(updates.map((update) => [update.imageId, update])).values(),
+    ])
     await reload()
   }
   async function alignVertical() {
@@ -780,7 +952,9 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       }
       return [{ imageId: Number(n.id), x: avgX, y: n.position.y }]
     })
-    await ImageService.SetPositions(repo.path, updates)
+    await ImageService.SetPositions(repo.path, [
+      ...new Map(updates.map((update) => [update.imageId, update])).values(),
+    ])
     await reload()
   }
   function handleLocate(node: Node) {
@@ -870,7 +1044,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Open Assets`,
       description: t`Show the repository asset navigator`,
       category: t`Workspace`,
-      aliases: ['library', 'asset shelf'],
+      aliases: [t`library`, t`asset shelf`],
       context: t`Workspace`,
       enabled: true,
       execute: openAssets,
@@ -880,7 +1054,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Toggle Assets`,
       description: t`Open or close the Assets navigator`,
       category: t`Workspace`,
-      aliases: ['assets drawer'],
+      aliases: [t`assets drawer`],
       shortcut: 'Mod+B',
       context: t`Workspace`,
       enabled: true,
@@ -891,7 +1065,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Close Assets`,
       description: t`Close the Assets navigator`,
       category: t`Workspace`,
-      aliases: ['hide assets'],
+      aliases: [t`hide assets`],
       context: t`Workspace`,
       enabled: assetsOpen,
       disabledReason: t`Assets is already closed`,
@@ -902,7 +1076,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Pin Assets drawer`,
       description: t`Keep Assets open during Canvas interactions`,
       category: t`Workspace`,
-      aliases: ['keep assets open'],
+      aliases: [t`keep assets open`],
       context: t`Assets`,
       enabled: assetsOpen && !assetsPinned,
       disabledReason: t`Open Assets before pinning`,
@@ -913,7 +1087,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Unpin Assets drawer`,
       description: t`Allow Assets to close after an action`,
       category: t`Workspace`,
-      aliases: ['unpin assets'],
+      aliases: [t`unpin assets`],
       context: t`Assets`,
       enabled: assetsOpen && assetsPinned,
       disabledReason: t`Assets is not pinned`,
@@ -924,7 +1098,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Open Inspector`,
       description: t`Show metadata for the active selection`,
       category: t`Workspace`,
-      aliases: ['details', 'inspector shelf'],
+      aliases: [t`details`, t`inspector shelf`],
       context: t`Workspace`,
       enabled: true,
       execute: openInspector,
@@ -934,7 +1108,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Toggle Inspector`,
       description: t`Open or close the Inspector`,
       category: t`Workspace`,
-      aliases: ['inspector drawer'],
+      aliases: [t`inspector drawer`],
       shortcut: 'Mod+I',
       context: t`Workspace`,
       enabled: true,
@@ -945,7 +1119,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Close Inspector`,
       description: t`Close the Inspector drawer`,
       category: t`Workspace`,
-      aliases: ['hide inspector'],
+      aliases: [t`hide inspector`],
       context: t`Workspace`,
       enabled: inspectorOpen,
       disabledReason: t`Inspector is already closed`,
@@ -956,7 +1130,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Pin Inspector drawer`,
       description: t`Keep Inspector open during Canvas interactions`,
       category: t`Workspace`,
-      aliases: ['keep inspector open'],
+      aliases: [t`keep inspector open`],
       context: t`Inspector`,
       enabled: inspectorOpen && !inspectorPinned,
       disabledReason: t`Open Inspector before pinning`,
@@ -967,7 +1141,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Unpin Inspector drawer`,
       description: t`Allow Inspector to close after selection clears`,
       category: t`Workspace`,
-      aliases: ['unpin inspector'],
+      aliases: [t`unpin inspector`],
       context: t`Inspector`,
       enabled: inspectorOpen && inspectorPinned,
       disabledReason: t`Inspector is not pinned`,
@@ -978,7 +1152,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Toggle Focus Canvas`,
       description: t`Hide or restore Canvas controls and drawers`,
       category: t`Workspace`,
-      aliases: ['zen', 'focus mode'],
+      aliases: [t`zen`, t`focus mode`],
       shortcut: 'Mod+\\',
       context: t`Workspace`,
       enabled: true,
@@ -989,18 +1163,39 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Show keyboard shortcuts`,
       description: t`Browse available keyboard shortcuts`,
       category: t`Workspace`,
-      aliases: ['help', 'shortcut reference'],
+      aliases: [t`help`, t`shortcut reference`],
       shortcut: '?',
       context: t`Workspace`,
       enabled: true,
-      execute: () => openPalette(true),
+      execute: () => openSettings('keyboard'),
+    },
+    {
+      id: 'open-settings',
+      label: t`Open Settings`,
+      description: t`Open device preferences`,
+      category: t`Workspace`,
+      aliases: [t`preferences`, t`settings`],
+      shortcut: 'Mod+,',
+      context: t`Workspace`,
+      enabled: true,
+      execute: () => openSettings(),
+    },
+    {
+      id: 'open-appearance-settings',
+      label: t`Appearance settings`,
+      description: t`Open appearance preferences`,
+      category: t`Workspace`,
+      aliases: [t`theme`, t`density`],
+      context: t`Workspace`,
+      enabled: true,
+      execute: () => openSettings('appearance'),
     },
     {
       id: 'show-commands',
       label: t`Show commands`,
       description: t`Search Canvas commands and repository assets`,
       category: t`Workspace`,
-      aliases: ['command palette', 'search actions'],
+      aliases: [t`command palette`, t`search actions`],
       shortcut: 'Mod+K',
       context: t`Workspace`,
       enabled: true,
@@ -1011,7 +1206,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Rescan repository`,
       description: t`Refresh the repository asset catalog`,
       category: t`Workspace`,
-      aliases: ['reload', 'refresh'],
+      aliases: [t`reload`, t`refresh`],
       context: t`Workspace`,
       enabled: true,
       execute: reload,
@@ -1021,7 +1216,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Switch repository`,
       description: t`Choose another repository window`,
       category: t`Workspace`,
-      aliases: ['open repository', 'project picker'],
+      aliases: [t`open repository`, t`project picker`],
       context: t`Workspace`,
       enabled: true,
       execute: () => setRepoOpenRequest((request) => request + 1),
@@ -1031,7 +1226,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Import media`,
       description: t`Choose images or videos to add to this repository`,
       category: t`Workspace`,
-      aliases: ['add files', 'upload'],
+      aliases: [t`add files`, t`upload`],
       context: t`Workspace`,
       enabled: true,
       execute: () => importInput.current?.click(),
@@ -1041,7 +1236,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Show All Assets`,
       description: t`Open the semantic repository catalog`,
       category: t`Assets navigation`,
-      aliases: ['catalog'],
+      aliases: [t`catalog`],
       context: t`Assets`,
       enabled: true,
       execute: () => {
@@ -1057,7 +1252,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Show Folders`,
       description: t`Open the physical folder navigator`,
       category: t`Assets navigation`,
-      aliases: ['filesystem', 'directories'],
+      aliases: [t`filesystem`, t`directories`],
       context: t`Assets`,
       enabled: true,
       execute: () => {
@@ -1073,7 +1268,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Show Assets gallery`,
       description: t`Switch Assets to a thumbnail gallery`,
       category: t`Assets navigation`,
-      aliases: ['gallery view', 'asset grid'],
+      aliases: [t`gallery view`, t`asset grid`],
       shortcut: 'Mod+Shift+1',
       context: t`Assets`,
       enabled: true,
@@ -1091,7 +1286,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Show Assets list`,
       description: t`Switch Assets to the compact list`,
       category: t`Assets navigation`,
-      aliases: ['list view', 'asset list'],
+      aliases: [t`list view`, t`asset list`],
       shortcut: 'Mod+Shift+2',
       context: t`Assets`,
       enabled: true,
@@ -1109,7 +1304,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Smaller gallery cards`,
       description: t`Reduce the thumbnail gallery card size`,
       category: t`Assets navigation`,
-      aliases: ['decrease gallery density', 'smaller thumbnails'],
+      aliases: [t`decrease gallery density`, t`smaller thumbnails`],
       shortcut: 'Mod+Alt+ArrowDown',
       context: t`Assets`,
       enabled: true,
@@ -1127,7 +1322,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Larger gallery cards`,
       description: t`Increase the thumbnail gallery card size`,
       category: t`Assets navigation`,
-      aliases: ['increase gallery density', 'larger thumbnails'],
+      aliases: [t`increase gallery density`, t`larger thumbnails`],
       shortcut: 'Mod+Alt+ArrowUp',
       context: t`Assets`,
       enabled: true,
@@ -1145,7 +1340,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Focus asset search`,
       description: t`Open Assets and focus its search field`,
       category: t`Assets navigation`,
-      aliases: ['find asset', 'search files'],
+      aliases: [t`find asset`, t`search files`],
       context: t`Assets`,
       enabled: true,
       execute: () => {
@@ -1158,7 +1353,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Search repository assets`,
       description: t`Search filenames, tags, and paths with @`,
       category: t`Assets navigation`,
-      aliases: ['@ search', 'find media'],
+      aliases: [t`@ search`, t`find media`],
       context: t`Repository`,
       enabled: true,
       execute: () => openPalette(false, '@'),
@@ -1168,7 +1363,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Fit all`,
       description: t`Frame every placed item in the Canvas`,
       category: t`Canvas view`,
-      aliases: ['zoom extents', 'frame canvas'],
+      aliases: [t`zoom extents`, t`frame canvas`],
       shortcut: 'Shift+1',
       context: t`Canvas`,
       enabled: displayNodes.length > 0,
@@ -1180,7 +1375,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Fit selection`,
       description: t`Frame the selected Canvas items`,
       category: t`Canvas view`,
-      aliases: ['zoom to selection', 'selection bounds'],
+      aliases: [t`zoom to selection`, t`selection bounds`],
       shortcut: 'Shift+2',
       context: t`Canvas selection`,
       enabled: canFitSelection,
@@ -1192,7 +1387,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Reset zoom to 100%`,
       description: t`Set Canvas zoom to its original scale`,
       category: t`Canvas view`,
-      aliases: ['actual size', 'zoom reset'],
+      aliases: [t`actual size`, t`zoom reset`],
       shortcut: 'Mod+0',
       context: t`Canvas`,
       enabled: true,
@@ -1203,7 +1398,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Zoom in`,
       description: t`Increase Canvas zoom`,
       category: t`Canvas view`,
-      aliases: ['magnify'],
+      aliases: [t`magnify`],
       shortcut: 'Mod+=',
       context: t`Canvas`,
       enabled: true,
@@ -1214,7 +1409,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Zoom out`,
       description: t`Decrease Canvas zoom`,
       category: t`Canvas view`,
-      aliases: ['shrink'],
+      aliases: [t`shrink`],
       shortcut: 'Mod+-',
       context: t`Canvas`,
       enabled: true,
@@ -1225,7 +1420,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Auto-arrange Canvas`,
       description: t`Reposition all placed items using their relationships`,
       category: t`Canvas view`,
-      aliases: ['layout', 'tidy all'],
+      aliases: [t`layout`, t`tidy all`],
       context: t`Canvas`,
       enabled: displayNodes.length > 0,
       disabledReason: t`There are no placed items`,
@@ -1236,7 +1431,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Auto-arrange Canvas or selection`,
       description: t`Arrange the selected subgraph, or the full Canvas when fewer than two items are selected`,
       category: t`Canvas view`,
-      aliases: ['layout', 'tidy selection', 'tidy all'],
+      aliases: [t`layout`, t`tidy selection`, t`tidy all`],
       shortcut: 'Shift+A',
       context: t`Canvas`,
       enabled: displayNodes.length > 0,
@@ -1251,7 +1446,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Auto-arrange selection`,
       description: t`Reposition selected items as a connected subgraph`,
       category: t`Canvas view`,
-      aliases: ['arrange subgraph', 'tidy selection'],
+      aliases: [t`arrange subgraph`, t`tidy selection`],
       context: t`Canvas selection`,
       enabled: canArrangeSelection,
       disabledReason: t`Select Canvas items`,
@@ -1262,7 +1457,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Select all in active surface`,
       description: t`Select all visible Assets or placed Canvas items`,
       category: t`Selection and sets`,
-      aliases: ['select everything'],
+      aliases: [t`select everything`],
       shortcut: 'Mod+A',
       context: t`Active surface`,
       enabled: visible.current.length > 0 || displayNodes.length > 0,
@@ -1285,7 +1480,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Select all`,
       description: t`Select every placed Canvas item`,
       category: t`Selection and sets`,
-      aliases: ['select all canvas items'],
+      aliases: [t`select all canvas items`],
       context: t`Canvas`,
       enabled: displayNodes.length > 0,
       disabledReason: t`There are no placed items`,
@@ -1304,7 +1499,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Clear selection`,
       description: t`Clear the active selection`,
       category: t`Selection and sets`,
-      aliases: ['deselect'],
+      aliases: [t`deselect`],
       shortcut: 'Escape',
       context: t`Active surface`,
       enabled:
@@ -1319,7 +1514,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Preview`,
       description: t`Open the selected Canvas image in the preview viewer`,
       category: t`Selection and sets`,
-      aliases: ['lightbox', 'view image'],
+      aliases: [t`lightbox`, t`view image`],
       context: t`Canvas selection`,
       enabled: selectedCanvasNodeIds.length === 1,
       disabledReason: t`Select one Canvas item`,
@@ -1333,7 +1528,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Locate in Assets`,
       description: t`Reveal the selected Canvas item in Assets`,
       category: t`Selection and sets`,
-      aliases: ['find in assets', 'show in library'],
+      aliases: [t`find in assets`, t`show in library`],
       context: t`Canvas selection`,
       enabled: selectedCanvasNodeIds.length === 1,
       disabledReason: t`Select one Canvas item`,
@@ -1347,7 +1542,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Create set`,
       description: t`Create a semantic set from selected Canvas items`,
       category: t`Selection and sets`,
-      aliases: ['group', 'collection'],
+      aliases: [t`group`, t`collection`],
       shortcut: 'Mod+G',
       context: t`Canvas selection`,
       enabled: canCreateSet,
@@ -1359,7 +1554,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Align horizontally`,
       description: t`Align selected Canvas items along one row`,
       category: t`Selection and sets`,
-      aliases: ['align row'],
+      aliases: [t`align row`],
       context: t`Canvas selection`,
       enabled: selectedCanvasNodeIds.length > 1,
       disabledReason: t`Select at least two Canvas items`,
@@ -1370,7 +1565,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Align vertically`,
       description: t`Align selected Canvas items along one column`,
       category: t`Selection and sets`,
-      aliases: ['align column'],
+      aliases: [t`align column`],
       context: t`Canvas selection`,
       enabled: selectedCanvasNodeIds.length > 1,
       disabledReason: t`Select at least two Canvas items`,
@@ -1381,7 +1576,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Unplace selected Canvas items`,
       description: t`Remove selected nodes while keeping their assets`,
       category: t`Clipboard and lifecycle`,
-      aliases: ['remove from canvas'],
+      aliases: [t`remove from canvas`],
       shortcut: 'Delete',
       shortcuts: ['Delete', 'Backspace'],
       context: t`Canvas selection`,
@@ -1389,14 +1584,17 @@ function Canvas({ repo }: { repo: RepoInfo }) {
         selection.surface === 'canvas' &&
         (selectedIds().length > 0 || selection.edges.length > 0),
       disabledReason: t`Select Canvas items`,
-      execute: () => remove(false),
+      execute: () =>
+        selection.surface === 'assets'
+          ? confirmTrash(selectedIds())
+          : remove(false),
     },
     {
       id: 'trash-selection',
       label: t`Trash selected Assets`,
       description: t`Move selected Assets to the repository trash`,
       category: t`Clipboard and lifecycle`,
-      aliases: ['delete assets'],
+      aliases: [t`delete assets`],
       shortcut: 'Delete',
       shortcuts: ['Delete', 'Backspace'],
       context: t`Assets selection`,
@@ -1410,19 +1608,19 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Trash selection`,
       description: t`Move selected Canvas assets to repository trash`,
       category: t`Clipboard and lifecycle`,
-      aliases: ['trash canvas items'],
+      aliases: [t`trash canvas items`],
       context: t`Canvas selection`,
       enabled: selection.surface === 'canvas' && selectedIds().length > 0,
       disabledReason: t`Select Canvas items`,
       dangerous: true,
-      execute: () => removeCanvasAssets(selectedIds(), true),
+      execute: () => confirmTrash(selectedIds()),
     },
     {
       id: 'archive-selection',
       label: t`Archive`,
       description: t`Hide selected assets from the active catalog`,
       category: t`Asset metadata and file`,
-      aliases: ['hide assets'],
+      aliases: [t`hide assets`],
       context: t`Assets selection`,
       enabled: selectedImageRecords.some((image) => !image.archived),
       disabledReason: t`Select an unarchived Asset`,
@@ -1438,7 +1636,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Unarchive`,
       description: t`Return selected assets to the active catalog`,
       category: t`Asset metadata and file`,
-      aliases: ['show archived assets'],
+      aliases: [t`show archived assets`],
       context: t`Assets selection`,
       enabled: selectedImageRecords.some((image) => image.archived),
       disabledReason: t`Select an archived Asset`,
@@ -1454,7 +1652,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Dissolve set`,
       description: t`Remove the selected set while keeping its assets`,
       category: t`Selection and sets`,
-      aliases: ['ungroup'],
+      aliases: [t`ungroup`],
       context: t`Set selection`,
       enabled: selection.group !== null,
       disabledReason: t`Select a set`,
@@ -1470,7 +1668,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Find in Assets`,
       description: t`Select and reveal the active asset in Assets`,
       category: t`Assets navigation`,
-      aliases: ['locate file'],
+      aliases: [t`locate file`],
       context: t`Canvas selection`,
       enabled: selection.surface === 'canvas' && selectedIds().length > 0,
       disabledReason: t`Select a Canvas item`,
@@ -1488,7 +1686,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Show in Folders`,
       description: t`Reveal the selected Asset in its physical directory`,
       category: t`Asset metadata and file`,
-      aliases: ['show file location', 'browse path'],
+      aliases: [t`show file location`, t`browse path`],
       context: t`Asset selection`,
       enabled: selectedIds().length === 1,
       disabledReason: t`Select one Asset`,
@@ -1502,7 +1700,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Move or rename file path`,
       description: t`Open the Inspector file path field`,
       category: t`Asset metadata and file`,
-      aliases: ['rename asset', 'move file'],
+      aliases: [t`rename asset`, t`move file`],
       context: t`Single Asset`,
       enabled: selectedIds().length === 1,
       disabledReason: t`Select one Asset`,
@@ -1513,7 +1711,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Add tag`,
       description: t`Focus the Inspector tag field for the active selection`,
       category: t`Asset metadata and file`,
-      aliases: ['tag assets', 'metadata'],
+      aliases: [t`tag assets`, t`metadata`],
       context: t`Asset selection`,
       enabled: selectedIds().length > 0,
       disabledReason: t`Select Assets`,
@@ -1524,7 +1722,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Save prompt`,
       description: t`Save the current prompt from the Inspector`,
       category: t`Asset metadata and file`,
-      aliases: ['edit prompt', 'prompt text'],
+      aliases: [t`edit prompt`, t`prompt text`],
       context: t`Asset selection`,
       enabled: selectedIds().length > 0,
       disabledReason: t`Select Assets`,
@@ -1535,7 +1733,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Restore from trash`,
       description: t`Return selected trashed assets to the repository`,
       category: t`Asset metadata and file`,
-      aliases: ['restore assets'],
+      aliases: [t`restore assets`],
       context: t`Asset selection`,
       enabled: selectedImageRecords.some((image) => image.trashed),
       disabledReason: t`Select a trashed Asset`,
@@ -1551,7 +1749,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Compress selected assets`,
       description: t`Open compression settings for selected Assets`,
       category: t`Asset metadata and file`,
-      aliases: ['compress', 'optimize media'],
+      aliases: [t`compress`, t`optimize media`],
       context: t`Asset selection`,
       enabled: selectedIds().length > 0,
       disabledReason: t`Select Assets`,
@@ -1562,7 +1760,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Compare set`,
       description: t`Open the selected set comparison`,
       category: t`Selection and sets`,
-      aliases: ['compare images'],
+      aliases: [t`compare images`],
       context: t`Set selection`,
       enabled: selection.group !== null && selectedIds().length > 1,
       disabledReason: t`Select a set with at least two assets`,
@@ -1573,7 +1771,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Set cover image`,
       description: t`Choose a cover image in the set comparison`,
       category: t`Selection and sets`,
-      aliases: ['change set thumbnail', 'cover'],
+      aliases: [t`change set thumbnail`, t`cover`],
       context: t`Set selection`,
       enabled: selection.group !== null && selectedIds().length > 1,
       disabledReason: t`Select a set with at least two assets`,
@@ -1584,7 +1782,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Edit set name`,
       description: t`Focus the selected set name field`,
       category: t`Selection and sets`,
-      aliases: ['rename set'],
+      aliases: [t`rename set`],
       context: t`Set selection`,
       enabled: selection.group !== null,
       disabledReason: t`Select a set`,
@@ -1595,7 +1793,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Edit set kind`,
       description: t`Focus the selected set kind field`,
       category: t`Selection and sets`,
-      aliases: ['change set type'],
+      aliases: [t`change set type`],
       context: t`Set selection`,
       enabled: selection.group !== null,
       disabledReason: t`Select a set`,
@@ -1606,7 +1804,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Expand selected set`,
       description: t`Show the selected set members at their stored positions`,
       category: t`Selection and sets`,
-      aliases: ['open group'],
+      aliases: [t`open group`],
       context: t`Set selection`,
       enabled: selection.group !== null,
       disabledReason: t`Select a set`,
@@ -1617,7 +1815,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Collapse active set`,
       description: t`Return the expanded set to its compact thumbnail stack`,
       category: t`Selection and sets`,
-      aliases: ['close group'],
+      aliases: [t`close group`],
       context: t`Canvas`,
       enabled: expanded !== null,
       disabledReason: t`There is no expanded set`,
@@ -1628,7 +1826,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Go to source`,
       description: t`Navigate to the source asset of the selected relationship`,
       category: t`Relationships`,
-      aliases: ['source image'],
+      aliases: [t`source image`],
       context: t`Relationship or image`,
       enabled: canNavigateRelationship,
       disabledReason: t`Select a related image or relationship`,
@@ -1642,7 +1840,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Go to derived`,
       description: t`Navigate to the derived asset of the selected relationship`,
       category: t`Relationships`,
-      aliases: ['derived image'],
+      aliases: [t`derived image`],
       context: t`Relationship or image`,
       enabled: canNavigateRelationship,
       disabledReason: t`Select a related image or relationship`,
@@ -1656,7 +1854,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Remove relationship`,
       description: t`Unlink the selected relationship`,
       category: t`Relationships`,
-      aliases: ['unlink'],
+      aliases: [t`unlink`],
       context: t`One relationship`,
       enabled: canRemoveRelationship,
       disabledReason: t`Select one relationship`,
@@ -1675,7 +1873,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Permanently purge selected assets`,
       description: t`Permanently remove selected files and metadata`,
       category: t`Clipboard and lifecycle`,
-      aliases: ['permanent delete'],
+      aliases: [t`permanent delete`],
       shortcut: 'Shift+Delete',
       shortcuts: ['Shift+Delete', 'Shift+Backspace'],
       context: t`Active selection`,
@@ -1689,7 +1887,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Copy original media`,
       description: t`Copy original files for the active selection`,
       category: t`Clipboard and lifecycle`,
-      aliases: ['copy assets'],
+      aliases: [t`copy assets`],
       shortcut: 'Mod+C',
       context: t`Active selection`,
       enabled: selectedIds().length > 0,
@@ -1701,7 +1899,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Copy converted media`,
       description: t`Copy converted output when a converter is available`,
       category: t`Clipboard and lifecycle`,
-      aliases: ['convert and copy'],
+      aliases: [t`convert and copy`],
       shortcut: 'Mod+Shift+C',
       context: t`Active selection`,
       enabled: selectedIds().length > 0,
@@ -1713,7 +1911,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Paste media`,
       description: t`Import copied or native clipboard media`,
       category: t`Clipboard and lifecycle`,
-      aliases: ['paste files'],
+      aliases: [t`paste files`],
       shortcut: 'Mod+V',
       context: t`Active surface`,
       enabled: true,
@@ -1724,7 +1922,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Undo`,
       description: t`Undo the last repository operation`,
       category: t`Clipboard and lifecycle`,
-      aliases: ['revert'],
+      aliases: [t`revert`],
       shortcut: 'Mod+Z',
       context: t`Workspace`,
       enabled: true,
@@ -1735,7 +1933,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       label: t`Redo`,
       description: t`Redo the last undone repository operation`,
       category: t`Clipboard and lifecycle`,
-      aliases: ['reapply'],
+      aliases: [t`reapply`],
       shortcut: 'Mod+Shift+Z',
       shortcuts: ['Mod+Shift+Z', 'Ctrl+Y'],
       context: t`Workspace`,
@@ -1761,22 +1959,82 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     []
   )
   function runPaletteAction(action: CanvasAction) {
-    changePaletteOpen(false)
+    const currentAction = actionById.get(action.id)
+    if (!currentAction?.enabled) return
+    // The route owns focus after palette commands. Do not let the dialog's
+    // opener restoration race the destination selected by the command.
+    setPaletteOpen(false)
+    if (
+      currentAction.id === 'open-settings' ||
+      currentAction.id === 'open-appearance-settings' ||
+      currentAction.id === 'show-shortcuts'
+    ) {
+      // Let the palette unmount before the Settings dialog takes focus.
+      requestAnimationFrame(() => void currentAction.execute())
+      return
+    }
+    const isLifecycleAction =
+      currentAction.id === 'trash-selection' ||
+      currentAction.id === 'trash-canvas-selection' ||
+      currentAction.id === 'purge-selection'
+    if (isLifecycleAction) pendingRecentAction.current = currentAction.id
     requestAnimationFrame(() => {
-      void executeAction(action).then(() =>
-        setRecentActionIds((ids) =>
-          [action.id, ...ids.filter((id) => id !== action.id)].slice(0, 6)
-        )
-      )
+      void Promise.resolve(currentAction.execute()).then(() => {
+        if (!isLifecycleAction)
+          setRecentActionIds((ids) =>
+            [
+              currentAction.id,
+              ...ids.filter((id) => id !== currentAction.id),
+            ].slice(0, 6)
+          )
+        if (isLifecycleAction && !trashIds && !purgeIds)
+          pendingRecentAction.current = null
+        requestAnimationFrame(() => {
+            if (
+              currentAction.id.includes('assets') ||
+              currentAction.id === 'show-folders' ||
+              currentAction.id === 'show-all-assets' ||
+              currentAction.id === 'focus-asset-search' ||
+              currentAction.id === 'find-in-assets' ||
+              currentAction.id === 'locate-selection'
+            ) {
+              document
+                .querySelector<HTMLElement>(
+                  '[aria-label="Assets"][data-visible="true"] input, [aria-label="Assets"][data-visible="true"] button, [aria-label="Assets"][data-visible="true"] [tabindex="0"]'
+                )
+                ?.focus()
+            } else if (currentAction.id.includes('inspector')) {
+              document
+                .querySelector<HTMLElement>(
+                  '[aria-label="Inspector"][data-visible="true"] input, [aria-label="Inspector"][data-visible="true"] button, [aria-label="Inspector"][data-visible="true"] [tabindex="0"]'
+                )
+                ?.focus()
+            } else if (
+              currentAction.id.includes('trash') ||
+              currentAction.id.includes('purge') ||
+              currentAction.id.includes('unplace') ||
+              currentAction.id.includes('archive') ||
+              currentAction.id.includes('create-set')
+            ) {
+              host.current?.focus()
+            }
+        })
+      }, report)
     })
   }
   function choosePaletteAsset(asset: PaletteAsset) {
-    changePaletteOpen(false)
+    setPaletteOpen(false)
     requestAnimationFrame(() => void go(asset.id).catch(report))
   }
   useEffect(() => {
-    if (!paletteOpen) return
+    if (!paletteOpen) {
+      setPaletteAssetsLoading(false)
+      return
+    }
     let cancelled = false
+    setPaletteAssets([])
+    setPaletteAssetsLoading(true)
+    setPaletteAssetsError(false)
     void LibraryService.ListImages(repo.path, {
       search: '',
       placement: '',
@@ -1784,7 +2042,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       tagId: 0,
     })
       .then((rows) => {
-        if (!cancelled)
+        if (!cancelled) {
           setPaletteAssets(
             (rows ?? [])
               .filter((row) => !row.trashed)
@@ -1795,12 +2053,19 @@ function Canvas({ repo }: { repo: RepoInfo }) {
                 tags: row.tags ?? [],
               }))
           )
+          setPaletteAssetsLoading(false)
+        }
       })
-      .catch(callbacks.current.report)
+      .catch((reason) => {
+        if (cancelled) return
+        setPaletteAssetsError(true)
+        setPaletteAssetsLoading(false)
+        callbacks.current.report(reason)
+      })
     return () => {
       cancelled = true
     }
-  }, [paletteOpen, repo.path])
+  }, [paletteOpen, repo.path, paletteAssetRequest])
   const keyboardState = useRef({
     assetsOpen,
     assetsPinned,
@@ -1819,6 +2084,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     purgeIds,
     repoMenuOpen,
     selection,
+    settingsSection,
   })
   keyboardState.current = {
     assetsOpen,
@@ -1838,6 +2104,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     purgeIds,
     repoMenuOpen,
     selection,
+    settingsSection,
   }
   useEffect(() => {
     const down = (event: KeyboardEvent) => {
@@ -1845,7 +2112,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       const target = event.target
       const targetElement = target instanceof Element ? target : null
       const inEditable = !!targetElement?.closest(
-        'input,textarea,select,[contenteditable=true],[role=dialog]'
+        'input,textarea,select,[contenteditable]:not([contenteditable=false]),[role=dialog]'
       )
       const isInteractiveTarget = !!targetElement?.closest(
         'button,a[href],input,textarea,select,summary,[contenteditable=true],[role=button],[role^=menuitem],[role=option],[role=checkbox],[role=radio],[role=switch],[role=tab],[role=combobox],[role=listbox],[role=slider],[role=spinbutton]'
@@ -1873,6 +2140,9 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       )
         return
       if (event.key === 'Escape') {
+        // Settings owns the first Escape. Do not let a closing Base UI popup
+        // keep swallowing later Escapes while its exit transition is mounted.
+        if (state.settingsSection) return
         if (state.menu) {
           setMenu(null)
           event.preventDefault()
@@ -1883,7 +2153,6 @@ function Canvas({ repo }: { repo: RepoInfo }) {
           event.preventDefault()
           return
         }
-        if (document.querySelector('[role="dialog"]')) return
         if (document.querySelector('[role="menu"]')) return
         if (state.inspectorOpen && !state.inspectorPinned)
           state.closeInspector()
@@ -1898,8 +2167,10 @@ function Canvas({ repo }: { repo: RepoInfo }) {
         else if (state.expanded !== null) setExpanded(null)
         else return
         event.preventDefault()
+        event.stopPropagation()
         return
       }
+      if (event.defaultPrevented || event.isComposing || event.repeat) return
       if (inEditable || state.menu) return
       const action = actionRef.current.find(
         (candidate) =>
@@ -1913,21 +2184,29 @@ function Canvas({ repo }: { repo: RepoInfo }) {
               shortcutMatches(event, shortcut)
           )
       )
+      const purgeShortcut =
+        event.shiftKey &&
+        (event.key === 'Delete' || event.key === 'Backspace') &&
+        selectedIds().length > 0
+      if (purgeShortcut) {
+        event.preventDefault()
+        void remove(true)
+        return
+      }
       if (!action) return
       event.preventDefault()
       if (action.id === 'show-commands') state.openPalette(false)
-      else if (action.id === 'show-shortcuts') state.openPalette(true)
       else void state.executeAction(action)
     }
     const up = (event: KeyboardEvent) => {
       if (event.code === 'Space') setSpace(false)
     }
     const blur = () => setSpace(false)
-    window.addEventListener('keydown', down)
+    window.addEventListener('keydown', down, true)
     window.addEventListener('keyup', up)
     window.addEventListener('blur', blur)
     return () => {
-      window.removeEventListener('keydown', down)
+      window.removeEventListener('keydown', down, true)
       window.removeEventListener('keyup', up)
       window.removeEventListener('blur', blur)
     }
@@ -2029,7 +2308,9 @@ function Canvas({ repo }: { repo: RepoInfo }) {
               visible.current = ids
             }}
             reveal={reveal}
-            change={reload}
+            change={async () => {
+              await reload()
+            }}
             compress={(ids) => {
               selectAssets(ids)
               requestAnimationFrame(() =>
@@ -2085,7 +2366,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
               return
             }
             const id = targetAt(event.clientX, event.clientY)
-            const valid = id ? validTarget(drag.source, id) : null
+            const result = id ? validTarget(drag.source, id) : null
             const rect = host.current?.getBoundingClientRect()
             if (rect)
               setRelationshipPreview({
@@ -2093,14 +2374,25 @@ function Canvas({ repo }: { repo: RepoInfo }) {
                 y1: drag.y - rect.top,
                 x2: event.clientX - rect.left,
                 y2: event.clientY - rect.top,
-                valid,
+                valid: result?.valid ?? null,
               })
             updateTarget(
               id
                 ? {
                     id,
-                    valid: valid ?? false,
-                    kind: 'relationship',
+                    valid: result?.valid ?? false,
+                    reason: result?.reason,
+                    members: id.startsWith('set-')
+                      ? groupMembers(Number(id.slice(4))).filter(
+                          (memberId) =>
+                            !(data.relationships ?? []).some(
+                              (relationship) =>
+                                relationship.sourceImageId === drag.source &&
+                                relationship.derivedImageId === memberId
+                            )
+                        ).length
+                      : undefined,
+                    kind: id.startsWith('set-') ? 'set' : 'relationship',
                   }
                 : null
             )
@@ -2134,7 +2426,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
               edges: [],
               group: null,
             })
-            if (id && validTarget(drag.source, id))
+            if (id && validTarget(drag.source, id).valid)
               run(() =>
                 id.startsWith('set-')
                   ? ImageService.LinkSourceToGroup(
@@ -2144,6 +2436,10 @@ function Canvas({ repo }: { repo: RepoInfo }) {
                     )
                   : ImageService.LinkSource(repo.path, drag.source, Number(id))
               )
+            else if (id) {
+              const result = validTarget(drag.source, id)
+              setError(result.reason ?? 'Cannot create this relationship')
+            }
           }}
           onDragOver={(e) => {
             e.preventDefault()
@@ -2153,13 +2449,17 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             e.preventDefault()
             const raw = e.dataTransfer.getData('application/x-loom-assets')
             if (raw) {
-              try {
-                const ids: unknown = JSON.parse(raw)
-                if (
-                  !Array.isArray(ids) ||
-                  !ids.every((i) => Number.isSafeInteger(i))
-                )
-                  throw new Error('Invalid asset drag')
+              const payload = parseAssetDragPayload(raw)
+              if (!payload) {
+                report(new Error('Invalid asset drag'))
+                return
+              }
+              if (payload.repoPath !== repo.path) {
+                report(new Error('This asset drag belongs to another repository'))
+                return
+              }
+              {
+                const uniqueIds = [...new Set(payload.ids)]
                 const p = flow.screenToFlowPosition({
                     x: e.clientX,
                     y: e.clientY,
@@ -2168,27 +2468,46 @@ function Canvas({ repo }: { repo: RepoInfo }) {
                   group = target?.startsWith('set-')
                     ? Number(target.slice(4))
                     : 0
-                run(async () => {
+                void (async () => {
+                  const images = await Promise.all(
+                    uniqueIds.map((id) => ImageService.GetImage(repo.path, id))
+                  )
+                  if (images.some((image) => !image || image.missing || image.trashed))
+                    throw new Error('Missing or trashed assets cannot be placed. Refine the selection and try again.')
                   await ImageService.PlaceImages(
                     repo.path,
-                    ids,
+                    uniqueIds,
                     p.x,
                     p.y,
                     group
                   )
+                  const refreshed = await reload(true)
                   if (!assetsPinned) {
                     closeAssets(false)
                     requestAnimationFrame(() => host.current?.focus())
                   }
+                  const collapsedSets = group
+                    ? []
+                    : (refreshed?.groups ?? data.groups ?? []).filter(
+                        (candidate) =>
+                          candidate.id !== expanded &&
+                          (candidate.memberIds ?? []).some((id) =>
+                            uniqueIds.includes(id)
+                          )
+                      )
+                  const collapsedSet = collapsedSets[0]
+                  const hiddenIds = new Set(
+                    collapsedSets.flatMap((candidate) => candidate.memberIds ?? [])
+                  )
                   setSelection({
                     surface: 'canvas',
-                    ids: group ? [] : ids,
+                    ids: group
+                      ? []
+                      : uniqueIds.filter((id) => !hiddenIds.has(id)),
                     edges: [],
-                    group: group || null,
+                    group: group || collapsedSet?.id || null,
                   })
-                })
-              } catch (error) {
-                report(error)
+                })().catch(report)
               }
             } else
               void filesToMedia(Array.from(e.dataTransfer.files))
@@ -2234,11 +2553,24 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             nodesConnectable={false}
             edgesReconnectable={false}
             deleteKeyCode={null}
-            selectionKeyCode={null}
+            selectionKeyCode="Shift"
             multiSelectionKeyCode="Shift"
             selectionOnDrag={!space}
             selectionMode={SelectionMode.Partial}
+            onSelectionStart={(event) => {
+              modifiedMarquee.current = {
+                active: event.shiftKey || event.ctrlKey || event.metaKey,
+                anchor:
+                  selectionRef.current.surface === 'canvas'
+                    ? [...selectionRef.current.ids]
+                    : [],
+              }
+            }}
+            onSelectionEnd={() => {
+              modifiedMarquee.current.active = false
+            }}
             panOnDrag={space ? [0, 1, 2] : [1, 2]}
+            panActivationKeyCode={null}
             nodesDraggable={!space}
             onNodesChange={(changes) => {
               if (dropTargets.current.length) {
@@ -2268,6 +2600,8 @@ function Canvas({ repo }: { repo: RepoInfo }) {
                     return s
                   let ids = s.surface === 'canvas' ? [...s.ids] : [],
                     group = s.surface === 'canvas' ? s.group : null
+                  if (modifiedMarquee.current.active)
+                    ids = [...new Set([...ids, ...modifiedMarquee.current.anchor])]
                   for (const c of selected) {
                     if (c.id.startsWith('set-')) {
                       group = c.selected ? Number(c.id.slice(4)) : null
@@ -2275,7 +2609,9 @@ function Canvas({ repo }: { repo: RepoInfo }) {
                     }
                     ids = c.selected
                       ? [...new Set([...ids, Number(c.id)])]
-                      : ids.filter((id) => id !== Number(c.id))
+                     : modifiedMarquee.current.active
+                       ? ids
+                       : ids.filter((id) => id !== Number(c.id))
                   }
                   return { surface: 'canvas', ids, edges: [], group }
                 })
@@ -2345,24 +2681,40 @@ function Canvas({ repo }: { repo: RepoInfo }) {
                 })
               }
             }}
+            onNodeDragStart={() => {
+              relation.current = null
+              setRelationshipPreview(null)
+              updateTarget(null)
+            }}
             onNodeDrag={(_, node) => {
               if (node.type !== 'image') return
-              const group = dropTargets.current.find((candidate) => {
-                const nodeWidth = node.measured?.width ?? node.width ?? 150
-                const nodeHeight = node.measured?.height ?? node.height ?? 110
-                const groupWidth =
-                  candidate.measured?.width ?? candidate.width ?? 160
-                const groupHeight =
-                  candidate.measured?.height ?? candidate.height ?? 128
-                return (
-                  node.position.x < candidate.position.x + groupWidth &&
-                  node.position.x + nodeWidth > candidate.position.x &&
-                  node.position.y < candidate.position.y + groupHeight &&
-                  node.position.y + nodeHeight > candidate.position.y
-                )
-              })
+              const group =
+                flow
+                  .getIntersectingNodes(node)
+                .find((candidate) => candidate.type === 'group') ??
+                dropTargets.current.find((candidate) => {
+                  const nodeWidth = node.measured?.width ?? node.width ?? 150
+                  const nodeHeight = node.measured?.height ?? node.height ?? 110
+                  const groupWidth =
+                    candidate.measured?.width ?? candidate.width ?? 160
+                  const groupHeight =
+                    candidate.measured?.height ?? candidate.height ?? 128
+                  return (
+                    node.position.x < candidate.position.x + groupWidth &&
+                    node.position.x + nodeWidth > candidate.position.x &&
+                    node.position.y < candidate.position.y + groupHeight &&
+                    node.position.y + nodeHeight > candidate.position.y
+                  )
+                })
               updateTarget(
-                group ? { id: group.id, valid: true, kind: 'set' } : null
+                group
+                  ? {
+                      id: group.id,
+                      valid: true,
+                      kind: 'set',
+                      reason: 'Release to add or move into this set',
+                    }
+                  : null
               )
             }}
             onNodeDragStop={(_, node, moved) => {
@@ -2499,10 +2851,13 @@ function Canvas({ repo }: { repo: RepoInfo }) {
               className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 rounded-md border border-black/10 bg-card/95 px-3 py-1.5 text-xs font-medium text-ink shadow-sm"
             >
               {target.kind === 'set'
-                ? 'Release to add or move into this set'
+                ? (target.reason ??
+                  (target.members === 0
+                    ? 'Already related'
+                    : `Release to create ${target.members ?? 0} one-time relationships`))
                 : target.valid
                   ? 'Release to create relationship'
-                  : 'Cannot create this relationship'}
+                  : (target.reason ?? 'Cannot create this relationship')}
             </div>
           )}
           {menu && menuItems.length > 0 && (
@@ -2570,6 +2925,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             onCommandRequestHandled={handleInspectorCommandRequest}
             onAction={executeActionById}
             onSubmitField={submitInspectorField}
+            selectionRevision={submissionScopeRef.current.revision}
             restoreEnabled={
               actionById.get('restore-from-trash')?.enabled ?? false
             }
@@ -2674,6 +3030,17 @@ function Canvas({ repo }: { repo: RepoInfo }) {
                 role="menuitem"
                 onClick={() => {
                   setRepoMenuOpen(false)
+                  executeActionById('open-settings')
+                }}
+                className="rounded px-3 py-2 text-left text-xs hover:bg-black/[0.05] focus-visible:ring-2 focus-visible:ring-primary/40"
+              >
+                <Trans>Settings…</Trans>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setRepoMenuOpen(false)
                   executeActionById('rescan-repository')
                 }}
                 className="rounded px-3 py-2 text-left text-xs hover:bg-black/[0.05] focus-visible:ring-2 focus-visible:ring-primary/40"
@@ -2702,9 +3069,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
           className="hidden"
           onChange={(event) => {
             const files = Array.from(event.target.files ?? [])
-            void filesToMedia(files)
-              .then((media) => paste(media, 'assets'))
-              .catch(report)
+            void filesToMedia(files).then(importMedia).catch(report)
             event.target.value = ''
           }}
         />
@@ -2734,10 +3099,20 @@ function Canvas({ repo }: { repo: RepoInfo }) {
         actions={actionCatalog}
         recentActionIds={recentActionIds}
         assets={paletteAssets}
+        assetsLoading={paletteAssetsLoading}
+        assetsError={paletteAssetsError}
+        onRetryAssets={() => setPaletteAssetRequest((request) => request + 1)}
         onOpenChange={changePaletteOpen}
         onRunAction={runPaletteAction}
         onChooseAsset={choosePaletteAsset}
       />
+      {settingsSection && (
+        <SettingsDialog
+          initialSection={settingsSection}
+          actions={actionCatalog}
+          onClose={() => setSettingsSection(null)}
+        />
+      )}
       {previewImageId !== null && (
         <LightboxViewer
           images={(data.images ?? []).filter((i) => i.placed && !i.trashed)}
@@ -2789,9 +3164,13 @@ function Canvas({ repo }: { repo: RepoInfo }) {
         />
       )}
       <Dialog.Root
-        open={purgeIds !== null}
+        open={purgeIds !== null || trashIds !== null}
         onOpenChange={(open) => {
-          if (!open) setPurgeIds(null)
+          if (!open) {
+            setPurgeIds(null)
+            setTrashIds(null)
+            if (!lifecyclePending) pendingRecentAction.current = null
+          }
         }}
       >
         <Dialog.Portal>
@@ -2799,27 +3178,58 @@ function Canvas({ repo }: { repo: RepoInfo }) {
           <Dialog.Popup className="fixed left-1/2 top-1/2 z-50 w-[min(420px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-black/8 bg-card p-5 shadow-lg outline-none">
             <Dialog.Title className="text-sm font-semibold text-ink">
               <Plural
-                value={purgeIds?.length ?? 0}
-                one="Permanently delete # asset?"
-                other="Permanently delete # assets?"
+                value={purgeIds?.length ?? trashIds?.length ?? 0}
+                one={
+                  purgeIds
+                    ? 'Permanently delete # asset?'
+                    : 'Move # asset to trash?'
+                }
+                other={
+                  purgeIds
+                    ? 'Permanently delete # assets?'
+                    : 'Move # assets to trash?'
+                }
               />
             </Dialog.Title>
             <Dialog.Description className="mt-2 text-xs leading-relaxed text-ink-muted">
               <Trans>
-                This removes the files and Loom metadata immediately. Trash
-                retention does not apply, and this action cannot be undone.
+                {purgeIds ? (
+                  <Trans>
+                    This removes the files and Loom metadata immediately. Trash
+                    retention does not apply, and this action cannot be undone.
+                  </Trans>
+                ) : (
+                  <Trans>
+                    The selected assets will move to repository trash. They are retained for 30 days, then permanently purged automatically.
+                  </Trans>
+                )}
               </Trans>
             </Dialog.Description>
             <div className="mt-5 flex justify-end gap-2">
               <Dialog.Close render={<Button variant="secondary" size="sm" />}>
-                Cancel
+                <Trans>Cancel</Trans>
               </Dialog.Close>
               <Button
                 variant="danger"
                 size="sm"
-                onClick={() => void confirmPurge().catch(report)}
+                onClick={() =>
+                  void (purgeIds ? confirmPurge() : finishTrash())
+                    .catch((error) => {
+                      pendingRecentAction.current = null
+                      report(error)
+                    })
+                    .finally(() => {
+                      lifecyclePendingRef.current = false
+                      setLifecyclePending(false)
+                    })
+                }
+                disabled={lifecyclePending}
               >
-                Permanently delete
+                {purgeIds ? (
+                  <Trans>Permanently delete</Trans>
+                ) : (
+                  <Trans>Move to trash</Trans>
+                )}
               </Button>
             </div>
           </Dialog.Popup>

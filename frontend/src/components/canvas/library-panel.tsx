@@ -19,12 +19,14 @@ import type { Selection } from '../../lib/selection'
 import { AssetGallery } from './asset-gallery'
 import { AssetList } from './asset-list'
 import { AssetViewControls } from './asset-view-controls'
+import { Button } from '../ui/button'
 import { FolderNavigator } from './folder-navigator'
 import {
   type AssetContextMenuState,
   LibraryContextMenu,
 } from './library-context-menu'
 import { useSavedAssetViews } from './use-saved-asset-views'
+import { parseAssetDragPayload } from '../../lib/asset-drag-payload'
 
 const fieldClass =
   'h-8 w-full rounded-sm border border-black/12 bg-card px-2 text-xs text-ink outline-none focus-visible:ring-2 focus-visible:ring-primary/40'
@@ -83,6 +85,9 @@ export function LibraryPanel({
   const [rows, setRows] = useState<LibraryRow[]>([]),
     [dirs, setDirs] = useState<string[]>([]),
     [tags, setTags] = useState<{ id: number; name: string }[]>([])
+  const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState(false)
+  const [retryCount, setRetryCount] = useState(0)
   const [itemMenu, setItemMenu] = useState<AssetContextMenuState | null>(null)
   const searchInput = useRef<HTMLInputElement>(null)
   const callbacks = useRef({ onError, visible })
@@ -123,6 +128,7 @@ export function LibraryPanel({
     setStatus('all')
     setPlacement('')
     setTagId(0)
+    setSelectedViewId('default-recent')
   }, [reveal])
   useEffect(() => {
     if (!navigatorModeRequest) return
@@ -143,6 +149,8 @@ export function LibraryPanel({
   useEffect(() => {
     let cancelled = false
     async function load() {
+      setLoading(true)
+      setLoadError(false)
       const all = await LibraryService.ListImages(path, {
         search: mode === 'folders' ? '' : search,
         placement: mode === 'folders' ? '' : placement,
@@ -161,45 +169,93 @@ export function LibraryPanel({
       }
       if (!cancelled) {
         setRows(list)
+        setLoading(false)
         callbacks.current.visible(sortAssetRows(list, sort).map((r) => r.id))
+        if (selection.surface === 'assets') {
+          const valid = new Set(list.map((row) => row.id))
+          const reconciled = selection.ids.filter((id) => valid.has(id))
+          if (reconciled.length !== selection.ids.length) select(reconciled)
+        }
       }
     }
-    void load().catch(callbacks.current.onError)
+    void load().catch((error) => {
+      if (!cancelled) {
+        setLoading(false)
+        setLoadError(true)
+        setRows([])
+        callbacks.current.onError(error)
+      }
+    })
     return () => {
       cancelled = true
     }
-  }, [path, mode, folder, search, status, placement, tagId, sort, refresh])
+  }, [path, mode, folder, search, status, placement, tagId, sort, refresh, retryCount])
   const selected = selection.surface === 'assets' ? selection.ids : []
   const activeFilterCount =
-    Number(status !== 'active') + Number(Boolean(placement)) + Number(tagId > 0)
+    Number(Boolean(search)) +
+    Number(status !== 'active') +
+    Number(Boolean(placement)) +
+    Number(tagId > 0)
   const tagName = tags.find((tag) => tag.id === tagId)?.name
   async function moveAssets(ids: number[], targetFolder: string) {
-    await Promise.all(
-      ids.map((id) => {
+    const uniqueIds = [...new Set(ids)]
+    const outcomes = await Promise.allSettled(
+      uniqueIds.map(async (id) => {
         const row = rows.find((item) => item.id === id)
-        return row
-          ? ImageService.MoveFile(
-              path,
-              id,
-              [targetFolder, row.fileName].filter(Boolean).join('/')
-            )
-          : Promise.resolve()
+        if (!row) throw new Error(`Asset ${id} is not in the current folder`)
+        await ImageService.MoveFile(
+          path,
+          id,
+          [targetFolder, row.fileName].filter(Boolean).join('/')
+        )
       })
     )
-    await change()
+    const failures = outcomes.flatMap((result, index) =>
+      result.status === 'rejected'
+        ? [{ id: uniqueIds[index], cause: result.reason }]
+        : []
+    )
+    let refreshError: unknown
+    await change().then(
+      () => undefined,
+      (error: unknown) => {
+        refreshError = error
+      }
+    )
+    if (failures.length || refreshError) {
+      for (const failure of failures) {
+        console.error('asset move failed', {
+          assetId: failure.id,
+          cause: failure.cause,
+        })
+      }
+      if (refreshError)
+        console.error('asset move refresh failed', { cause: refreshError })
+      const contexts = failures.map(({ id, cause }) =>
+        `Asset ${id}: ${cause instanceof Error ? cause.message : String(cause)}`
+      )
+      const refreshed = refreshError
+        ? ` Refresh failed: ${refreshError instanceof Error ? refreshError.message : String(refreshError)}`
+        : ' The current state was refreshed.'
+      throw new Error(
+        `${uniqueIds.length - failures.length} of ${uniqueIds.length} assets moved.${contexts.length ? ` ${contexts.join('; ')}` : ''}${refreshed}`
+      )
+    }
   }
   function dropInto(event: DragEvent, targetFolder: string) {
     const raw = event.dataTransfer.getData('application/x-loom-assets')
     if (!raw) return
     event.preventDefault()
-    try {
-      const ids: unknown = JSON.parse(raw)
-      if (!Array.isArray(ids) || !ids.every((id) => Number.isSafeInteger(id)))
-        throw new Error('Invalid asset drag')
-      void moveAssets(ids, targetFolder).catch(onError)
-    } catch (error) {
-      onError(error)
+    const payload = parseAssetDragPayload(raw)
+    if (!payload) {
+      onError(new Error('Invalid asset drag'))
+      return
     }
+    if (payload.repoPath !== path) {
+      onError(new Error('This asset drag belongs to another repository'))
+      return
+    }
+    void moveAssets(payload.ids, targetFolder).catch(onError)
   }
   function renameAsset(id: number, name: string) {
     const row = rows.find((item) => item.id === id)
@@ -366,34 +422,69 @@ export function LibraryPanel({
             </div>
           )}
           {activeFilterCount > 0 && (
-            <div className="flex flex-wrap gap-1">
-              {status !== 'active' && (
-                <button
+            <div className="flex flex-wrap items-center gap-1">
+              {search && (
+                <Button
                   type="button"
-                  onClick={() => setStatus('active')}
-                  className="rounded-full bg-primary-soft px-2 py-1 text-[11px] text-ink"
+                  aria-label={t`Remove search filter: ${search}`}
+                  onClick={() => setSearch('')}
+                  variant="ghost"
+                  size="sm"
+                  className="h-auto rounded-full bg-primary-soft px-2 py-1 text-[11px] text-ink"
                 >
-                  {status} ×
-                </button>
+                  {t`Search`}: {search} ×
+                </Button>
+              )}
+              {status !== 'active' && (
+                <Button
+                  type="button"
+                  aria-label={t`Remove asset state filter: ${status}`}
+                  onClick={() => setStatus('active')}
+                  variant="ghost"
+                  size="sm"
+                  className="h-auto rounded-full bg-primary-soft px-2 py-1 text-[11px] text-ink"
+                >
+                  {status === 'all' ? <Trans>All</Trans> : status === 'active' ? <Trans>Active</Trans> : status === 'archived' ? <Trans>Archived</Trans> : status === 'trashed' ? <Trans>Trash</Trans> : <Trans>Missing</Trans>} ×
+                </Button>
               )}
               {placement && (
-                <button
+                <Button
                   type="button"
+                  aria-label={t`Remove placement filter: ${placement}`}
                   onClick={() => setPlacement('')}
-                  className="rounded-full bg-primary-soft px-2 py-1 text-[11px] text-ink"
+                  variant="ghost"
+                  size="sm"
+                  className="h-auto rounded-full bg-primary-soft px-2 py-1 text-[11px] text-ink"
                 >
-                  {placement} ×
-                </button>
+                  {placement === 'placed' ? <Trans>Placed</Trans> : <Trans>Unplaced</Trans>} ×
+                </Button>
               )}
               {tagId > 0 && (
-                <button
+                <Button
                   type="button"
+                  aria-label={t`Remove tag filter: ${tagName ?? 'Unavailable tag'}`}
                   onClick={() => setTagId(0)}
-                  className="rounded-full bg-primary-soft px-2 py-1 text-[11px] text-ink"
+                  variant="ghost"
+                  size="sm"
+                  className="h-auto rounded-full bg-primary-soft px-2 py-1 text-[11px] text-ink"
                 >
-                  {tagName ?? 'tag'} ×
-                </button>
+                  {tagName ?? <Trans>Unavailable tag</Trans>} ×
+                </Button>
               )}
+              <Button
+                type="button"
+                onClick={() => {
+                  setSearch('')
+                  setStatus('active')
+                  setPlacement('')
+                  setTagId(0)
+                }}
+                variant="ghost"
+                size="sm"
+                className="h-auto rounded-full px-2 py-1 text-[11px] text-ink-muted underline"
+              >
+                <Trans>Clear filters</Trans>
+              </Button>
             </div>
           )}
         </div>
@@ -406,10 +497,31 @@ export function LibraryPanel({
         />
       )}
       <div className="px-2 pb-1 text-[11px] text-ink-subtle">
-        {plural(sortedRows.length, { one: '# asset', other: '# assets' })}
+        <span>{plural(sortedRows.length, { one: '# asset', other: '# assets' })}</span>
+        {(
+          <span className="ml-2">
+            {plural(selected.length, { one: '# selected', other: '# selected' })}
+          </span>
+        )}
+              {sortedRows.length > 0 && !loading && !loadError && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="ml-2 h-auto px-0 underline"
+            onClick={() => select(sortedRows.map((row) => row.id))}
+          >
+            {mode === 'all' ? (
+              <Trans>Select all results</Trans>
+            ) : (
+              <Trans>Select all files in folder</Trans>
+            )}
+          </Button>
+        )}
       </div>
-      {layout === 'gallery' && mode === 'all' ? (
+      {layout === 'gallery' && mode === 'all' && sortedRows.length > 0 ? (
         <AssetGallery
+          path={path}
           rows={sortedRows}
           selected={selected}
           select={select}
@@ -420,6 +532,7 @@ export function LibraryPanel({
         />
       ) : (
         <AssetList
+          path={path}
           rows={sortedRows}
           selected={selected}
           search={search}
@@ -427,6 +540,9 @@ export function LibraryPanel({
           placement={placement}
           tagId={tagId}
           mode={mode}
+          loading={loading}
+          error={loadError}
+          onRetry={() => setRetryCount((count) => count + 1)}
           onSelect={select}
           onContextMenu={(assetIds, x, y) => setItemMenu({ assetIds, x, y })}
         />

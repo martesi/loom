@@ -20,6 +20,8 @@ type OpStep struct {
 const (
 	stepLink           = "link"
 	stepUnlink         = "unlink"
+	stepLinks          = "links"
+	stepUnlinks        = "unlinks"
 	stepSetArchived    = "set_archived"
 	stepSetTrashed     = "set_trashed"
 	stepTagAdd         = "tag_add"
@@ -46,6 +48,10 @@ const (
 type linkStepPayload struct {
 	SourceID  int64 `json:"sourceId"`
 	DerivedID int64 `json:"derivedId"`
+}
+
+type linksStepPayload struct {
+	Links []linkStepPayload `json:"links"`
 }
 
 type archivedStepPayload struct {
@@ -204,6 +210,66 @@ func applyStep(repo *store.Repo, s OpStep) error {
 			return err
 		}
 		return repo.UnlinkSourcePair(p.SourceID, p.DerivedID)
+
+	case stepLinks:
+		var p linksStepPayload
+		if err := json.Unmarshal(s.Payload, &p); err != nil {
+			return err
+		}
+		tx, err := repo.DB.Begin()
+		if err != nil {
+			return fmt.Errorf("begin batch link replay: %w", err)
+		}
+		defer tx.Rollback()
+		for _, link := range p.Links {
+			if link.SourceID == link.DerivedID {
+				return fmt.Errorf("cannot link an image to itself")
+			}
+			var sourceExists, targetExists int
+			if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images WHERE id = ?)`, link.SourceID).Scan(&sourceExists); err != nil {
+				return fmt.Errorf("check batch link source: %w", err)
+			}
+			if sourceExists == 0 {
+				return purgedErr(link.SourceID)
+			}
+			if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images WHERE id = ?)`, link.DerivedID).Scan(&targetExists); err != nil {
+				return fmt.Errorf("check batch link target: %w", err)
+			}
+			if targetExists == 0 {
+				return purgedErr(link.DerivedID)
+			}
+			var cyclic int
+			if err := tx.QueryRow(`WITH RECURSIVE reachable(id) AS (
+				SELECT ? UNION SELECT relationships.derived_image_id
+				FROM relationships JOIN reachable ON relationships.source_image_id = reachable.id
+			) SELECT EXISTS(SELECT 1 FROM reachable WHERE id = ?)`, link.DerivedID, link.SourceID).Scan(&cyclic); err != nil {
+				return fmt.Errorf("check batch link cycle: %w", err)
+			}
+			if cyclic != 0 {
+				return fmt.Errorf("linking would create a cycle")
+			}
+			if _, err := tx.Exec(`INSERT OR IGNORE INTO relationships (source_image_id, derived_image_id) VALUES (?, ?)`, link.SourceID, link.DerivedID); err != nil {
+				return fmt.Errorf("replay batch link: %w", err)
+			}
+		}
+		return tx.Commit()
+
+	case stepUnlinks:
+		var p linksStepPayload
+		if err := json.Unmarshal(s.Payload, &p); err != nil {
+			return err
+		}
+		tx, err := repo.DB.Begin()
+		if err != nil {
+			return fmt.Errorf("begin batch unlink replay: %w", err)
+		}
+		defer tx.Rollback()
+		for _, link := range p.Links {
+			if _, err := tx.Exec(`DELETE FROM relationships WHERE source_image_id = ? AND derived_image_id = ?`, link.SourceID, link.DerivedID); err != nil {
+				return fmt.Errorf("replay batch unlink: %w", err)
+			}
+		}
+		return tx.Commit()
 
 	case stepSetArchived:
 		var p archivedStepPayload

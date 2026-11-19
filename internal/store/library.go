@@ -30,7 +30,7 @@ func (r *Repo) ListImagesFiltered(q LibraryQuery) ([]Image, error) {
 	case "placed":
 		conditions = append(conditions, "canvas_x IS NOT NULL AND canvas_y IS NOT NULL")
 	case "unplaced":
-		conditions = append(conditions, "canvas_x IS NULL OR canvas_y IS NULL")
+		conditions = append(conditions, "(canvas_x IS NULL OR canvas_y IS NULL)")
 	}
 
 	if q.TagID > 0 {

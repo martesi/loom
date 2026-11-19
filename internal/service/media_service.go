@@ -19,6 +19,12 @@ type ClipboardMedia struct {
 
 type MediaService struct{ Processor media.Processor }
 
+const (
+	maxClipboardItems     = 100
+	maxClipboardItemBytes = 50 << 20
+	maxClipboardBatchSize = 200 << 20
+)
+
 type MediaTranscodeRequest struct {
 	TargetExt string `json:"targetExt"`
 	Quality   int    `json:"quality"`
@@ -89,22 +95,15 @@ func (s *ImageService) CopyMedia(repoPath string, ids []int64, converted bool) (
 	if err != nil {
 		return nil, err
 	}
+	if converted {
+		// The plugin convert.Converter boundary is not registered in this build.
+		// Do not substitute the unrelated compression processor.
+		return nil, fmt.Errorf("Converted copy is unavailable. No converter is installed.")
+	}
 	out := make([]ClipboardMedia, 0, len(images))
 	for _, img := range images {
 		path := img.FilePath
 		name := filepath.Base(path)
-		if converted {
-			dir, err := os.MkdirTemp("", "loom-convert-")
-			if err != nil {
-				return nil, err
-			}
-			defer os.RemoveAll(dir)
-			name = strings.TrimSuffix(name, filepath.Ext(name)) + ".avif"
-			path = filepath.Join(dir, filepath.Base(name))
-			if err := s.mediaProcessor().Transcode(img.FilePath, path, media.TranscodeOptions{}); err != nil {
-				return nil, err
-			}
-		}
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return nil, err
@@ -116,6 +115,9 @@ func (s *ImageService) CopyMedia(repoPath string, ids []int64, converted bool) (
 
 // ImportMedia always creates fresh files and identities, with no copied metadata.
 func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, place bool, x, y float64) ([]int64, error) {
+	if err := validateClipboardMedia(media); err != nil {
+		return nil, err
+	}
 	r, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return nil, err
@@ -139,9 +141,6 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 	ids := make([]int64, 0, len(media))
 	for i, item := range media {
 		name := filepath.Base(strings.ReplaceAll(item.Name, "\\", "/"))
-		if !store.IsMediaFile(name) {
-			return nil, fmt.Errorf("unsupported media name %q", name)
-		}
 		data, err := base64.StdEncoding.DecodeString(item.Data)
 		if err != nil {
 			return nil, fmt.Errorf("decode media: %w", err)
@@ -279,7 +278,18 @@ func (s *ImageService) PurgeImages(repoPath string, ids []int64) error {
 	}
 	defer unlock()
 	defer r.Close()
-	return purgeImages(r, ids)
+	if _, err := eligiblePurgeImages(r, ids); err != nil {
+		return err
+	}
+	return purgeImages(r, uniqueImageIDs(ids))
+}
+
+func (s *ImageService) purgeExpiredTrash(r *store.Repo) error {
+	now := time.Now()
+	if s != nil && s.now != nil {
+		now = s.now()
+	}
+	return purgeExpiredTrash(r, now)
 }
 
 func purgeExpiredTrash(r *store.Repo, now time.Time) error {
@@ -306,7 +316,49 @@ func purgeExpiredTrash(r *store.Repo, now time.Time) error {
 	if err := rows.Close(); err != nil {
 		return err
 	}
+	// Caller holds the repository operation lock from cutoff query through
+	// deletion, so restore cannot invalidate this expiry snapshot mid-flow.
 	return purgeImages(r, ids)
+}
+
+func eligiblePurgeImages(r *store.Repo, ids []int64) ([]store.Image, error) {
+	images := make([]store.Image, 0, len(ids))
+	for _, id := range uniqueImageIDs(ids) {
+		img, err := r.GetImageByID(id)
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("purge scope changed; confirmation required")
+		}
+		if err != nil {
+			return nil, err
+		}
+		images = append(images, img)
+	}
+	return images, nil
+}
+
+func validateClipboardMedia(items []ClipboardMedia) error {
+	if len(items) == 0 || len(items) > maxClipboardItems {
+		return fmt.Errorf("clipboard batch must contain 1 to %d items", maxClipboardItems)
+	}
+	var total int
+	for _, item := range items {
+		name := filepath.Base(strings.ReplaceAll(item.Name, "\\", "/"))
+		if !store.IsMediaFile(name) || filepath.Ext(name) == "" {
+			return fmt.Errorf("unsupported media name %q", name)
+		}
+		data, err := base64.StdEncoding.Strict().DecodeString(item.Data)
+		if err != nil || len(data) == 0 {
+			return fmt.Errorf("invalid or empty media data for %q", name)
+		}
+		if len(data) > maxClipboardItemBytes {
+			return fmt.Errorf("media item %q exceeds %d bytes", name, maxClipboardItemBytes)
+		}
+		total += len(data)
+		if total > maxClipboardBatchSize {
+			return fmt.Errorf("clipboard batch exceeds %d bytes", maxClipboardBatchSize)
+		}
+	}
+	return nil
 }
 
 func purgeImages(r *store.Repo, ids []int64) error {

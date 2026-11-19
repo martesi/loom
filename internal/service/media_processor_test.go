@@ -92,11 +92,11 @@ func TestMediaServiceTranscode(t *testing.T) {
 		t.Fatal("transcode returned empty media")
 	}
 	converted, err := (&ImageService{}).CopyMedia(repoPath, []int64{images[0].ID}, true)
-	if err != nil {
-		t.Fatal(err)
+	if err == nil || err.Error() != "Converted copy is unavailable. No converter is installed." {
+		t.Fatalf("converted copy error = %v, want unavailable converter", err)
 	}
-	if len(converted) != 1 || !strings.HasSuffix(converted[0].Name, ".avif") {
-		t.Fatalf("converted copy = %+v, want one AVIF", converted)
+	if len(converted) != 0 {
+		t.Fatalf("converted copy = %+v, want no output", converted)
 	}
 
 	for _, tc := range []struct {

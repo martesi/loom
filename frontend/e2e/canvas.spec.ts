@@ -68,10 +68,16 @@ test('Assets selection, placement, unplace, trash and viewport persistence', asy
   )
   await autoArrangeCanvas(page)
   await page.keyboard.press('Delete')
+  // Canvas Delete is reversible unplace, not Assets trash.
   await expect(page.locator('.react-flow__node')).toHaveCount(0)
   await expect(rows).toHaveCount(2)
   await rows.first().click()
   await page.keyboard.press('Delete')
+  const assetTrashDialog = page.getByRole('dialog', {
+    name: 'Move 1 asset to trash?',
+  })
+  await expect(assetTrashDialog).toBeVisible()
+  await assetTrashDialog.getByRole('button', { name: 'Move to trash' }).click()
   await expect(rows).toHaveCount(1)
   await dropAssetRow(page, rows.first(), { x: 90, y: 90 })
   await expect(page.locator('.react-flow__node')).toHaveCount(1)
@@ -192,6 +198,11 @@ test('canvas context menus and auto-arrange preserve the canvas origin', async (
 
   await nodes.first().click({ button: 'right' })
   await page.getByRole('menu').getByRole('button', { name: 'Trash' }).click()
+  const trashDialog = page.getByRole('dialog', {
+    name: 'Move 1 asset to trash?',
+  })
+  await expect(trashDialog).toBeVisible()
+  await trashDialog.getByRole('button', { name: 'Move to trash' }).click()
   await expect(nodes).toHaveCount(0)
   await expect(assets(page)).toHaveCount(1)
   await page.getByTestId('toggle-inspector-shelf').click()
@@ -252,9 +263,21 @@ test('explicit relationship gesture, navigation, and semantic sets', async ({
   await nodes.nth(0).click()
   await page.getByTestId('toggle-inspector-shelf').click()
   await expect(page.getByRole('heading', { name: 'Derived' })).toBeVisible()
-  await page.getByRole('button', { name: 'Go to', exact: true }).click()
+  await page
+    .getByRole('button', { name: /^Go to derived asset .+/ })
+    .click()
   await expect(nodes.nth(1)).toHaveClass(/selected/)
   await page
+    .getByRole('button', {
+      name: 'Remove relationship with menu-alpha.png',
+      exact: true,
+    })
+    .click()
+  const removeRelationshipDialog = page.getByRole('dialog', {
+    name: 'Remove relationship?',
+  })
+  await expect(removeRelationshipDialog).toBeVisible()
+  await removeRelationshipDialog
     .getByRole('button', { name: 'Remove relationship', exact: true })
     .click()
   await expect(page.locator('.react-flow__edge')).toHaveCount(0)
@@ -368,7 +391,7 @@ test('browser clipboard copies original media and paste creates fresh unplaced a
   await expect(page.locator('[aria-selected=true]')).toHaveCount(1)
   await page.keyboard.press('Shift+Delete')
   const purgeDialog = page.getByRole('dialog', {
-    name: 'Permanently delete 1 asset?',
+    name: 'Permanently delete 2 assets?',
   })
   await expect(purgeDialog).toBeVisible()
   await purgeDialog.getByRole('button', { name: 'Cancel' }).click()
@@ -377,7 +400,7 @@ test('browser clipboard copies original media and paste creates fresh unplaced a
   await assets(page).filter({ hasText: 'hover-target (1).png' }).click()
   await page.keyboard.press('Shift+Delete')
   await page
-    .getByRole('dialog', { name: 'Permanently delete 1 asset?' })
+    .getByRole('dialog', { name: 'Permanently delete 2 assets?' })
     .getByRole('button', { name: 'Permanently delete' })
     .click()
   await expect(page.locator('[data-asset-id]')).toHaveCount(1)

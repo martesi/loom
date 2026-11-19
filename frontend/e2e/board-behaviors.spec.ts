@@ -78,7 +78,7 @@ test('relationships reject cycles, support ctrl-click selection, and delete as e
   await page.mouse.down()
   await page.mouse.move(first.x + 30, first.y + 30, { steps: 8 })
   await expect(page.getByRole('status')).toHaveText(
-    'Cannot create this relationship'
+    'This relationship would create a cycle'
   )
   await expect(nodes.nth(0)).toHaveClass(/ring-red-500/)
   await page.mouse.up()
@@ -129,7 +129,7 @@ test('relationship gestures reject self-links', async ({ page }) => {
   await page.mouse.down()
   await page.mouse.move(box.x + 70, box.y + 65, { steps: 6 })
   await expect(page.getByRole('status')).toHaveText(
-    'Cannot create this relationship'
+    'An image cannot be related to itself'
   )
   await expect(
     page.getByTestId('relationship-preview').locator('line')
@@ -197,7 +197,7 @@ test('Sources navigation reveals and selects an unplaced asset', async ({
     .locator('.loom-detail-panel section')
     .filter({ has: page.getByRole('heading', { name: 'Sources' }) })
   await expect(sources.getByText('relation-alpha.png')).toBeVisible()
-  await sources.getByRole('button', { name: 'Go to' }).click()
+  await sources.getByRole('button', { name: /Go to source asset/ }).click()
 
   await expect(asset(page, 'relation-alpha.png')).toHaveAttribute(
     'aria-selected',
@@ -512,9 +512,9 @@ test('file drop and canvas clipboard paste create placed assets and errors are d
   await expect(page.getByRole('alert')).toHaveCount(0)
   await expect
     .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-    .toContain('media-alpha.avif')
+    .toContain('canvas-paste.png')
   await page.keyboard.press('Control+v')
-  await expect(asset(page, 'media-alpha.avif')).toBeVisible()
+  await expect(asset(page, 'canvas-paste.png')).toBeVisible()
 
   await page.evaluate(() => navigator.clipboard.writeText('not Loom media'))
   await page.keyboard.press('Control+v')

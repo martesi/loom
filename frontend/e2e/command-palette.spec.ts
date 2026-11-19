@@ -243,7 +243,12 @@ test.describe('Canvas command palette', () => {
     await asset(page, 'inspect-alpha.png').click()
     const inspector = page.getByLabel('Inspector')
     await inspector.getByLabel('Add tag').fill('palette-search-tag')
-    await inspector.getByRole('button', { name: 'Add', exact: true }).click()
+    await inspector
+      .getByRole('button', { name: 'Add to selected assets', exact: true })
+      .click()
+    await expect(inspector.getByLabel('Tag summary')).toContainText(
+      'palette-search-tag'
+    )
 
     await page.keyboard.press('ControlOrMeta+k')
     const search = page.getByRole('combobox', { name: 'Search commands' })
@@ -355,6 +360,11 @@ test.describe('Canvas command palette', () => {
     await asset(page, 'inspect-alpha.png').click()
     await asset(page, 'inspect-beta.png').click({ modifiers: ['Shift'] })
     await page.keyboard.press('Delete')
+    const trashDialog = page.getByRole('dialog', {
+      name: 'Move 2 assets to trash?',
+    })
+    await expect(trashDialog).toBeVisible()
+    await trashDialog.getByRole('button', { name: 'Move to trash' }).click()
     await page.getByRole('button', { name: /^Filters/ }).click()
     await page
       .getByRole('combobox', { name: 'Asset state' })
@@ -437,7 +447,9 @@ test.describe('Canvas command palette', () => {
     await expect(addTag).toHaveCount(0)
 
     releaseImageFailure()
-    await expect(page.getByRole('alert')).toBeVisible()
+    await expect(
+      page.getByRole('alert').filter({ hasText: 'Failed to fetch' })
+    ).toBeVisible()
     await inspector.getByTestId('collapse-shelf-right').click()
     await page.getByTestId('toggle-inspector-shelf').click()
     await expect(inspector.getByTestId('pin-shelf-right')).toBeFocused()
@@ -481,6 +493,11 @@ test.describe('Canvas command palette', () => {
     const inspector = page.getByLabel('Inspector')
     await asset(page, 'inspect-alpha.png').click()
     await page.keyboard.press('Delete')
+    const trashDialog = page.getByRole('dialog', {
+      name: 'Move 1 asset to trash?',
+    })
+    await expect(trashDialog).toBeVisible()
+    await trashDialog.getByRole('button', { name: 'Move to trash' }).click()
     await expect(asset(page, 'inspect-alpha.png')).toHaveCount(0)
 
     await page.getByRole('button', { name: /^Filters/ }).click()
@@ -558,11 +575,10 @@ test.describe('Canvas command palette', () => {
     await expect(trigger).toBeFocused()
 
     await page.keyboard.press('?')
+    await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible()
+    await page.getByRole('button', { name: 'Keyboard', exact: true }).click()
     await expect(
-      page.getByRole('dialog', { name: 'Keyboard shortcuts' })
-    ).toBeVisible()
-    await expect(
-      page.getByRole('combobox', { name: 'Search keyboard shortcuts' })
+      page.getByRole('heading', { name: 'Keyboard', exact: true })
     ).toBeVisible()
     await page.keyboard.press('Escape')
   })

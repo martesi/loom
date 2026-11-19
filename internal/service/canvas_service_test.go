@@ -143,3 +143,33 @@ func TestViewportAndImportFailure(t *testing.T) {
 		t.Fatal("failed import left file behind")
 	}
 }
+
+func TestImportMediaValidatesPayloadLimitsAndExtensions(t *testing.T) {
+	path := t.TempDir()
+	images := &ImageService{}
+	atLimit := base64.StdEncoding.EncodeToString(make([]byte, maxClipboardItemBytes))
+	if _, err := images.ImportMedia(path, []ClipboardMedia{{Name: "limit.png", Data: atLimit}}, false, 0, 0); err != nil {
+		t.Fatalf("50 MiB item boundary rejected: %v", err)
+	}
+	overLimit := base64.StdEncoding.EncodeToString(make([]byte, maxClipboardItemBytes+1))
+	if _, err := images.ImportMedia(path, []ClipboardMedia{{Name: "large.png", Data: overLimit}}, false, 0, 0); err == nil {
+		t.Fatal("item over 50 MiB accepted")
+	}
+	for _, item := range []ClipboardMedia{
+		{Name: "unsupported.xyz", Data: "YQ=="},
+		{Name: "empty.png", Data: ""},
+		{Name: "empty-content.png", Data: ""},
+		{Name: "bad-padding.png", Data: "YR=="},
+	} {
+		if _, err := images.ImportMedia(path, []ClipboardMedia{item}, false, 0, 0); err == nil {
+			t.Errorf("invalid payload accepted: %+v", item)
+		}
+	}
+	tooMany := make([]ClipboardMedia, maxClipboardItems+1)
+	for i := range tooMany {
+		tooMany[i] = ClipboardMedia{Name: "item.png", Data: "YQ=="}
+	}
+	if _, err := images.ImportMedia(path, tooMany, false, 0, 0); err == nil {
+		t.Fatal("batch over 100 items accepted")
+	}
+}

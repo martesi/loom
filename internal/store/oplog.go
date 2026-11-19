@@ -60,7 +60,14 @@ func (r *Repo) RecordOperation(kind, forward, inverse string) error {
 		return err
 	}
 	defer tx.Rollback()
+	if err := r.RecordOperationInTx(tx, kind, forward, inverse); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
 
+// RecordOperationInTx appends an operation in the caller's transaction.
+func (r *Repo) RecordOperationInTx(tx *sql.Tx, kind, forward, inverse string) error {
 	cursor, err := undoCursorTx(tx)
 	if err != nil {
 		return err
@@ -81,7 +88,14 @@ func (r *Repo) RecordOperation(kind, forward, inverse string) error {
 		strconv.FormatInt(newSeq, 10)); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
+}
+
+// PrepareOperationLog primes the process-local undo boundary before a caller
+// starts a transaction that will append an operation.
+func (r *Repo) PrepareOperationLog() error {
+	_, err := r.undoSessionBoundary()
+	return err
 }
 
 func undoCursorTx(tx *sql.Tx) (int64, error) {

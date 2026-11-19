@@ -1,13 +1,14 @@
 import { Dialog } from '@base-ui-components/react/dialog'
 import { t } from '@lingui/core/macro'
 import { Command, Search } from 'lucide-react'
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import {
   type CanvasAction,
   fuzzyMatch,
   searchActions,
 } from '../../lib/action-catalog'
 import { Input } from '../ui/input'
+import { Button } from '../ui/button'
 import { Kbd, KbdGroup } from '../ui/kbd'
 import { ShortcutKeys } from '../ui/tooltip'
 
@@ -25,6 +26,9 @@ interface Props {
   actions: CanvasAction[]
   recentActionIds?: string[]
   assets: PaletteAsset[]
+  assetsLoading?: boolean
+  assetsError?: boolean
+  onRetryAssets?: () => void
   onOpenChange: (open: boolean) => void
   onRunAction: (action: CanvasAction) => void
   onChooseAsset: (asset: PaletteAsset) => void
@@ -37,12 +41,16 @@ export function CommandPalette({
   actions,
   recentActionIds = [],
   assets,
+  assetsLoading = false,
+  assetsError = false,
+  onRetryAssets,
   onOpenChange,
   onRunAction,
   onChooseAsset,
 }: Props) {
   const [query, setQuery] = useState('')
   const [activeIndex, setActiveIndex] = useState(0)
+  const composing = useRef(false)
   const listId = useId()
   const trimmed = query.trim()
   const assetMode = trimmed.startsWith('@')
@@ -70,6 +78,18 @@ export function CommandPalette({
     ...recentCommands,
     ...searchedCommands.filter(({ action }) => !recentIds.has(action.id)),
   ]
+  const groupedShortcutResults = shortcutsOnly
+    ? commandResults.reduce((groups, result) => {
+        const category = result.action.category
+        const group = groups.find((item) => item.category === category)
+        if (group) group.results.push(result)
+        else groups.push({ category, results: [result] })
+        return groups
+      }, [] as { category: string; results: typeof commandResults }[])
+    : []
+  const navigableCommands = shortcutsOnly
+    ? groupedShortcutResults.flatMap(({ results }) => results)
+    : commandResults
   const assetResults = assetMode
     ? assets
         .flatMap((asset) => {
@@ -82,11 +102,11 @@ export function CommandPalette({
         .sort((left, right) => right.match.score - left.match.score)
         .slice(0, 50)
     : []
-  const resultCount = assetMode ? assetResults.length : commandResults.length
+  const resultCount = assetMode ? assetResults.length : navigableCommands.length
   const selectedIndex = Math.min(activeIndex, Math.max(0, resultCount - 1))
   const activeResultId = assetMode
     ? assetResults[selectedIndex]?.asset.id
-    : commandResults[selectedIndex]?.action.id
+    : navigableCommands[selectedIndex]?.action.id
   function optionId(index: number, resultId: string | number) {
     return `${listId}-option-${encodeURIComponent(search)}-${resultCount}-${index}-${resultId}`
   }
@@ -115,14 +135,14 @@ export function CommandPalette({
       if (result) onChooseAsset(result.asset)
       return
     }
-    const result = commandResults[selectedIndex]
+    const result = navigableCommands[selectedIndex]
     if (result?.action.enabled) onRunAction(result.action)
   }
 
   function focusResult(index: number) {
     const resultId = assetMode
       ? assetResults[index]?.asset.id
-      : commandResults[index]?.action.id
+      : navigableCommands[index]?.action.id
     if (resultId === undefined) return
     document.getElementById(optionId(index, resultId))?.focus()
   }
@@ -157,6 +177,7 @@ export function CommandPalette({
           data-testid="command-palette"
           className="fixed left-1/2 top-[min(18vh,140px)] z-50 flex max-h-[min(620px,75vh)] w-[min(640px,calc(100vw-24px))] -translate-x-1/2 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl outline-none motion-safe:animate-in motion-safe:fade-in-0 motion-safe:zoom-in-95"
           onKeyDown={(event) => {
+            if (composing.current || event.nativeEvent.isComposing || event.keyCode === 229) return
             if (event.key === 'ArrowDown') {
               event.preventDefault()
               moveActive(1)
@@ -166,6 +187,7 @@ export function CommandPalette({
               moveActive(-1)
             }
             if (event.key === 'Enter') {
+              if ((event.target as HTMLElement).tagName === 'BUTTON') return
               event.preventDefault()
               runActive()
             }
@@ -205,12 +227,18 @@ export function CommandPalette({
               placeholder={
                 shortcutsOnly
                   ? t`Search shortcuts`
-                  : t`Search commands or @ assets`
+                  : t`Commands · > commands · @ assets`
               }
               value={query}
               onChange={(event) => {
                 setQuery(event.target.value)
                 setActiveIndex(0)
+              }}
+              onCompositionStart={() => {
+                composing.current = true
+              }}
+              onCompositionEnd={() => {
+                composing.current = false
               }}
               className="h-11 rounded-none border-0 bg-transparent px-1 text-sm font-normal text-ink placeholder:text-ink-subtle focus:outline-none focus:ring-0 focus-visible:ring-0"
             />
@@ -234,7 +262,14 @@ export function CommandPalette({
             aria-label={assetMode ? t`Repository assets` : t`Commands`}
             className="min-h-0 overflow-y-auto p-1.5"
           >
-            {assetMode
+            {assetMode && assetsLoading ? (
+              <p role="status" className="px-3 py-8 text-center text-sm text-ink-muted">{t`Loading assets…`}</p>
+            ) : assetMode && assetsError ? (
+              <div className="px-3 py-8 text-center text-sm text-ink-muted">
+                <p>{t`Could not load repository assets.`}</p>
+                <Button type="button" size="sm" variant="secondary" onClick={onRetryAssets} className="mt-2">{t`Retry`}</Button>
+              </div>
+            ) : assetMode
               ? assetResults.map(({ asset }, index) => (
                   <button
                     type="button"
@@ -244,7 +279,7 @@ export function CommandPalette({
                     key={asset.id}
                     onFocus={() => setActiveIndex(index)}
                     onKeyDown={(event) => {
-                      if (event.key !== 'Enter') return
+                      if (event.key !== 'Enter' || composing.current || event.nativeEvent.isComposing || event.keyCode === 229) return
                       event.preventDefault()
                       event.stopPropagation()
                       onChooseAsset(asset)
@@ -254,17 +289,45 @@ export function CommandPalette({
                     className="flex w-full items-center justify-between gap-4 rounded-md px-3 py-2.5 text-left aria-selected:bg-primary-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                   >
                     <span className="min-w-0">
-                      <span className="block truncate text-sm font-medium text-ink">
-                        {asset.fileName}
-                      </span>
+                        <span className="block truncate text-sm font-medium text-ink">
+                          {highlight(asset.fileName, search)}
+                        </span>
                       <span className="block truncate text-xs text-ink-muted">
-                        {asset.filePath}
+                          {highlight(asset.filePath, search)}
                       </span>
+                      {asset.tags.length > 0 && (
+                        <span className="block truncate text-[10px] text-ink-subtle">
+                          {asset.tags.map((tag, tagIndex) => (
+                            <span key={`${tag}-${tagIndex}`}>
+                              {tagIndex > 0 ? ' · ' : ''}
+                              {highlight(tag, search)}
+                            </span>
+                          ))}
+                        </span>
+                      )}
                     </span>
                     <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-ink-subtle">{t`Asset`}</span>
                   </button>
                 ))
-              : commandResults.map(({ action }, index) => (
+              : shortcutsOnly
+                ? groupedShortcutResults.map(({ category, results }) => (
+                    <section key={category} aria-label={category}>
+                      <h3 className="px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-ink-subtle">{category}</h3>
+                      {results.map(({ action }) => {
+                        const index = navigableCommands.findIndex((result) => result.action.id === action.id)
+                        return <button type="button" role="option" aria-selected={index === selectedIndex} aria-disabled={!action.enabled} id={optionId(index, action.id)} key={action.id} onFocus={() => setActiveIndex(index)} onKeyDown={(event) => {
+                          if (event.key !== 'Enter' || composing.current || event.nativeEvent.isComposing || event.keyCode === 229) return
+                          event.preventDefault()
+                          event.stopPropagation()
+                          if (action.enabled) onRunAction(action)
+                        }} onMouseMove={() => activateHoveredResult(index)} onClick={() => action.enabled && onRunAction(action)} className="flex w-full items-start justify-between gap-4 rounded-md px-3 py-2.5 text-left aria-selected:bg-primary-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 aria-disabled:opacity-55">
+                          <span className="text-sm font-medium text-ink">{action.label}<span className="ml-2 text-xs text-ink-muted">{action.context}</span></span>
+                          <span className="shrink-0 text-[10px] text-ink-subtle">{(action.shortcuts ?? (action.shortcut ? [action.shortcut] : [])).map((shortcut) => <ShortcutKeys key={shortcut} shortcut={shortcut} />)}</span>
+                        </button>
+                      })}
+                    </section>
+                  ))
+                : commandResults.map(({ action }, index) => (
                   <button
                     type="button"
                     role="option"
@@ -274,7 +337,7 @@ export function CommandPalette({
                     key={action.id}
                     onFocus={() => setActiveIndex(index)}
                     onKeyDown={(event) => {
-                      if (event.key !== 'Enter') return
+                      if (event.key !== 'Enter' || composing.current || event.nativeEvent.isComposing || event.keyCode === 229) return
                       event.preventDefault()
                       event.stopPropagation()
                       if (action.enabled) onRunAction(action)
@@ -308,9 +371,9 @@ export function CommandPalette({
                     </span>
                   </button>
                 ))}
-            {resultCount === 0 && (
+            {resultCount === 0 && !(assetMode && (assetsLoading || assetsError)) && (
               <p className="px-3 py-8 text-center text-sm text-ink-muted">
-                {assetMode ? t`No matching assets` : t`No matching commands`}
+                {assetMode ? t`No matching assets. Search is limited to the first 50 matches.` : t`No matching commands`}
               </p>
             )}
           </div>
@@ -328,6 +391,11 @@ export function CommandPalette({
             <span className="inline-flex items-center gap-1">
               <Kbd>Esc</Kbd> {t`Close`}
             </span>
+            {!shortcutsOnly && (
+              <span className="ml-auto inline-flex items-center gap-1">
+                <Kbd>?</Kbd> {t`Help`}
+              </span>
+            )}
           </div>
         </Dialog.Popup>
       </Dialog.Portal>
@@ -337,14 +405,25 @@ export function CommandPalette({
 
 function highlight(label: string, query: string) {
   const match = fuzzyMatch(query, label)
-  const positions = new Set(match?.positions ?? [])
-  const occurrenceByCharacter = new Map<string, number>()
-  return [...label].map((character, index) => {
-    const occurrence = occurrenceByCharacter.get(character) ?? 0
-    occurrenceByCharacter.set(character, occurrence + 1)
+  const normalizedPositions = new Set(match?.positions ?? [])
+  const originalIndexByNormalizedOffset: number[] = []
+  let normalizedOffset = 0
+  const characters = [...label]
+  characters.forEach((character, index) => {
+    const part = character.normalize('NFKD').toLocaleLowerCase().replace(/\p{Diacritic}/gu, '')
+    for (let offset = 0; offset < part.length; offset++) {
+      originalIndexByNormalizedOffset[normalizedOffset++] = index
+    }
+  })
+  const positions = new Set<number>()
+  for (const position of normalizedPositions) {
+    const originalIndex = originalIndexByNormalizedOffset[position]
+    if (originalIndex !== undefined) positions.add(originalIndex)
+  }
+  return characters.map((character, index) => {
     return positions.has(index) ? (
       <mark
-        key={`${character}-${occurrence}`}
+        key={`${character}-${index}`}
         className="rounded-sm bg-primary/20 text-inherit"
       >
         {character}
