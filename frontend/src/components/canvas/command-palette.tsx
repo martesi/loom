@@ -8,6 +8,7 @@ import {
   searchActions,
 } from '../../lib/action-catalog'
 import { Input } from '../ui/input'
+import { Kbd, KbdGroup } from '../ui/kbd'
 import { ShortcutKeys } from '../ui/tooltip'
 
 export interface PaletteAsset {
@@ -314,14 +315,18 @@ export function CommandPalette({
             )}
           </div>
           <div className="flex items-center gap-3 border-t border-border px-4 py-2 text-[10px] text-ink-subtle">
-            <span>
-              <kbd>↑</kbd> <kbd>↓</kbd> {t`Navigate`}
+            <span className="inline-flex items-center gap-1">
+              <KbdGroup>
+                <Kbd>↑</Kbd>
+                <Kbd>↓</Kbd>
+              </KbdGroup>{' '}
+              {t`Navigate`}
             </span>
-            <span>
-              <kbd>↵</kbd> {t`Run`}
+            <span className="inline-flex items-center gap-1">
+              <Kbd>↵</Kbd> {t`Run`}
             </span>
-            <span>
-              <kbd>Esc</kbd> {t`Close`}
+            <span className="inline-flex items-center gap-1">
+              <Kbd>Esc</Kbd> {t`Close`}
             </span>
           </div>
         </Dialog.Popup>

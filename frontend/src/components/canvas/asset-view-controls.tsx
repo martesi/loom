@@ -91,7 +91,6 @@ export function AssetViewControls(props: Props) {
           <button
             type="button"
             aria-label={t`Delete saved view`}
-            title={t`Delete saved view`}
             className={buttonClass}
             disabled={!props.viewsLoaded || props.saveStatus === 'saving'}
             onClick={() => props.onDeleteView(props.selectedViewId)}
