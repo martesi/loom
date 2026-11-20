@@ -4,6 +4,7 @@ r/
 .bin
 .task
 .test
+.example
 bin
 result
 frontend/bindings/
