@@ -1,7 +1,9 @@
 import { t } from '@lingui/core/macro'
 import { Trans } from '@lingui/react/macro'
 import { ChevronRight, X } from 'lucide-react'
-import Lightbox, { useController } from 'yet-another-react-lightbox'
+import { useRef, useState } from 'react'
+import Lightbox, { useController, type ZoomRef } from 'yet-another-react-lightbox'
+import Zoom from 'yet-another-react-lightbox/plugins/zoom'
 import 'yet-another-react-lightbox/styles.css'
 import type { ImageInfo } from '../../../bindings/loom/internal/service'
 import { Tooltip } from '../ui/tooltip'
@@ -73,6 +75,9 @@ interface LightboxViewerProps {
   sourcesFor: (
     imageId: number
   ) => { id: number; fileName: string; thumbUrl: string }[]
+  childrenFor?: (
+    imageId: number
+  ) => { id: number; fileName: string; thumbUrl: string }[]
   onJumpTo: (imageId: number) => void
 }
 
@@ -88,9 +93,35 @@ export function LightboxViewer({
   tagsForImage,
   placementLabel,
   sourcesFor,
+  childrenFor = () => [],
   onJumpTo,
 }: LightboxViewerProps) {
   const current = images[index]
+  const [history, setHistory] = useState<number[]>([])
+  const [copyStatus, setCopyStatus] = useState('')
+  const zoomRef = useRef<ZoomRef>(null)
+
+  function jumpTo(id: number) {
+    if (current) setHistory((previous) => [...previous, current.id])
+    setCopyStatus('')
+    onJumpTo(id)
+  }
+
+  function copyImage() {
+    if (!current) return
+    setCopyStatus('')
+    void fetch(current.fullUrl)
+      .then((response) => {
+        if (!response.ok) throw new Error(`Image request failed: ${response.status}`)
+        return response.blob()
+      })
+      .then((blob) => navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]))
+      .then(() => setCopyStatus(t`Image copied`))
+      .catch((cause: unknown) => {
+        console.warn('Could not copy preview image', cause)
+        setCopyStatus(t`Could not copy image. Try downloading it instead.`)
+      })
+  }
 
   return (
     <Lightbox
@@ -104,6 +135,9 @@ export function LightboxViewer({
         height: img.height || undefined,
       }))}
       on={{ view: ({ index: i }) => onIndexChange(i) }}
+      plugins={[Zoom]}
+      zoom={{ ref: zoomRef }}
+      toolbar={{ buttons: ['close'] }}
       carousel={{ finite: false, padding: '0px', spacing: 0 }}
       styles={{
         container: { backgroundColor: '#151414', paddingRight: '300px' },
@@ -114,10 +148,24 @@ export function LightboxViewer({
         buttonNext: () => <LightboxNextButton />,
         controls: () =>
           current ? (
-            <div className="pointer-events-auto fixed right-0 top-0 flex h-full w-[300px] flex-col gap-5 border-l border-white/8 bg-white/4 p-6">
+            <div className="pointer-events-auto fixed right-0 top-0 flex h-full w-[300px] flex-col gap-5 overflow-y-auto border-l border-white/8 bg-[#202020] p-6">
+              {history.length > 0 && (
+                <button type="button" className="self-start text-sm text-white" onClick={() => {
+                  const id = history[history.length - 1]
+                  setHistory((previous) => previous.slice(0, -1))
+                  onJumpTo(id)
+                }}><Trans>Back</Trans></button>
+              )}
               <div className="text-[13px] font-semibold text-white/90">
                 {current.fileName}
               </div>
+              <div className="flex flex-wrap gap-3 text-sm text-white">
+                <button type="button" onClick={() => zoomRef.current?.zoomIn()}><Trans>Zoom in</Trans></button>
+                <button type="button" onClick={() => zoomRef.current?.zoomOut()}><Trans>Zoom out</Trans></button>
+                <button type="button" onClick={copyImage}><Trans>Copy image</Trans></button>
+                <a href={current.fullUrl} download={current.fileName}><Trans>Download</Trans></a>
+              </div>
+              {copyStatus && <div role="status" className="text-xs text-white">{copyStatus}</div>}
               <div>
                 <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-white/45">
                   <Trans>Prompt</Trans>
@@ -154,7 +202,7 @@ export function LightboxViewer({
                       <button
                         key={src.id}
                         type="button"
-                        onClick={() => onJumpTo(src.id)}
+                        onClick={() => jumpTo(src.id)}
                         className="flex items-center gap-2 rounded hover:bg-white/5"
                       >
                         <img
@@ -165,6 +213,21 @@ export function LightboxViewer({
                         <span className="text-[11.5px] text-white/70">
                           {src.fileName}
                         </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {childrenFor(current.id).length > 0 && (
+                <div>
+                  <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-white/45">
+                    <Trans>Derived images</Trans>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    {childrenFor(current.id).map((child) => (
+                      <button key={child.id} type="button" onClick={() => jumpTo(child.id)} className="flex items-center gap-2 rounded hover:bg-white/5">
+                        <img src={child.thumbUrl} alt="" className="h-8 w-8 rounded object-cover" />
+                        <span className="text-[11.5px] text-white/70">{child.fileName}</span>
                       </button>
                     ))}
                   </div>

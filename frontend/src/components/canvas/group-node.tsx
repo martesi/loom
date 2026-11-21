@@ -27,6 +27,13 @@ export function GroupNode({ data, selected }: NodeProps) {
         style={{ visibility: 'hidden' }}
       />
 
+      <div
+        data-testid="group-node-title-tooltip"
+        className="pointer-events-none absolute bottom-[calc(100%+8px)] left-0 z-30 hidden max-w-64 truncate rounded border border-white/10 bg-black/80 px-2 py-1 text-xs font-medium text-white shadow-sm group-hover/deck:block"
+      >
+        {name}
+      </div>
+
       {/* Tactile layered card deck composition */}
       {/* Bottom layer */}
       <div
@@ -68,7 +75,7 @@ export function GroupNode({ data, selected }: NodeProps) {
 
         <div
           data-testid="group-name"
-          className="truncate px-2 py-1.5 text-xs font-medium text-foreground"
+          className="canvas-title truncate px-2 py-1.5 text-xs font-medium text-foreground"
         >
           {name} · {count}
         </div>

@@ -42,7 +42,7 @@ test.describe('Settings', () => {
     await expect(page.locator('html')).toHaveAttribute('data-density', 'compact')
     await expect
       .poll(() => page.evaluate(() => localStorage.getItem('loom.preferences.v1')))
-      .toBe(JSON.stringify({ theme: 'dark', density: 'compact', version: 1 }))
+      .toBe(JSON.stringify({ theme: 'dark', density: 'compact', showTitle: true, showResolution: true, version: 1 }))
 
     await page.reload()
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
@@ -54,6 +54,20 @@ test.describe('Settings', () => {
     await expect(dialog).toHaveCount(0)
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
     await expect(page.locator('html')).toHaveAttribute('data-density', 'compact')
+  })
+
+  test('persists canvas metadata visibility', async ({ page }) => {
+    await openFixtureRepo(page, 'direct-fixtures', { drawers: 'closed' })
+    await page.keyboard.press('ControlOrMeta+,')
+    const dialog = page.getByRole('dialog', { name: 'Settings' })
+    await dialog.getByLabel('Show titles').uncheck()
+    await dialog.getByLabel('Show resolution').uncheck()
+    await expect(page.locator('html')).toHaveAttribute('data-show-title', 'false')
+    await expect(page.locator('html')).toHaveAttribute('data-show-resolution', 'false')
+    await page.reload()
+    await page.keyboard.press('ControlOrMeta+,')
+    await expect(dialog.getByLabel('Show titles')).not.toBeChecked()
+    await expect(dialog.getByLabel('Show resolution')).not.toBeChecked()
   })
 
   test('uses safe defaults and warns when stored preferences are corrupt', async ({

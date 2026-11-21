@@ -98,7 +98,7 @@ export const ImageNode = memo(
           >
             <div
               data-testid="image-node-metadata"
-              className="absolute left-2 top-2 flex max-w-[320px] flex-col items-start gap-1"
+              className="absolute bottom-[calc(100%+8px)] left-2 flex max-w-[320px] flex-col items-start gap-1"
               style={{
                 transform: 'scale(var(--canvas-inverse-zoom, 1))',
                 transformOrigin: 'top left',
@@ -106,14 +106,14 @@ export const ImageNode = memo(
             >
               <span
                 data-testid="resolution-badge"
-                className="rounded border border-white/10 bg-black/80 px-2 py-0.5 text-[11px] font-medium tracking-tight text-white/95 shadow-sm backdrop-blur-md"
+                className="canvas-resolution rounded border border-white/10 bg-black/80 px-2 py-0.5 text-[11px] font-medium tracking-tight text-white/95 shadow-sm backdrop-blur-md"
               >
                 {resolutionStr}
               </span>
               {showFileName && (
                 <div
                   data-testid="image-node-filename"
-                  className="max-w-[320px] truncate rounded border border-white/10 bg-black/80 px-2 py-1 text-xs font-medium text-white/95 shadow-sm backdrop-blur-md"
+                  className="canvas-title max-w-[320px] truncate rounded border border-white/10 bg-black/80 px-2 py-1 text-xs font-medium text-white/95 shadow-sm backdrop-blur-md"
                 >
                   {fileName}
                 </div>

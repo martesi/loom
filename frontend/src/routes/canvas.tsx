@@ -26,6 +26,7 @@ import {
   type RepoInfo,
   TagService,
 } from '../../bindings/loom/internal/service'
+import { applyCanvasNodeSelection } from '../lib/canvas-selection'
 import { CanvasDock } from '../components/canvas/canvas-dock'
 import {
   CommandPalette,
@@ -958,6 +959,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     await reload()
   }
   function handleLocate(node: Node) {
+    setMenu(null)
     openAssets()
     if (node.type === 'group') {
       const groupId = Number(node.id.slice(4))
@@ -2269,6 +2271,20 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       showCommands,
     ]
   })()
+  const previewImages = (data.images ?? []).filter((image) => !image.trashed)
+  const previewIndex = previewImages.findIndex((image) => image.id === previewImageId)
+  const relatedImages = (id: number, direction: 'sources' | 'children') =>
+    (data.relationships ?? []).flatMap((relationship) => {
+      const matches = direction === 'sources'
+        ? relationship.derivedImageId === id
+        : relationship.sourceImageId === id
+      if (!matches) return []
+      const targetId = direction === 'sources'
+        ? relationship.sourceImageId
+        : relationship.derivedImageId
+      const image = previewImages.find((candidate) => candidate.id === targetId)
+      return image ? [{ id: image.id, fileName: image.fileName, thumbUrl: image.thumbUrl }] : []
+    })
   return (
     <div className="relative h-screen overflow-hidden bg-surface-canvas text-ink">
       {error && (
@@ -2550,6 +2566,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             nodeTypes={nodeTypes}
             minZoom={0.05}
             maxZoom={4}
+            zoomOnDoubleClick={false}
             nodesConnectable={false}
             edgesReconnectable={false}
             deleteKeyCode={null}
@@ -2557,6 +2574,9 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             multiSelectionKeyCode="Shift"
             selectionOnDrag={!space}
             selectionMode={SelectionMode.Partial}
+            panOnScroll={true}
+            zoomOnScroll={false}
+            zoomOnPinch={true}
             onSelectionStart={(event) => {
               modifiedMarquee.current = {
                 active: event.shiftKey || event.ctrlKey || event.metaKey,
@@ -2592,29 +2612,14 @@ function Canvas({ repo }: { repo: RepoInfo }) {
               setNodes((n) => applyNodeChanges(changes, n))
               const selected = changes.filter((c) => c.type === 'select')
               if (selected.length)
-                setSelection((s) => {
-                  const hasNodeSelection =
-                    s.surface === 'canvas' &&
-                    (s.ids.length > 0 || s.group !== null)
-                  if (!selected.some((c) => c.selected) && !hasNodeSelection)
-                    return s
-                  let ids = s.surface === 'canvas' ? [...s.ids] : [],
-                    group = s.surface === 'canvas' ? s.group : null
-                  if (modifiedMarquee.current.active)
-                    ids = [...new Set([...ids, ...modifiedMarquee.current.anchor])]
-                  for (const c of selected) {
-                    if (c.id.startsWith('set-')) {
-                      group = c.selected ? Number(c.id.slice(4)) : null
-                      continue
-                    }
-                    ids = c.selected
-                      ? [...new Set([...ids, Number(c.id)])]
-                     : modifiedMarquee.current.active
-                       ? ids
-                       : ids.filter((id) => id !== Number(c.id))
-                  }
-                  return { surface: 'canvas', ids, edges: [], group }
-                })
+                setSelection((s) =>
+                  applyCanvasNodeSelection(
+                    s,
+                    selected,
+                    modifiedMarquee.current.active,
+                    modifiedMarquee.current.anchor
+                  )
+                )
             }}
             onEdgesChange={(changes) => {
               setEdges((e) => applyEdgeChanges(changes, e))
@@ -2679,7 +2684,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
                   edges: [],
                   group: null,
                 })
-              }
+              } else if (node.type === 'image') handlePreview(node)
             }}
             onNodeDragStart={() => {
               relation.current = null
@@ -3113,21 +3118,13 @@ function Canvas({ repo }: { repo: RepoInfo }) {
           onClose={() => setSettingsSection(null)}
         />
       )}
-      {previewImageId !== null && (
+      {previewImageId !== null && previewIndex >= 0 && (
         <LightboxViewer
-          images={(data.images ?? []).filter((i) => i.placed && !i.trashed)}
-          index={Math.max(
-            0,
-            (data.images ?? [])
-              .filter((i) => i.placed && !i.trashed)
-              .findIndex((i) => i.id === previewImageId)
-          )}
+          images={previewImages}
+          index={previewIndex}
           onClose={() => setPreviewImageId(null)}
           onIndexChange={(idx) => {
-            const placed = (data.images ?? []).filter(
-              (i) => i.placed && !i.trashed
-            )
-            if (placed[idx]) setPreviewImageId(placed[idx].id)
+            if (previewImages[idx]) setPreviewImageId(previewImages[idx].id)
           }}
           tagsForImage={() => []}
           placementLabel={
@@ -3135,24 +3132,9 @@ function Canvas({ repo }: { repo: RepoInfo }) {
               ? 'Canvas'
               : 'Library'
           }
-          sourcesFor={(id) =>
-            (data.relationships ?? [])
-              .filter((r) => r.derivedImageId === id)
-              .map((r) => {
-                const src = (data.images ?? []).find(
-                  (i) => i.id === r.sourceImageId
-                )
-                return {
-                  id: r.sourceImageId,
-                  fileName: src?.fileName ?? '',
-                  thumbUrl: src?.thumbUrl ?? '',
-                }
-              })
-          }
-          onJumpTo={(id) => {
-            setPreviewImageId(id)
-            void go(id).catch(report)
-          }}
+          sourcesFor={(id) => relatedImages(id, 'sources')}
+          childrenFor={(id) => relatedImages(id, 'children')}
+          onJumpTo={setPreviewImageId}
         />
       )}
       {compressIds && (
