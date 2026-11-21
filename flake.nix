@@ -21,6 +21,13 @@
 
           export GIO_EXTRA_MODULES="${pkgs.glib-networking}/lib/gio/modules''${GIO_EXTRA_MODULES:+:$GIO_EXTRA_MODULES}"
 
+          # The purego backend (-tags purego) loads GTK/WebKit via dlopen of
+          # bare sonames, which know nothing of the Nix store. Point the
+          # loader at the libraries the app needs (transitive deps resolve
+          # via the RUNPATH baked into those .so files). Harmless for cgo
+          # binaries, which carry their own RPATH.
+          export LD_LIBRARY_PATH="${pkgs.gtk4}/lib:${pkgs.webkitgtk_6_0}/lib:${pkgs.glib.out}/lib:${pkgs.libsoup_3}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
           # The minimal Nix environment has no /etc/fonts/fonts.conf. Without
           # an explicit config WebKitGTK can map a white window even though
           # the frontend server is healthy.
