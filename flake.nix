@@ -103,16 +103,6 @@
           pkgs.ffmpeg
           pkgs.imagemagick
 
-          # WebKitGTK relies on GStreamer for WebAudio/media playback. The
-          # engine does not provide these runtime plugins itself: base has
-          # appsink, good provides autoaudiosink, and libav/ugly provide
-          # common audio/video codecs such as MP3 and AAC.
-          pkgs.gst_all_1.gstreamer
-          pkgs.gst_all_1.gst-plugins-base
-          pkgs.gst_all_1.gst-plugins-good
-          pkgs.gst_all_1.gst-libav
-          pkgs.gst_all_1.gst-plugins-ugly
-
           # Graphics stack. Nothing here pulls in a GPU: mesa carries the
           # llvmpipe/swrast DRI drivers and the lavapipe Vulkan ICD, which are
           # what GTK4 and WebKit fall back to when there is no render node.
@@ -134,7 +124,17 @@
 
         devShells.default = pkgs.mkShell {
           buildInputs = commonBuildInputs;
-          shellHook = commonHook;
+          shellHook = commonHook + ''
+            # WSLg's PulseAudio socket can make WebKitGTK's bubblewrap
+            # launcher abort during startup. Unset this only in the default
+            # development shell so Loom can open. This does not configure a
+            # replacement audio route: WebView audio may be unavailable, and
+            # child processes in this shell will not inherit WSLg's explicit
+            # PulseAudio server address.
+            if [ -n "''${WSL_DISTRO_NAME:-}" ] || [ -n "''${WSL_INTEROP:-}" ]; then
+              unset PULSE_SERVER
+            fi
+          '';
         };
 
         # GUI closure (Xvfb, xdotool, imagemagick) split out from `default`
