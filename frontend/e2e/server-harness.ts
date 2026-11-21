@@ -171,6 +171,11 @@ const fixtureRepos = [
     name: 'dock-shortcut-fixtures',
     files: ['shortcut-alpha.png', 'shortcut-beta.png'],
   },
+  // Dedicated fixtures for the Lightbox preview viewer
+  {
+    name: 'lightbox-fixtures',
+    files: ['lightbox-alpha.png', 'lightbox-beta.png'],
+  },
   // Dedicated fixtures for Card & Deck Stacks
   { name: 'card-fixtures', files: ['card-alpha.png', 'card-beta.png'] },
   { name: 'card-hover-fixtures', files: ['hover-alpha.png'] },

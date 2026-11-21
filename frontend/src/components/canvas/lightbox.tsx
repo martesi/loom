@@ -1,67 +1,194 @@
 import { t } from '@lingui/core/macro'
 import { Trans } from '@lingui/react/macro'
-import { ChevronRight, X } from 'lucide-react'
-import { useRef, useState } from 'react'
-import Lightbox, { useController, type ZoomRef } from 'yet-another-react-lightbox'
+import {
+  ArrowLeft,
+  ArrowRight,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
+  Download,
+  Info,
+  X,
+  ZoomIn,
+  ZoomOut,
+} from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import Lightbox, {
+  useController,
+  type ZoomRef,
+} from 'yet-another-react-lightbox'
 import Zoom from 'yet-another-react-lightbox/plugins/zoom'
 import 'yet-another-react-lightbox/styles.css'
 import type { ImageInfo } from '../../../bindings/loom/internal/service'
+import { cn } from '../../lib/utils'
 import { Tooltip } from '../ui/tooltip'
 
-// The library's own toolbar close button and next-nav arrow are both
-// right-anchored (`right: 0`) inside the slide area — LightboxViewer's
-// `paddingRight: 300px` only shrinks where the slide itself centers, it
-// doesn't move those absolutely-positioned controls, so they end up sitting
-// directly under (and unclickable beneath) the metadata sidebar's
-// `controls` slot. Prev's arrow is left-anchored and unaffected, so only
-// these two need replacing, shifted left by the sidebar's width so they
-// land in the open area instead of behind it. Real components (not inline
-// closures) so useController can be called at each one's own top level.
-function LightboxCloseButton() {
-  const { close } = useController()
-  return (
-    <Tooltip label={t`Close preview`} shortcut="Escape">
-      <button
-        type="button"
-        aria-label={t`Close preview`}
-        onClick={close}
-        className="fixed right-[316px] top-4 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white/90 transition-colors hover:bg-white/20"
-      >
-        <X className="h-4 w-4" />
-      </button>
-    </Tooltip>
-  )
+const actionButtonClass =
+  'flex h-9 w-9 items-center justify-center rounded-full text-white/90 transition-colors hover:bg-white/20 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent'
+
+interface LightboxChromeProps {
+  fileName: string
+  fullUrl: string
+  canGoBack: boolean
+  canGoForward: boolean
+  infoOpen: boolean
+  zoomRef: React.RefObject<ZoomRef | null>
+  onHistoryBack: () => void
+  onHistoryForward: () => void
+  onCopy: () => void
+  onToggleInfo: () => void
 }
 
-function LightboxPreviousButton() {
-  const { prev } = useController()
+// Custom chrome rendered through the library's `controls` slot, so it lives
+// inside the lightbox controller context (useController works) and above the
+// slide. Close sits top-left; everything else clusters top-right; the info
+// panel is opt-in via the Info toggle instead of always-on.
+function LightboxChrome({
+  fileName,
+  fullUrl,
+  canGoBack,
+  canGoForward,
+  infoOpen,
+  zoomRef,
+  onHistoryBack,
+  onHistoryForward,
+  onCopy,
+  onToggleInfo,
+}: LightboxChromeProps) {
+  const { close, prev, next } = useController()
   return (
-    <Tooltip label={t`Previous image`} shortcut="ArrowLeft">
-      <button
-        type="button"
-        aria-label={t`Previous image`}
-        onClick={() => prev()}
-        className="fixed left-4 top-1/2 z-10 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-white/90 transition-colors hover:bg-white/20"
+    <>
+      <div className="pointer-events-auto fixed left-4 top-4 z-10">
+        <Tooltip label={t`Close preview`} shortcut="Escape">
+          <button
+            type="button"
+            data-testid="lightbox-close"
+            aria-label={t`Close preview`}
+            onClick={close}
+            className={actionButtonClass}
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </Tooltip>
+      </div>
+      <div
+        data-testid="lightbox-toolbar"
+        role="toolbar"
+        aria-label={t`Preview actions`}
+        className={cn(
+          'pointer-events-auto fixed top-4 z-10 flex items-center gap-0.5 rounded-full bg-black/60 p-1 backdrop-blur transition-[right] duration-200',
+          infoOpen ? 'right-[316px]' : 'right-4'
+        )}
       >
-        <ChevronRight className="h-5 w-5 rotate-180" />
-      </button>
-    </Tooltip>
-  )
-}
-
-function LightboxNextButton() {
-  const { next } = useController()
-  return (
-    <Tooltip label={t`Next image`} shortcut="ArrowRight">
-      <button
-        type="button"
-        aria-label={t`Next image`}
-        onClick={() => next()}
-        className="fixed right-[316px] top-1/2 z-10 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-white/90 transition-colors hover:bg-white/20"
-      >
-        <ChevronRight className="h-5 w-5" />
-      </button>
-    </Tooltip>
+        <Tooltip label={t`Back`} shortcut="Alt+ArrowLeft">
+          <button
+            type="button"
+            data-testid="lightbox-history-back"
+            aria-label={t`Back`}
+            onClick={onHistoryBack}
+            disabled={!canGoBack}
+            className={actionButtonClass}
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+        </Tooltip>
+        <Tooltip label={t`Forward`} shortcut="Alt+ArrowRight">
+          <button
+            type="button"
+            data-testid="lightbox-history-forward"
+            aria-label={t`Forward`}
+            onClick={onHistoryForward}
+            disabled={!canGoForward}
+            className={actionButtonClass}
+          >
+            <ArrowRight className="h-4 w-4" />
+          </button>
+        </Tooltip>
+        <Tooltip label={t`Previous image`} shortcut="ArrowLeft">
+          <button
+            type="button"
+            data-testid="lightbox-prev"
+            aria-label={t`Previous image`}
+            onClick={() => prev()}
+            className={actionButtonClass}
+          >
+            <ChevronLeft className="h-5 w-5" />
+          </button>
+        </Tooltip>
+        <Tooltip label={t`Next image`} shortcut="ArrowRight">
+          <button
+            type="button"
+            data-testid="lightbox-next"
+            aria-label={t`Next image`}
+            onClick={() => next()}
+            className={actionButtonClass}
+          >
+            <ChevronRight className="h-5 w-5" />
+          </button>
+        </Tooltip>
+        <span aria-hidden="true" className="mx-1 h-5 w-px bg-white/15" />
+        <Tooltip label={t`Zoom in`} shortcut="+">
+          <button
+            type="button"
+            data-testid="lightbox-zoom-in"
+            aria-label={t`Zoom in`}
+            onClick={() => zoomRef.current?.zoomIn()}
+            className={actionButtonClass}
+          >
+            <ZoomIn className="h-4 w-4" />
+          </button>
+        </Tooltip>
+        <Tooltip label={t`Zoom out`} shortcut="-">
+          <button
+            type="button"
+            data-testid="lightbox-zoom-out"
+            aria-label={t`Zoom out`}
+            onClick={() => zoomRef.current?.zoomOut()}
+            className={actionButtonClass}
+          >
+            <ZoomOut className="h-4 w-4" />
+          </button>
+        </Tooltip>
+        <Tooltip label={t`Copy image`}>
+          <button
+            type="button"
+            data-testid="lightbox-copy"
+            aria-label={t`Copy image`}
+            onClick={onCopy}
+            className={actionButtonClass}
+          >
+            <Copy className="h-4 w-4" />
+          </button>
+        </Tooltip>
+        <Tooltip label={t`Download`}>
+          <a
+            data-testid="lightbox-download"
+            aria-label={t`Download`}
+            href={fullUrl}
+            download={fileName}
+            className={cn(actionButtonClass, 'items-center')}
+          >
+            <Download className="h-4 w-4" />
+          </a>
+        </Tooltip>
+        <span aria-hidden="true" className="mx-1 h-5 w-px bg-white/15" />
+        <Tooltip
+          label={infoOpen ? t`Hide info panel` : t`Show info panel`}
+          shortcut="I"
+        >
+          <button
+            type="button"
+            data-testid="lightbox-info-toggle"
+            aria-label={infoOpen ? t`Hide info panel` : t`Show info panel`}
+            aria-pressed={infoOpen}
+            onClick={onToggleInfo}
+            className={cn(actionButtonClass, infoOpen && 'bg-white/20')}
+          >
+            <Info className="h-4 w-4" />
+          </button>
+        </Tooltip>
+      </div>
+    </>
   )
 }
 
@@ -81,10 +208,9 @@ interface LightboxViewerProps {
   onJumpTo: (imageId: number) => void
 }
 
-// Full-res in-canvas preview (mockup section 6: dark surface, filmstrip,
-// side metadata panel) — this is a daily-use path per the spec, not
-// polish, so it gets a real metadata sidebar via the library's `controls`
-// render slot rather than just the bare carousel.
+// Full-res in-canvas preview: dark surface, carousel, opt-in metadata panel.
+// Close is top-left, actions cluster top-right, and the info panel stays
+// closed until the Info toggle opens it.
 export function LightboxViewer({
   images,
   index,
@@ -98,13 +224,67 @@ export function LightboxViewer({
 }: LightboxViewerProps) {
   const current = images[index]
   const [history, setHistory] = useState<number[]>([])
+  const [forward, setForward] = useState<number[]>([])
+  const [infoOpen, setInfoOpen] = useState(false)
   const [copyStatus, setCopyStatus] = useState('')
   const zoomRef = useRef<ZoomRef>(null)
+  // History jumps change the index prop from the parent, which fires the
+  // library `view` event — flag them so the view handler doesn't wipe the
+  // forward stack it just pushed to.
+  const navigatingHistory = useRef(false)
+
+  // 'i' toggles the info panel; Escape/arrows stay with the library.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'i' && event.key !== 'I') return
+      if (event.ctrlKey || event.metaKey || event.altKey) return
+      const target = event.target
+      const element = target instanceof Element ? target : null
+      if (
+        element?.closest(
+          'input,textarea,select,[contenteditable]:not([contenteditable=false])'
+        )
+      )
+        return
+      event.preventDefault()
+      setInfoOpen((open) => !open)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   function jumpTo(id: number) {
     if (current) setHistory((previous) => [...previous, current.id])
+    setForward([])
     setCopyStatus('')
     onJumpTo(id)
+  }
+
+  function goBack() {
+    if (!current || history.length === 0) return
+    const id = history[history.length - 1]
+    navigatingHistory.current = true
+    setHistory((previous) => previous.slice(0, -1))
+    setForward((previous) => [...previous, current.id])
+    setCopyStatus('')
+    onJumpTo(id)
+  }
+
+  function goForward() {
+    if (!current || forward.length === 0) return
+    const id = forward[forward.length - 1]
+    navigatingHistory.current = true
+    setForward((previous) => previous.slice(0, -1))
+    setHistory((previous) => [...previous, current.id])
+    setCopyStatus('')
+    onJumpTo(id)
+  }
+
+  function handleView(i: number) {
+    // Linear carousel moves invalidate redo; history jumps preserve it.
+    if (navigatingHistory.current) navigatingHistory.current = false
+    else if (forward.length > 0) setForward([])
+    onIndexChange(i)
   }
 
   function copyImage() {
@@ -112,10 +292,13 @@ export function LightboxViewer({
     setCopyStatus('')
     void fetch(current.fullUrl)
       .then((response) => {
-        if (!response.ok) throw new Error(`Image request failed: ${response.status}`)
+        if (!response.ok)
+          throw new Error(`Image request failed: ${response.status}`)
         return response.blob()
       })
-      .then((blob) => navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]))
+      .then((blob) =>
+        navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })])
+      )
       .then(() => setCopyStatus(t`Image copied`))
       .catch((cause: unknown) => {
         console.warn('Could not copy preview image', cause)
@@ -134,114 +317,142 @@ export function LightboxViewer({
         width: img.width || undefined,
         height: img.height || undefined,
       }))}
-      on={{ view: ({ index: i }) => onIndexChange(i) }}
+      on={{ view: ({ index: i }) => handleView(i) }}
       plugins={[Zoom]}
       zoom={{ ref: zoomRef }}
-      toolbar={{ buttons: ['close'] }}
+      toolbar={{ buttons: [] }}
       carousel={{ finite: false, padding: '0px', spacing: 0 }}
       styles={{
-        container: { backgroundColor: '#151414', paddingRight: '300px' },
+        container: {
+          backgroundColor: '#151414',
+          paddingRight: infoOpen ? '300px' : '0px',
+        },
       }}
       render={{
-        buttonClose: () => <LightboxCloseButton />,
-        buttonPrev: () => <LightboxPreviousButton />,
-        buttonNext: () => <LightboxNextButton />,
+        buttonPrev: () => <></>,
+        buttonNext: () => <></>,
+        buttonClose: () => <></>,
         controls: () =>
           current ? (
-            <div className="pointer-events-auto fixed right-0 top-0 flex h-full w-[300px] flex-col gap-5 overflow-y-auto border-l border-white/8 bg-[#202020] p-6">
-              {history.length > 0 && (
-                <button type="button" className="self-start text-sm text-white" onClick={() => {
-                  const id = history[history.length - 1]
-                  setHistory((previous) => previous.slice(0, -1))
-                  onJumpTo(id)
-                }}><Trans>Back</Trans></button>
+            <>
+              <LightboxChrome
+                fileName={current.fileName}
+                fullUrl={current.fullUrl}
+                canGoBack={history.length > 0}
+                canGoForward={forward.length > 0}
+                infoOpen={infoOpen}
+                zoomRef={zoomRef}
+                onHistoryBack={goBack}
+                onHistoryForward={goForward}
+                onCopy={copyImage}
+                onToggleInfo={() => setInfoOpen((open) => !open)}
+              />
+              {copyStatus && (
+                <div
+                  role="status"
+                  className="pointer-events-none fixed bottom-6 left-1/2 z-10 -translate-x-1/2 rounded-full bg-black/70 px-4 py-2 text-xs text-white"
+                >
+                  {copyStatus}
+                </div>
               )}
-              <div className="text-[13px] font-semibold text-white/90">
-                {current.fileName}
-              </div>
-              <div className="flex flex-wrap gap-3 text-sm text-white">
-                <button type="button" onClick={() => zoomRef.current?.zoomIn()}><Trans>Zoom in</Trans></button>
-                <button type="button" onClick={() => zoomRef.current?.zoomOut()}><Trans>Zoom out</Trans></button>
-                <button type="button" onClick={copyImage}><Trans>Copy image</Trans></button>
-                <a href={current.fullUrl} download={current.fileName}><Trans>Download</Trans></a>
-              </div>
-              {copyStatus && <div role="status" className="text-xs text-white">{copyStatus}</div>}
-              <div>
-                <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-white/45">
-                  <Trans>Prompt</Trans>
-                </div>
-                <div className="text-[12px] leading-relaxed text-white/85">
-                  {current.promptText || <Trans>No prompt attached</Trans>}
-                </div>
-              </div>
-              <div>
-                <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-white/45">
-                  <Trans>Tags</Trans>
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {tagsForImage(current.id).length === 0 && (
-                    <span className="text-[11.5px] text-white/40">—</span>
-                  )}
-                  {tagsForImage(current.id).map((tag) => (
-                    <span
-                      key={tag}
-                      className="rounded-full bg-white/8 px-2.5 py-0.5 text-[11px] text-white/80"
-                    >
-                      {tag}
-                    </span>
-                  ))}
-                </div>
-              </div>
-              {sourcesFor(current.id).length > 0 && (
-                <div>
-                  <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-white/45">
-                    <Trans>Derived from</Trans>
+              {infoOpen && (
+                <aside
+                  data-testid="lightbox-info-panel"
+                  aria-label={t`Image info`}
+                  className="pointer-events-auto fixed right-0 top-0 flex h-full w-[300px] flex-col gap-5 overflow-y-auto border-l border-white/8 bg-[#202020] p-6"
+                >
+                  <div className="text-[13px] font-semibold text-white/90">
+                    {current.fileName}
                   </div>
-                  <div className="flex flex-col gap-1.5">
-                    {sourcesFor(current.id).map((src) => (
-                      <button
-                        key={src.id}
-                        type="button"
-                        onClick={() => jumpTo(src.id)}
-                        className="flex items-center gap-2 rounded hover:bg-white/5"
-                      >
-                        <img
-                          src={src.thumbUrl}
-                          alt=""
-                          className="h-8 w-8 rounded object-cover"
-                        />
-                        <span className="text-[11.5px] text-white/70">
-                          {src.fileName}
+                  <div>
+                    <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-white/45">
+                      <Trans>Prompt</Trans>
+                    </div>
+                    <div className="text-[12px] leading-relaxed text-white/85">
+                      {current.promptText || <Trans>No prompt attached</Trans>}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-white/45">
+                      <Trans>Tags</Trans>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {tagsForImage(current.id).length === 0 && (
+                        <span className="text-[11.5px] text-white/40">—</span>
+                      )}
+                      {tagsForImage(current.id).map((tag) => (
+                        <span
+                          key={tag}
+                          className="rounded-full bg-white/8 px-2.5 py-0.5 text-[11px] text-white/80"
+                        >
+                          {tag}
                         </span>
-                      </button>
-                    ))}
+                      ))}
+                    </div>
                   </div>
-                </div>
+                  {sourcesFor(current.id).length > 0 && (
+                    <div>
+                      <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-white/45">
+                        <Trans>Derived from</Trans>
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        {sourcesFor(current.id).map((src) => (
+                          <button
+                            key={src.id}
+                            type="button"
+                            onClick={() => jumpTo(src.id)}
+                            className="flex items-center gap-2 rounded hover:bg-white/5"
+                          >
+                            <img
+                              src={src.thumbUrl}
+                              alt=""
+                              className="h-8 w-8 rounded object-cover"
+                            />
+                            <span className="text-[11.5px] text-white/70">
+                              {src.fileName}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {childrenFor(current.id).length > 0 && (
+                    <div>
+                      <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-white/45">
+                        <Trans>Derived images</Trans>
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        {childrenFor(current.id).map((child) => (
+                          <button
+                            key={child.id}
+                            type="button"
+                            onClick={() => jumpTo(child.id)}
+                            className="flex items-center gap-2 rounded hover:bg-white/5"
+                          >
+                            <img
+                              src={child.thumbUrl}
+                              alt=""
+                              className="h-8 w-8 rounded object-cover"
+                            />
+                            <span className="text-[11.5px] text-white/70">
+                              {child.fileName}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div>
+                    <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-white/45">
+                      <Trans>Placement</Trans>
+                    </div>
+                    <div className="text-[12px] text-white/85">
+                      {placementLabel || <Trans>Unplaced</Trans>}
+                    </div>
+                  </div>
+                </aside>
               )}
-              {childrenFor(current.id).length > 0 && (
-                <div>
-                  <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-white/45">
-                    <Trans>Derived images</Trans>
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    {childrenFor(current.id).map((child) => (
-                      <button key={child.id} type="button" onClick={() => jumpTo(child.id)} className="flex items-center gap-2 rounded hover:bg-white/5">
-                        <img src={child.thumbUrl} alt="" className="h-8 w-8 rounded object-cover" />
-                        <span className="text-[11.5px] text-white/70">{child.fileName}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-              <div>
-                <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-white/45">
-                  <Trans>Placement</Trans>
-                </div>
-                <div className="text-[12px] text-white/85">
-                  {placementLabel || <Trans>Unplaced</Trans>}
-                </div>
-              </div>
-            </div>
+            </>
           ) : null,
       }}
     />
