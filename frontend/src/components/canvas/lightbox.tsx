@@ -31,6 +31,7 @@ interface LightboxChromeProps {
   fullUrl: string
   canGoBack: boolean
   canGoForward: boolean
+  canStep: boolean
   infoOpen: boolean
   zoomRef: React.RefObject<ZoomRef | null>
   onHistoryBack: () => void
@@ -48,6 +49,7 @@ function LightboxChrome({
   fullUrl,
   canGoBack,
   canGoForward,
+  canStep,
   infoOpen,
   zoomRef,
   onHistoryBack,
@@ -59,7 +61,7 @@ function LightboxChrome({
   return (
     <>
       <div className="pointer-events-auto fixed left-4 top-4 z-10">
-        <Tooltip label={t`Close preview`} shortcut="Escape">
+        <Tooltip label={t`Close preview`} shortcut="Escape" side="bottom">
           <button
             type="button"
             data-testid="lightbox-close"
@@ -80,7 +82,7 @@ function LightboxChrome({
           infoOpen ? 'right-[316px]' : 'right-4'
         )}
       >
-        <Tooltip label={t`Back`} shortcut="Alt+ArrowLeft">
+        <Tooltip label={t`Back`} shortcut="Alt+ArrowLeft" side="bottom">
           <button
             type="button"
             data-testid="lightbox-history-back"
@@ -92,7 +94,7 @@ function LightboxChrome({
             <ArrowLeft className="h-4 w-4" />
           </button>
         </Tooltip>
-        <Tooltip label={t`Forward`} shortcut="Alt+ArrowRight">
+        <Tooltip label={t`Forward`} shortcut="Alt+ArrowRight" side="bottom">
           <button
             type="button"
             data-testid="lightbox-history-forward"
@@ -104,30 +106,32 @@ function LightboxChrome({
             <ArrowRight className="h-4 w-4" />
           </button>
         </Tooltip>
-        <Tooltip label={t`Previous image`} shortcut="ArrowLeft">
+        <Tooltip label={t`Previous image`} shortcut="ArrowLeft" side="bottom">
           <button
             type="button"
             data-testid="lightbox-prev"
             aria-label={t`Previous image`}
             onClick={() => prev()}
+            disabled={!canStep}
             className={actionButtonClass}
           >
             <ChevronLeft className="h-5 w-5" />
           </button>
         </Tooltip>
-        <Tooltip label={t`Next image`} shortcut="ArrowRight">
+        <Tooltip label={t`Next image`} shortcut="ArrowRight" side="bottom">
           <button
             type="button"
             data-testid="lightbox-next"
             aria-label={t`Next image`}
             onClick={() => next()}
+            disabled={!canStep}
             className={actionButtonClass}
           >
             <ChevronRight className="h-5 w-5" />
           </button>
         </Tooltip>
         <span aria-hidden="true" className="mx-1 h-5 w-px bg-white/15" />
-        <Tooltip label={t`Zoom in`} shortcut="+">
+        <Tooltip label={t`Zoom in`} shortcut="+" side="bottom">
           <button
             type="button"
             data-testid="lightbox-zoom-in"
@@ -138,7 +142,7 @@ function LightboxChrome({
             <ZoomIn className="h-4 w-4" />
           </button>
         </Tooltip>
-        <Tooltip label={t`Zoom out`} shortcut="-">
+        <Tooltip label={t`Zoom out`} shortcut="-" side="bottom">
           <button
             type="button"
             data-testid="lightbox-zoom-out"
@@ -149,7 +153,7 @@ function LightboxChrome({
             <ZoomOut className="h-4 w-4" />
           </button>
         </Tooltip>
-        <Tooltip label={t`Copy image`}>
+        <Tooltip label={t`Copy image`} side="bottom">
           <button
             type="button"
             data-testid="lightbox-copy"
@@ -160,7 +164,7 @@ function LightboxChrome({
             <Copy className="h-4 w-4" />
           </button>
         </Tooltip>
-        <Tooltip label={t`Download`}>
+        <Tooltip label={t`Download`} side="bottom">
           <a
             data-testid="lightbox-download"
             aria-label={t`Download`}
@@ -175,6 +179,7 @@ function LightboxChrome({
         <Tooltip
           label={infoOpen ? t`Hide info panel` : t`Show info panel`}
           shortcut="I"
+          side="bottom"
         >
           <button
             type="button"
@@ -206,6 +211,8 @@ interface LightboxViewerProps {
     imageId: number
   ) => { id: number; fileName: string; thumbUrl: string }[]
   onJumpTo: (imageId: number) => void
+  infoOpen: boolean
+  onInfoOpenChange: (open: boolean) => void
 }
 
 // Full-res in-canvas preview: dark surface, carousel, opt-in metadata panel.
@@ -221,11 +228,12 @@ export function LightboxViewer({
   sourcesFor,
   childrenFor = () => [],
   onJumpTo,
+  infoOpen,
+  onInfoOpenChange,
 }: LightboxViewerProps) {
   const current = images[index]
   const [history, setHistory] = useState<number[]>([])
   const [forward, setForward] = useState<number[]>([])
-  const [infoOpen, setInfoOpen] = useState(false)
   const [copyStatus, setCopyStatus] = useState('')
   const zoomRef = useRef<ZoomRef>(null)
   // History jumps change the index prop from the parent, which fires the
@@ -247,11 +255,11 @@ export function LightboxViewer({
       )
         return
       event.preventDefault()
-      setInfoOpen((open) => !open)
+      onInfoOpenChange(!infoOpen)
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
+  }, [infoOpen, onInfoOpenChange])
 
   function jumpTo(id: number) {
     if (current) setHistory((previous) => [...previous, current.id])
@@ -319,7 +327,7 @@ export function LightboxViewer({
       }))}
       on={{ view: ({ index: i }) => handleView(i) }}
       plugins={[Zoom]}
-      zoom={{ ref: zoomRef }}
+      zoom={{ ref: zoomRef, scrollToZoom: true, maxZoomPixelRatio: 2 }}
       toolbar={{ buttons: [] }}
       carousel={{ finite: false, padding: '0px', spacing: 0 }}
       styles={{
@@ -340,12 +348,13 @@ export function LightboxViewer({
                 fullUrl={current.fullUrl}
                 canGoBack={history.length > 0}
                 canGoForward={forward.length > 0}
+                canStep={images.length > 1}
                 infoOpen={infoOpen}
                 zoomRef={zoomRef}
                 onHistoryBack={goBack}
                 onHistoryForward={goForward}
                 onCopy={copyImage}
-                onToggleInfo={() => setInfoOpen((open) => !open)}
+                onToggleInfo={() => onInfoOpenChange(!infoOpen)}
               />
               {copyStatus && (
                 <div
@@ -395,23 +404,26 @@ export function LightboxViewer({
                       <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-white/45">
                         <Trans>Derived from</Trans>
                       </div>
-                      <div className="flex flex-col gap-1.5">
+                      <div className="flex flex-wrap gap-2">
                         {sourcesFor(current.id).map((src) => (
-                          <button
+                          <Tooltip
                             key={src.id}
-                            type="button"
-                            onClick={() => jumpTo(src.id)}
-                            className="flex items-center gap-2 rounded hover:bg-white/5"
+                            label={src.fileName}
+                            side="bottom"
                           >
-                            <img
-                              src={src.thumbUrl}
-                              alt=""
-                              className="h-8 w-8 rounded object-cover"
-                            />
-                            <span className="text-[11.5px] text-white/70">
-                              {src.fileName}
-                            </span>
-                          </button>
+                            <button
+                              type="button"
+                              aria-label={src.fileName}
+                              onClick={() => jumpTo(src.id)}
+                              className="h-16 w-16 overflow-hidden rounded-md outline-none hover:ring-2 hover:ring-white/40 focus-visible:ring-2 focus-visible:ring-white/60"
+                            >
+                              <img
+                                src={src.thumbUrl}
+                                alt=""
+                                className="h-full w-full object-cover"
+                              />
+                            </button>
+                          </Tooltip>
                         ))}
                       </div>
                     </div>
@@ -421,23 +433,26 @@ export function LightboxViewer({
                       <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-white/45">
                         <Trans>Derived images</Trans>
                       </div>
-                      <div className="flex flex-col gap-1.5">
+                      <div className="flex flex-wrap gap-2">
                         {childrenFor(current.id).map((child) => (
-                          <button
+                          <Tooltip
                             key={child.id}
-                            type="button"
-                            onClick={() => jumpTo(child.id)}
-                            className="flex items-center gap-2 rounded hover:bg-white/5"
+                            label={child.fileName}
+                            side="bottom"
                           >
-                            <img
-                              src={child.thumbUrl}
-                              alt=""
-                              className="h-8 w-8 rounded object-cover"
-                            />
-                            <span className="text-[11.5px] text-white/70">
-                              {child.fileName}
-                            </span>
-                          </button>
+                            <button
+                              type="button"
+                              aria-label={child.fileName}
+                              onClick={() => jumpTo(child.id)}
+                              className="h-16 w-16 overflow-hidden rounded-md outline-none hover:ring-2 hover:ring-white/40 focus-visible:ring-2 focus-visible:ring-white/60"
+                            >
+                              <img
+                                src={child.thumbUrl}
+                                alt=""
+                                className="h-full w-full object-cover"
+                              />
+                            </button>
+                          </Tooltip>
                         ))}
                       </div>
                     </div>

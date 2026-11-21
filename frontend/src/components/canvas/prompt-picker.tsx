@@ -69,7 +69,7 @@ export function PromptPicker({
   return (
     <div
       ref={ref}
-      className="fixed z-50 flex w-72 flex-col gap-2 rounded-lg border border-black/8 bg-white p-3 shadow-lg"
+      className="fixed z-50 flex w-72 flex-col gap-2 rounded-lg border border-black/8 bg-card p-3 shadow-lg"
       style={{ left: x, top: y }}
     >
       {prompts.length > 0 && (

@@ -10,7 +10,9 @@ test.describe('Settings', () => {
     await page.getByRole('menuitem', { name: 'Settings…' }).click()
     const dialog = page.getByRole('dialog', { name: 'Settings' })
     await expect(dialog).toBeVisible()
-    await expect(page.getByRole('heading', { name: 'Appearance' })).toBeVisible()
+    await expect(
+      page.getByRole('heading', { name: 'Appearance' })
+    ).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(dialog).toHaveCount(0)
 
@@ -39,21 +41,40 @@ test.describe('Settings', () => {
     await dialog.getByLabel('Density').click()
     await page.getByRole('option', { name: 'Compact' }).press('Enter')
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
-    await expect(page.locator('html')).toHaveAttribute('data-density', 'compact')
+    await expect(page.locator('html')).toHaveAttribute(
+      'data-density',
+      'compact'
+    )
     await expect
-      .poll(() => page.evaluate(() => localStorage.getItem('loom.preferences.v1')))
-      .toBe(JSON.stringify({ theme: 'dark', density: 'compact', showTitle: true, showResolution: true, version: 1 }))
+      .poll(() =>
+        page.evaluate(() => localStorage.getItem('loom.preferences.v1'))
+      )
+      .toBe(
+        JSON.stringify({
+          theme: 'dark',
+          density: 'compact',
+          showTitle: true,
+          showResolution: true,
+          version: 1,
+        })
+      )
 
     await page.reload()
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
-    await expect(page.locator('html')).toHaveAttribute('data-density', 'compact')
+    await expect(page.locator('html')).toHaveAttribute(
+      'data-density',
+      'compact'
+    )
     await page.keyboard.press('ControlOrMeta+,')
     await expect(dialog.getByLabel('Theme')).toHaveText('dark')
     await expect(dialog.getByLabel('Density')).toHaveText('compact')
     await page.keyboard.press('Escape')
     await expect(dialog).toHaveCount(0)
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
-    await expect(page.locator('html')).toHaveAttribute('data-density', 'compact')
+    await expect(page.locator('html')).toHaveAttribute(
+      'data-density',
+      'compact'
+    )
   })
 
   test('persists canvas metadata visibility', async ({ page }) => {
@@ -62,8 +83,14 @@ test.describe('Settings', () => {
     const dialog = page.getByRole('dialog', { name: 'Settings' })
     await dialog.getByLabel('Show titles').uncheck()
     await dialog.getByLabel('Show resolution').uncheck()
-    await expect(page.locator('html')).toHaveAttribute('data-show-title', 'false')
-    await expect(page.locator('html')).toHaveAttribute('data-show-resolution', 'false')
+    await expect(page.locator('html')).toHaveAttribute(
+      'data-show-title',
+      'false'
+    )
+    await expect(page.locator('html')).toHaveAttribute(
+      'data-show-resolution',
+      'false'
+    )
     await page.reload()
     await page.keyboard.press('ControlOrMeta+,')
     await expect(dialog.getByLabel('Show titles')).not.toBeChecked()
@@ -105,9 +132,59 @@ test.describe('Settings', () => {
     await page.keyboard.press('ControlOrMeta+,')
     const dialog = page.getByRole('dialog', { name: 'Settings' })
     await dialog.getByRole('button', { name: 'Keyboard', exact: true }).click()
-    await expect(dialog.getByRole('heading', { name: 'Keyboard' })).toBeVisible()
+    await expect(
+      dialog.getByRole('heading', { name: 'Keyboard' })
+    ).toBeVisible()
     await expect(dialog.locator('kbd').first()).toBeVisible()
     expect(await dialog.getByRole('listitem').count()).toBeGreaterThan(0)
     await expect(dialog.getByText(/Canvas gestures:/)).toBeVisible()
+  })
+
+  test('Keyboard section rebinds a shortcut including modifiers', async ({
+    page,
+  }) => {
+    await openFixtureRepo(page, 'direct-fixtures', { drawers: 'closed' })
+    await page.keyboard.press('ControlOrMeta+,')
+    const dialog = page.getByRole('dialog', { name: 'Settings' })
+    await dialog.getByRole('button', { name: 'Keyboard', exact: true }).click()
+    const row = dialog
+      .getByRole('listitem')
+      .filter({ hasText: 'Toggle Inspector' })
+    // Modifiers held while recording are captured: Alt+Shift+J records
+    // identically on every platform (bare Ctrl would add a physical
+    // ctrl part on Linux but only mod on macOS).
+    await row.getByTestId('shortcut-change').click()
+    await page.keyboard.press('Alt+Shift+J')
+    await expect
+      .poll(() =>
+        page.evaluate(() => localStorage.getItem('loom.shortcuts.v1'))
+      )
+      .toBe(JSON.stringify({ 'toggle-inspector': 'alt+shift+j' }))
+    await page.keyboard.press('Escape')
+    await expect(dialog).toHaveCount(0)
+
+    // The rebound combo drives the action; the drawer starts closed.
+    const drawer = page.locator('aside[aria-label="Inspector"]')
+    await expect(drawer).toHaveAttribute('data-state', 'closed')
+    await page.keyboard.press('Alt+Shift+J')
+    await expect(drawer).toHaveAttribute('data-state', 'open')
+
+    // Reset restores the default and clears the override.
+    await page.keyboard.press('ControlOrMeta+,')
+    await dialog.getByRole('button', { name: 'Keyboard', exact: true }).click()
+    await dialog
+      .getByRole('listitem')
+      .filter({ hasText: 'Toggle Inspector' })
+      .getByTestId('shortcut-reset')
+      .click()
+    await expect
+      .poll(() =>
+        page.evaluate(() => localStorage.getItem('loom.shortcuts.v1'))
+      )
+      .toBe(JSON.stringify({}))
+    await page.keyboard.press('Escape')
+    await expect(dialog).toHaveCount(0)
+    await page.keyboard.press('ControlOrMeta+I')
+    await expect(drawer).toHaveAttribute('data-state', 'closed')
   })
 })

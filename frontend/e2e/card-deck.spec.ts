@@ -186,6 +186,17 @@ test.describe('Physical Card & Set Stack Metaphors, Studio Palette', () => {
         filenameAfterZoom.y
       )
     }
+    // The metadata block stays pinned above the card: inverse-zoom growth
+    // extends upward, never sliding down over the image.
+    const metadataAfterZoom = await metadata.boundingBox()
+    const cardAfterZoom = await nodeBox(card)
+    expect(metadataAfterZoom).not.toBeNull()
+    expect(cardAfterZoom).not.toBeNull()
+    if (metadataAfterZoom && cardAfterZoom) {
+      expect(
+        metadataAfterZoom.y + metadataAfterZoom.height
+      ).toBeLessThanOrEqual(cardAfterZoom.y + 1)
+    }
   })
 
   test('GroupNode renders physical tactile deck offset cards and frosted count pill badge', async ({

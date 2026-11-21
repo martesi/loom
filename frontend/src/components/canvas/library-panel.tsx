@@ -49,6 +49,10 @@ interface Props {
     request: number
   } | null
   onShowCommands: () => void
+  // Opens the preview rooted at an asset row. `orderedIds` is the
+  // ListDirectory file order captured alongside the current folder listing;
+  // the route uses it to build the folder carousel.
+  onPreview: (imageId: number, folder: string, orderedIds: number[]) => void
 }
 // Memoized: the Canvas route re-renders on every node-drag pointermove, but
 // all props here are referentially stable across drag frames (stable
@@ -67,6 +71,7 @@ export const LibraryPanel = memo(function LibraryPanel({
   searchFocusRequest,
   navigatorModeRequest,
   onShowCommands,
+  onPreview,
 }: Props) {
   const [mode, setMode] = useState('all'),
     [folder, setFolder] = useState(''),
@@ -88,6 +93,7 @@ export const LibraryPanel = memo(function LibraryPanel({
   })
   const [rows, setRows] = useState<LibraryRow[]>([]),
     [dirs, setDirs] = useState<string[]>([]),
+    [folderOrder, setFolderOrder] = useState<number[]>([]),
     [tags, setTags] = useState<{ id: number; name: string }[]>([])
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState(false)
@@ -168,8 +174,13 @@ export const LibraryPanel = memo(function LibraryPanel({
       if (mode === 'folders') {
         const d = await ImageService.ListDirectory(path, folder)
         if (!cancelled) setDirs(d?.dirs ?? [])
+        // Capture the backend file order alongside the listing so a folder
+        // preview can carousel in the same order ListDirectory returned.
+        if (!cancelled) setFolderOrder((d?.files ?? []).map((file) => file.id))
         const ids = new Set(d?.files?.map((f) => f.id))
         list = list.filter((r) => ids.has(r.id))
+      } else if (!cancelled) {
+        setFolderOrder([])
       }
       if (!cancelled) {
         setRows(list)
@@ -533,6 +544,7 @@ export const LibraryPanel = memo(function LibraryPanel({
           fit={imageFit}
           overlays={overlays}
           onContextMenu={(assetIds, x, y) => setItemMenu({ assetIds, x, y })}
+          reveal={reveal}
         />
       ) : (
         <AssetList
@@ -549,6 +561,15 @@ export const LibraryPanel = memo(function LibraryPanel({
           onRetry={() => setRetryCount((count) => count + 1)}
           onSelect={select}
           onContextMenu={(assetIds, x, y) => setItemMenu({ assetIds, x, y })}
+          reveal={reveal}
+          // Double-click previews from the folder view (single click stays
+          // selection, matching the list's existing interaction). Gallery
+          // only renders in 'all' mode, so only the list needs the hook.
+          onPreview={
+            mode === 'folders'
+              ? (id) => onPreview(id, folder, folderOrder)
+              : undefined
+          }
         />
       )}
       <LibraryContextMenu

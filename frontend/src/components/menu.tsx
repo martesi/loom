@@ -60,7 +60,7 @@ export function PositionedMenu({
     <div
       role="menu"
       ref={menuRef}
-      className="fixed z-50 flex flex-col gap-0.5 rounded-lg border border-black/8 bg-white p-1.5 shadow-lg"
+      className="fixed z-50 flex flex-col gap-0.5 rounded-lg border border-black/8 bg-card p-1.5 shadow-lg"
       style={{ left: Math.max(clampedX, 8), top: Math.max(clampedY, 8), width }}
       onClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => e.stopPropagation()}

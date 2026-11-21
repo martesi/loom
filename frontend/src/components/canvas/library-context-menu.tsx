@@ -64,7 +64,7 @@ export function LibraryContextMenu({
   return (
     <div
       role="menu"
-      className="fixed z-50 min-w-44 rounded-lg border border-black/8 bg-white p-1.5 shadow-lg"
+      className="fixed z-50 min-w-44 rounded-lg border border-black/8 bg-card p-1.5 shadow-lg"
       style={{ left: menu.x, top: menu.y }}
     >
       {renaming ? (

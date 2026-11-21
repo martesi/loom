@@ -141,6 +141,23 @@ export function RepoSelect({ repo, openRequest = 0 }: RepoSelectProps) {
               </div>
             </SelectItem>
           ))}
+        <div className="mt-1 grid gap-1 border-t border-black/10 px-2.5 pb-1 pt-2 text-[11px] leading-relaxed text-ink-muted">
+          <span className="truncate font-medium text-ink" title={repo.path}>
+            {repo.path}
+          </span>
+          <span>
+            <Trans>
+              Trashed assets are retained for 30 days, then removed
+              automatically during repository cleanup.
+            </Trans>
+          </span>
+          <span>
+            <Trans>
+              Imports land at the repository root without placing them on the
+              Canvas.
+            </Trans>
+          </span>
+        </div>
       </SelectContent>
     </Select>
   )

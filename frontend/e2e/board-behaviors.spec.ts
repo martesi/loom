@@ -203,6 +203,20 @@ test('Sources navigation reveals and selects an unplaced asset', async ({
     'aria-selected',
     'true'
   )
+  // Locate scrolls the row into view, not just selects it.
+  await expect
+    .poll(async () => {
+      const rowBox = await asset(page, 'relation-alpha.png').boundingBox()
+      const listBox = await page
+        .getByRole('listbox', { name: 'Assets' })
+        .boundingBox()
+      if (!rowBox || !listBox) return false
+      return (
+        rowBox.y >= listBox.y &&
+        rowBox.y + rowBox.height <= listBox.y + listBox.height
+      )
+    })
+    .toBe(true)
   await expect(page.getByText(/× .* · Unplaced/)).toBeVisible()
 })
 

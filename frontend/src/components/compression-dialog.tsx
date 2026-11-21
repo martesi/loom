@@ -1,6 +1,6 @@
 import { t } from '@lingui/core/macro'
 import { Plural, Trans } from '@lingui/react/macro'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   ImageService,
   MediaService,
@@ -34,6 +34,21 @@ export function CompressionDialog({
   const [settingsLoaded, setSettingsLoaded] = useState(false)
   const [summary, setSummary] = useState('')
   const [error, setError] = useState('')
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
+  const runningRef = useRef(running)
+  runningRef.current = running
+
+  // Modal dismissal matches the Base UI dialogs: backdrop click or Escape,
+  // disabled while a transcode run is in flight so it can't be killed
+  // halfway (the Close button is disabled for the same reason).
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !runningRef.current) closeRef.current()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -124,7 +139,13 @@ export function CompressionDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/20 p-4">
+    // biome-ignore lint/a11y/noStaticElementInteractions: backdrop click-catcher for modal dismissal; keyboard users get the Escape listener below.
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/20 p-4"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !running) onClose()
+      }}
+    >
       <section
         role="dialog"
         aria-modal="true"

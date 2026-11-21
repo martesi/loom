@@ -1,6 +1,7 @@
 import { type ChildProcess, spawn } from 'node:child_process'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import * as path from 'node:path'
+import { deflateSync } from 'node:zlib'
 import { acquireBuildLock } from './build-lock'
 import {
   spawnBuildProcess,
@@ -30,6 +31,47 @@ const fixturePng = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
   'base64'
 )
+
+// Solid-gray PNGs with real dimensions. The 1x1 fixture locks the lightbox
+// Zoom plugin at minZoom === maxZoom, so zoom gestures are no-ops on it;
+// the lightbox fixtures need a bitmap larger than the slide area instead.
+const crcTable = new Uint32Array(256)
+for (let n = 0; n < 256; n++) {
+  let c = n
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1
+  crcTable[n] = c >>> 0
+}
+function crc32(data: Buffer): number {
+  let crc = 0xffffffff
+  for (const byte of data) crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8)
+  return (crc ^ 0xffffffff) >>> 0
+}
+function solidPng(width: number, height: number, gray = 128): Buffer {
+  const stride = width * 3
+  const raw = Buffer.alloc(height * (stride + 1), gray)
+  for (let y = 0; y < height; y++) raw[y * (stride + 1)] = 0
+  const chunk = (type: string, data: Buffer): Buffer => {
+    const typeBytes = Buffer.from(type, 'ascii')
+    const header = Buffer.alloc(8)
+    header.writeUInt32BE(data.length, 0)
+    typeBytes.copy(header, 4)
+    const crc = Buffer.alloc(4)
+    crc.writeUInt32BE(crc32(Buffer.concat([typeBytes, data])), 0)
+    return Buffer.concat([header, data, crc])
+  }
+  const ihdr = Buffer.alloc(13)
+  ihdr.writeUInt32BE(width, 0)
+  ihdr.writeUInt32BE(height, 4)
+  ihdr[8] = 8
+  ihdr[9] = 2
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', deflateSync(raw)),
+    chunk('IEND', Buffer.alloc(0)),
+  ])
+}
+const lightboxPng = solidPng(1600, 1200)
 
 const benchmarkRepos =
   process.env.LOOM_BENCHMARK === '1'
@@ -174,7 +216,17 @@ const fixtureRepos = [
   // Dedicated fixtures for the Lightbox preview viewer
   {
     name: 'lightbox-fixtures',
-    files: ['lightbox-alpha.png', 'lightbox-beta.png'],
+    files: [
+      'lightbox-alpha.png',
+      'lightbox-beta.png',
+      'lightbox-gamma.png',
+      // Same-folder traversal set for folder-opened preview coverage:
+      // three images isolated in a subfolder so the folder carousel can be
+      // asserted across >=3 slides while root images must never appear.
+      'album/lightbox-delta.png',
+      'album/lightbox-epsilon.png',
+      'album/lightbox-zeta.png',
+    ],
   },
   // Dedicated fixtures for Card & Deck Stacks
   { name: 'card-fixtures', files: ['card-alpha.png', 'card-beta.png'] },
@@ -210,7 +262,14 @@ async function seedFixtureRepos(browseRoot: string) {
         files.map(async (fileName) => {
           const filePath = path.join(repoPath, fileName)
           await mkdir(path.dirname(filePath), { recursive: true })
-          await writeFile(filePath, fixturePng)
+          // Lightbox fixtures need real dimensions for zoom (see above).
+          await writeFile(
+            filePath,
+            fileName.startsWith('lightbox-') ||
+              fileName.includes('/lightbox-')
+              ? lightboxPng
+              : fixturePng
+          )
         })
       )
     })

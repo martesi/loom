@@ -14,7 +14,11 @@ test('lightbox chrome layout, info toggle, and history navigation', async ({
   page,
 }) => {
   await openFixtureRepo(page, 'lightbox-fixtures', { drawers: 'closed' })
-  await placeAssets(page, ['lightbox-alpha.png', 'lightbox-beta.png'])
+  await placeAssets(page, [
+    'lightbox-alpha.png',
+    'lightbox-beta.png',
+    'lightbox-gamma.png',
+  ])
   await autoArrangeCanvas(page)
   await page.keyboard.press('ControlOrMeta+0')
 
@@ -85,15 +89,56 @@ test('lightbox chrome layout, info toggle, and history navigation', async ({
   await page.getByTestId('lightbox-history-forward').click()
   await expect(panel.getByText('lightbox-alpha.png')).toBeVisible()
 
-  // Linear prev/next moves through the carousel.
+  // Prev/next traverse the linked relationship chain, skipping the
+  // unrelated gamma image (two linked slides: either direction wraps).
   await page.getByTestId('lightbox-prev').click()
   await expect(panel.getByText('lightbox-beta.png')).toBeVisible()
   await page.getByTestId('lightbox-next').click()
+  await expect(panel.getByText('lightbox-alpha.png')).toBeVisible()
+  await page.getByTestId('lightbox-next').click()
+  await expect(panel.getByText('lightbox-beta.png')).toBeVisible()
+  await expect(panel.getByText('lightbox-gamma.png')).toHaveCount(0)
+  await page.getByTestId('lightbox-prev').click()
   await expect(panel.getByText('lightbox-alpha.png')).toBeVisible()
 
   // Zoom controls activate without errors.
   await page.getByTestId('lightbox-zoom-in').click()
   await page.getByTestId('lightbox-zoom-out').click()
+
+  // Scroll gestures zoom the current image. Fixture bitmaps for the other
+  // suites are 1x1 px, which locks the Zoom plugin at minZoom === maxZoom;
+  // the lightbox fixtures are 1600x1200 precisely so zoom can move. The
+  // carousel also renders off-screen neighbor slides, so wheel over the
+  // slide-area center (viewport minus the open info panel) and compare
+  // against the measured pre-wheel width.
+  const slideAreaCenter = () =>
+    page.evaluate(() => {
+      const panel = document.querySelector(
+        '[data-testid="lightbox-info-panel"]'
+      )
+      const panelWidth = panel ? panel.getBoundingClientRect().width : 0
+      return {
+        x: (window.innerWidth - panelWidth) / 2,
+        y: window.innerHeight / 2,
+      }
+    })
+  const maxSlideWidth = () =>
+    page.evaluate(() =>
+      Math.max(
+        0,
+        ...[...document.querySelectorAll('.yarl__slide_image')].map(
+          (element) => element.getBoundingClientRect().width
+        )
+      )
+    )
+  const beforeZoom = await maxSlideWidth()
+  expect(beforeZoom).toBeGreaterThan(0)
+  const center = await slideAreaCenter()
+  await page.mouse.move(center.x, center.y)
+  await page.mouse.wheel(0, -600)
+  await expect
+    .poll(maxSlideWidth)
+    .toBeGreaterThan(beforeZoom)
 
   // Download points at the current image.
   const download = page.getByTestId('lightbox-download')
@@ -109,5 +154,5 @@ test('lightbox chrome layout, info toggle, and history navigation', async ({
   // Close dismisses the viewer.
   await close.click()
   await expect(toolbar).toHaveCount(0)
-  await expect(imageNodes(page)).toHaveCount(2)
+  await expect(imageNodes(page)).toHaveCount(3)
 })

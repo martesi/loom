@@ -76,7 +76,7 @@ export function SelectValue({
 }
 
 const selectPopupVariants = cva(
-  'z-50 max-h-[min(24rem,var(--available-height))] overflow-y-auto rounded-md border border-black/10 bg-white py-1 text-[12.5px] text-ink shadow-lg outline-none'
+  'z-50 max-h-[min(24rem,var(--available-height))] overflow-y-auto rounded-md border border-black/10 bg-card py-1 text-[12.5px] text-ink shadow-lg outline-none'
 )
 
 interface SelectContentProps
@@ -86,6 +86,12 @@ interface SelectContentProps
   sideOffset?: number
   /** Alignment of the popup relative to the trigger. @default 'start' */
   align?: 'start' | 'center' | 'end'
+  /**
+   * Align the selected item with the trigger (popup opens over the
+   * trigger). Defaults to false so the dropdown opens below the trigger
+   * instead of covering it.
+   */
+  alignItemWithTrigger?: boolean
 }
 
 /**
@@ -98,6 +104,7 @@ export function SelectContent({
   render = <SelectPrimitive.Popup />,
   sideOffset = 4,
   align = 'start',
+  alignItemWithTrigger = false,
   ...props
 }: SelectContentProps) {
   return (
@@ -105,6 +112,7 @@ export function SelectContent({
       <SelectPrimitive.Positioner
         sideOffset={sideOffset}
         align={align}
+        alignItemWithTrigger={alignItemWithTrigger}
         className="z-50 outline-none"
       >
         {useRender({

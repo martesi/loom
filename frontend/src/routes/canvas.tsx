@@ -55,11 +55,21 @@ import { parseAssetDragPayload } from '../lib/asset-drag-payload'
 import { copyMedia, filesToMedia, readMedia } from '../lib/clipboard'
 import { computeSubgraphLayout, placeCluster } from '../lib/layout'
 import { emptySelection, type Selection } from '../lib/selection'
+import {
+  readShortcutOverrides,
+  shortcutOverridesEvent,
+} from '../lib/shortcut-overrides'
 import { useUndoActions } from '../lib/use-undo'
 import { cn } from '../lib/utils'
 
 const nodeTypes = { image: ImageNode, group: GroupNode }
 const RELATION_DRAG_THRESHOLD = 5
+// Where a preview was opened from. Canvas opens keep the existing
+// relationship-component carousel; folder opens step through that folder's
+// images in ListDirectory order instead.
+type PreviewOrigin =
+  | { surface: 'canvas' }
+  | { surface: 'folder'; folder: string }
 function rememberFocus(target: { current: HTMLElement | null }) {
   target.current =
     document.activeElement instanceof HTMLElement
@@ -152,6 +162,17 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   const fieldSubmissionPending = useRef(false)
   const pendingRecentAction = useRef<string | null>(null)
   const [previewImageId, setPreviewImageId] = useState<number | null>(null)
+  const [previewOrigin, setPreviewOrigin] = useState<PreviewOrigin | null>(
+    null
+  )
+  // ListDirectory file-id order captured by the folder view at open time;
+  // null when the preview was opened from the canvas.
+  const [previewFolderOrder, setPreviewFolderOrder] = useState<number[] | null>(
+    null
+  )
+  // Info panel visibility is app state: closing and reopening the preview
+  // keeps the panel as it was instead of resetting to closed.
+  const [previewInfoOpen, setPreviewInfoOpen] = useState(false)
   const [assetsOpen, setAssetsOpen] = useState(false)
   const [inspectorOpen, setInspectorOpen] = useState(false)
   const [assetsPinned, setAssetsPinned] = useState(false)
@@ -202,6 +223,27 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     pending: boolean
   } | null>(null)
   const [repoMenuOpen, setRepoMenuOpen] = useState(false)
+  const repoMenuRef = useRef<HTMLDivElement>(null)
+  // The repository actions menu is a hand-rolled dropdown (not a Base UI
+  // menu: it opens from a toolbar button, not a menu trigger), so dismiss
+  // it here the same way PositionedMenu does — outside pointer-down or
+  // Escape. The trigger lives inside repoMenuRef, so toggling still works.
+  useEffect(() => {
+    if (!repoMenuOpen) return
+    const onPointerDown = (event: PointerEvent) => {
+      if (!repoMenuRef.current?.contains(event.target as unknown as globalThis.Node))
+        setRepoMenuOpen(false)
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setRepoMenuOpen(false)
+    }
+    window.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [repoMenuOpen])
   const [searchFocusRequest, setSearchFocusRequest] = useState(0)
   const [repoOpenRequest, setRepoOpenRequest] = useState(0)
   const [navigatorModeRequest, setNavigatorModeRequest] = useState<{
@@ -554,6 +596,10 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       groupMemberMap,
     ]
   )
+  // Hovered node renders above siblings (xyflow elevates selected nodes to
+  // z-index 1000) so its inverse-zoomed title/resolution badges — which grow
+  // upward beyond the card at low zoom — are not covered by other images.
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null)
   const previousDisplayNodes = useRef(new Map<string, Node>())
   // Memoized so the per-pointermove setNodes during a drag does not rebuild
   // every node/edge wrapper or rescan membership for the whole board.
@@ -566,6 +612,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             ? 'ring-4 ring-green-500'
             : 'ring-4 ring-red-500'
           : ''
+      const zIndex = node.id === hoveredNodeId ? 1001 : node.zIndex
       const previous = previousDisplayNodes.current.get(node.id)
       if (
         previous &&
@@ -577,16 +624,16 @@ function Canvas({ repo }: { repo: RepoInfo }) {
         previous.selected === selected &&
         previous.className === className &&
         previous.dragging === node.dragging &&
-        previous.zIndex === node.zIndex
+        previous.zIndex === zIndex
       )
         return previous
-      return { ...node, selected, className }
+      return { ...node, selected, className, zIndex }
     })
     previousDisplayNodes.current = new Map(
       mapped.map((node) => [node.id, node])
     )
     return mapped
-  }, [nodes, isCanvasNodeSelected, target])
+  }, [nodes, isCanvasNodeSelected, target, hoveredNodeId])
   const displayEdges: Edge[] = useMemo(
     () =>
       edges.map((e) => {
@@ -1104,6 +1151,8 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       .catch(report)
   }
   function handlePreview(node: Node) {
+    setPreviewOrigin({ surface: 'canvas' })
+    setPreviewFolderOrder(null)
     if (node.type === 'group') {
       const groupId = Number(node.id.slice(4))
       const group = (data.groups ?? []).find((g) => g.id === groupId)
@@ -1112,6 +1161,15 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     } else {
       setPreviewImageId(Number(node.id))
     }
+  }
+  function handleFolderPreview(
+    imageId: number,
+    folder: string,
+    orderedIds: number[]
+  ) {
+    setPreviewOrigin({ surface: 'folder', folder })
+    setPreviewFolderOrder(orderedIds)
+    setPreviewImageId(imageId)
   }
   async function fitAll() {
     await flow.fitView({ padding: 0.2 })
@@ -1184,7 +1242,18 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   const canRemoveRelationship = relationshipActions.length === 1
   const canFitSelection = displayNodes.some((node) => node.selected)
   const canArrangeSelection = selectedCanvasNodeIds.length > 0
-  const actionCatalog: CanvasAction[] = [
+  // User shortcut overrides (Settings → Keyboard, curated subset only).
+  // Applied over the static catalog so every consumer — palette, dock
+  // hints, tooltips, the global resolver — sees the effective combo.
+  const [shortcutOverrides, setShortcutOverrides] = useState(
+    readShortcutOverrides
+  )
+  useEffect(() => {
+    const sync = () => setShortcutOverrides(readShortcutOverrides())
+    window.addEventListener(shortcutOverridesEvent, sync)
+    return () => window.removeEventListener(shortcutOverridesEvent, sync)
+  }, [])
+  const baseActionCatalog: CanvasAction[] = [
     {
       id: 'open-assets',
       label: t`Open Assets`,
@@ -1197,6 +1266,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     },
     {
       id: 'toggle-assets',
+      customizable: true,
       label: t`Toggle Assets`,
       description: t`Open or close the Assets navigator`,
       category: t`Workspace`,
@@ -1251,6 +1321,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     },
     {
       id: 'toggle-inspector',
+      customizable: true,
       label: t`Toggle Inspector`,
       description: t`Open or close the Inspector`,
       category: t`Workspace`,
@@ -1295,6 +1366,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     },
     {
       id: 'toggle-focus-canvas',
+      customizable: true,
       label: t`Toggle Focus Canvas`,
       description: t`Hide or restore Canvas controls and drawers`,
       category: t`Workspace`,
@@ -1306,6 +1378,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     },
     {
       id: 'show-shortcuts',
+      customizable: true,
       label: t`Show keyboard shortcuts`,
       description: t`Browse available keyboard shortcuts`,
       category: t`Workspace`,
@@ -1317,6 +1390,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     },
     {
       id: 'open-settings',
+      customizable: true,
       label: t`Open Settings`,
       description: t`Open device preferences`,
       category: t`Workspace`,
@@ -1338,6 +1412,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     },
     {
       id: 'show-commands',
+      customizable: true,
       label: t`Show commands`,
       description: t`Search Canvas commands and repository assets`,
       category: t`Workspace`,
@@ -1411,6 +1486,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     },
     {
       id: 'assets-gallery-view',
+      customizable: true,
       label: t`Show Assets gallery`,
       description: t`Switch Assets to a thumbnail gallery`,
       category: t`Assets navigation`,
@@ -1429,6 +1505,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     },
     {
       id: 'assets-list-view',
+      customizable: true,
       label: t`Show Assets list`,
       description: t`Switch Assets to the compact list`,
       category: t`Assets navigation`,
@@ -2087,6 +2164,16 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       execute: undoActions.redo,
     },
   ]
+  const actionCatalog: CanvasAction[] = baseActionCatalog.map((action) =>
+    shortcutOverrides[action.id]
+      ? { ...action, shortcut: shortcutOverrides[action.id] }
+      : action
+  )
+  const defaultShortcuts = Object.fromEntries(
+    baseActionCatalog.flatMap((action) =>
+      action.shortcut ? [[action.id, action.shortcut] as const] : []
+    )
+  )
   const actionById = new Map(actionCatalog.map((action) => [action.id, action]))
   const actionRef = useRef(actionCatalog)
   actionRef.current = actionCatalog
@@ -2455,7 +2542,70 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       showCommands,
     ]
   })()
-  const previewImages = (data.images ?? []).filter((image) => !image.trashed)
+  // Preview carousel by origin. Folder opens step through that folder's
+  // images in ListDirectory order (os.ReadDir order, i.e. filename order —
+  // matched here via the file-id sequence the folder view captured, with a
+  // fileName localeCompare fallback when that order is unavailable or
+  // stale). Canvas opens keep the linked-relation carousel: prev/next step
+  // only through images connected to the open image via source→derived
+  // edges (undirected traversal); unrelated images are excluded instead of
+  // stepping in repo order.
+  const previewImages = ((): ImageInfo[] => {
+    const all = (data.images ?? []).filter((image) => !image.trashed)
+    if (previewOrigin?.surface === 'folder') {
+      const folder = previewOrigin.folder
+      const folderOf = (image: ImageInfo) =>
+        image.filePath
+          .slice(repo.path.length + 1)
+          .split('/')
+          .slice(0, -1)
+          .join('/')
+      const inFolder = all.filter((image) => folderOf(image) === folder)
+      if (previewFolderOrder && previewFolderOrder.length > 0) {
+        const rank = new Map(
+          previewFolderOrder.map((id, order) => [id, order] as const)
+        )
+        return [...inFolder].sort((left, right) => {
+          const leftRank = rank.get(left.id)
+          const rightRank = rank.get(right.id)
+          if (leftRank !== undefined && rightRank !== undefined)
+            return leftRank - rightRank
+          // Images registered after the order was captured sort after the
+          // known ones, by file name.
+          if (leftRank !== undefined) return -1
+          if (rightRank !== undefined) return 1
+          return left.fileName.localeCompare(right.fileName)
+        })
+      }
+      return [...inFolder].sort((left, right) =>
+        left.fileName.localeCompare(right.fileName)
+      )
+    }
+    if (previewImageId === null) return all
+    if (!all.some((image) => image.id === previewImageId)) return all
+    const neighbors = new Map<number, number[]>()
+    const link = (a: number, b: number) => {
+      const list = neighbors.get(a)
+      if (list) list.push(b)
+      else neighbors.set(a, [b])
+    }
+    for (const relationship of data.relationships ?? []) {
+      link(relationship.sourceImageId, relationship.derivedImageId)
+      link(relationship.derivedImageId, relationship.sourceImageId)
+    }
+    const seen = new Set<number>([previewImageId])
+    const queue = [previewImageId]
+    while (queue.length > 0) {
+      const id = queue.pop() as number
+      for (const next of neighbors.get(id) ?? []) {
+        if (!seen.has(next)) {
+          seen.add(next)
+          queue.push(next)
+        }
+      }
+    }
+    return all.filter((image) => seen.has(image.id))
+  })()
   const previewIndex = previewImages.findIndex((image) => image.id === previewImageId)
   const relatedImages = (id: number, direction: 'sources' | 'children') =>
     (data.relationships ?? []).flatMap((relationship) => {
@@ -2469,6 +2619,24 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       const image = previewImages.find((candidate) => candidate.id === targetId)
       return image ? [{ id: image.id, fileName: image.fileName, thumbUrl: image.thumbUrl }] : []
     })
+  // Info-panel and history jumps resolve within the active array; a target
+  // outside it (e.g. a related image from another folder while in folder
+  // mode) re-roots to the canvas relationship component so the viewer still
+  // opens it instead of stalling on a missing index.
+  function handlePreviewJump(imageId: number) {
+    if (previewImages.some((image) => image.id === imageId)) {
+      setPreviewImageId(imageId)
+      return
+    }
+    setPreviewOrigin({ surface: 'canvas' })
+    setPreviewFolderOrder(null)
+    setPreviewImageId(imageId)
+  }
+  function closePreview() {
+    setPreviewImageId(null)
+    setPreviewOrigin(null)
+    setPreviewFolderOrder(null)
+  }
   return (
     <div className="relative h-screen overflow-hidden bg-surface-canvas text-ink">
       {error && (
@@ -2507,6 +2675,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             searchFocusRequest={searchFocusRequest}
             navigatorModeRequest={navigatorModeRequest}
             onShowCommands={showCommandsAction}
+            onPreview={handleFolderPreview}
           />
         </ShelfPanel>
         <main
@@ -2750,8 +2919,8 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             multiSelectionKeyCode="Shift"
             selectionOnDrag={!space}
             selectionMode={SelectionMode.Partial}
-            panOnScroll={true}
-            zoomOnScroll={false}
+            panOnScroll={!space}
+            zoomOnScroll={space}
             zoomOnPinch={true}
             onSelectionStart={(event) => {
               modifiedMarquee.current = {
@@ -2862,6 +3031,8 @@ function Canvas({ repo }: { repo: RepoInfo }) {
                 })
               } else if (node.type === 'image') handlePreview(node)
             }}
+            onNodeMouseEnter={(_, node) => setHoveredNodeId(node.id)}
+            onNodeMouseLeave={() => setHoveredNodeId(null)}
             onNodeDragStart={() => {
               relation.current = null
               setRelationshipPreview(null)
@@ -3187,7 +3358,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             <PanelRight className="h-4 w-4" />
           </button>
         </Tooltip>
-        <div className="relative">
+        <div className="relative" ref={repoMenuRef}>
           <Tooltip label={t`Repository actions`}>
             <button
               type="button"
@@ -3292,6 +3463,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
         <SettingsDialog
           initialSection={settingsSection}
           actions={actionCatalog}
+          defaultShortcuts={defaultShortcuts}
           onClose={() => setSettingsSection(null)}
         />
       )}
@@ -3299,7 +3471,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
         <LightboxViewer
           images={previewImages}
           index={previewIndex}
-          onClose={() => setPreviewImageId(null)}
+          onClose={closePreview}
           onIndexChange={(idx) => {
             if (previewImages[idx]) setPreviewImageId(previewImages[idx].id)
           }}
@@ -3311,7 +3483,9 @@ function Canvas({ repo }: { repo: RepoInfo }) {
           }
           sourcesFor={(id) => relatedImages(id, 'sources')}
           childrenFor={(id) => relatedImages(id, 'children')}
-          onJumpTo={setPreviewImageId}
+          onJumpTo={handlePreviewJump}
+          infoOpen={previewInfoOpen}
+          onInfoOpenChange={setPreviewInfoOpen}
         />
       )}
       {compressIds && (

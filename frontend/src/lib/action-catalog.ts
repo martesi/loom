@@ -10,6 +10,8 @@ export interface CanvasAction {
   enabled: boolean
   disabledReason?: string
   dangerous?: boolean
+  /** Opt-in: listed in Settings for rebinding plus a Control-mode switch. */
+  customizable?: boolean
   execute: () => void | Promise<void>
 }
 

@@ -102,10 +102,13 @@ export const ImageNode = memo(
           >
             <div
               data-testid="image-node-metadata"
-              className="absolute bottom-[calc(100%+8px)] left-2 flex max-w-[320px] flex-col items-start gap-1"
+              className="absolute bottom-[calc(100%+8px)] left-0 flex max-w-[320px] flex-col items-start gap-1"
               style={{
+                // Bottom-anchored element: scale about the bottom-left corner
+                // so inverse-zoom growth extends upward and the 8px gap above
+                // the card stays pinned instead of sliding over the image.
                 transform: 'scale(var(--canvas-inverse-zoom, 1))',
-                transformOrigin: 'top left',
+                transformOrigin: 'bottom left',
               }}
             >
               <span

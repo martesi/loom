@@ -1,6 +1,6 @@
 import { t } from '@lingui/core/macro'
 import { Trans } from '@lingui/react/macro'
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import type { LibraryRow } from '../../../bindings/loom/internal/service'
 import { selectAsset } from '../../lib/selection'
 import { Button } from '../ui/button'
@@ -19,6 +19,8 @@ interface Props {
   onSelect: (ids: number[]) => void
   onContextMenu: (ids: number[], x: number, y: number) => void
   onRetry: () => void
+  onPreview?: (id: number) => void
+  reveal?: { id: number; folder: string | null } | null
 }
 
 export function AssetList({
@@ -35,10 +37,29 @@ export function AssetList({
   onSelect,
   onContextMenu,
   onRetry,
+  onPreview,
+  reveal = null,
 }: Props) {
   const anchor = useRef<number | null>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  const scrolledReveal = useRef<typeof reveal>(null)
+  // Locate-in-Assets selects the row, but the list may be scrolled
+  // elsewhere or still loading after a mode/folder switch: bring the
+  // row into view once it renders. Consumed per reveal request (object
+  // identity), so later list refreshes don't yank scroll back.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: rows is a timing dependency — refire after the async listing renders.
+  useEffect(() => {
+    if (!reveal || scrolledReveal.current === reveal) return
+    const target = listRef.current?.querySelector<HTMLElement>(
+      `[data-asset-id="${reveal.id}"]`
+    )
+    if (!target) return
+    scrolledReveal.current = reveal
+    target.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [reveal, rows])
   return (
     <div
+      ref={listRef}
       role="listbox"
       aria-label={t`Assets`}
       aria-multiselectable="true"
@@ -90,6 +111,7 @@ export function AssetList({
             )
             if (!event.shiftKey) anchor.current = row.id
           }}
+          onDoubleClick={() => onPreview?.(row.id)}
           onContextMenu={(event) => {
             event.preventDefault()
             const ids = selected.includes(row.id) ? selected : [row.id]

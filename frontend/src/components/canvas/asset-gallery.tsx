@@ -18,6 +18,7 @@ interface Props {
     tags: boolean
     prompt: boolean
   }
+  reveal?: { id: number; folder: string | null } | null
 }
 
 export function AssetGallery({
@@ -29,9 +30,23 @@ export function AssetGallery({
   density,
   fit,
   overlays,
+  reveal = null,
 }: Props) {
   const anchor = useRef<number | null>(null)
   const grid = useRef<HTMLDivElement>(null)
+  const scrolledReveal = useRef<typeof reveal>(null)
+  // Same locate behavior as the list: bring the revealed card into view
+  // once it renders after a mode/folder switch.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: rows is a timing dependency — refire after the async listing renders.
+  useEffect(() => {
+    if (!reveal || scrolledReveal.current === reveal) return
+    const target = grid.current?.querySelector<HTMLElement>(
+      `[data-asset-id="${reveal.id}"]`
+    )
+    if (!target) return
+    scrolledReveal.current = reveal
+    target.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [reveal, rows])
   const cardWidth = [112, 168, 240][density] ?? 168
   const [columnCount, setColumnCount] = useState(1)
   useEffect(() => {
@@ -177,6 +192,7 @@ export function AssetGallery({
                 <button
                   type="button"
                   data-gallery-card
+                  data-asset-id={row.id}
                   aria-label={label}
                   aria-pressed={selected.includes(row.id)}
                   tabIndex={row.id === focusId ? 0 : -1}

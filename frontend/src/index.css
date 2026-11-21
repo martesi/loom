@@ -136,6 +136,13 @@ body {
   border: none;
 }
 
+/* The live marquee's dotted border must paint above image nodes: xyflow
+   elevates selected nodes to z-index 1000 (SELECTED_NODE_Z), so without
+   this the dots disappear underneath the images being marquee-selected. */
+.react-flow .react-flow__selection {
+  z-index: 1001;
+}
+
 .react-flow__attribution a {
   color: var(--color-ink-muted);
 }
