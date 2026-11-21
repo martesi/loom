@@ -21,7 +21,7 @@ tasks:
       # is available (default cgo backend) or the purego backend is selected
       # (dlopens GTK/WebKit at runtime - no compiler needed). Otherwise
       # (cross-compile, or cgo without a CC) fall back to Docker.
-      - task: '{{if and (eq OS "linux") (eq .TARGET_ARCH ARCH) (or (eq .HAS_CC "true") (eq .PUREGO "true") (and .EXTRA_TAGS (contains "purego" .EXTRA_TAGS)))}}build:native{{else}}build:docker{{end}}'
+      - task: '{{if and (eq OS "linux") (eq .TARGET_ARCH ARCH) (or (eq .HAS_CC "true") (eq .PUREGO "true") (has "purego" (splitList "," (.EXTRA_TAGS | default ""))))}}build:native{{else}}build:docker{{end}}'
         vars:
           ARCH: '{{.ARCH}}'
           DEV: '{{.DEV}}'
@@ -67,7 +67,7 @@ tasks:
       GOOS: linux
       # The purego backend dlopens GTK/WebKit at runtime, so no C toolchain
       # is needed: disable cgo. Default cgo backend keeps CGO_ENABLED=1.
-      CGO_ENABLED: '{{if or (eq .PUREGO "true") (and .EXTRA_TAGS (contains "purego" .EXTRA_TAGS))}}0{{else}}1{{end}}'
+      CGO_ENABLED: '{{if or (eq .PUREGO "true") (has "purego" (splitList "," (.EXTRA_TAGS | default "")))}}0{{else}}1{{end}}'
       GOARCH: '{{.ARCH | default ARCH}}'
 
   build:docker:
