@@ -35,7 +35,7 @@ msgid "{0, plural, one {# asset} other {# assets}}"
 msgstr "{0, plural, one {# asset} other {# assets}}"
 
 #. placeholder {0}: repo.imageCount
-#: src/routes/landing.tsx:118
+#: src/routes/landing.tsx:119
 msgid "{0, plural, one {# image} other {# images}}"
 msgstr "{0, plural, one {# image} other {# images}}"
 
@@ -160,7 +160,11 @@ msgstr "actual size"
 #~ msgid "Add"
 #~ msgstr "Add"
 
-#: src/components/canvas/tag-picker.tsx:101
+#: src/components/canvas/tag-picker.tsx:103
+msgid "Add a tag"
+msgstr "Add a tag"
+
+#: src/components/canvas/tag-picker.tsx:102
 msgid "Add a tag…"
 msgstr "Add a tag…"
 
@@ -270,7 +274,7 @@ msgstr "Allow Inspector to close after selection clears"
 msgid "Also triggers {0}"
 msgstr "Also triggers {0}"
 
-#: src/components/settings-appearance.tsx:37
+#: src/components/settings-appearance.tsx:42
 #: src/components/settings-dialog.tsx:265
 msgid "Appearance"
 msgstr "Appearance"
@@ -373,7 +377,7 @@ msgstr "Asset state"
 #: src/routes/canvas-actions-workspace.ts:306
 #: src/routes/canvas-actions-workspace.ts:324
 #: src/routes/canvas-actions-workspace.ts:341
-#: src/routes/landing.tsx:45
+#: src/routes/landing.tsx:42
 msgid "Assets"
 msgstr "Assets"
 
@@ -407,7 +411,7 @@ msgstr "Assets navigation"
 msgid "Assets selection"
 msgstr "Assets selection"
 
-#: src/components/canvas/prompt-picker.tsx:137
+#: src/components/canvas/prompt-picker.tsx:140
 msgid "Attach"
 msgstr "Attach"
 
@@ -489,7 +493,7 @@ msgstr "Back"
 msgid "Browse available keyboard shortcuts"
 msgstr "Browse available keyboard shortcuts"
 
-#: src/routes/landing.tsx:47
+#: src/routes/landing.tsx:44
 msgid "browse every file, including unplaced images."
 msgstr "browse every file, including unplaced images."
 
@@ -515,7 +519,7 @@ msgstr "Cancel"
 #: src/routes/canvas-actions-view.ts:73
 #: src/routes/canvas-actions-view.ts:83
 #: src/routes/canvas-actions-view.ts:95
-#: src/routes/landing.tsx:51
+#: src/routes/landing.tsx:48
 msgid "Canvas"
 msgstr "Canvas"
 
@@ -584,7 +588,7 @@ msgstr "Change shortcut for {0}"
 #~ msgid "Change…"
 #~ msgstr "Change…"
 
-#: src/components/settings-appearance.tsx:114
+#: src/components/settings-appearance.tsx:119
 msgid "Changes will not be saved on this device."
 msgstr "Changes will not be saved on this device."
 
@@ -704,7 +708,7 @@ msgstr "Collapse active set"
 msgid "collection"
 msgstr "collection"
 
-#: src/components/settings-appearance.tsx:88
+#: src/components/settings-appearance.tsx:93
 msgid "Comfortable"
 msgstr "Comfortable"
 
@@ -729,7 +733,7 @@ msgstr "Commands · > commands · @ assets"
 #~ msgid "Common:"
 #~ msgstr "Common:"
 
-#: src/components/settings-appearance.tsx:91
+#: src/components/settings-appearance.tsx:96
 msgid "Compact"
 msgstr "Compact"
 
@@ -880,7 +884,7 @@ msgstr "Create a semantic set from selected Canvas items"
 msgid "Create compressed copy"
 msgstr "Create compressed copy"
 
-#: src/routes/landing.tsx:69
+#: src/routes/landing.tsx:66
 msgid "Create New Repo"
 msgstr "Create New Repo"
 
@@ -913,11 +917,11 @@ msgstr "Ctrl/Cmd-drag image → image or set to create a relationship."
 msgid "Ctrl/Cmd-drag this image onto another image or set to create a relationship."
 msgstr "Ctrl/Cmd-drag this image onto another image or set to create a relationship."
 
-#: src/components/canvas/repo-select.tsx:127
+#: src/components/canvas/repo-select.tsx:128
 msgid "Current"
 msgstr "Current"
 
-#: src/components/settings-appearance.tsx:64
+#: src/components/settings-appearance.tsx:69
 msgid "Dark"
 msgstr "Dark"
 
@@ -953,8 +957,8 @@ msgstr "Delete saved view"
 msgid "density"
 msgstr "density"
 
-#: src/components/settings-appearance.tsx:71
-#: src/components/settings-appearance.tsx:81
+#: src/components/settings-appearance.tsx:76
+#: src/components/settings-appearance.tsx:86
 msgid "Density"
 msgstr "Density"
 
@@ -1036,7 +1040,7 @@ msgstr "Edit set kind"
 msgid "Edit set name"
 msgstr "Edit set name"
 
-#: src/routes/landing.tsx:61
+#: src/routes/landing.tsx:58
 msgid "edits metadata for the current selection."
 msgstr "edits metadata for the current selection."
 
@@ -1078,7 +1082,7 @@ msgstr "File"
 #~ msgid "File explorer"
 #~ msgstr "File explorer"
 
-#: src/components/canvas/image-node.tsx:88
+#: src/components/canvas/image-node.tsx:263
 msgid "File not found on disk"
 msgstr "File not found on disk"
 
@@ -1160,7 +1164,7 @@ msgstr "Focus the selected set kind field"
 msgid "Focus the selected set name field"
 msgstr "Focus the selected set name field"
 
-#: src/components/canvas/repo-select.tsx:94
+#: src/components/canvas/repo-select.tsx:95
 msgid "Focused the window showing \"{targetName}\"."
 msgstr "Focused the window showing \"{targetName}\"."
 
@@ -1335,7 +1339,7 @@ msgstr "Import media"
 msgid "Import media or drop files onto the canvas."
 msgstr "Import media or drop files onto the canvas."
 
-#: src/components/canvas/repo-select.tsx:155
+#: src/components/canvas/repo-select.tsx:156
 msgid "Imports land at the repository root without placing them on the Canvas."
 msgstr "Imports land at the repository root without placing them on the Canvas."
 
@@ -1359,7 +1363,7 @@ msgstr "Inspect"
 #: src/components/canvas/canvas-workspace-content.tsx:397
 #: src/routes/canvas-actions-workspace.ts:125
 #: src/routes/canvas-actions-workspace.ts:136
-#: src/routes/landing.tsx:59
+#: src/routes/landing.tsx:56
 msgid "Inspector"
 msgstr "Inspector"
 
@@ -1445,7 +1449,7 @@ msgstr "library"
 #~ msgid "Library"
 #~ msgstr "Library"
 
-#: src/components/settings-appearance.tsx:61
+#: src/components/settings-appearance.tsx:66
 msgid "Light"
 msgstr "Light"
 
@@ -1499,7 +1503,7 @@ msgstr "locate file"
 msgid "Locate in Assets"
 msgstr "Locate in Assets"
 
-#: src/routes/landing.tsx:83
+#: src/routes/landing.tsx:80
 msgid "Loom"
 msgstr "Loom"
 
@@ -1646,7 +1650,8 @@ msgstr "Navigate to the derived asset of the selected relationship"
 msgid "Navigate to the source asset of the selected relationship"
 msgstr "Navigate to the source asset of the selected relationship"
 
-#: src/components/canvas/prompt-picker.tsx:126
+#: src/components/canvas/prompt-picker.tsx:128
+#: src/components/canvas/prompt-picker.tsx:129
 msgid "Negative prompt (optional)"
 msgstr "Negative prompt (optional)"
 
@@ -1658,7 +1663,7 @@ msgstr "Negative prompt (optional)"
 #~ msgid "New board…"
 #~ msgstr "New board…"
 
-#: src/routes/landing.tsx:91
+#: src/routes/landing.tsx:88
 msgid "New Repo"
 msgstr "New Repo"
 
@@ -1737,7 +1742,7 @@ msgstr "No subfolders here."
 msgid "No tags"
 msgstr "No tags"
 
-#: src/components/canvas/tag-picker.tsx:89
+#: src/components/canvas/tag-picker.tsx:90
 msgid "No tags yet"
 msgstr "No tags yet"
 
@@ -1761,7 +1766,7 @@ msgstr "One relationship"
 msgid "Only the relationship will be removed. The assets and their metadata will remain."
 msgstr "Only the relationship will be removed. The assets and their metadata will remain."
 
-#: src/components/canvas/repo-select.tsx:138
+#: src/components/canvas/repo-select.tsx:139
 msgid "Open"
 msgstr "Open"
 
@@ -1778,7 +1783,7 @@ msgstr "Open"
 #~ msgid "Open {title} shelf"
 #~ msgstr "Open {title} shelf"
 
-#: src/routes/landing.tsx:37
+#: src/routes/landing.tsx:34
 msgid "Open an image folder as a local Loom repository. Assets stay on disk, and only the images you place appear on the Canvas."
 msgstr "Open an image folder as a local Loom repository. Assets stay on disk, and only the images you place appear on the Canvas."
 
@@ -1806,8 +1811,8 @@ msgstr "Open compression settings for selected Assets"
 msgid "Open device preferences"
 msgstr "Open device preferences"
 
-#: src/routes/landing.tsx:66
-#: src/routes/landing.tsx:88
+#: src/routes/landing.tsx:63
+#: src/routes/landing.tsx:85
 msgid "Open Folder"
 msgstr "Open Folder"
 
@@ -1871,7 +1876,7 @@ msgstr "Open this folder"
 msgid "optimize media"
 msgstr "optimize media"
 
-#: src/routes/landing.tsx:53
+#: src/routes/landing.tsx:50
 msgid "organizes selected images and source → derived links."
 msgstr "organizes selected images and source → derived links."
 
@@ -1968,11 +1973,19 @@ msgstr "project picker"
 msgid "Prompt"
 msgstr "Prompt"
 
+#: src/components/canvas/prompt-picker.tsx:110
+msgid "Prompt name (optional)"
+msgstr "Prompt name (optional)"
+
 #: src/routes/canvas-actions-assets.ts:91
 msgid "prompt text"
 msgstr "prompt text"
 
-#: src/components/canvas/prompt-picker.tsx:117
+#: src/components/canvas/prompt-picker.tsx:119
+msgid "Prompt text"
+msgstr "Prompt text"
+
+#: src/components/canvas/prompt-picker.tsx:118
 msgid "Prompt text…"
 msgstr "Prompt text…"
 
@@ -1990,7 +2003,7 @@ msgstr "reapply"
 
 #: src/components/canvas/asset-view-controls.tsx:83
 #: src/components/canvas/command-palette-results.tsx:216
-#: src/routes/landing.tsx:97
+#: src/routes/landing.tsx:94
 msgid "Recent"
 msgstr "Recent"
 
@@ -2088,6 +2101,11 @@ msgstr "Remove selected nodes while keeping their assets"
 #: src/components/board/detail-panel.tsx:285
 #~ msgid "Remove tag"
 #~ msgstr "Remove tag"
+
+#. placeholder {0}: tag.name
+#: src/components/canvas/tag-picker.tsx:76
+msgid "Remove tag {0}"
+msgstr "Remove tag {0}"
 
 #. placeholder {0}: tagName ?? 'Unavailable tag'
 #: src/components/canvas/library-filter-controls.tsx:260
@@ -2666,7 +2684,7 @@ msgstr "Show metadata for the active selection"
 #~ msgid "Show on board"
 #~ msgstr "Show on board"
 
-#: src/components/settings-appearance.tsx:110
+#: src/components/settings-appearance.tsx:115
 msgid "Show resolution"
 msgstr "Show resolution"
 
@@ -2678,7 +2696,7 @@ msgstr "Show the repository asset navigator"
 msgid "Show the selected set members at their stored positions"
 msgstr "Show the selected set members at their stored positions"
 
-#: src/components/settings-appearance.tsx:102
+#: src/components/settings-appearance.tsx:107
 msgid "Show titles"
 msgstr "Show titles"
 
@@ -2736,16 +2754,16 @@ msgstr "Switch Assets to a thumbnail gallery"
 msgid "Switch Assets to the compact list"
 msgstr "Switch Assets to the compact list"
 
-#: src/components/canvas/repo-select.tsx:113
+#: src/components/canvas/repo-select.tsx:114
 #: src/routes/canvas-actions-workspace.ts:211
 msgid "Switch repository"
 msgstr "Switch repository"
 
-#: src/components/canvas/repo-select.tsx:92
+#: src/components/canvas/repo-select.tsx:93
 msgid "Switched to existing window"
 msgstr "Switched to existing window"
 
-#: src/components/settings-appearance.tsx:58
+#: src/components/settings-appearance.tsx:63
 msgid "System"
 msgstr "System"
 
@@ -2799,8 +2817,8 @@ msgstr "The selection changed. Review the Inspector and try again."
 msgid "theme"
 msgstr "theme"
 
-#: src/components/settings-appearance.tsx:41
-#: src/components/settings-appearance.tsx:51
+#: src/components/settings-appearance.tsx:46
+#: src/components/settings-appearance.tsx:56
 msgid "Theme"
 msgstr "Theme"
 
@@ -2921,7 +2939,7 @@ msgstr "trashed"
 msgid "Trashed"
 msgstr "Trashed"
 
-#: src/components/canvas/repo-select.tsx:149
+#: src/components/canvas/repo-select.tsx:150
 msgid "Trashed assets are retained for 30 days, then removed automatically during repository cleanup."
 msgstr "Trashed assets are retained for 30 days, then removed automatically during repository cleanup."
 
@@ -3038,7 +3056,7 @@ msgstr "view image"
 msgid "View saved"
 msgstr "View saved"
 
-#: src/routes/landing.tsx:34
+#: src/routes/landing.tsx:31
 msgid "Welcome to Loom"
 msgstr "Welcome to Loom"
 

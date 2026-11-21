@@ -82,6 +82,48 @@ test.describe('Canvas command palette', () => {
     const activeOption = page.locator('[role="option"][aria-selected="true"]')
     await expect(search).toBeFocused()
 
+    // A single filtered result hides scrolling bugs. "canvas" matches the whole
+    // Canvas view category, so shrink the listbox to the height of one option,
+    // prove the second result starts out of view, then ArrowDown to it and poll
+    // until it is fully visible.
+    await search.fill('canvas')
+    const listbox = page.getByRole('listbox', { name: 'Commands' })
+    const resultOptions = listbox.getByRole('option')
+    await expect(resultOptions.nth(1)).toBeVisible()
+    const firstResultBounds = await resultOptions.first().boundingBox()
+    if (!firstResultBounds) throw new Error('first result has no bounds')
+    await listbox.evaluate((element, height) => {
+      element.style.maxHeight = `${height}px`
+    }, Math.floor(firstResultBounds.height))
+    const listBounds = await listbox.boundingBox()
+    const secondResultBounds = await resultOptions.nth(1).boundingBox()
+    if (!listBounds || !secondResultBounds)
+      throw new Error('listbox or second result has no bounds')
+    expect(secondResultBounds.y).toBeGreaterThanOrEqual(
+      listBounds.y + listBounds.height - 1
+    )
+
+    await page.keyboard.press('ArrowDown')
+    await expect(resultOptions.nth(1)).toHaveAttribute('aria-selected', 'true')
+    await expect
+      .poll(() =>
+        resultOptions.nth(1).evaluate((option) => {
+          const list = option.closest('[role="listbox"]')
+          if (!list) return false
+          const optionBox = option.getBoundingClientRect()
+          const listBox = list.getBoundingClientRect()
+          const tolerance = 1
+          return (
+            optionBox.top >= listBox.top - tolerance &&
+            optionBox.bottom <= listBox.bottom + tolerance
+          )
+        })
+      )
+      .toBe(true)
+    await listbox.evaluate((element) => {
+      element.style.maxHeight = ''
+    })
+
     // Filter before walking so the test does not depend on the full command
     // ordering and does not need dozens of key round-trips.
     await search.fill('focus canvas')

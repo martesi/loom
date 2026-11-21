@@ -73,6 +73,7 @@ export function TagPicker({
             {tag.name}
             <button
               type="button"
+              aria-label={t`Remove tag ${tag.name}`}
               onClick={async () => {
                 await TagService.RemoveTag(repoPath, imageId, tag.id)
                 refresh()
@@ -99,6 +100,7 @@ export function TagPicker({
           e.stopPropagation()
         }}
         placeholder={t`Add a tag…`}
+        aria-label={t`Add a tag`}
         className={cn(
           'w-full rounded-md border border-black/12 px-2.5 py-1.5 text-[12px] text-ink outline-none focus:border-primary'
         )}

@@ -42,6 +42,9 @@ export function PositionedMenu({
     const onPointerDown = (event: PointerEvent) => {
       if (!menuRef.current?.contains(event.target as Node)) onClose()
     }
+    // Kept alongside the menu's own onKeyDown handler: when the menu opens,
+    // focus can still sit outside it (e.g. after a canvas right-click), so
+    // this covers Escape for that case.
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
     }
@@ -63,7 +66,13 @@ export function PositionedMenu({
       className="fixed z-50 flex flex-col gap-0.5 rounded-lg border border-black/8 bg-card p-1.5 shadow-lg"
       style={{ left: Math.max(clampedX, 8), top: Math.max(clampedY, 8), width }}
       onClick={(e) => e.stopPropagation()}
-      onKeyDown={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        // Close before stopping propagation: the stopPropagation below keeps
+        // the window-level Escape listener from seeing keydown events that
+        // originate inside the menu (e.g. when an item has focus).
+        if (e.key === 'Escape') onClose()
+        e.stopPropagation()
+      }}
     >
       {items.map((item) => (
         <Fragment key={item.key}>

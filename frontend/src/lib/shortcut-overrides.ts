@@ -18,12 +18,15 @@ function sanitize(raw: unknown): Record<string, string> {
 
 export function readShortcutOverrides(): Record<string, string> {
   let raw: string | null
+  // localStorage access throws in restricted contexts (private mode, blocked
+  // storage); the throwing storage API is the only failure signal here.
   try {
     raw = localStorage.getItem(shortcutOverridesKey)
   } catch {
     return {}
   }
   if (!raw) return {}
+  // JSON.parse only reports malformed input by throwing an untyped SyntaxError.
   try {
     return sanitize(JSON.parse(raw))
   } catch {
@@ -32,6 +35,7 @@ export function readShortcutOverrides(): Record<string, string> {
 }
 
 export function writeShortcutOverrides(next: Record<string, string>): void {
+  // Best-effort persistence: warn and still notify listeners when storage throws.
   try {
     localStorage.setItem(shortcutOverridesKey, JSON.stringify(next))
   } catch (cause) {

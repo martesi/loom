@@ -107,6 +107,7 @@ export function PromptPicker({
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder={t`Name (optional)`}
+            aria-label={t`Prompt name (optional)`}
             className={cn(
               'w-full rounded-md border border-black/12 px-2.5 py-1.5 text-[12px] text-ink outline-none focus:border-primary'
             )}
@@ -115,6 +116,7 @@ export function PromptPicker({
             value={text}
             onChange={(e) => setText(e.target.value)}
             placeholder={t`Prompt text…`}
+            aria-label={t`Prompt text`}
             rows={3}
             className={cn(
               'w-full resize-none rounded-md border border-black/12 px-2.5 py-1.5 text-[12px] text-ink outline-none focus:border-primary'
@@ -124,6 +126,7 @@ export function PromptPicker({
             value={negative}
             onChange={(e) => setNegative(e.target.value)}
             placeholder={t`Negative prompt (optional)`}
+            aria-label={t`Negative prompt (optional)`}
             className={cn(
               'w-full rounded-md border border-black/12 px-2.5 py-1.5 text-[12px] text-ink outline-none focus:border-primary'
             )}

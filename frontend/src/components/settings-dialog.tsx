@@ -231,7 +231,7 @@ export function SettingsDialog({
           ref={popupRef}
           className="fixed left-1/2 top-1/2 z-[80] grid max-h-[calc(100dvh-2rem)] w-[min(44rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 grid-cols-1 gap-4 overflow-auto rounded-lg border border-black/10 bg-card p-4 text-ink shadow-xl outline-none sm:grid-cols-[10rem_1fr]"
         >
-          <header className="sm:col-span-2 flex items-center justify-between gap-2">
+          <header className="sm:col-span-2 sticky top-[-1rem] z-10 -mx-4 -mt-4 flex items-center justify-between gap-2 rounded-t-lg border-b border-black/10 bg-card/95 px-4 py-3 backdrop-blur">
             <Dialog.Title className="text-base font-semibold">
               <Trans>Settings</Trans>
             </Dialog.Title>
@@ -250,7 +250,7 @@ export function SettingsDialog({
           </header>
           <nav
             aria-label={t`Settings sections`}
-            className="flex gap-2 sm:sticky sm:top-0 sm:self-start sm:flex-col"
+            className="flex gap-2 sm:sticky sm:top-12 sm:self-start sm:flex-col"
           >
             {sections.map((section) => (
               <Button
@@ -284,7 +284,7 @@ export function SettingsDialog({
               }}
               data-section="keyboard"
               aria-labelledby="settings-keyboard-heading"
-              className="grid scroll-mt-2 content-start gap-3"
+              className="grid scroll-mt-16 content-start gap-3"
             >
               <h3
                 id="settings-keyboard-heading"

@@ -92,6 +92,14 @@ interface SelectContentProps
    * instead of covering it.
    */
   alignItemWithTrigger?: boolean
+  /**
+   * Extra classes for the popup and its positioner, used to change the layer
+   * the popup paints in. Pass it to lift a popup above an overlay that stacks
+   * higher than the default `z-50`, such as a dialog. The positioner needs the
+   * classes too: it is positioned and carries its own z-index, so it forms the
+   * stacking context the popup paints inside.
+   */
+  layerClassName?: string
 }
 
 /**
@@ -101,6 +109,7 @@ interface SelectContentProps
  */
 export function SelectContent({
   className,
+  layerClassName,
   render = <SelectPrimitive.Popup />,
   sideOffset = 4,
   align = 'start',
@@ -113,13 +122,13 @@ export function SelectContent({
         sideOffset={sideOffset}
         align={align}
         alignItemWithTrigger={alignItemWithTrigger}
-        className="z-50 outline-none"
+        className={cn('z-50 outline-none', layerClassName)}
       >
         {useRender({
           render,
           props: {
             ...props,
-            className: cn(selectPopupVariants({ className })),
+            className: cn(selectPopupVariants({ className }), layerClassName),
           },
         })}
       </SelectPrimitive.Positioner>

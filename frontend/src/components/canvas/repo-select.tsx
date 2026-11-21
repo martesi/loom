@@ -54,16 +54,17 @@ export function RepoSelect({ repo, openRequest = 0 }: RepoSelectProps) {
     [entries]
   )
 
-  const handleOpenChange = (open: boolean) => {
+  const handleOpenChange = (nextOpen: boolean) => {
     // Refresh on every open (not on every render) so "open elsewhere"
     // flags reflect windows opened/closed since the last look, without
     // hammering the backend while the panel just sits there.
-    if (!open) return
+    if (!nextOpen) return
     RepoService.ListRecentRepos().then((list) => setRecent(list ?? []))
   }
 
   const handleValueChange = (value: unknown) => {
-    const path = value as string
+    if (typeof value !== 'string') return
+    const path = value
     if (path === repo.path) return
 
     // Server mode has no OS windows for SwitchTo to spawn (its

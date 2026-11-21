@@ -20,6 +20,11 @@ interface Props {
   sectionRef: (element: HTMLElement | null) => void
 }
 
+// The settings dialog stacks its backdrop and popup at z-[80], above the
+// shared select default (z-50). Both selects here open from inside that
+// dialog, so their popups need a layer between the dialog and the tooltip.
+const dialogSelectLayer = 'z-[90]'
+
 export function AppearanceSettings({
   preferences,
   storageFailed,
@@ -31,7 +36,7 @@ export function AppearanceSettings({
       ref={sectionRef}
       data-section="appearance"
       aria-labelledby="settings-appearance-heading"
-      className="grid scroll-mt-2 content-start gap-3"
+      className="grid scroll-mt-16 content-start gap-3"
     >
       <h3 id="settings-appearance-heading" className="text-sm font-semibold">
         <Trans>Appearance</Trans>
@@ -53,7 +58,7 @@ export function AppearanceSettings({
           >
             <SelectValue />
           </SelectTrigger>
-          <SelectContent>
+          <SelectContent layerClassName={dialogSelectLayer}>
             <SelectItem value="system">
               <Trans>System</Trans>
             </SelectItem>
@@ -83,7 +88,7 @@ export function AppearanceSettings({
           >
             <SelectValue />
           </SelectTrigger>
-          <SelectContent>
+          <SelectContent layerClassName={dialogSelectLayer}>
             <SelectItem value="comfortable">
               <Trans>Comfortable</Trans>
             </SelectItem>
