@@ -39,8 +39,8 @@ task build
 
 WebKitGTK 2.54.1 could abort in `bubblewrapSpawn` when `PULSE_SERVER`
 contained a `unix:` socket address. Use the WebKitGTK version from the flake
-(2.54.2 or later). The development shells keep the sandbox enabled and
-select the WSLg socket only when it exists and `PULSE_SERVER` is unset.
+(2.54.2 or later). The development shells leave `PULSE_SERVER` unchanged
+and keep the sandbox enabled.
 
 If Loom still exits with `SIGABRT` before a window opens, enter a new Nix
 shell, check the WebKitGTK version, and rebuild. Compare the two WSLg display

@@ -56,12 +56,6 @@
           # GIO actually searches, so do that here.
           export XDG_DATA_DIRS="$GSETTINGS_SCHEMAS_PATH''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
 
-          # WebKitGTK 2.54.2 can bind an explicit Unix PulseAudio socket into
-          # its sandbox. WSLg's default PulseAudio symlink points outside it.
-          if [ -S /mnt/wslg/PulseServer ]; then
-            export PULSE_SERVER="''${PULSE_SERVER-unix:/mnt/wslg/PulseServer}"
-          fi
-
           # WSLg may expose a DRM render node backed by a host driver that is
           # not usable by the NixOS WebKitGTK closure. Treat WSL as a
           # software-rendered environment even when that node exists; without
