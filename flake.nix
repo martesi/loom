@@ -11,31 +11,10 @@
       let
         pkgs = import nixpkgs { inherit system; };
 
-        # nixpkgs only carries Wails v2, so the v3 CLI is built here. Keep the
-        # version in lockstep with github.com/wailsapp/wails/v3 in go.mod: the
-        # CLI generates and consumes code that the library must agree with.
-        wails3 = pkgs.buildGoModule rec {
-          pname = "wails3";
-          version = "3.1.0";
-
-          src = pkgs.fetchFromGitHub {
-            owner = "wailsapp";
-            repo = "wails";
-            rev = "v${version}";
-            hash = "sha256-Eqi2QEOdgjeJXYRtFJSYgqovDXn8PFoF5QExwhFg/+8=";
-          };
-
-          # The v3 module lives in a subdirectory of the repo.
-          sourceRoot = "${src.name}/v3";
-          subPackages = [ "cmd/wails3" ];
-          vendorHash = "sha256-VmWjstXfAcbNf/3XpP6pUPbq5K3EApSCANFVzKsruVE=";
-
-          nativeBuildInputs = [ pkgs.pkg-config ];
-          buildInputs = [ pkgs.gtk4 pkgs.webkitgtk_6_0 ];
-
-          # The CLI embeds templates and task files; tests want a display.
-          doCheck = false;
-        };
+        # Wails v3 CLI. nixpkgs carries it as pkgs.wails3, pinned here via
+        # flake.lock — keep that in lockstep with github.com/wailsapp/wails/v3
+        # in go.mod: the CLI generates and consumes code that the library
+        # must agree with.
         commonHook = ''
           export GOBIN="$PWD/.bin"
           export PATH="$GOBIN:$PATH"
@@ -90,18 +69,22 @@
         '';
 
         commonBuildInputs = [
-          wails3
+          # wails3 CLI (dev server, bindings, packaging). Library itself comes
+          # from go.mod via `go build`.
+          pkgs.wails3
           pkgs.go
           pkgs.go-task
           pkgs.gcc
           pkgs.pkg-config
           pkgs.gtk4
           pkgs.webkitgtk_6_0
+          # Both: bun builds/tests the frontend, node runs the agent harness
+          # (`node .agents/skills/e2e/scripts/harness.ts`) and Playwright.
           pkgs.nodejs
           pkgs.bun
-          pkgs.sqlite
+          # Runtime dep: internal/media/processor.go shells out to ffmpeg for
+          # transcoding/thumbnails (docs/init.md). Tests skip if absent.
           pkgs.ffmpeg
-          pkgs.imagemagick
 
           # Graphics stack. Nothing here pulls in a GPU: mesa carries the
           # llvmpipe/swrast DRI drivers and the lavapipe Vulkan ICD, which are
@@ -120,23 +103,27 @@
         ];
       in
       {
-        packages.wails3 = wails3;
-
         devShells.default = pkgs.mkShell {
           buildInputs = commonBuildInputs;
           shellHook = commonHook;
         };
 
-        # GUI closure (Xvfb, xdotool, imagemagick) split out from `default`
-        # so everyday development doesn't pay for it — see
-        # docs/panel-unification-plan.md's e2e verification steps, which are
-        # the only thing that needs this shell.
+        # GUI/test closure (Xvfb, xdotool, screenshots, sqlite3 CLI for e2e
+        # fixtures) split out from `default` so everyday development doesn't
+        # pay for it — see docs/panel-unification-plan.md's e2e verification
+        # steps, which are the only thing that needs this shell.
         devShells.e2e = pkgs.mkShell {
           buildInputs = commonBuildInputs ++ [
             pkgs.chromium
             pkgs.xvfb
             pkgs.xdpyinfo
             pkgs.xdotool
+            # `import` for screenshots (see .agents/skills/e2e/references/).
+            pkgs.imagemagick
+            # Only used by e2e specs (frontend/e2e/library.spec.ts seeds
+            # fixtures via the sqlite3 CLI); the app itself uses the pure-Go
+            # modernc.org/sqlite driver, no CLI needed.
+            pkgs.sqlite
           ];
           shellHook = ''
             ${commonHook}
