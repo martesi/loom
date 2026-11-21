@@ -81,8 +81,12 @@
           pkgs.wails3
           pkgs.go
           pkgs.go-task
-          pkgs.gcc
-          pkgs.pkg-config
+          # No gcc / pkg-config here: default builds are purego or server
+          # (both CGO_ENABLED=0), so no C toolchain is needed. gtk/webkit
+          # stay - purego dlopens their .so files at runtime, and the CGO=true
+          # opt-out still compiles against them. (Note: stdenv always provides
+          # a cc, and pkgs.wails3 propagates pkg-config + webkitgtk back into
+          # this shell, so CGO=true keeps working regardless.)
           pkgs.gtk4
           pkgs.webkitgtk_6_0
           # Both: bun builds/tests the frontend, node runs the agent harness

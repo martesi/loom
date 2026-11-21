@@ -33,9 +33,9 @@ tasks:
       - task: "{{.GOOS}}:run"
 
   dev:
-    summary: Runs the application in development mode (PUREGO=true for the cgo-free backend)
+    summary: Runs the application in development mode (purego backend by default; CGO=true selects cgo)
     cmds:
-      - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}{{if eq .PUREGO "true"}} -tags purego{{end}}
+      - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}{{if eq .CGO "true"}}{{else}} -tags purego{{end}}
 
   setup:docker:
     summary: Builds Docker image for cross-compilation (~800MB download)
