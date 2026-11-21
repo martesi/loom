@@ -3,16 +3,19 @@ package service
 import (
 	"encoding/base64"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"loom/internal/store"
 )
 
 const (
-	thumbURLPrefix = "/loom-asset/thumb/"
-	fullURLPrefix  = "/loom-asset/full/"
+	thumbURLPrefix   = "/loom-asset/thumb/"
+	fullURLPrefix    = "/loom-asset/full/"
+	previewURLPrefix = "/loom-asset/preview/"
 )
 
 func thumbURL(repoPath string, imageID int64) string {
@@ -23,6 +26,19 @@ func thumbURL(repoPath string, imageID int64) string {
 func fullURL(repoPath string, imageID int64) string {
 	enc := base64.RawURLEncoding.EncodeToString([]byte(repoPath))
 	return fullURLPrefix + enc + "/" + strconv.FormatInt(imageID, 10)
+}
+
+func previewURL(repoPath string, imageID int64, filePath string) string {
+	enc := base64.RawURLEncoding.EncodeToString([]byte(repoPath))
+	info, err := os.Stat(filePath)
+	var size int64
+	var modified time.Time
+	if err == nil {
+		size = info.Size()
+		modified = info.ModTime()
+	}
+	revision := previewRevision(filePath, size, modified)
+	return previewURLPrefix + enc + "/" + strconv.FormatInt(imageID, 10) + "?v=" + revision
 }
 
 // IsThumbRequest reports whether path should be routed to ServeThumb.

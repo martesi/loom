@@ -32,6 +32,8 @@ func appOptions() application.Options {
 	assetMiddleware := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch {
+			case service.IsPreviewRequest(r.URL.Path):
+				service.ServePreview(w, r)
 			case service.IsThumbRequest(r.URL.Path):
 				service.ServeThumb(w, r)
 			case service.IsFullRequest(r.URL.Path):

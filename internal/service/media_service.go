@@ -391,8 +391,14 @@ func purgeImages(r *store.Repo, ids []int64) error {
 		if err := os.RemoveAll(filepath.Join(r.Path, ".loom", "trash", "replacements", fmt.Sprint(img.ID))); err != nil {
 			return err
 		}
-		if _, err := r.DB.Exec("DELETE FROM images WHERE id = ?", img.ID); err != nil {
-			return err
+		releasePreviewLocks, err := lockAndRemovePreviewCacheForImage(r.Path, img.ID)
+		if err != nil {
+			return fmt.Errorf("purge preview cache: %w", err)
+		}
+		_, deleteErr := r.DB.Exec("DELETE FROM images WHERE id = ?", img.ID)
+		releasePreviewLocks()
+		if deleteErr != nil {
+			return deleteErr
 		}
 	}
 	_, err := r.DB.Exec("DELETE FROM groups WHERE NOT EXISTS (SELECT 1 FROM images WHERE group_id = groups.id)")

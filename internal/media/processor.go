@@ -2,6 +2,7 @@ package media
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +23,7 @@ type TranscodeOptions struct {
 
 type Processor interface {
 	Thumbnail(srcPath, destPath string, isVideo bool) (Dimensions, error)
+	Preview(ctx context.Context, srcPath, destPath string, maxWidth int, isVideo bool) error
 	Transcode(srcPath, destPath string, options TranscodeOptions) error
 }
 
@@ -55,6 +57,23 @@ func (FFmpegProcessor) Thumbnail(srcPath, destPath string, isVideo bool) (Dimens
 		return Dimensions{}, err
 	}
 	return dimensions, nil
+}
+
+func (FFmpegProcessor) Preview(ctx context.Context, srcPath, destPath string, maxWidth int, isVideo bool) error {
+	if maxWidth != 640 && maxWidth != 1280 && maxWidth != 2048 {
+		return fmt.Errorf("unsupported preview width %d", maxWidth)
+	}
+	args := []string{"-y"}
+	if isVideo {
+		midpoint, err := probeMidpointContext(ctx, srcPath)
+		if err != nil {
+			return fmt.Errorf("probe duration: %w", err)
+		}
+		args = append(args, "-ss", fmt.Sprintf("%.3f", midpoint))
+	}
+	args = append(args, "-i", srcPath, "-vf", fmt.Sprintf("scale='min(iw,%d)':'min(ih,4096)':force_original_aspect_ratio=decrease", maxWidth),
+		"-frames:v", "1", "-c:v", "libwebp", "-quality", "70", destPath)
+	return runFFmpegContext(ctx, args...)
 }
 
 func (FFmpegProcessor) Transcode(srcPath, destPath string, options TranscodeOptions) error {
@@ -105,7 +124,11 @@ func scaleFilter(maxWidth, maxHeight int) string {
 }
 
 func runFFmpeg(args ...string) error {
-	cmd := exec.Command("ffmpeg", args...)
+	return runFFmpegContext(context.Background(), args...)
+}
+
+func runFFmpegContext(ctx context.Context, args ...string) error {
+	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -140,7 +163,11 @@ func probeDimensions(path string) (Dimensions, error) {
 }
 
 func probeMidpoint(path string) (float64, error) {
-	out, err := exec.Command("ffprobe", "-v", "error", "-show_entries", "format=duration",
+	return probeMidpointContext(context.Background(), path)
+}
+
+func probeMidpointContext(ctx context.Context, path string) (float64, error) {
+	out, err := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-show_entries", "format=duration",
 		"-of", "csv=p=0", path).Output()
 	if err != nil {
 		return 0, err

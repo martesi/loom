@@ -1,12 +1,20 @@
 import { t } from '@lingui/core/macro'
-import { Handle, type NodeProps, NodeResizer, Position } from '@xyflow/react'
-import { memo, useState } from 'react'
+import {
+  Handle,
+  type NodeProps,
+  NodeResizer,
+  Position,
+  useStore,
+} from '@xyflow/react'
+import { memo, useEffect, useState } from 'react'
 import { DEFAULT_NODE_HEIGHT, DEFAULT_NODE_WIDTH } from '../../lib/node-size'
+import { previewRequestUrl, previewTierForNode } from '../../lib/preview-tier'
 import { cn } from '../../lib/utils'
 
 export interface ImageNodeData {
   fileName: string
   thumbUrl: string
+  previewUrl?: string
   missing: boolean
   showFileName: boolean
   width?: number
@@ -17,15 +25,120 @@ export interface ImageNodeData {
 
 export const ImageNode = memo(
   function ImageNode({ data, selected, width, height }: NodeProps) {
-    const { fileName, thumbUrl, missing, showFileName, onResizeEnd } =
-      data as unknown as ImageNodeData
-    const [imgFailed, setImgFailed] = useState(false)
+    const {
+      fileName,
+      thumbUrl,
+      previewUrl,
+      missing,
+      showFileName,
+      onResizeEnd,
+    } = data as unknown as ImageNodeData
+    const [failedThumbUrl, setFailedThumbUrl] = useState<string | null>(null)
     const [naturalSize, setNaturalSize] = useState<{
       w: number
       h: number
     } | null>(null)
 
     const nodeData = data as unknown as ImageNodeData
+    const previewKey = `${thumbUrl}\u0000${previewUrl ?? ''}`
+    const [devicePixelRatio, setDevicePixelRatio] = useState(() =>
+      typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1
+    )
+    useEffect(() => {
+      const updateDevicePixelRatio = () =>
+        setDevicePixelRatio(window.devicePixelRatio || 1)
+      window.addEventListener('resize', updateDevicePixelRatio)
+      return () => window.removeEventListener('resize', updateDevicePixelRatio)
+    }, [])
+    const calculatedTier = useStore((state) =>
+      previewTierForNode(
+        Number(width ?? DEFAULT_NODE_WIDTH),
+        Number(height ?? DEFAULT_NODE_HEIGHT),
+        Number(nodeData.width),
+        Number(nodeData.height),
+        state.transform[2],
+        devicePixelRatio
+      )
+    )
+    const [settledTier, setSettledTier] = useState<{
+      key: string
+      tier: 640 | 1280 | 2048 | null
+    } | null>(null)
+    useEffect(() => {
+      const timer = window.setTimeout(
+        () => setSettledTier({ key: previewKey, tier: calculatedTier }),
+        120
+      )
+      return () => window.clearTimeout(timer)
+    }, [calculatedTier, previewKey])
+    const requestTier =
+      settledTier?.key === previewKey ? settledTier.tier : null
+    const previewSrc =
+      !missing && previewUrl && requestTier
+        ? previewRequestUrl(previewUrl, requestTier)
+        : null
+    const [previewStatus, setPreviewStatus] = useState<{
+      key: string
+      requestSrc: string | null
+      loadedSrc?: string
+      loadedBase?: string
+      failures: number
+      retryToken: number
+    } | null>(null)
+    const assetPreviewStatus =
+      previewStatus?.key === previewKey ? previewStatus : null
+    const requestStatus =
+      assetPreviewStatus?.requestSrc === previewSrc ? assetPreviewStatus : null
+    const retryFailures = requestStatus?.failures ?? 0
+    useEffect(() => {
+      setPreviewStatus((previous) => {
+        if (previous?.key === previewKey && previous.requestSrc === previewSrc)
+          return previous
+        return {
+          key: previewKey,
+          requestSrc: previewSrc,
+          loadedSrc:
+            previous?.key === previewKey ? previous.loadedSrc : undefined,
+          loadedBase:
+            previous?.key === previewKey ? previous.loadedBase : undefined,
+          failures: 0,
+          retryToken: 0,
+        }
+      })
+    }, [previewKey, previewSrc])
+    useEffect(() => {
+      if (!previewSrc || missing || retryFailures < 1 || retryFailures > 2)
+        return
+      const delay = retryFailures === 1 ? 1000 : 3000
+      const timer = window.setTimeout(() => {
+        setPreviewStatus((previous) => {
+          if (
+            previous?.key !== previewKey ||
+            previous.requestSrc !== previewSrc ||
+            previous.failures !== retryFailures
+          )
+            return previous
+          return { ...previous, retryToken: retryFailures }
+        })
+      }, delay)
+      return () => window.clearTimeout(timer)
+    }, [missing, previewKey, previewSrc, retryFailures])
+    const loadedPreviewSrc =
+      !missing && requestTier ? assetPreviewStatus?.loadedSrc : null
+    const pendingPreviewSrc =
+      previewSrc &&
+      requestStatus?.loadedBase !== previewSrc &&
+      (requestStatus?.failures ?? 0) < 3
+        ? requestStatus?.retryToken
+          ? `${previewSrc}&retry=${requestStatus.retryToken}`
+          : previewSrc
+        : null
+    const previewLayers = [
+      ...(loadedPreviewSrc && loadedPreviewSrc !== pendingPreviewSrc
+        ? [{ src: loadedPreviewSrc, loaded: true }]
+        : []),
+      ...(pendingPreviewSrc ? [{ src: pendingPreviewSrc, loaded: false }] : []),
+    ]
     const imgWidth = (nodeData.width as number) || naturalSize?.w
     const imgHeight = (nodeData.height as number) || naturalSize?.h
     const resolutionStr =
@@ -64,17 +177,22 @@ export const ImageNode = memo(
           }
         />
         <div className={cn('relative flex-1 min-h-0', missing && 'grayscale')}>
-          {thumbUrl && !imgFailed ? (
+          {thumbUrl && failedThumbUrl !== thumbUrl ? (
             <img
               src={thumbUrl}
               alt=""
               draggable={false}
               decoding="async"
               className="h-full w-full rounded-t-lg object-cover"
-              onError={() => setImgFailed(true)}
+              onError={() => setFailedThumbUrl(thumbUrl)}
               onLoad={(e) => {
                 const img = e.currentTarget
-                if (!naturalSize && img.naturalWidth && img.naturalHeight) {
+                if (
+                  img.currentSrc.endsWith(thumbUrl) &&
+                  !naturalSize &&
+                  img.naturalWidth &&
+                  img.naturalHeight
+                ) {
                   setNaturalSize({ w: img.naturalWidth, h: img.naturalHeight })
                 }
               }}
@@ -82,6 +200,63 @@ export const ImageNode = memo(
           ) : (
             <div className="h-full w-full rounded-t-lg bg-[repeating-linear-gradient(45deg,#EDEBE9_0px,#EDEBE9_10px,#E1DFDD_10px,#E1DFDD_20px)]" />
           )}
+          {previewLayers.map(({ src, loaded }) => (
+            <img
+              data-testid={
+                loaded ? 'image-node-preview-loaded' : 'image-node-preview'
+              }
+              key={src}
+              src={src}
+              alt=""
+              decoding="async"
+              draggable={false}
+              className={cn(
+                'pointer-events-none absolute inset-0 h-full w-full rounded-t-lg object-cover transition-opacity duration-150 motion-reduce:transition-none',
+                loaded ? 'opacity-100' : 'opacity-0'
+              )}
+              onLoad={(event) => {
+                if (
+                  !pendingPreviewSrc ||
+                  !event.currentTarget.currentSrc.endsWith(pendingPreviewSrc)
+                )
+                  return
+                setPreviewStatus(() => ({
+                  key: previewKey,
+                  requestSrc: previewSrc,
+                  loadedSrc: pendingPreviewSrc,
+                  loadedBase: previewSrc ?? undefined,
+                  failures: 0,
+                  retryToken: 0,
+                }))
+              }}
+              onError={(event) => {
+                if (
+                  !pendingPreviewSrc ||
+                  !event.currentTarget.currentSrc.endsWith(pendingPreviewSrc)
+                )
+                  return
+                setPreviewStatus((previous) => {
+                  const sameRequest =
+                    previous?.key === previewKey &&
+                    previous.requestSrc === previewSrc
+                  return {
+                    key: previewKey,
+                    requestSrc: previewSrc,
+                    loadedSrc:
+                      previous?.key === previewKey
+                        ? previous.loadedSrc
+                        : undefined,
+                    loadedBase:
+                      previous?.key === previewKey
+                        ? previous.loadedBase
+                        : undefined,
+                    failures: sameRequest ? previous.failures + 1 : 1,
+                    retryToken: sameRequest ? previous.retryToken : 0,
+                  }
+                })
+              }}
+            />
+          ))}
           {missing && (
             <div
               role="img"

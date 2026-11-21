@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/base64"
 	"os"
 	"os/exec"
@@ -23,6 +24,10 @@ func (p *recordingMediaProcessor) Thumbnail(_, destPath string, _ bool) (media.D
 		return media.Dimensions{}, err
 	}
 	return media.Dimensions{Width: 12, Height: 34}, nil
+}
+
+func (p *recordingMediaProcessor) Preview(context.Context, string, string, int, bool) error {
+	return nil
 }
 
 func (p *recordingMediaProcessor) Transcode(_, _ string, _ media.TranscodeOptions) error {
@@ -223,10 +228,21 @@ func TestReplaceMediaPreservesIdentityAndUndoRedo(t *testing.T) {
 	if _, err := os.Stat(stashDir); err != nil {
 		t.Fatalf("replacement stash missing before purge: %v", err)
 	}
+	previewDir := filepath.Join(repoPath, ".loom", "previews")
+	if err := os.MkdirAll(previewDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	previewFile := filepath.Join(previewDir, strconv.FormatInt(imageID, 10)+"-640-old.webp")
+	if err := os.WriteFile(previewFile, []byte("preview"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := images.PurgeImages(repoPath, []int64{imageID}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(stashDir); !os.IsNotExist(err) {
 		t.Fatalf("replacement stash remains after purge: %v", err)
+	}
+	if _, err := os.Stat(previewFile); !os.IsNotExist(err) {
+		t.Fatalf("preview cache remains after purge: %v", err)
 	}
 }

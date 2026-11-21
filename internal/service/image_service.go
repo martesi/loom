@@ -30,6 +30,7 @@ type ImageInfo struct {
 	FileName   string  `json:"fileName"`
 	FilePath   string  `json:"filePath"`
 	ThumbURL   string  `json:"thumbUrl"`
+	PreviewURL string  `json:"previewUrl"`
 	FullURL    string  `json:"fullUrl"`
 	Width      int     `json:"width"`
 	Height     int     `json:"height"`
@@ -169,6 +170,7 @@ func (s *ImageService) LoadCanvas(repoPath string) (*CanvasData, error) {
 			FileName:   filepath.Base(img.FilePath),
 			FilePath:   img.FilePath,
 			ThumbURL:   thumbURL(repoPath, img.ID),
+			PreviewURL: previewURL(repoPath, img.ID, img.FilePath),
 			FullURL:    fullURL(repoPath, img.ID),
 			Width:      img.Width,
 			Height:     img.Height,
@@ -226,6 +228,7 @@ func (s *ImageService) GetImage(repoPath string, imageID int64) (*ImageInfo, err
 		FileName:   filepath.Base(img.FilePath),
 		FilePath:   img.FilePath,
 		ThumbURL:   thumbURL(repoPath, img.ID),
+		PreviewURL: previewURL(repoPath, img.ID, img.FilePath),
 		FullURL:    fullURL(repoPath, img.ID),
 		Width:      img.Width,
 		Height:     img.Height,
@@ -615,6 +618,7 @@ func (s *ImageService) ListDirectory(repoPath, relPath string) (*DirListing, err
 			FileName:   filepath.Base(img.FilePath),
 			FilePath:   img.FilePath,
 			ThumbURL:   thumbURL(repoPath, img.ID),
+			PreviewURL: previewURL(repoPath, img.ID, img.FilePath),
 			FullURL:    fullURL(repoPath, img.ID),
 			Width:      img.Width,
 			Height:     img.Height,

@@ -108,6 +108,7 @@ export function useCanvasBoardModel({
         data: {
           fileName: image.fileName,
           thumbUrl: image.thumbUrl,
+          previewUrl: image.previewUrl,
           missing: image.missing,
           showFileName: true,
           width: image.width,
