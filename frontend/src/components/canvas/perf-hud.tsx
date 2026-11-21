@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
 import { useReactFlow } from '@xyflow/react'
+import { useEffect, useRef, useState } from 'react'
 
 interface TaskEntry {
   start: number
@@ -97,7 +97,9 @@ export function PerfHud({ onClose }: { onClose: () => void }) {
     framesRef.current = []
     tasksRef.current = []
     loafsRef.current = []
-    observersRef.current.forEach((observer) => observer.disconnect())
+    observersRef.current.forEach((observer) => {
+      observer.disconnect()
+    })
     observersRef.current = []
     const tasks = new PerformanceObserver((list) => {
       for (const entry of list.getEntries())
@@ -136,7 +138,9 @@ export function PerfHud({ onClose }: { onClose: () => void }) {
     const dragEnd = performance.now()
     const dragStart = startRef.current
     recordingRef.current = false
-    observersRef.current.forEach((observer) => observer.disconnect())
+    observersRef.current.forEach((observer) => {
+      observer.disconnect()
+    })
     observersRef.current = []
     setRecording(false)
     const inWindow = (task: TaskEntry) =>
@@ -149,16 +153,14 @@ export function PerfHud({ onClose }: { onClose: () => void }) {
           Math.round(windowed.reduce((sum, t) => sum + t.duration, 0) * 10) /
           10,
         maxMs:
-          Math.round(Math.max(0, ...windowed.map((t) => t.duration)) * 10) /
-          10,
+          Math.round(Math.max(0, ...windowed.map((t) => t.duration)) * 10) / 10,
       }
     }
     const frames = framesRef.current.filter(
       (at) => at >= dragStart && at <= dragEnd
     )
     const gaps: number[] = []
-    for (let i = 1; i < frames.length; i++)
-      gaps.push(frames[i] - frames[i - 1])
+    for (let i = 1; i < frames.length; i++) gaps.push(frames[i] - frames[i - 1])
     const sorted = [...gaps].sort((a, b) => a - b)
     const spanMs = frames.length > 1 ? frames[frames.length - 1] - frames[0] : 0
     setResult({
@@ -195,19 +197,19 @@ export function PerfHud({ onClose }: { onClose: () => void }) {
   }
 
   function readHeapMB(): { used: number | null; total: number | null } | null {
-  const memory = (
-    performance as Performance & {
-      memory?: { usedJSHeapSize: number; totalJSHeapSize: number }
+    const memory = (
+      performance as Performance & {
+        memory?: { usedJSHeapSize: number; totalJSHeapSize: number }
+      }
+    ).memory
+    if (!memory) return null
+    return {
+      used: Math.round(memory.usedJSHeapSize / 1048576),
+      total: Math.round(memory.totalJSHeapSize / 1048576),
     }
-  ).memory
-  if (!memory) return null
-  return {
-    used: Math.round(memory.usedJSHeapSize / 1048576),
-    total: Math.round(memory.totalJSHeapSize / 1048576),
   }
-}
 
-async function copyResult() {
+  async function copyResult() {
     if (!result) return
     const text = JSON.stringify(result, null, 2)
     try {
@@ -225,9 +227,8 @@ async function copyResult() {
   }
 
   return (
-    <div
+    <aside
       data-testid="perf-hud"
-      role="complementary"
       aria-label="Performance HUD"
       className="absolute bottom-4 right-4 z-50 w-72 rounded-lg border border-border bg-card/95 p-3 text-xs shadow-2xl backdrop-blur-xl"
       onPointerDown={(event) => event.stopPropagation()}
@@ -335,6 +336,6 @@ async function copyResult() {
           </dd>
         </dl>
       )}
-    </div>
+    </aside>
   )
 }

@@ -78,7 +78,9 @@ test('sustained node-drag frame rate and cpu profile', async ({ page }) => {
   if (expected > 10) {
     // Worst case: every node moves, so every memo fails and all nodes
     // re-render per pointermove.
-    await page.locator('.react-flow__pane').click({ position: { x: 100, y: 100 } })
+    await page
+      .locator('.react-flow__pane')
+      .click({ position: { x: 100, y: 100 } })
     await page.keyboard.press('Control+a')
     // Culling-proof: offscreen selected nodes are unmounted, so the selected
     // count is asserted on the dock (data-driven), not the DOM.
@@ -124,9 +126,7 @@ async function measurePhase(
   await page.mouse.up()
   const dragEnd = await page.evaluate(() => performance.now())
   await page.evaluate(() => {
-    ;(
-      window as unknown as { __stopCollect?: boolean }
-    ).__stopCollect = true
+    ;(window as unknown as { __stopCollect?: boolean }).__stopCollect = true
   })
   const endBox = await node.boundingBox()
   const { profile } = (await cdp.send('Profiler.stop')) as {
@@ -150,18 +150,17 @@ async function measurePhase(
   // Node-side timeout always fires, frames are just truncated.
   const { frames, longtasks } = await Promise.race([
     collect,
-    page
-      .waitForTimeout(15_000)
-      .then(() => ({ frames: [] as number[], longtasks: [] as Array<{ start: number; duration: number }> })),
+    page.waitForTimeout(15_000).then(() => ({
+      frames: [] as number[],
+      longtasks: [] as Array<{ start: number; duration: number }>,
+    })),
   ])
   moveMs.sort((a, b) => a - b)
 
   const gaps: Array<{ at: number; gap: number }> = []
   for (let i = 1; i < frames.length; i++)
     gaps.push({ at: frames[i], gap: frames[i] - frames[i - 1] })
-  const windowFrames = gaps.filter(
-    ({ at }) => at >= dragStart && at <= dragEnd
-  )
+  const windowFrames = gaps.filter(({ at }) => at >= dragStart && at <= dragEnd)
   const sortedGaps = windowFrames.map(({ gap }) => gap).sort((a, b) => a - b)
   const percentile = (p: number) =>
     sortedGaps.length
@@ -219,13 +218,15 @@ async function measurePhase(
           windowLongtasks.reduce((sum, task) => sum + task.duration, 0) * 10
         ) / 10,
       maxMs:
-        Math.round(Math.max(0, ...windowLongtasks.map((t) => t.duration)) * 10) /
-        10,
+        Math.round(
+          Math.max(0, ...windowLongtasks.map((t) => t.duration)) * 10
+        ) / 10,
     },
     moveRoundTripMs: {
       avg:
         Math.round(
-          (moveMs.reduce((sum, ms) => sum + ms, 0) / Math.max(1, moveMs.length)) *
+          (moveMs.reduce((sum, ms) => sum + ms, 0) /
+            Math.max(1, moveMs.length)) *
             10
         ) / 10,
       p50: moveMs.length

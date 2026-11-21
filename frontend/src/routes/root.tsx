@@ -12,9 +12,19 @@ export const preferencesSchema = z.object({
   showResolution: z.boolean().optional(),
   version: z.literal(1).optional(),
 })
-export type Preferences = { theme: 'system' | 'light' | 'dark'; density: 'comfortable' | 'compact'; showTitle: boolean; showResolution: boolean }
+export type Preferences = {
+  theme: 'system' | 'light' | 'dark'
+  density: 'comfortable' | 'compact'
+  showTitle: boolean
+  showResolution: boolean
+}
 export const preferencesStorageKey = 'loom.preferences.v1'
-export const defaultPreferences: Preferences = { theme: 'system', density: 'comfortable', showTitle: true, showResolution: true }
+export const defaultPreferences: Preferences = {
+  theme: 'system',
+  density: 'comfortable',
+  showTitle: true,
+  showResolution: true,
+}
 
 export function readPreferences(): { value: Preferences; failed: boolean } {
   let raw: string | null
@@ -43,7 +53,8 @@ export function readPreferences(): { value: Preferences; failed: boolean } {
       theme: result.data.theme ?? defaultPreferences.theme,
       density: result.data.density ?? defaultPreferences.density,
       showTitle: result.data.showTitle ?? defaultPreferences.showTitle,
-      showResolution: result.data.showResolution ?? defaultPreferences.showResolution,
+      showResolution:
+        result.data.showResolution ?? defaultPreferences.showResolution,
     },
     failed: false,
   }
@@ -53,7 +64,9 @@ function applyPreferences(preferences: Preferences) {
   const root = document.documentElement
   root.dataset.theme =
     preferences.theme === 'system'
-      ? window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+      ? window.matchMedia('(prefers-color-scheme: dark)').matches
+        ? 'dark'
+        : 'light'
       : preferences.theme
   root.dataset.density = preferences.density
   root.dataset.showTitle = String(preferences.showTitle)
@@ -83,13 +96,16 @@ function Root() {
       apply()
     }
     const updated = (event: Event) => {
-      const parsed = preferencesSchema.safeParse((event as CustomEvent<unknown>).detail)
+      const parsed = preferencesSchema.safeParse(
+        (event as CustomEvent<unknown>).detail
+      )
       if (!parsed.success) return
       preferences = {
         theme: parsed.data.theme ?? defaultPreferences.theme,
         density: parsed.data.density ?? defaultPreferences.density,
         showTitle: parsed.data.showTitle ?? defaultPreferences.showTitle,
-        showResolution: parsed.data.showResolution ?? defaultPreferences.showResolution,
+        showResolution:
+          parsed.data.showResolution ?? defaultPreferences.showResolution,
       }
       apply()
     }

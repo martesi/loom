@@ -1,9 +1,5 @@
 import { expect, test } from './test-fixtures'
-import {
-  imageNodes,
-  dropAsset,
-  openFixtureRepo,
-} from './test-helpers'
+import { dropAsset, imageNodes, openFixtureRepo } from './test-helpers'
 
 async function nodePosition(node: ReturnType<typeof imageNodes>) {
   const transform = await node.evaluate(
@@ -30,7 +26,10 @@ test('select, arrange, align, create and expand a set, then restore viewport', a
     button: 'right',
     position: { x: 1000, y: 500 },
   })
-  await page.getByRole('menu').getByRole('button', { name: 'Select all' }).click()
+  await page
+    .getByRole('menu')
+    .getByRole('button', { name: 'Select all' })
+    .click()
   await expect(page.locator('.react-flow__node.selected')).toHaveCount(3)
   await expect(page.getByTestId('dock-arrange-selection')).toBeVisible()
   await page.getByTestId('dock-arrange-selection').click()
@@ -51,8 +50,10 @@ test('select, arrange, align, create and expand a set, then restore viewport', a
       const positions = await Promise.all(
         [0, 1, 2].map((index) => nodePosition(nodes.nth(index)))
       )
-      return Math.max(...positions.map(({ y }) => y)) -
+      return (
+        Math.max(...positions.map(({ y }) => y)) -
         Math.min(...positions.map(({ y }) => y))
+      )
     })
     .toBeLessThanOrEqual(1)
 
@@ -80,11 +81,12 @@ test('select, arrange, align, create and expand a set, then restore viewport', a
   }
 
   const viewport = page.locator('.react-flow__viewport')
-  const waitForViewportSave = () => page.waitForResponse(
-    (response) =>
-      response.url().endsWith('/wails/runtime') &&
-      response.request().postData()?.includes('"methodID":248266558') === true
-  )
+  const waitForViewportSave = () =>
+    page.waitForResponse(
+      (response) =>
+        response.url().endsWith('/wails/runtime') &&
+        response.request().postData()?.includes('"methodID":248266558') === true
+    )
   const fitSaved = waitForViewportSave()
   await page.keyboard.press('Shift+1')
   await fitSaved
@@ -120,8 +122,10 @@ test('select, arrange, align, create and expand a set, then restore viewport', a
       const positions = await Promise.all(
         [0, 1, 2].map((index) => nodePosition(nodes.nth(index)))
       )
-      return Math.max(...positions.map(({ y }) => y)) -
+      return (
+        Math.max(...positions.map(({ y }) => y)) -
         Math.min(...positions.map(({ y }) => y))
+      )
     })
     .toBeLessThanOrEqual(1)
 })

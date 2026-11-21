@@ -260,7 +260,9 @@ export function AssetGallery({
                           {row.fileName}
                         </span>
                       )}
-                      {overlays.dimensions && dimensions && <span>{dimensions}</span>}
+                      {overlays.dimensions && dimensions && (
+                        <span>{dimensions}</span>
+                      )}
                       {overlays.tags && !!row.tags?.length && (
                         <span className="truncate">{row.tags.join(', ')}</span>
                       )}

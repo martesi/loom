@@ -136,9 +136,7 @@ test('lightbox chrome layout, info toggle, and history navigation', async ({
   const center = await slideAreaCenter()
   await page.mouse.move(center.x, center.y)
   await page.mouse.wheel(0, -600)
-  await expect
-    .poll(maxSlideWidth)
-    .toBeGreaterThan(beforeZoom)
+  await expect.poll(maxSlideWidth).toBeGreaterThan(beforeZoom)
 
   // Download points at the current image.
   const download = page.getByTestId('lightbox-download')

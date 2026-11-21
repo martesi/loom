@@ -14,7 +14,10 @@ test('repro: fully enclosed image and set can be lost during controlled select r
   expect(
     applyCanvasNodeSelection(
       staleSelection,
-      [{ id: '12', selected: false }, { id: '12', selected: true }],
+      [
+        { id: '12', selected: false },
+        { id: '12', selected: true },
+      ],
       false,
       []
     )
@@ -31,7 +34,12 @@ test('repro: fully enclosed image and set can be lost during controlled select r
 
 test('partial intersections on either side select; additive selection preserves anchor', () => {
   expect(
-    applyCanvasNodeSelection(emptySelection, [{ id: '8', selected: true }], false, [])
+    applyCanvasNodeSelection(
+      emptySelection,
+      [{ id: '8', selected: true }],
+      false,
+      []
+    )
   ).toEqual({ surface: 'canvas', ids: [8], edges: [], group: null })
   expect(
     applyCanvasNodeSelection(
@@ -47,7 +55,10 @@ test('additive marquee does not lose an already selected set on stale deselectio
   expect(
     applyCanvasNodeSelection(
       { surface: 'canvas', ids: [3], edges: [], group: 7 },
-      [{ id: 'set-7', selected: false }, { id: '8', selected: true }],
+      [
+        { id: 'set-7', selected: false },
+        { id: '8', selected: true },
+      ],
       true,
       [3]
     )

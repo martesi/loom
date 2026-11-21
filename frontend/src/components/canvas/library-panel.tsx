@@ -1,4 +1,4 @@
-import { plural, t } from '@lingui/core/macro'
+import { plural } from '@lingui/core/macro'
 import { Trans } from '@lingui/react/macro'
 import { type DragEvent, memo, useEffect, useRef, useState } from 'react'
 import {
@@ -7,6 +7,7 @@ import {
   LibraryService,
   TagService,
 } from '../../../bindings/loom/internal/service'
+import { parseAssetDragPayload } from '../../lib/asset-drag-payload'
 import {
   type AssetLayout,
   type AssetSort,
@@ -16,20 +17,15 @@ import {
   sortAssetRows,
 } from '../../lib/asset-views'
 import type { Selection } from '../../lib/selection'
+import { Button } from '../ui/button'
 import { AssetGallery } from './asset-gallery'
 import { AssetList } from './asset-list'
-import { AssetViewControls } from './asset-view-controls'
-import { Button } from '../ui/button'
-import { FolderNavigator } from './folder-navigator'
 import {
   type AssetContextMenuState,
   LibraryContextMenu,
 } from './library-context-menu'
+import { LibraryFilterControls } from './library-filter-controls'
 import { useSavedAssetViews } from './use-saved-asset-views'
-import { parseAssetDragPayload } from '../../lib/asset-drag-payload'
-
-const fieldClass =
-  'h-8 w-full rounded-sm border border-black/12 bg-card px-2 text-xs text-ink outline-none focus-visible:ring-2 focus-visible:ring-primary/40'
 
 interface Props {
   path: string
@@ -204,7 +200,18 @@ export const LibraryPanel = memo(function LibraryPanel({
     return () => {
       cancelled = true
     }
-  }, [path, mode, folder, search, status, placement, tagId, sort, refresh, retryCount])
+  }, [
+    path,
+    mode,
+    folder,
+    search,
+    status,
+    placement,
+    tagId,
+    sort,
+    refresh,
+    retryCount,
+  ])
   const selected = selection.surface === 'assets' ? selection.ids : []
   const activeFilterCount =
     Number(Boolean(search)) +
@@ -246,8 +253,9 @@ export const LibraryPanel = memo(function LibraryPanel({
       }
       if (refreshError)
         console.error('asset move refresh failed', { cause: refreshError })
-      const contexts = failures.map(({ id, cause }) =>
-        `Asset ${id}: ${cause instanceof Error ? cause.message : String(cause)}`
+      const contexts = failures.map(
+        ({ id, cause }) =>
+          `Asset ${id}: ${cause instanceof Error ? cause.message : String(cause)}`
       )
       const refreshed = refreshError
         ? ` Refresh failed: ${refreshError instanceof Error ? refreshError.message : String(refreshError)}`
@@ -336,189 +344,60 @@ export const LibraryPanel = memo(function LibraryPanel({
           </button>
         ))}
       </div>
-      {mode === 'all' ? (
-        <div className="grid gap-2 p-2">
-          <AssetViewControls
-            views={views}
-            savedViewIds={savedViewIds}
-            selectedViewId={selectedViewId}
-            viewsLoaded={viewsLoaded}
-            loadError={viewsLoadError}
-            saveStatus={saveStatus}
-            sort={sort}
-            layout={layout}
-            density={galleryDensity}
-            fit={imageFit}
-            overlays={overlays}
-            onSelectView={selectAssetView}
-            onRetryLoad={retryLoad}
-            onSaveView={saveAssetView}
-            onDeleteView={deleteAssetView}
-            onSortChange={setSort}
-            onLayoutChange={setLayout}
-            onDensityChange={setGalleryDensity}
-            onFitChange={setImageFit}
-            onOverlayChange={setOverlay}
-          />
-          <div className="flex gap-1.5">
-            <input
-              ref={searchInput}
-              className={fieldClass}
-              aria-label={t`Search assets`}
-              placeholder={t`Search assets`}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-            <button
-              type="button"
-              aria-expanded={filtersOpen}
-              onClick={() => setFiltersOpen((open) => !open)}
-              className="h-8 shrink-0 rounded-sm border border-black/12 px-2.5 font-semibold text-ink-muted outline-none hover:bg-black/[0.03] focus-visible:ring-2 focus-visible:ring-primary/40"
-            >
-              <Trans>Filters</Trans>
-              {activeFilterCount > 0 && <> {activeFilterCount}</>}
-            </button>
-          </div>
-          {filtersOpen && (
-            <div className="grid gap-1.5 rounded-md border border-black/6 bg-black/[0.015] p-2">
-              <select
-                className={fieldClass}
-                aria-label={t`Asset state`}
-                value={status}
-                onChange={(e) => setStatus(e.target.value)}
-              >
-                <option value="active">
-                  <Trans>active</Trans>
-                </option>
-                <option value="all">
-                  <Trans>all</Trans>
-                </option>
-                <option value="archived">
-                  <Trans>archived</Trans>
-                </option>
-                <option value="trashed">
-                  <Trans>trashed</Trans>
-                </option>
-                <option value="missing">
-                  <Trans>missing</Trans>
-                </option>
-              </select>
-              <select
-                className={fieldClass}
-                aria-label={t`Placement`}
-                value={placement}
-                onChange={(e) => setPlacement(e.target.value)}
-              >
-                <option value="">
-                  <Trans>All placements</Trans>
-                </option>
-                <option value="placed">
-                  <Trans>placed</Trans>
-                </option>
-                <option value="unplaced">
-                  <Trans>unplaced</Trans>
-                </option>
-              </select>
-              <select
-                className={fieldClass}
-                aria-label={t`Tag filter`}
-                value={tagId}
-                onChange={(e) => setTagId(Number(e.target.value))}
-              >
-                <option value={0}>
-                  <Trans>All tags</Trans>
-                </option>
-                {tags.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-          {activeFilterCount > 0 && (
-            <div className="flex flex-wrap items-center gap-1">
-              {search && (
-                <Button
-                  type="button"
-                  aria-label={t`Remove search filter: ${search}`}
-                  onClick={() => setSearch('')}
-                  variant="ghost"
-                  size="sm"
-                  className="h-auto rounded-full bg-primary-soft px-2 py-1 text-[11px] text-ink"
-                >
-                  {t`Search`}: {search} ×
-                </Button>
-              )}
-              {status !== 'active' && (
-                <Button
-                  type="button"
-                  aria-label={t`Remove asset state filter: ${status}`}
-                  onClick={() => setStatus('active')}
-                  variant="ghost"
-                  size="sm"
-                  className="h-auto rounded-full bg-primary-soft px-2 py-1 text-[11px] text-ink"
-                >
-                  {status === 'all' ? <Trans>All</Trans> : status === 'active' ? <Trans>Active</Trans> : status === 'archived' ? <Trans>Archived</Trans> : status === 'trashed' ? <Trans>Trash</Trans> : <Trans>Missing</Trans>} ×
-                </Button>
-              )}
-              {placement && (
-                <Button
-                  type="button"
-                  aria-label={t`Remove placement filter: ${placement}`}
-                  onClick={() => setPlacement('')}
-                  variant="ghost"
-                  size="sm"
-                  className="h-auto rounded-full bg-primary-soft px-2 py-1 text-[11px] text-ink"
-                >
-                  {placement === 'placed' ? <Trans>Placed</Trans> : <Trans>Unplaced</Trans>} ×
-                </Button>
-              )}
-              {tagId > 0 && (
-                <Button
-                  type="button"
-                  aria-label={t`Remove tag filter: ${tagName ?? 'Unavailable tag'}`}
-                  onClick={() => setTagId(0)}
-                  variant="ghost"
-                  size="sm"
-                  className="h-auto rounded-full bg-primary-soft px-2 py-1 text-[11px] text-ink"
-                >
-                  {tagName ?? <Trans>Unavailable tag</Trans>} ×
-                </Button>
-              )}
-              <Button
-                type="button"
-                onClick={() => {
-                  setSearch('')
-                  setStatus('active')
-                  setPlacement('')
-                  setTagId(0)
-                }}
-                variant="ghost"
-                size="sm"
-                className="h-auto rounded-full px-2 py-1 text-[11px] text-ink-muted underline"
-              >
-                <Trans>Clear filters</Trans>
-              </Button>
-            </div>
-          )}
-        </div>
-      ) : (
-        <FolderNavigator
-          folder={folder}
-          dirs={dirs}
-          onFolderChange={setFolder}
-          onDropInto={dropInto}
-        />
-      )}
+      <LibraryFilterControls
+        mode={mode}
+        views={views}
+        savedViewIds={savedViewIds}
+        selectedViewId={selectedViewId}
+        viewsLoaded={viewsLoaded}
+        viewsLoadError={viewsLoadError}
+        saveStatus={saveStatus}
+        sort={sort}
+        layout={layout}
+        galleryDensity={galleryDensity}
+        imageFit={imageFit}
+        overlays={overlays}
+        onSelectView={selectAssetView}
+        onRetryLoad={retryLoad}
+        onSaveView={saveAssetView}
+        onDeleteView={deleteAssetView}
+        onSortChange={setSort}
+        onLayoutChange={setLayout}
+        onDensityChange={setGalleryDensity}
+        onFitChange={setImageFit}
+        onOverlayChange={setOverlay}
+        searchRef={searchInput}
+        search={search}
+        onSearchChange={setSearch}
+        filtersOpen={filtersOpen}
+        onFiltersOpenChange={setFiltersOpen}
+        status={status}
+        onStatusChange={setStatus}
+        placement={placement}
+        onPlacementChange={setPlacement}
+        tagId={tagId}
+        onTagChange={setTagId}
+        tags={tags}
+        activeFilterCount={activeFilterCount}
+        tagName={tagName}
+        folder={folder}
+        dirs={dirs}
+        onFolderChange={setFolder}
+        onDropInto={dropInto}
+      />
       <div className="px-2 pb-1 text-[11px] text-ink-subtle">
-        <span>{plural(sortedRows.length, { one: '# asset', other: '# assets' })}</span>
-        {(
+        <span>
+          {plural(sortedRows.length, { one: '# asset', other: '# assets' })}
+        </span>
+        {
           <span className="ml-2">
-            {plural(selected.length, { one: '# selected', other: '# selected' })}
+            {plural(selected.length, {
+              one: '# selected',
+              other: '# selected',
+            })}
           </span>
-        )}
-              {sortedRows.length > 0 && !loading && !loadError && (
+        }
+        {sortedRows.length > 0 && !loading && !loadError && (
           <Button
             type="button"
             variant="ghost"

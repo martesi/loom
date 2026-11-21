@@ -56,7 +56,9 @@ test.describe('P0 lifecycle and selection guards', () => {
       name: 'Permanently delete 1 asset?',
     })
     await expect(purgeDialog).toBeVisible()
-    await purgeDialog.getByRole('button', { name: 'Permanently delete' }).click()
+    await purgeDialog
+      .getByRole('button', { name: 'Permanently delete' })
+      .click()
     await expect(asset(page, 'inspect-alpha.png')).toHaveCount(0)
     await expect(survivor).toBeVisible()
     await expect(page.locator('[data-asset-id]')).toHaveCount(1)
@@ -122,8 +124,12 @@ test.describe('P0 lifecycle and selection guards', () => {
     // The grabbed row belongs to the multi-selection, so the shelf serializes
     // both selected IDs. Successful placement transfers ownership to Canvas.
     await expect(imageNodes(page)).toHaveCount(2)
-    await expect(imageNodes(page).filter({ hasText: 'dock-alpha.png' })).toHaveCount(1)
-    await expect(imageNodes(page).filter({ hasText: 'dock-beta.png' })).toHaveCount(1)
+    await expect(
+      imageNodes(page).filter({ hasText: 'dock-alpha.png' })
+    ).toHaveCount(1)
+    await expect(
+      imageNodes(page).filter({ hasText: 'dock-beta.png' })
+    ).toHaveCount(1)
     await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
     await expect(drawer).toHaveAttribute('data-state', 'closed')
     await openAssetsShelf(page)

@@ -3,7 +3,6 @@ import { t } from '@lingui/core/macro'
 import { Trans } from '@lingui/react/macro'
 import { X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { z } from 'zod'
 import {
   type CanvasAction,
   displayShortcut,
@@ -21,15 +20,9 @@ import {
   preferencesStorageKey,
   readPreferences,
 } from '../routes/root'
+import { AppearanceSettings } from './settings-appearance'
 import { Button } from './ui/button'
 import { Kbd } from './ui/kbd'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from './ui/select'
 
 type Section = 'appearance' | 'keyboard'
 
@@ -277,107 +270,14 @@ export function SettingsDialog({
             ))}
           </nav>
           <main aria-live="polite" className="grid min-h-48 gap-6">
-            <section
-              ref={(element) => {
+            <AppearanceSettings
+              preferences={preferences}
+              storageFailed={storageFailed}
+              onChange={update}
+              sectionRef={(element) => {
                 sectionRefs.current.appearance = element
               }}
-              data-section="appearance"
-              aria-labelledby="settings-appearance-heading"
-              className="grid scroll-mt-2 content-start gap-3"
-            >
-              <h3
-                id="settings-appearance-heading"
-                className="text-sm font-semibold"
-              >
-                <Trans>Appearance</Trans>
-              </h3>
-              <label className="grid gap-1 text-sm">
-                <span>
-                  <Trans>Theme</Trans>
-                </span>
-                <Select
-                  value={preferences.theme}
-                  onValueChange={(value) => {
-                    const parsed = z
-                      .enum(['system', 'light', 'dark'])
-                      .safeParse(value)
-                    if (parsed.success) update('theme', parsed.data)
-                  }}
-                >
-                  <SelectTrigger
-                    aria-label={t`Theme`}
-                    className="h-10 w-full rounded border border-black/15 bg-card px-2"
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="system">
-                      <Trans>System</Trans>
-                    </SelectItem>
-                    <SelectItem value="light">
-                      <Trans>Light</Trans>
-                    </SelectItem>
-                    <SelectItem value="dark">
-                      <Trans>Dark</Trans>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </label>
-              <label className="grid gap-1 text-sm">
-                <span>
-                  <Trans>Density</Trans>
-                </span>
-                <Select
-                  value={preferences.density}
-                  onValueChange={(value) => {
-                    const parsed = z
-                      .enum(['comfortable', 'compact'])
-                      .safeParse(value)
-                    if (parsed.success) update('density', parsed.data)
-                  }}
-                >
-                  <SelectTrigger
-                    aria-label={t`Density`}
-                    className="h-10 w-full rounded border border-black/15 bg-card px-2"
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="comfortable">
-                      <Trans>Comfortable</Trans>
-                    </SelectItem>
-                    <SelectItem value="compact">
-                      <Trans>Compact</Trans>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </label>
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={preferences.showTitle}
-                  onChange={(event) =>
-                    update('showTitle', event.target.checked)
-                  }
-                />
-                <Trans>Show titles</Trans>
-              </label>
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={preferences.showResolution}
-                  onChange={(event) =>
-                    update('showResolution', event.target.checked)
-                  }
-                />
-                <Trans>Show resolution</Trans>
-              </label>
-              {storageFailed && (
-                <p role="status">
-                  <Trans>Changes will not be saved on this device.</Trans>
-                </p>
-              )}
-            </section>
+            />
             <section
               ref={(element) => {
                 sectionRefs.current.keyboard = element

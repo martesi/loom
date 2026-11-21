@@ -70,15 +70,14 @@ test('zoomed-out canvas pan frame rate', async ({ page }) => {
   await page.keyboard.up('Space')
   const dragEnd = await page.evaluate(() => performance.now())
   await page.evaluate(() => {
-    ;(
-      window as unknown as { __stopCollect?: boolean }
-    ).__stopCollect = true
+    ;(window as unknown as { __stopCollect?: boolean }).__stopCollect = true
   })
   const { frames, longtasks } = await Promise.race([
     collect,
-    page
-      .waitForTimeout(15_000)
-      .then(() => ({ frames: [] as number[], longtasks: [] as Array<{ start: number; duration: number }> })),
+    page.waitForTimeout(15_000).then(() => ({
+      frames: [] as number[],
+      longtasks: [] as Array<{ start: number; duration: number }>,
+    })),
   ])
   moveMs.sort((a, b) => a - b)
 
@@ -95,8 +94,7 @@ test('zoomed-out canvas pan frame rate', async ({ page }) => {
           Math.min(windowGaps.length - 1, Math.floor(p * windowGaps.length))
         ]
       : null
-  const spanMs =
-    frames.length > 1 ? frames[frames.length - 1] - frames[0] : 0
+  const spanMs = frames.length > 1 ? frames[frames.length - 1] - frames[0] : 0
   const windowLongtasks = longtasks.filter(
     (task) => task.start >= dragStart && task.start <= dragEnd
   )

@@ -72,7 +72,9 @@ export function AssetList({
           ) : error ? (
             <div className="grid justify-items-center gap-2">
               <Trans>Could not load assets.</Trans>
-              <Button size="sm" variant="secondary" onClick={onRetry}><Trans>Retry</Trans></Button>
+              <Button size="sm" variant="secondary" onClick={onRetry}>
+                <Trans>Retry</Trans>
+              </Button>
             </div>
           ) : mode === 'folders' ? (
             <Trans>No assets in this folder.</Trans>
@@ -134,7 +136,10 @@ export function AssetList({
             )
             // Keep the payload useful to native drop targets without changing
             // Loom's authoritative, repository-scoped asset payload.
-            event.dataTransfer.setData('text/plain', `${ids.length} Loom asset${ids.length === 1 ? '' : 's'}`)
+            event.dataTransfer.setData(
+              'text/plain',
+              `${ids.length} Loom asset${ids.length === 1 ? '' : 's'}`
+            )
             event.dataTransfer.effectAllowed = 'copyMove'
             const preview = document.createElement('div')
             preview.textContent = `${ids.length} asset${ids.length === 1 ? '' : 's'}`

@@ -263,9 +263,7 @@ test('explicit relationship gesture, navigation, and semantic sets', async ({
   await nodes.nth(0).click()
   await page.getByTestId('toggle-inspector-shelf').click()
   await expect(page.getByRole('heading', { name: 'Derived' })).toBeVisible()
-  await page
-    .getByRole('button', { name: /^Go to derived asset .+/ })
-    .click()
+  await page.getByRole('button', { name: /^Go to derived asset .+/ }).click()
   await expect(nodes.nth(1)).toHaveClass(/selected/)
   await page
     .getByRole('button', {
@@ -391,7 +389,7 @@ test('browser clipboard copies original media and paste creates fresh unplaced a
   await expect(page.locator('[aria-selected=true]')).toHaveCount(1)
   await page.keyboard.press('Shift+Delete')
   const purgeDialog = page.getByRole('dialog', {
-    name: 'Permanently delete 2 assets?',
+    name: 'Permanently delete 1 asset?',
   })
   await expect(purgeDialog).toBeVisible()
   await purgeDialog.getByRole('button', { name: 'Cancel' }).click()
@@ -400,7 +398,7 @@ test('browser clipboard copies original media and paste creates fresh unplaced a
   await assets(page).filter({ hasText: 'hover-target (1).png' }).click()
   await page.keyboard.press('Shift+Delete')
   await page
-    .getByRole('dialog', { name: 'Permanently delete 2 assets?' })
+    .getByRole('dialog', { name: 'Permanently delete 1 asset?' })
     .getByRole('button', { name: 'Permanently delete' })
     .click()
   await expect(page.locator('[data-asset-id]')).toHaveCount(1)

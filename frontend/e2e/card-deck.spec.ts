@@ -45,6 +45,26 @@ function contrastRatio(color1: string, color2: string): number {
   return (lighter + 0.05) / (darker + 0.05)
 }
 
+function colorChannels(color: string): [number, number, number, number] {
+  const [red, green, blue] = parseRgb(color)
+  if (color.startsWith('#')) {
+    const hex = color.slice(1)
+    const alpha = hex.length === 8 ? Number.parseInt(hex.slice(6), 16) / 255 : 1
+    return [red, green, blue, alpha]
+  }
+  const alpha = color.match(/rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\)/)?.[1]
+  return [red, green, blue, alpha === undefined ? 1 : Number(alpha)]
+}
+
+function expectColorToken(actual: string, token: string) {
+  const actualChannels = colorChannels(actual)
+  const tokenChannels = colorChannels(token)
+  expect(actualChannels.slice(0, 3)).toEqual(tokenChannels.slice(0, 3))
+  expect(Math.abs(actualChannels[3] - tokenChannels[3])).toBeLessThanOrEqual(
+    1 / 255
+  )
+}
+
 test.describe('Physical Card & Set Stack Metaphors, Studio Palette', () => {
   test('ImageNode renders with rounded-lg, multi-tier ambient shadow, hairline border, and selection ring', async ({
     page,
@@ -150,9 +170,9 @@ test.describe('Physical Card & Set Stack Metaphors, Studio Palette', () => {
       cardBounds.y + cardBounds.height / 2
     )
     // Ctrl+wheel zooms (plain wheel pans since panOnScroll).
-  await page.keyboard.down('Control')
-  for (let step = 0; step < 6; step += 1) await page.mouse.wheel(0, 500)
-  await page.keyboard.up('Control')
+    await page.keyboard.down('Control')
+    for (let step = 0; step < 6; step += 1) await page.mouse.wheel(0, 500)
+    await page.keyboard.up('Control')
 
     const viewportZoom = () =>
       page.locator('.react-flow__viewport').evaluate((viewport) => {
@@ -288,7 +308,101 @@ test.describe('Physical Card & Set Stack Metaphors, Studio Palette', () => {
   test('WCAG 2.1 AA and AAA contrast compliance across Studio Obsidian and Editorial Stone themes', async ({
     page,
   }) => {
-    await openFixtureRepo(page, 'deck-theme-fixtures')
+    await openFixtureRepo(page, 'relationship-fixtures')
+    await expect(
+      page.getByRole('textbox', { name: 'Search assets' })
+    ).toBeVisible()
+    const filtersButton = page.getByRole('button', { name: /^Filters/ })
+    await filtersButton.click()
+    const assetState = page.getByRole('combobox', { name: 'Asset state' })
+    await expect(assetState).toBeVisible()
+
+    await placeAssets(page, ['relation-alpha.png', 'relation-beta.png'])
+    await autoArrangeCanvas(page)
+    await page.keyboard.press('ControlOrMeta+0')
+    const source = imageNodes(page).nth(0)
+    const derived = imageNodes(page).nth(1)
+    await source.click()
+    await expect(page.getByText(/Ctrl\/Cmd-drag this image/)).toBeVisible()
+    const sourceBox = await nodeBox(source)
+    const derivedBox = await nodeBox(derived)
+    await page.keyboard.down('Control')
+    await page.mouse.move(sourceBox.x + 30, sourceBox.y + 30)
+    await page.mouse.down()
+    await page.mouse.move(sourceBox.x + 32, sourceBox.y + 32)
+    await expect(page.getByTestId('relationship-preview')).toHaveCount(0)
+    await page.mouse.move(derivedBox.x + 30, derivedBox.y + 30, { steps: 8 })
+    await expect(page.getByTestId('relationship-preview')).toBeVisible()
+    await page.mouse.up()
+    await page.keyboard.up('Control')
+    await expect(page.locator('.react-flow__edge')).toHaveCount(1)
+    await source.click()
+
+    const prompt = page.getByRole('textbox', { name: 'Prompt' })
+    if (!(await prompt.isVisible()))
+      await page.getByTestId('toggle-inspector-shelf').click()
+    await expect(prompt).toBeVisible()
+    const inspector = page.locator('.loom-detail-panel').filter({ has: prompt })
+    const relatedAssetName = inspector.getByText('relation-beta.png', {
+      exact: true,
+    })
+    await expect(relatedAssetName).toBeVisible()
+    const relationshipCard = relatedAssetName.locator('..').locator('..')
+
+    const assertThemeAwareControls = async (expectedAccent: string) => {
+      const assetSearch = page.getByRole('textbox', { name: 'Search assets' })
+      if (!(await assetSearch.isVisible()))
+        await page.getByTestId('toggle-assets-shelf').click()
+      if (!(await assetState.isVisible())) await filtersButton.click()
+      await expect(assetState).toBeVisible()
+
+      await filtersButton.hover()
+      const filtersColors = await filtersButton.evaluate((element) => {
+        const style = window.getComputedStyle(element)
+        return {
+          border: style.borderTopColor,
+          background: style.backgroundColor,
+        }
+      })
+      const toolbarButton = page.getByTestId('open-command-palette')
+      await toolbarButton.hover({ force: true })
+      await expect(toolbarButton).toHaveClass(/hover:bg-accent/)
+
+      const tokens = await page.evaluate(() => {
+        const style = window.getComputedStyle(document.documentElement)
+        return {
+          border: style.getPropertyValue('--color-border').trim(),
+          input: style.getPropertyValue('--color-input').trim(),
+          accent: style.getPropertyValue('--color-accent').trim(),
+          muted: style.getPropertyValue('--color-muted').trim(),
+        }
+      })
+      expect(tokens.accent).toBe(expectedAccent)
+      const searchBorder = await assetSearch.evaluate(
+        (element) => window.getComputedStyle(element).borderTopColor
+      )
+      const promptBorder = await prompt.evaluate(
+        (element) => window.getComputedStyle(element).borderTopColor
+      )
+      const filterPanel = await assetState.locator('..').evaluate((element) => {
+        const style = window.getComputedStyle(element)
+        return {
+          border: style.borderTopColor,
+          background: style.backgroundColor,
+        }
+      })
+      const relationBorder = await relationshipCard.evaluate(
+        (element) => window.getComputedStyle(element).borderTopColor
+      )
+
+      expectColorToken(searchBorder, tokens.input)
+      expectColorToken(filtersColors.border, tokens.input)
+      expectColorToken(filtersColors.background, tokens.accent)
+      expectColorToken(filterPanel.border, tokens.border)
+      expectColorToken(filterPanel.background, tokens.muted)
+      expectColorToken(promptBorder, tokens.input)
+      expectColorToken(relationBorder, tokens.border)
+    }
 
     // 1. Light Theme (Editorial Stone) contrast assertions
     const lightTokens = await page.evaluate(() => {
@@ -327,6 +441,7 @@ test.describe('Physical Card & Set Stack Metaphors, Studio Palette', () => {
       lightTokens.canvas
     )
     expect(lightMutedOnCanvas).toBeGreaterThanOrEqual(4.5)
+    await assertThemeAwareControls('#f3f2f1')
 
     // 2. Dark Theme (Studio Obsidian) contrast assertions
     await page.evaluate(() => {
@@ -366,6 +481,7 @@ test.describe('Physical Card & Set Stack Metaphors, Studio Palette', () => {
       darkTokens.canvas
     )
     expect(darkMutedOnCanvas).toBeGreaterThanOrEqual(4.5)
+    await assertThemeAwareControls('#27272a')
 
     // Frosted glass count pill overlay contrast: white text on rgba(0,0,0,0.6)
     const pillTextContrast = contrastRatio('#ffffff', 'rgba(0, 0, 0, 0.6)')

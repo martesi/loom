@@ -1,10 +1,6 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from './test-fixtures'
-import {
-  asset,
-  openAssetsShelf,
-  openFixtureRepo,
-} from './test-helpers'
+import { asset, openAssetsShelf, openFixtureRepo } from './test-helpers'
 
 // Folder-opened preview carousel: opening the preview from the folder view
 // traverses the images of that folder in folder order, and images from

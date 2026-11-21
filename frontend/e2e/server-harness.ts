@@ -265,8 +265,7 @@ async function seedFixtureRepos(browseRoot: string) {
           // Lightbox fixtures need real dimensions for zoom (see above).
           await writeFile(
             filePath,
-            fileName.startsWith('lightbox-') ||
-              fileName.includes('/lightbox-')
+            fileName.startsWith('lightbox-') || fileName.includes('/lightbox-')
               ? lightboxPng
               : fixturePng
           )

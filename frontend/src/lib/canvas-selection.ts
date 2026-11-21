@@ -9,7 +9,11 @@ export function applyCanvasNodeSelection(
   anchor: number[]
 ): Selection {
   if (!changes.length) return current
-  if (!changes.some((change) => change.selected) && current.ids.length === 0 && current.group === null)
+  if (
+    !changes.some((change) => change.selected) &&
+    current.ids.length === 0 &&
+    current.group === null
+  )
     return current
 
   let ids = current.surface === 'canvas' ? [...current.ids] : []
