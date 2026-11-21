@@ -225,7 +225,9 @@ type FSDirListing struct {
 // BrowseDirectory lists the subdirectories of path, for the folder-tree
 // repo picker that server mode uses in place of the native folder dialog
 // (OpenFolder/CreateRepo's Dialog.OpenFile is unavailable when built
-// headless). path == "" resolves to the user's home directory. Each entry
+// headless). path == "" resolves to the user's home directory. Dot-directories
+// are included in the response; the picker hides them by default behind its
+// "Show hidden" toggle. Each entry
 // reports whether it's already a Loom repo so the picker can distinguish
 // "open" from "create" without a round trip; the actual open/create still
 // goes through OpenRecent, which already bootstraps .loom/ if it's missing.
@@ -266,7 +268,7 @@ func (s *RepoService) BrowseDirectory(path string) (*FSDirListing, error) {
 
 	entries := make([]FSDirEntry, 0, len(items))
 	for _, item := range items {
-		if !item.IsDir() || strings.HasPrefix(item.Name(), ".") {
+		if !item.IsDir() {
 			continue
 		}
 		entryPath := filepath.Join(resolved, item.Name())

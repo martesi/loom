@@ -1,10 +1,12 @@
 import { Dialog } from '@base-ui-components/react/dialog'
+import { t } from '@lingui/core/macro'
 import { Trans } from '@lingui/react/macro'
 import { ChevronUp, Folder, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { FSDirListing } from '../../bindings/loom/internal/service'
 import { RepoService } from '../../bindings/loom/internal/service'
 import { Button } from './ui/button'
+import { Switch } from './ui/switch'
 
 interface RepoPickerModalProps {
   open: boolean
@@ -27,6 +29,11 @@ export function RepoPickerModal({
   const [path, setPath] = useState<string | undefined>(undefined)
   const [listing, setListing] = useState<FSDirListing | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [showHidden, setShowHidden] = useState(false)
+
+  const visibleEntries = (listing?.entries ?? []).filter(
+    (entry) => showHidden || !entry.name.startsWith('.')
+  )
 
   useEffect(() => {
     if (!open) return
@@ -71,18 +78,27 @@ export function RepoPickerModal({
               </button>
             ) : null}
             <span className="truncate">{listing?.path ?? path ?? ''}</span>
+            {/* biome-ignore lint/a11y/noLabelWithoutControl: Base UI Switch renders a native hidden input, so this wrapping label toggles it at runtime. */}
+            <label className="ml-auto flex flex-none cursor-pointer items-center gap-1.5 pl-2">
+              <Switch
+                checked={showHidden}
+                onCheckedChange={setShowHidden}
+                aria-label={t`Show hidden`}
+              />
+              <Trans>Show hidden</Trans>
+            </label>
           </div>
 
           <div className="flex-1 overflow-y-auto rounded-md border border-black/6">
             {error ? (
               <div className="p-3 text-[12px] text-ink-subtle">{error}</div>
             ) : null}
-            {listing && (listing.entries ?? []).length === 0 ? (
+            {listing && visibleEntries.length === 0 ? (
               <div className="p-3 text-[12px] text-ink-subtle">
                 <Trans>No subfolders here.</Trans>
               </div>
             ) : null}
-            {(listing?.entries ?? []).map((entry) => (
+            {visibleEntries.map((entry) => (
               <button
                 type="button"
                 key={entry.path}
