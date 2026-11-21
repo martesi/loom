@@ -2,18 +2,18 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import type { Browser, Page } from '@playwright/test'
-import { expect, test } from './test-fixtures'
+import { expect, test } from '../test-fixtures'
 import {
   assets,
   dropAssetRow,
   imageNodes,
   openFixtureRepo,
-} from './test-helpers'
+} from '../test-helpers'
 
 const photoCount = 1000
 const resultPath = path.resolve(
   import.meta.dirname,
-  '../../.cache/e2e/benchmark-1k.json'
+  '../../../.cache/e2e/benchmark-1k.json'
 )
 
 test.skip(process.env.LOOM_BENCHMARK !== '1', 'run with bun run benchmark:1k')

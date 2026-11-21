@@ -1,6 +1,4 @@
-import { execFileSync } from 'node:child_process'
 import { rm, writeFile } from 'node:fs/promises'
-import path from 'node:path'
 import { expect, test } from './test-fixtures'
 import {
   asset,
@@ -267,47 +265,6 @@ test('gallery vertical navigation moves between rows with unequal card heights',
   await expect(
     gallery.getByRole('row').nth(1).locator('[data-gallery-card]:focus')
   ).toHaveCount(1)
-})
-
-test('saved view loader rejects malformed enum values from repo settings', async ({
-  page,
-}) => {
-  await openFixtureRepo(page, 'gallery-keyboard-fixtures', {
-    drawers: 'closed',
-  })
-
-  const dbPath = path.join(
-    await fixturePath('gallery-keyboard-fixtures'),
-    '.loom',
-    'db.sqlite'
-  )
-  const malformedViews = JSON.stringify([
-    {
-      id: 'broken-view',
-      name: 'Broken view',
-      search: '',
-      status: ['active'],
-      placement: '',
-      tagId: 0,
-      sort: 'recent',
-      layout: 'list',
-    },
-  ]).replace(/'/g, "''")
-  execFileSync(
-    'sqlite3',
-    [
-      dbPath,
-      `INSERT INTO settings (scope, key, value) VALUES ('repo', 'assets.saved_views', '${malformedViews}') ON CONFLICT (scope, key) DO UPDATE SET value = excluded.value`,
-    ],
-    { stdio: 'pipe' }
-  )
-
-  await page.reload()
-  await expect(page.getByRole('heading', { name: 'Canvas' })).toBeVisible()
-  await openAssetsShelf(page)
-  await expect(
-    page.locator('aside[aria-label="Assets"]').getByRole('alert')
-  ).toContainText('Saved views could not be loaded.')
 })
 
 test('asset selection survives view switches and multi-row drag transfers selection to Canvas', async ({

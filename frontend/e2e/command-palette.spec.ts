@@ -82,11 +82,17 @@ test.describe('Canvas command palette', () => {
     const activeOption = page.locator('[role="option"][aria-selected="true"]')
     await expect(search).toBeFocused()
 
+    // Filter before walking so the test does not depend on the full command
+    // ordering and does not need dozens of key round-trips.
+    await search.fill('focus canvas')
+    await expect(
+      page.getByRole('option', { name: /Toggle Focus Canvas/ })
+    ).toBeVisible()
     const options = await page.getByRole('option').allTextContents()
     const targetIndex = options.findIndex((option) =>
       option.includes('Toggle Focus Canvas')
     )
-    expect(targetIndex).toBeGreaterThan(8)
+    expect(targetIndex).toBeGreaterThanOrEqual(0)
     for (let index = 0; index < targetIndex; index += 1) {
       await page.keyboard.press('ArrowDown')
     }

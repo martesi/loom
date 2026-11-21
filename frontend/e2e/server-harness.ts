@@ -1,7 +1,17 @@
 import { type ChildProcess, spawn } from 'node:child_process'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
+import { createServer } from 'node:net'
 import * as path from 'node:path'
 import { deflateSync } from 'node:zlib'
+import { computeBuildKey } from './build-cache'
 import { acquireBuildLock } from './build-lock'
 import {
   spawnBuildProcess,
@@ -13,14 +23,25 @@ import { getE2ERunId } from './run-context'
 const frontendDir = path.resolve(import.meta.dirname, '..')
 const repoDir = path.resolve(frontendDir, '..')
 const cacheDir = path.join(repoDir, '.cache', 'e2e')
+const binDir = path.join(cacheDir, 'bin')
+const buildStateFile = path.join(cacheDir, 'build-state.json')
 const runId = getE2ERunId()
 const runDir = path.join(cacheDir, 'runs', runId)
 const fixtureDir = path.join(runDir, 'fixtures')
 const fixtureRootFile = path.join(runDir, 'fixture-root.json')
 const buildLockFile = path.join(cacheDir, 'build.lock')
-const port = process.env.E2E_PORT ?? '4173'
+const serverCount = Math.max(1, Number(process.env.E2E_WORKERS ?? '1'))
+const basePort = Number(process.env.E2E_PORT ?? '4173')
 let activeBuildCommand: ChildProcess | undefined
 let activeBuildTermination: Promise<void> | undefined
+
+type BuildState = { key: string }
+
+type FixtureServer = {
+  url: string
+  port: number
+  configRoot: string
+}
 
 // Keep the browser fixtures outside the repository checkout. The files are
 // deliberately created here rather than copied from a fixture directory so
@@ -346,25 +367,169 @@ function waitForExit(child: ChildProcess): Promise<{
   })
 }
 
+async function fileExists(filePath: string) {
+  return stat(filePath).then(
+    () => true,
+    () => false
+  )
+}
+
+async function readBuildState(): Promise<BuildState | null> {
+  return readFile(buildStateFile, 'utf8').then(
+    (contents) => JSON.parse(contents) as BuildState,
+    () => null
+  )
+}
+
+async function buildServer(binaryPath: string) {
+  const [key, state] = await Promise.all([
+    computeBuildKey(repoDir),
+    readBuildState(),
+  ])
+  const cached =
+    state?.key === key &&
+    (await fileExists(binaryPath)) &&
+    (await fileExists(path.join(frontendDir, 'dist', 'index.html'))) &&
+    (await fileExists(
+      path.join(
+        frontendDir,
+        'bindings',
+        'loom',
+        'internal',
+        'service',
+        'index.ts'
+      )
+    ))
+
+  if (cached) {
+    console.log(
+      'E2E build cache hit; reusing frontend bundle and server binary'
+    )
+    return
+  }
+
+  await run(
+    'wails3',
+    [
+      'generate',
+      'bindings',
+      '-f',
+      '-tags server,production',
+      '-clean=true',
+      '-ts',
+      '-i',
+    ],
+    repoDir
+  )
+  await run('bun', ['run', 'build'], frontendDir)
+  await run(
+    'go',
+    [
+      'build',
+      '-tags',
+      'server,production',
+      '-trimpath',
+      '-buildvcs=false',
+      '-ldflags=-w -s',
+      '-o',
+      binaryPath,
+      '.',
+    ],
+    repoDir
+  )
+  await writeFile(buildStateFile, JSON.stringify({ key } satisfies BuildState))
+}
+
+async function freePort() {
+  const server = createServer()
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  const address = server.address()
+  if (!address || typeof address === 'string') {
+    throw new Error('Could not allocate an E2E server port')
+  }
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()))
+  })
+  return address.port
+}
+
+async function waitForHealth(port: number, timeoutMs = 60_000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const healthy = await fetch(`http://127.0.0.1:${port}/health`, {
+      signal: AbortSignal.timeout(1_000),
+    }).then(
+      (response) => response.ok,
+      () => false
+    )
+    if (healthy) return
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  throw new Error(`E2E server on port ${port} did not become healthy`)
+}
+
+async function startServers(
+  binaryPath: string,
+  browseRoot: string,
+  configRoots: string[]
+): Promise<Array<{ child: ChildProcess; info: FixtureServer }>> {
+  const started: Array<{ child: ChildProcess; info: FixtureServer }> = []
+  try {
+    for (const [index, configRoot] of configRoots.entries()) {
+      const port = index === 0 ? basePort : await freePort()
+      const child = spawn(binaryPath, [], {
+        cwd: repoDir,
+        env: {
+          ...process.env,
+          LOOM_BROWSE_ROOT: browseRoot,
+          ...(process.platform === 'win32'
+            ? { APPDATA: configRoot }
+            : { XDG_CONFIG_HOME: configRoot }),
+          WAILS_SERVER_HOST: '127.0.0.1',
+          WAILS_SERVER_PORT: String(port),
+        },
+        stdio: 'inherit',
+      })
+      started.push({
+        child,
+        info: { url: `http://127.0.0.1:${port}`, port, configRoot },
+      })
+    }
+    for (const { info } of started) await waitForHealth(info.port)
+    return started
+  } catch (error) {
+    for (const { child } of started) child.kill('SIGTERM')
+    throw error
+  }
+}
+
 async function main() {
   await mkdir(fixtureDir, { recursive: true })
   const tempRoot = await mkdtemp(path.join(fixtureDir, 'run-'))
   const browseRoot = path.join(tempRoot, 'browse-root')
   const templateRoot = path.join(tempRoot, 'fixture-templates')
-  const configRoot = path.join(tempRoot, 'config')
   const binaryPath = path.join(
     tempRoot,
     process.platform === 'win32' ? 'loom-server.exe' : 'loom-server'
   )
+  const builtBinaryPath = path.join(
+    binDir,
+    process.platform === 'win32' ? 'loom-server.exe' : 'loom-server'
+  )
+  const configRoots = Array.from({ length: serverCount }, (_, index) =>
+    path.join(tempRoot, `config-${index}`)
+  )
 
   await seedFixtureRepos(templateRoot)
   await mkdir(browseRoot, { recursive: true })
-  await writeFile(
-    fixtureRootFile,
-    JSON.stringify({ browseRoot, configRoot, templateRoot })
+  await Promise.all(
+    configRoots.map((configRoot) => mkdir(configRoot, { recursive: true }))
   )
 
-  let server: ChildProcess | undefined
+  let servers: Array<{ child: ChildProcess; info: FixtureServer }> = []
   let forceStop: NodeJS.Timeout | undefined
   let stopping = false
   const stop = () => {
@@ -375,7 +540,7 @@ async function main() {
         console.error('Could not terminate E2E build process tree', error)
       })
     }
-    server?.kill('SIGTERM')
+    for (const { child } of servers) child.kill('SIGTERM')
     forceStop ??= setTimeout(() => {
       if (activeBuildCommand) {
         activeBuildTermination = terminateBuildProcessTree(
@@ -386,7 +551,7 @@ async function main() {
           console.error('Could not force-stop E2E build process tree', error)
         })
       }
-      server?.kill('SIGKILL')
+      for (const { child } of servers) child.kill('SIGKILL')
     }, 5_000)
     forceStop.unref()
   }
@@ -395,68 +560,45 @@ async function main() {
   process.once('SIGTERM', stop)
 
   try {
+    await mkdir(binDir, { recursive: true })
     const releaseBuildLock = await acquireBuildLock(
       buildLockFile,
       () => stopping
     )
     try {
       if (stopping) throw new Error('E2E server startup cancelled')
-      await run(
-        'wails3',
-        [
-          'generate',
-          'bindings',
-          '-f',
-          '-tags server,production',
-          '-clean=true',
-          '-ts',
-          '-i',
-        ],
-        repoDir
-      )
-      if (stopping) throw new Error('E2E server startup cancelled')
-      await run('bun', ['run', 'build'], frontendDir)
-      if (stopping) throw new Error('E2E server startup cancelled')
-      await run(
-        'go',
-        [
-          'build',
-          '-tags',
-          'server,production',
-          '-trimpath',
-          '-buildvcs=false',
-          '-ldflags=-w -s',
-          '-o',
-          binaryPath,
-          '.',
-        ],
-        repoDir
-      )
+      await buildServer(builtBinaryPath)
+      // Run from a per-run copy so a concurrent run cannot replace the binary
+      // while this run's servers are alive.
+      await copyFile(builtBinaryPath, binaryPath)
     } finally {
       if (activeBuildTermination) await activeBuildTermination
       await releaseBuildLock()
     }
     if (stopping) throw new Error('E2E server startup cancelled')
 
-    server = spawn(binaryPath, [], {
-      cwd: repoDir,
-      env: {
-        ...process.env,
-        LOOM_BROWSE_ROOT: browseRoot,
-        ...(process.platform === 'win32'
-          ? { APPDATA: configRoot }
-          : { XDG_CONFIG_HOME: configRoot }),
-        WAILS_SERVER_HOST: '127.0.0.1',
-        WAILS_SERVER_PORT: port,
-      },
-      stdio: 'inherit',
-    })
+    servers = await startServers(binaryPath, browseRoot, configRoots)
+    await writeFile(
+      fixtureRootFile,
+      JSON.stringify({
+        browseRoot,
+        templateRoot,
+        servers: servers.map(({ info }) => info),
+      })
+    )
 
-    const result = await waitForExit(server)
+    const firstExit = await Promise.race(
+      servers.map(async ({ child, info }) => ({
+        info,
+        result: await waitForExit(child),
+      }))
+    )
     if (!stopping) {
       throw new Error(
-        `loom server exited before the test run completed with ${
-          result.signal ? `signal ${result.signal}` : `status ${result.code}`
+        `loom server on port ${firstExit.info.port} exited before the test run completed with ${
+          firstExit.result.signal
+            ? `signal ${firstExit.result.signal}`
+            : `status ${firstExit.result.code}`
         }`
       )
     }
@@ -464,10 +606,10 @@ async function main() {
     process.off('SIGINT', stop)
     process.off('SIGTERM', stop)
     if (forceStop) clearTimeout(forceStop)
-    if (server && !stopping) {
-      server.kill('SIGTERM')
-      await waitForExit(server).catch(() => undefined)
-    }
+    if (!stopping) for (const { child } of servers) child.kill('SIGTERM')
+    await Promise.all(
+      servers.map(({ child }) => waitForExit(child).catch(() => undefined))
+    )
     await rm(fixtureRootFile, { force: true })
     await rm(fixtureDir, { recursive: true, force: true })
   }

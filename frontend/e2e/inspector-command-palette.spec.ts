@@ -1,3 +1,4 @@
+import { getImageMethodID } from './bindings'
 import { expect, test } from './test-fixtures'
 import {
   asset,
@@ -134,7 +135,7 @@ test.describe('Inspector commands from the Canvas command palette', () => {
       resolveImageFailureStarted = resolve
     })
     await page.route('**/wails/runtime', async (route) => {
-      if (route.request().postData()?.includes('1073816885')) {
+      if (route.request().postData()?.includes(getImageMethodID)) {
         if (failImageLoads) {
           resolveImageFailureStarted()
           await imageFailureGate
@@ -263,7 +264,7 @@ test.describe('Inspector commands from the Canvas command palette', () => {
       resolveGetImageStarted = resolve
     })
     await page.route('**/wails/runtime', async (route) => {
-      if (route.request().postData()?.includes('1073816885')) {
+      if (route.request().postData()?.includes(getImageMethodID)) {
         resolveGetImageStarted()
         await new Promise((resolve) => setTimeout(resolve, 2000))
       }

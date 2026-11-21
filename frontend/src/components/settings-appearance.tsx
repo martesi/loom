@@ -1,7 +1,7 @@
 import { t } from '@lingui/core/macro'
 import { Trans } from '@lingui/react/macro'
 import { z } from 'zod'
-import type { Preferences } from '../routes/root'
+import type { Preferences } from '../lib/preferences'
 import {
   Select,
   SelectContent,

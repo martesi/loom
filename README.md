@@ -82,12 +82,20 @@ for browser development in the meantime.
 ```sh
 nix develop --command go test ./...
 nix develop --command bash -lc 'cd frontend && bun run build'
+nix develop --command bash -lc 'cd frontend && bun run test'
 nix develop .#e2e --command bash -lc 'cd frontend && bun run test:e2e'
 bun run test:agent -- snapshot
 bun run benchmark:1k
 ```
 
-Focused Playwright specs live under `frontend/e2e/`. `benchmark:1k` records 1,000-photo Canvas latency and browser resource metrics to `.cache/e2e/benchmark-1k.json`. Arca owns the agent-driven Chromium/dev-server lifecycle from `.config/arca.toml`; test runtime artifacts stay under `.cache/`.
+`bun run test` runs the fast checks: frontend unit tests (`bun test src`) and
+the E2E harness tests (lock, process trees, build cache, fixture isolation).
+Playwright specs are black-box checks of the app in a browser; benchmarks are
+separate measurement runs under `frontend/e2e/benchmarks/`. Focused Playwright
+specs live under `frontend/e2e/`. `benchmark:1k` records 1,000-photo Canvas
+latency and browser resource metrics to `.cache/e2e/benchmark-1k.json`. Arca
+owns the agent-driven Chromium/dev-server lifecycle from `.config/arca.toml`;
+test runtime artifacts stay under `.cache/`.
 
 ## Repository layout
 

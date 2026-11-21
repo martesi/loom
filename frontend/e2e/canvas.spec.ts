@@ -1,4 +1,5 @@
 import type { Page } from '@playwright/test'
+import { setViewportMethodID } from './bindings'
 import { expect, test } from './test-fixtures'
 import {
   assets,
@@ -85,7 +86,10 @@ test('Assets selection, placement, unplace, trash and viewport persistence', asy
   const viewportSaved = page.waitForResponse(
     (response) =>
       response.url().endsWith('/wails/runtime') &&
-      response.request().postData()?.includes('"methodID":248266558') === true
+      response
+        .request()
+        .postData()
+        ?.includes(`"methodID":${setViewportMethodID}`) === true
   )
   await page.keyboard.press('Shift+1')
   await viewportSaved
@@ -377,7 +381,9 @@ test('browser import creates an unplaced asset and keeps Canvas focused behavior
 test('browser clipboard copies original media and paste creates fresh unplaced assets', async ({
   page,
   context,
+  clipboardAccess,
 }) => {
+  void clipboardAccess
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
   await open(page, 'filename-fixtures')
   await assets(page).filter({ hasText: 'hover-target.png' }).click()

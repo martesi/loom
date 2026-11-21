@@ -1,21 +1,20 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { Page } from '@playwright/test'
-import { expect, test } from './test-fixtures'
+import { expect, test } from '../test-fixtures'
 import {
   assets,
   dropAssetRow,
   imageNodes,
   openAssetsShelf,
   openFixtureRepo,
-} from './test-helpers'
+} from '../test-helpers'
 
 const resultPath = path.resolve(
   import.meta.dirname,
-  '../../.cache/e2e/pan-fps.json'
+  '../../../.cache/e2e/pan-fps.json'
 )
 
-test.skip(process.env.LOOM_BENCHMARK !== '1', 'run with LOOM_BENCHMARK=1')
 test.setTimeout(300_000)
 // Trace snapshots walk the whole DOM per input action, which dwarfs the
 // app's own cost at scale. Screenshots/traces stay available via the

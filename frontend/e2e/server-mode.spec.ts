@@ -58,7 +58,9 @@ test('direct openRepo bootstraps a canvas and naked canvas route redirects', asy
 
   const context = await browser.newContext()
   const freshPage = await context.newPage()
-  await freshPage.goto('/canvas')
+  // A context created by hand has no configured base URL; the fresh session
+  // still needs to hit this worker's server.
+  await freshPage.goto(new URL('/canvas', page.url()).href)
   await expect(freshPage).toHaveURL('/')
   await expect(
     freshPage.getByRole('button', {
