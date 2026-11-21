@@ -15,18 +15,18 @@ vars:
 
 tasks:
   build:
-    summary: Builds the application for Linux
+    summary: Builds the application for Linux (purego backend by default; CGO=true selects the cgo backend)
     cmds:
-      # Linux requires CGO - use Docker when:
-      # 1. Cross-compiling from non-Linux, OR
-      # 2. No C compiler is available, OR
-      # 3. Target architecture differs from host architecture (cross-arch compilation)
-      - task: '{{if and (eq OS "linux") (eq .HAS_CC "true") (eq .TARGET_ARCH ARCH)}}build:native{{else}}build:docker{{end}}'
+      # Purego (default) dlopens GTK/WebKit at runtime - no compiler needed,
+      # so native build only requires Linux + matching arch. The cgo backend
+      # (CGO=true) additionally requires a C compiler, else Docker.
+      - task: '{{if and (eq OS "linux") (eq .TARGET_ARCH ARCH) (or (not (eq .CGO "true")) (eq .HAS_CC "true"))}}build:native{{else}}build:docker{{end}}'
         vars:
           ARCH: '{{.ARCH}}'
           DEV: '{{.DEV}}'
           OUTPUT: '{{.OUTPUT}}'
-          EXTRA_TAGS: '{{.EXTRA_TAGS}}'
+          EXTRA_TAGS: '{{if or (eq .CGO "true") (has "purego" (splitList "," (.EXTRA_TAGS | default "")))}}{{.EXTRA_TAGS}}{{else}}purego{{if .EXTRA_TAGS}},{{.EXTRA_TAGS}}{{end}}{{end}}'
+          CGO: '{{.CGO}}'
           OBFUSCATED: '{{.OBFUSCATED}}'
           GARBLE_ARGS: '{{.GARBLE_ARGS}}'
     vars:
@@ -64,7 +64,9 @@ tasks:
       OUTPUT: '{{ .OUTPUT | default .DEFAULT_OUTPUT }}'
     env:
       GOOS: linux
-      CGO_ENABLED: 1
+      # Purego is the default: it dlopens GTK/WebKit at runtime, so no C
+      # toolchain is needed. CGO=true selects the cgo backend instead.
+      CGO_ENABLED: '{{if eq .CGO "true"}}1{{else}}0{{end}}'
       GOARCH: '{{.ARCH | default ARCH}}'
 
   build:docker:

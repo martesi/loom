@@ -21,6 +21,13 @@
 
           export GIO_EXTRA_MODULES="${pkgs.glib-networking}/lib/gio/modules''${GIO_EXTRA_MODULES:+:$GIO_EXTRA_MODULES}"
 
+          # The purego backend (-tags purego) loads GTK/WebKit via dlopen of
+          # bare sonames, which know nothing of the Nix store. Point the
+          # loader at the libraries the app needs (transitive deps resolve
+          # via the RUNPATH baked into those .so files). Harmless for cgo
+          # binaries, which carry their own RPATH.
+          export LD_LIBRARY_PATH="${pkgs.gtk4}/lib:${pkgs.webkitgtk_6_0}/lib:${pkgs.glib.out}/lib:${pkgs.libsoup_3}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
           # The minimal Nix environment has no /etc/fonts/fonts.conf. Without
           # an explicit config WebKitGTK can map a white window even though
           # the frontend server is healthy.
@@ -74,10 +81,12 @@
           pkgs.wails3
           pkgs.go
           pkgs.go-task
-          pkgs.gcc
-          pkgs.pkg-config
-          pkgs.gtk4
-          pkgs.webkitgtk_6_0
+          # No gcc / pkg-config / gtk / webkit declarations: gtk4 and
+          # webkitgtk_6_0 arrive via pkgs.wails3's propagated inputs, and the
+          # shellHook path refs below pin them into the closure for purego's
+          # dlopen. Default builds are purego or server (both CGO_ENABLED=0),
+          # so no C toolchain is needed. (Note: stdenv always provides a cc,
+          # so the CGO=true opt-out keeps working regardless.)
           # Both: bun builds/tests the frontend, node runs the agent harness
           # (`node .agents/skills/e2e/scripts/harness.ts`) and Playwright.
           pkgs.nodejs
