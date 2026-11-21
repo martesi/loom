@@ -12,8 +12,9 @@ import {
   RotateCcw,
   Sparkles,
 } from 'lucide-react'
-import { memo, type ReactNode } from 'react'
-import { ShortcutKeys, Tooltip } from '../ui/tooltip'
+import type { ReactNode } from 'react'
+import { memo } from 'react'
+import { Tooltip } from '../ui/tooltip'
 
 export type CanvasDockMode = 'idle' | 'single' | 'multiple'
 
@@ -67,13 +68,11 @@ function DockButton({
           onClick()
         }}
         onPointerDown={(event) => event.stopPropagation()}
-        className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3 text-xs font-semibold transition-colors hover:bg-black/[0.06] focus-visible:ring-2 focus-visible:ring-primary/40 disabled:pointer-events-none disabled:opacity-40 ${
+        className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-black/[0.06] focus-visible:ring-2 focus-visible:ring-primary/40 disabled:pointer-events-none disabled:opacity-40 ${
           danger ? 'text-danger hover:bg-danger-soft' : 'text-ink'
         }`}
       >
         <span className="shrink-0">{icon}</span>
-        <span>{label}</span>
-        {shortcut && <ShortcutKeys shortcut={shortcut} />}
       </button>
     </Tooltip>
   )

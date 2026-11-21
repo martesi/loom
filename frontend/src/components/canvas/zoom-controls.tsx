@@ -1,5 +1,5 @@
 import { t } from '@lingui/core/macro'
-import { Minus, Plus } from 'lucide-react'
+import { Maximize2, Minus, Plus } from 'lucide-react'
 import { Tooltip } from '../ui/tooltip'
 
 interface ZoomControlsProps {
@@ -41,13 +41,16 @@ export function ZoomControls({
         </button>
       </Tooltip>
       <div className="mx-1 h-4 w-px bg-black/10" />
-      <button
-        type="button"
-        onClick={onFitView}
-        className="px-1 text-[11px] font-semibold text-primary hover:underline"
-      >
-        {t`Fit`}
-      </button>
+      <Tooltip label={t`Fit`}>
+        <button
+          type="button"
+          aria-label={t`Fit`}
+          onClick={onFitView}
+          className="flex h-6 w-6 items-center justify-center rounded text-ink-muted hover:bg-black/[0.04] hover:text-ink"
+        >
+          <Maximize2 className="h-3.5 w-3.5" />
+        </button>
+      </Tooltip>
     </div>
   )
 }
