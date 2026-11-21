@@ -185,7 +185,13 @@ test.describe('contextual Canvas Dock', () => {
     expect(dockBefore?.y ?? 0).toBeGreaterThan(cardBefore.y)
 
     await page.mouse.move(600, 400)
-    await page.mouse.wheel(0, -300)
+    // Focus the canvas host so function keys reach the route handler.
+    await page.getByRole('main', { name: 'Canvas' }).focus()
+    // Ctrl+wheel zooms (proven pattern from the metadata zoom test; a single
+    // tick is not reliably delivered as a zoom gesture in this harness).
+    await page.keyboard.down('Control')
+    for (let i = 0; i < 6; i++) await page.mouse.wheel(0, 500)
+    await page.keyboard.up('Control')
     await expect(dock).toBeVisible()
     expect(await dock.boundingBox()).toEqual(dockBefore)
     await expect

@@ -8,11 +8,13 @@ import { setCapabilities } from '../lib/capabilities-store'
 export const preferencesSchema = z.object({
   theme: z.enum(['system', 'light', 'dark']).optional(),
   density: z.enum(['comfortable', 'compact']).optional(),
+  showTitle: z.boolean().optional(),
+  showResolution: z.boolean().optional(),
   version: z.literal(1).optional(),
 })
-export type Preferences = { theme: 'system' | 'light' | 'dark'; density: 'comfortable' | 'compact' }
+export type Preferences = { theme: 'system' | 'light' | 'dark'; density: 'comfortable' | 'compact'; showTitle: boolean; showResolution: boolean }
 export const preferencesStorageKey = 'loom.preferences.v1'
-export const defaultPreferences: Preferences = { theme: 'system', density: 'comfortable' }
+export const defaultPreferences: Preferences = { theme: 'system', density: 'comfortable', showTitle: true, showResolution: true }
 
 export function readPreferences(): { value: Preferences; failed: boolean } {
   let raw: string | null
@@ -40,6 +42,8 @@ export function readPreferences(): { value: Preferences; failed: boolean } {
     value: {
       theme: result.data.theme ?? defaultPreferences.theme,
       density: result.data.density ?? defaultPreferences.density,
+      showTitle: result.data.showTitle ?? defaultPreferences.showTitle,
+      showResolution: result.data.showResolution ?? defaultPreferences.showResolution,
     },
     failed: false,
   }
@@ -52,6 +56,8 @@ function applyPreferences(preferences: Preferences) {
       ? window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
       : preferences.theme
   root.dataset.density = preferences.density
+  root.dataset.showTitle = String(preferences.showTitle)
+  root.dataset.showResolution = String(preferences.showResolution)
 }
 
 function Root() {
@@ -82,6 +88,8 @@ function Root() {
       preferences = {
         theme: parsed.data.theme ?? defaultPreferences.theme,
         density: parsed.data.density ?? defaultPreferences.density,
+        showTitle: parsed.data.showTitle ?? defaultPreferences.showTitle,
+        showResolution: parsed.data.showResolution ?? defaultPreferences.showResolution,
       }
       apply()
     }

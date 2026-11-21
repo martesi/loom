@@ -139,6 +139,14 @@ export function SettingsDialog({
                     </SelectContent>
                   </Select>
                 </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={preferences.showTitle} onChange={(event) => update('showTitle', event.target.checked)} />
+                  <Trans>Show titles</Trans>
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={preferences.showResolution} onChange={(event) => update('showResolution', event.target.checked)} />
+                  <Trans>Show resolution</Trans>
+                </label>
                 {storageFailed && <p role="status"><Trans>Changes will not be saved on this device.</Trans></p>}
               </div>
             ) : (
@@ -158,7 +166,7 @@ export function SettingsDialog({
                       </ul>
                     </section>
                   ))}
-                  <p className="text-xs text-ink-muted"><Trans>Canvas gestures: Space + drag to pan; drag from a connection handle to create a relationship.</Trans></p>
+                  <p className="text-xs text-ink-muted"><Trans>Canvas gestures: scroll to pan, Ctrl/Cmd + scroll to zoom, Space + drag to pan; pinch to zoom; drag from a connection handle to create a relationship.</Trans></p>
                 </div>
               </div>
             )}

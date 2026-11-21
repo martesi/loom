@@ -45,9 +45,12 @@ test('zoomed-out canvas pan frame rate', async ({ page }) => {
   await page.keyboard.press('Escape')
   await expect(page.locator('aside[data-visible="true"]')).toHaveCount(0)
 
-  // Zoom out to the floor so the pan crosses the whole board.
+  // Zoom out to the floor so the pan crosses the whole board (Ctrl+wheel
+  // zooms; plain wheel pans since panOnScroll).
   await page.mouse.move(640, 400)
+  await page.keyboard.down('Control')
   for (let i = 0; i < 10; i++) await page.mouse.wheel(0, 500)
+  await page.keyboard.up('Control')
   const zoom = await viewportZoom(page)
 
   const moves = 40

@@ -149,7 +149,10 @@ test.describe('Physical Card & Set Stack Metaphors, Studio Palette', () => {
       cardBounds.x + cardBounds.width / 2,
       cardBounds.y + cardBounds.height / 2
     )
-    for (let step = 0; step < 6; step += 1) await page.mouse.wheel(0, 500)
+    // Ctrl+wheel zooms (plain wheel pans since panOnScroll).
+  await page.keyboard.down('Control')
+  for (let step = 0; step < 6; step += 1) await page.mouse.wheel(0, 500)
+  await page.keyboard.up('Control')
 
     const viewportZoom = () =>
       page.locator('.react-flow__viewport').evaluate((viewport) => {

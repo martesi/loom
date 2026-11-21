@@ -212,3 +212,7 @@ body {
 [data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
   background-color: rgba(255, 255, 255, 0.32);
 }
+html[data-show-title="false"] .canvas-title,
+html[data-show-resolution="false"] .canvas-resolution {
+  display: none;
+}

@@ -19,22 +19,22 @@ msgstr ""
 #. placeholder {1}: purgeIds ? 'Permanently delete # asset?' : 'Move # asset to trash?'
 #. placeholder {2}: promptConfirmation.replacing ? 'Replace prompts on # selected assets?' : 'Clear prompts on # selected assets?'
 #. placeholder {2}: purgeIds ? 'Permanently delete # assets?' : 'Move # assets to trash?'
-#: src/components/canvas/detail-panel.tsx:602
-#: src/routes/canvas.tsx:3125
+#: src/components/canvas/detail-panel.tsx:587
+#: src/routes/canvas.tsx:3339
 msgid "{0, plural, one {{1}} other {{2}}}"
 msgstr "{0, plural, one {{1}} other {{2}}}"
 
 #. placeholder {0}: assetIds.length
 #. placeholder {0}: selection.ids.length
-#: src/components/canvas/detail-panel.tsx:474
+#: src/components/canvas/detail-panel.tsx:459
 #: src/components/compression-dialog.tsx:150
 msgid "{0, plural, one {# asset selected} other {# assets selected}}"
 msgstr "{0, plural, one {# asset selected} other {# assets selected}}"
 
 #. placeholder {0}: (group.memberIds ?? []).length
 #. placeholder {0}: sortedRows.length
-#: src/components/canvas/detail-panel.tsx:249
-#: src/components/canvas/library-panel.tsx:476
+#: src/components/canvas/detail-panel.tsx:251
+#: src/components/canvas/library-panel.tsx:504
 msgid "{0, plural, one {# asset} other {# assets}}"
 msgstr "{0, plural, one {# asset} other {# assets}}"
 
@@ -44,18 +44,18 @@ msgid "{0, plural, one {# image} other {# images}}"
 msgstr "{0, plural, one {# image} other {# images}}"
 
 #. placeholder {0}: selection.edges.length
-#: src/components/canvas/detail-panel.tsx:286
+#: src/components/canvas/detail-panel.tsx:288
 msgid "{0, plural, one {# relationship} other {# relationships}}"
 msgstr "{0, plural, one {# relationship} other {# relationships}}"
 
 #. placeholder {0}: selected.length
-#: src/components/canvas/library-panel.tsx:479
+#: src/components/canvas/library-panel.tsx:507
 msgid "{0, plural, one {# selected} other {# selected}}"
 msgstr "{0, plural, one {# selected} other {# selected}}"
 
 #. placeholder {0}: images.length
-#: src/components/canvas/detail-panel.tsx:498
-#: src/components/canvas/detail-panel.tsx:583
+#: src/components/canvas/detail-panel.tsx:483
+#: src/components/canvas/detail-panel.tsx:568
 msgid "{0, plural, one {Apply to # asset} other {Apply to # assets}}"
 msgstr "{0, plural, one {Apply to # asset} other {Apply to # assets}}"
 
@@ -65,7 +65,7 @@ msgstr "{0, plural, one {Apply to # asset} other {Apply to # assets}}"
 #~ msgstr "{0, plural, one {Permanently delete # asset?} other {Permanently delete # assets?}}"
 
 #. placeholder {0}: purgeIds ? ( <Trans> This removes the files and Loom metadata immediately. Trash retention does not apply, and this action cannot be undone. </Trans> ) : ( <Trans> The selected assets will move to repository trash. They are retained for 30 days, then permanently purged automatically. </Trans> )
-#: src/routes/canvas.tsx:3140
+#: src/routes/canvas.tsx:3354
 msgid "{0}"
 msgstr "{0}"
 
@@ -84,8 +84,8 @@ msgstr "{0}"
 #. placeholder {0}: ids.length - failedIds.length
 #. placeholder {1}: ids.length
 #. placeholder {2}: failedIds.join(', ')
-#: src/routes/canvas.tsx:288
-#: src/routes/canvas.tsx:298
+#: src/routes/canvas.tsx:681
+#: src/routes/canvas.tsx:691
 msgid "{0} of {1} assets updated; failed asset IDs: {2}. The current state was refreshed."
 msgstr "{0} of {1} assets updated; failed asset IDs: {2}. The current state was refreshed."
 
@@ -98,24 +98,24 @@ msgstr "{compressed} compressed"
 msgid "{compressed} compressed, {0} failed"
 msgstr "{compressed} compressed, {0} failed"
 
-#: src/components/canvas/group-node.tsx:65
+#: src/components/canvas/group-node.tsx:80
 msgid "{count, plural, one {Set · # asset} other {Set · # assets}}"
 msgstr "{count, plural, one {Set · # asset} other {Set · # assets}}"
 
 #. placeholder {0}: images.length
-#: src/components/canvas/detail-panel.tsx:490
+#: src/components/canvas/detail-panel.tsx:475
 msgid "{count} of {0} assets"
 msgstr "{count} of {0} assets"
 
-#: src/components/canvas/command-palette.tsx:256
+#: src/components/canvas/command-palette.tsx:257
 msgid "{resultCount} results"
 msgstr "{resultCount} results"
 
-#: src/components/canvas/detail-panel.tsx:482
+#: src/components/canvas/detail-panel.tsx:467
 msgid "{unavailableCount, plural, one {# selected asset is unavailable; bulk edits are disabled.} other {# selected assets are unavailable; bulk edits are disabled.}}"
 msgstr "{unavailableCount, plural, one {# selected asset is unavailable; bulk edits are disabled.} other {# selected assets are unavailable; bulk edits are disabled.}}"
 
-#: src/routes/canvas.tsx:1309
+#: src/routes/canvas.tsx:1502
 msgid "@ search"
 msgstr "@ search"
 
@@ -123,7 +123,7 @@ msgstr "@ search"
 #~ msgid "+ add"
 #~ msgstr "+ add"
 
-#: src/routes/canvas.tsx:244
+#: src/routes/canvas.tsx:637
 msgid "A save is already in progress."
 msgstr "A save is already in progress."
 
@@ -131,27 +131,27 @@ msgstr "A save is already in progress."
 msgid "A saved view with that name already exists"
 msgstr "A saved view with that name already exists"
 
-#: src/components/canvas/library-panel.tsx:366
+#: src/components/canvas/library-panel.tsx:380
 msgid "active"
 msgstr "active"
 
-#: src/components/canvas/library-panel.tsx:431
+#: src/components/canvas/library-panel.tsx:451
 msgid "Active"
 msgstr "Active"
 
-#: src/routes/canvas.tsx:1832
-#: src/routes/canvas.tsx:1845
-#: src/routes/canvas.tsx:1857
+#: src/routes/canvas.tsx:2025
+#: src/routes/canvas.tsx:2038
+#: src/routes/canvas.tsx:2050
 msgid "Active selection"
 msgstr "Active selection"
 
-#: src/routes/canvas.tsx:1415
-#: src/routes/canvas.tsx:1457
-#: src/routes/canvas.tsx:1869
+#: src/routes/canvas.tsx:1608
+#: src/routes/canvas.tsx:1650
+#: src/routes/canvas.tsx:2062
 msgid "Active surface"
 msgstr "Active surface"
 
-#: src/routes/canvas.tsx:1343
+#: src/routes/canvas.tsx:1536
 msgid "actual size"
 msgstr "actual size"
 
@@ -163,7 +163,7 @@ msgstr "actual size"
 msgid "Add a tag…"
 msgstr "Add a tag…"
 
-#: src/routes/canvas.tsx:1182
+#: src/routes/canvas.tsx:1375
 msgid "add files"
 msgstr "add files"
 
@@ -171,9 +171,9 @@ msgstr "add files"
 #~ msgid "Add prompt…"
 #~ msgstr "Add prompt…"
 
-#: src/components/canvas/detail-panel.tsx:527
-#: src/components/canvas/detail-panel.tsx:528
-#: src/routes/canvas.tsx:1664
+#: src/components/canvas/detail-panel.tsx:512
+#: src/components/canvas/detail-panel.tsx:513
+#: src/routes/canvas.tsx:1857
 msgid "Add tag"
 msgstr "Add tag"
 
@@ -192,63 +192,63 @@ msgstr "Add tag"
 #~ msgid "Add to board…"
 #~ msgstr "Add to board…"
 
-#: src/components/canvas/detail-panel.tsx:539
+#: src/components/canvas/detail-panel.tsx:524
 msgid "Add to selected assets"
 msgstr "Add to selected assets"
 
-#: src/routes/canvas.tsx:1521
+#: src/routes/canvas.tsx:1714
 msgid "align column"
 msgstr "align column"
 
-#: src/routes/canvas.tsx:1507
+#: src/routes/canvas.tsx:1700
 msgid "Align horizontally"
 msgstr "Align horizontally"
 
-#: src/components/canvas/canvas-dock.tsx:189
+#: src/components/canvas/canvas-dock.tsx:188
 msgid "Align Horizontally"
 msgstr "Align Horizontally"
 
-#: src/routes/canvas.tsx:1510
+#: src/routes/canvas.tsx:1703
 msgid "align row"
 msgstr "align row"
 
-#: src/routes/canvas.tsx:1519
+#: src/routes/canvas.tsx:1712
 msgid "Align selected Canvas items along one column"
 msgstr "Align selected Canvas items along one column"
 
-#: src/routes/canvas.tsx:1508
+#: src/routes/canvas.tsx:1701
 msgid "Align selected Canvas items along one row"
 msgstr "Align selected Canvas items along one row"
 
-#: src/routes/canvas.tsx:1518
+#: src/routes/canvas.tsx:1711
 msgid "Align vertically"
 msgstr "Align vertically"
 
-#: src/components/canvas/canvas-dock.tsx:195
+#: src/components/canvas/canvas-dock.tsx:194
 msgid "Align Vertically"
 msgstr "Align Vertically"
 
-#: src/components/canvas/library-panel.tsx:369
+#: src/components/canvas/library-panel.tsx:383
 msgid "all"
 msgstr "all"
 
-#: src/components/canvas/library-panel.tsx:431
+#: src/components/canvas/library-panel.tsx:451
 msgid "All"
 msgstr "All"
 
-#: src/components/canvas/library-panel.tsx:310
+#: src/components/canvas/library-panel.tsx:324
 msgid "All Assets"
 msgstr "All Assets"
 
-#: src/components/canvas/library-panel.tsx:388
+#: src/components/canvas/library-panel.tsx:402
 msgid "All placements"
 msgstr "All placements"
 
-#: src/components/canvas/detail-panel.tsx:490
+#: src/components/canvas/detail-panel.tsx:475
 msgid "All selected assets"
 msgstr "All selected assets"
 
-#: src/components/canvas/library-panel.tsx:404
+#: src/components/canvas/library-panel.tsx:418
 msgid "All tags"
 msgstr "All tags"
 
@@ -256,25 +256,25 @@ msgstr "All tags"
 #~ msgid "Allow {title} to close after actions"
 #~ msgstr "Allow {title} to close after actions"
 
-#: src/routes/canvas.tsx:1041
+#: src/routes/canvas.tsx:1234
 msgid "Allow Assets to close after an action"
 msgstr "Allow Assets to close after an action"
 
-#: src/routes/canvas.tsx:1095
+#: src/routes/canvas.tsx:1288
 msgid "Allow Inspector to close after selection clears"
 msgstr "Allow Inspector to close after selection clears"
 
-#: src/components/settings-dialog.tsx:128
-#: src/components/settings-dialog.tsx:153
+#: src/components/settings-dialog.tsx:85
+#: src/components/settings-dialog.tsx:110
 msgid "Appearance"
 msgstr "Appearance"
 
-#: src/routes/canvas.tsx:1138
+#: src/routes/canvas.tsx:1331
 msgid "Appearance settings"
 msgstr "Appearance settings"
 
-#: src/components/canvas/detail-panel.tsx:637
-#: src/routes/canvas.tsx:1573
+#: src/components/canvas/detail-panel.tsx:622
+#: src/routes/canvas.tsx:1766
 msgid "Archive"
 msgstr "Archive"
 
@@ -283,33 +283,33 @@ msgstr "Archive"
 #~ msgid "Archive selection"
 #~ msgstr "Archive selection"
 
-#: src/components/canvas/library-panel.tsx:372
+#: src/components/canvas/library-panel.tsx:386
 msgid "archived"
 msgstr "archived"
 
-#: src/components/canvas/library-panel.tsx:431
+#: src/components/canvas/library-panel.tsx:451
 #: src/components/canvas/panel-image-row.tsx:122
 msgid "Archived"
 msgstr "Archived"
 
-#: src/routes/canvas.tsx:1402
+#: src/routes/canvas.tsx:1595
 msgid "arrange subgraph"
 msgstr "arrange subgraph"
 
-#: src/components/canvas/canvas-dock.tsx:201
+#: src/components/canvas/canvas-dock.tsx:200
 msgid "Arrange Subgraph"
 msgstr "Arrange Subgraph"
 
-#: src/routes/canvas.tsx:1385
+#: src/routes/canvas.tsx:1578
 msgid "Arrange the selected subgraph, or the full Canvas when fewer than two items are selected"
 msgstr "Arrange the selected subgraph, or the full Canvas when fewer than two items are selected"
 
-#: src/components/canvas/command-palette.tsx:308
+#: src/components/canvas/command-palette.tsx:309
 msgid "Asset"
 msgstr "Asset"
 
+#: src/components/canvas/detail-panel.tsx:670
 #: src/components/canvas/detail-panel.tsx:685
-#: src/components/canvas/detail-panel.tsx:700
 msgid "Asset {endpointId}"
 msgstr "Asset {endpointId}"
 
@@ -317,38 +317,38 @@ msgstr "Asset {endpointId}"
 msgid "Asset gallery"
 msgstr "Asset gallery"
 
-#: src/routes/canvas.tsx:1224
+#: src/routes/canvas.tsx:1417
 msgid "asset grid"
 msgstr "asset grid"
 
-#: src/routes/canvas.tsx:1242
+#: src/routes/canvas.tsx:1435
 msgid "asset list"
 msgstr "asset list"
 
-#: src/routes/canvas.tsx:1575
-#: src/routes/canvas.tsx:1591
-#: src/routes/canvas.tsx:1641
-#: src/routes/canvas.tsx:1655
-#: src/routes/canvas.tsx:1666
-#: src/routes/canvas.tsx:1677
-#: src/routes/canvas.tsx:1688
-#: src/routes/canvas.tsx:1704
+#: src/routes/canvas.tsx:1768
+#: src/routes/canvas.tsx:1784
+#: src/routes/canvas.tsx:1834
+#: src/routes/canvas.tsx:1848
+#: src/routes/canvas.tsx:1859
+#: src/routes/canvas.tsx:1870
+#: src/routes/canvas.tsx:1881
+#: src/routes/canvas.tsx:1897
 msgid "Asset metadata and file"
 msgstr "Asset metadata and file"
 
-#: src/routes/canvas.tsx:1643
-#: src/routes/canvas.tsx:1668
-#: src/routes/canvas.tsx:1679
-#: src/routes/canvas.tsx:1690
-#: src/routes/canvas.tsx:1706
+#: src/routes/canvas.tsx:1836
+#: src/routes/canvas.tsx:1861
+#: src/routes/canvas.tsx:1872
+#: src/routes/canvas.tsx:1883
+#: src/routes/canvas.tsx:1899
 msgid "Asset selection"
 msgstr "Asset selection"
 
-#: src/routes/canvas.tsx:1000
+#: src/routes/canvas.tsx:1193
 msgid "asset shelf"
 msgstr "asset shelf"
 
-#: src/components/canvas/library-panel.tsx:361
+#: src/components/canvas/library-panel.tsx:375
 msgid "Asset state"
 msgstr "Asset state"
 
@@ -356,49 +356,49 @@ msgstr "Asset state"
 #~ msgid "assets"
 #~ msgstr "assets"
 
-#: src/components/canvas/asset-list.tsx:40
-#: src/routes/canvas.tsx:1033
-#: src/routes/canvas.tsx:1044
-#: src/routes/canvas.tsx:1193
-#: src/routes/canvas.tsx:1209
+#: src/components/canvas/asset-list.tsx:43
 #: src/routes/canvas.tsx:1226
-#: src/routes/canvas.tsx:1244
-#: src/routes/canvas.tsx:1262
-#: src/routes/canvas.tsx:1280
-#: src/routes/canvas.tsx:1297
-#: src/routes/canvas.tsx:2235
-#: src/routes/canvas.tsx:2916
+#: src/routes/canvas.tsx:1237
+#: src/routes/canvas.tsx:1386
+#: src/routes/canvas.tsx:1402
+#: src/routes/canvas.tsx:1419
+#: src/routes/canvas.tsx:1437
+#: src/routes/canvas.tsx:1455
+#: src/routes/canvas.tsx:1473
+#: src/routes/canvas.tsx:1490
+#: src/routes/canvas.tsx:2487
+#: src/routes/canvas.tsx:3153
 #: src/routes/landing.tsx:45
 msgid "Assets"
 msgstr "Assets"
 
-#: src/routes/canvas.tsx:1010
+#: src/routes/canvas.tsx:1203
 msgid "assets drawer"
 msgstr "assets drawer"
 
-#: src/routes/canvas.tsx:1024
+#: src/routes/canvas.tsx:1217
 msgid "Assets is already closed"
 msgstr "Assets is already closed"
 
-#: src/routes/canvas.tsx:1046
+#: src/routes/canvas.tsx:1239
 msgid "Assets is not pinned"
 msgstr "Assets is not pinned"
 
-#: src/routes/canvas.tsx:1191
-#: src/routes/canvas.tsx:1207
-#: src/routes/canvas.tsx:1223
-#: src/routes/canvas.tsx:1241
-#: src/routes/canvas.tsx:1259
-#: src/routes/canvas.tsx:1277
-#: src/routes/canvas.tsx:1295
-#: src/routes/canvas.tsx:1308
-#: src/routes/canvas.tsx:1623
+#: src/routes/canvas.tsx:1384
+#: src/routes/canvas.tsx:1400
+#: src/routes/canvas.tsx:1416
+#: src/routes/canvas.tsx:1434
+#: src/routes/canvas.tsx:1452
+#: src/routes/canvas.tsx:1470
+#: src/routes/canvas.tsx:1488
+#: src/routes/canvas.tsx:1501
+#: src/routes/canvas.tsx:1816
 msgid "Assets navigation"
 msgstr "Assets navigation"
 
-#: src/routes/canvas.tsx:1553
-#: src/routes/canvas.tsx:1577
-#: src/routes/canvas.tsx:1593
+#: src/routes/canvas.tsx:1746
+#: src/routes/canvas.tsx:1770
+#: src/routes/canvas.tsx:1786
 msgid "Assets selection"
 msgstr "Assets selection"
 
@@ -418,7 +418,7 @@ msgstr "Attach new prompt"
 #~ msgid "Auto layout arrives in a later stage"
 #~ msgstr "Auto layout arrives in a later stage"
 
-#: src/components/canvas/canvas-dock.tsx:130
+#: src/components/canvas/canvas-dock.tsx:129
 msgid "Auto-arrange"
 msgstr "Auto-arrange"
 
@@ -430,21 +430,25 @@ msgstr "Auto-arrange"
 #~ msgid "Auto-arrange canvas"
 #~ msgstr "Auto-arrange canvas"
 
-#: src/routes/canvas.tsx:1373
+#: src/routes/canvas.tsx:1566
 msgid "Auto-arrange Canvas"
 msgstr "Auto-arrange Canvas"
 
-#: src/routes/canvas.tsx:1384
+#: src/routes/canvas.tsx:1577
 msgid "Auto-arrange Canvas or selection"
 msgstr "Auto-arrange Canvas or selection"
 
-#: src/routes/canvas.tsx:1399
+#: src/routes/canvas.tsx:1592
 msgid "Auto-arrange selection"
 msgstr "Auto-arrange selection"
 
 #: src/components/canvas/selection-hud.tsx:142
 #~ msgid "Auto-arrange Subgraph"
 #~ msgstr "Auto-arrange Subgraph"
+
+#: src/components/canvas/lightbox.tsx:157
+msgid "Back"
+msgstr "Back"
 
 #: src/components/board/library-panel.tsx:545
 #: src/components/board/lightbox.tsx:153
@@ -475,7 +479,7 @@ msgstr "Auto-arrange selection"
 #~ msgid "Boards are scoped canvases you place images onto explicitly. Create one to start arranging images."
 #~ msgstr "Boards are scoped canvases you place images onto explicitly. Create one to start arranging images."
 
-#: src/routes/canvas.tsx:1117
+#: src/routes/canvas.tsx:1310
 msgid "Browse available keyboard shortcuts"
 msgstr "Browse available keyboard shortcuts"
 
@@ -483,78 +487,81 @@ msgstr "Browse available keyboard shortcuts"
 msgid "browse every file, including unplaced images."
 msgstr "browse every file, including unplaced images."
 
-#: src/routes/canvas.tsx:1642
+#: src/routes/canvas.tsx:1835
 msgid "browse path"
 msgstr "browse path"
 
-#: src/components/canvas/detail-panel.tsx:331
-#: src/components/canvas/detail-panel.tsx:608
-#: src/components/canvas/detail-panel.tsx:717
+#: src/components/canvas/detail-panel.tsx:593
+#: src/components/canvas/detail-panel.tsx:702
 #: src/components/canvas/library-context-menu.tsx:108
-#: src/components/repo-picker-modal.tsx:105
-#: src/routes/canvas.tsx:3155
+#: src/components/repo-picker-modal.tsx:121
+#: src/routes/canvas.tsx:3369
 msgid "Cancel"
 msgstr "Cancel"
 
-#: src/routes/canvas.tsx:1321
-#: src/routes/canvas.tsx:1345
-#: src/routes/canvas.tsx:1356
-#: src/routes/canvas.tsx:1367
-#: src/routes/canvas.tsx:1377
-#: src/routes/canvas.tsx:1389
-#: src/routes/canvas.tsx:1437
-#: src/routes/canvas.tsx:1772
-#: src/routes/canvas.tsx:2275
-#: src/routes/canvas.tsx:2892
+#: src/routes/canvas.tsx:1514
+#: src/routes/canvas.tsx:1538
+#: src/routes/canvas.tsx:1549
+#: src/routes/canvas.tsx:1560
+#: src/routes/canvas.tsx:1570
+#: src/routes/canvas.tsx:1582
+#: src/routes/canvas.tsx:1630
+#: src/routes/canvas.tsx:1965
+#: src/routes/canvas.tsx:2514
+#: src/routes/canvas.tsx:3129
 #: src/routes/landing.tsx:51
 msgid "Canvas"
 msgstr "Canvas"
 
-#: src/components/canvas/canvas-dock.tsx:98
+#: src/components/canvas/canvas-dock.tsx:97
 msgid "Canvas Actions"
 msgstr "Canvas Actions"
 
-#: src/components/settings-dialog.tsx:185
-msgid "Canvas gestures: Space + drag to pan; drag from a connection handle to create a relationship."
-msgstr "Canvas gestures: Space + drag to pan; drag from a connection handle to create a relationship."
+#: src/components/settings-dialog.tsx:169
+msgid "Canvas gestures: scroll to pan, Ctrl/Cmd + scroll to zoom, Space + drag to pan; pinch to zoom; drag from a connection handle to create a relationship."
+msgstr "Canvas gestures: scroll to pan, Ctrl/Cmd + scroll to zoom, Space + drag to pan; pinch to zoom; drag from a connection handle to create a relationship."
 
-#: src/routes/canvas.tsx:1333
-#: src/routes/canvas.tsx:1403
-#: src/routes/canvas.tsx:1471
-#: src/routes/canvas.tsx:1485
-#: src/routes/canvas.tsx:1500
-#: src/routes/canvas.tsx:1511
-#: src/routes/canvas.tsx:1522
-#: src/routes/canvas.tsx:1535
-#: src/routes/canvas.tsx:1565
-#: src/routes/canvas.tsx:1625
+#: src/components/settings-dialog.tsx:185
+#~ msgid "Canvas gestures: Space + drag to pan; drag from a connection handle to create a relationship."
+#~ msgstr "Canvas gestures: Space + drag to pan; drag from a connection handle to create a relationship."
+
+#: src/routes/canvas.tsx:1526
+#: src/routes/canvas.tsx:1596
+#: src/routes/canvas.tsx:1664
+#: src/routes/canvas.tsx:1678
+#: src/routes/canvas.tsx:1693
+#: src/routes/canvas.tsx:1704
+#: src/routes/canvas.tsx:1715
+#: src/routes/canvas.tsx:1728
+#: src/routes/canvas.tsx:1758
+#: src/routes/canvas.tsx:1818
 msgid "Canvas selection"
 msgstr "Canvas selection"
 
-#: src/routes/canvas.tsx:1318
-#: src/routes/canvas.tsx:1330
-#: src/routes/canvas.tsx:1342
-#: src/routes/canvas.tsx:1353
-#: src/routes/canvas.tsx:1364
-#: src/routes/canvas.tsx:1375
-#: src/routes/canvas.tsx:1386
-#: src/routes/canvas.tsx:1401
+#: src/routes/canvas.tsx:1511
+#: src/routes/canvas.tsx:1523
+#: src/routes/canvas.tsx:1535
+#: src/routes/canvas.tsx:1546
+#: src/routes/canvas.tsx:1557
+#: src/routes/canvas.tsx:1568
+#: src/routes/canvas.tsx:1579
+#: src/routes/canvas.tsx:1594
 msgid "Canvas view"
 msgstr "Canvas view"
 
-#: src/routes/canvas.tsx:2882
+#: src/routes/canvas.tsx:3119
 msgid "Canvas workspace controls"
 msgstr "Canvas workspace controls"
 
-#: src/routes/canvas.tsx:1192
+#: src/routes/canvas.tsx:1385
 msgid "catalog"
 msgstr "catalog"
 
-#: src/routes/canvas.tsx:1727
+#: src/routes/canvas.tsx:1920
 msgid "change set thumbnail"
 msgstr "change set thumbnail"
 
-#: src/routes/canvas.tsx:1749
+#: src/routes/canvas.tsx:1942
 msgid "change set type"
 msgstr "change set type"
 
@@ -562,39 +569,39 @@ msgstr "change set type"
 #~ msgid "Change…"
 #~ msgstr "Change…"
 
-#: src/components/settings-dialog.tsx:166
+#: src/components/settings-dialog.tsx:150
 msgid "Changes will not be saved on this device."
 msgstr "Changes will not be saved on this device."
 
-#: src/routes/canvas.tsx:1725
+#: src/routes/canvas.tsx:1918
 msgid "Choose a cover image in the set comparison"
 msgstr "Choose a cover image in the set comparison"
 
-#: src/components/repo-picker-modal.tsx:56
+#: src/components/repo-picker-modal.tsx:63
 msgid "Choose a folder"
 msgstr "Choose a folder"
 
-#: src/routes/canvas.tsx:1170
+#: src/routes/canvas.tsx:1363
 msgid "Choose another repository window"
 msgstr "Choose another repository window"
 
-#: src/routes/canvas.tsx:1180
+#: src/routes/canvas.tsx:1373
 msgid "Choose images or videos to add to this repository"
 msgstr "Choose images or videos to add to this repository"
 
-#: src/components/canvas/library-panel.tsx:462
+#: src/components/canvas/library-panel.tsx:490
 msgid "Clear filters"
 msgstr "Clear filters"
 
-#: src/components/canvas/detail-panel.tsx:617
+#: src/components/canvas/detail-panel.tsx:602
 msgid "Clear prompts"
 msgstr "Clear prompts"
 
-#: src/routes/canvas.tsx:1452
+#: src/routes/canvas.tsx:1645
 msgid "Clear selection"
 msgstr "Clear selection"
 
-#: src/routes/canvas.tsx:1453
+#: src/routes/canvas.tsx:1646
 msgid "Clear the active selection"
 msgstr "Clear the active selection"
 
@@ -602,29 +609,29 @@ msgstr "Clear the active selection"
 #~ msgid "Click a node to set as source — Esc to cancel"
 #~ msgstr "Click a node to set as source — Esc to cancel"
 
-#: src/routes/canvas.tsx:1531
-#: src/routes/canvas.tsx:1549
-#: src/routes/canvas.tsx:1563
-#: src/routes/canvas.tsx:1828
-#: src/routes/canvas.tsx:1842
-#: src/routes/canvas.tsx:1854
-#: src/routes/canvas.tsx:1866
-#: src/routes/canvas.tsx:1877
-#: src/routes/canvas.tsx:1888
+#: src/routes/canvas.tsx:1724
+#: src/routes/canvas.tsx:1742
+#: src/routes/canvas.tsx:1756
+#: src/routes/canvas.tsx:2021
+#: src/routes/canvas.tsx:2035
+#: src/routes/canvas.tsx:2047
+#: src/routes/canvas.tsx:2059
+#: src/routes/canvas.tsx:2070
+#: src/routes/canvas.tsx:2081
 msgid "Clipboard and lifecycle"
 msgstr "Clipboard and lifecycle"
 
-#: src/components/settings-dialog.tsx:148
+#: src/components/settings-dialog.tsx:105
 msgid "Clipboard paste continues to use the repository root and places assets only when the Canvas has focus."
 msgstr "Clipboard paste continues to use the repository root and places assets only when the Canvas has focus."
 
-#: src/components/canvas/command-palette.tsx:391
+#: src/components/canvas/command-palette.tsx:392
 #: src/components/compression-dialog.tsx:145
-#: src/components/settings-dialog.tsx:124
+#: src/components/settings-dialog.tsx:81
 msgid "Close"
 msgstr "Close"
 
-#: src/routes/canvas.tsx:1018
+#: src/routes/canvas.tsx:1211
 msgid "Close Assets"
 msgstr "Close Assets"
 
@@ -632,11 +639,11 @@ msgstr "Close Assets"
 msgid "Close comparison"
 msgstr "Close comparison"
 
-#: src/routes/canvas.tsx:1771
+#: src/routes/canvas.tsx:1964
 msgid "close group"
 msgstr "close group"
 
-#: src/routes/canvas.tsx:1072
+#: src/routes/canvas.tsx:1265
 msgid "Close Inspector"
 msgstr "Close Inspector"
 
@@ -644,16 +651,16 @@ msgstr "Close Inspector"
 msgid "Close operation"
 msgstr "Close operation"
 
-#: src/components/canvas/lightbox.tsx:21
-#: src/components/canvas/lightbox.tsx:24
+#: src/components/canvas/lightbox.tsx:23
+#: src/components/canvas/lightbox.tsx:26
 msgid "Close preview"
 msgstr "Close preview"
 
-#: src/routes/canvas.tsx:1019
+#: src/routes/canvas.tsx:1212
 msgid "Close the Assets navigator"
 msgstr "Close the Assets navigator"
 
-#: src/routes/canvas.tsx:1073
+#: src/routes/canvas.tsx:1266
 msgid "Close the Inspector drawer"
 msgstr "Close the Inspector drawer"
 
@@ -674,32 +681,32 @@ msgstr "Close the Inspector drawer"
 msgid "Collapse {title} shelf"
 msgstr "Collapse {title} shelf"
 
-#: src/routes/canvas.tsx:1768
+#: src/routes/canvas.tsx:1961
 msgid "Collapse active set"
 msgstr "Collapse active set"
 
-#: src/routes/canvas.tsx:1498
+#: src/routes/canvas.tsx:1691
 msgid "collection"
 msgstr "collection"
 
-#: src/components/settings-dialog.tsx:163
+#: src/components/settings-dialog.tsx:137
 msgid "Comfortable"
 msgstr "Comfortable"
 
-#: src/routes/canvas.tsx:1151
+#: src/routes/canvas.tsx:1344
 msgid "command palette"
 msgstr "command palette"
 
-#: src/components/canvas/command-palette.tsx:196
+#: src/components/canvas/command-palette.tsx:197
 msgid "Command palette"
 msgstr "Command palette"
 
-#: src/components/canvas/command-palette.tsx:251
-#: src/components/canvas/command-palette.tsx:261
+#: src/components/canvas/command-palette.tsx:252
+#: src/components/canvas/command-palette.tsx:262
 msgid "Commands"
 msgstr "Commands"
 
-#: src/components/canvas/command-palette.tsx:229
+#: src/components/canvas/command-palette.tsx:230
 msgid "Commands · > commands · @ assets"
 msgstr "Commands · > commands · @ assets"
 
@@ -707,11 +714,11 @@ msgstr "Commands · > commands · @ assets"
 #~ msgid "Common:"
 #~ msgstr "Common:"
 
-#: src/components/settings-dialog.tsx:163
+#: src/components/settings-dialog.tsx:138
 msgid "Compact"
 msgstr "Compact"
 
-#: src/components/canvas/detail-panel.tsx:260
+#: src/components/canvas/detail-panel.tsx:262
 msgid "Compare"
 msgstr "Compare"
 
@@ -724,16 +731,16 @@ msgstr "Compare"
 msgid "Compare {name}"
 msgstr "Compare {name}"
 
-#: src/routes/canvas.tsx:1716
+#: src/routes/canvas.tsx:1909
 msgid "compare images"
 msgstr "compare images"
 
 #: src/components/canvas/set-comparison-dialog.tsx:48
-#: src/routes/canvas.tsx:1713
+#: src/routes/canvas.tsx:1906
 msgid "Compare set"
 msgstr "Compare set"
 
-#: src/routes/canvas.tsx:1705
+#: src/routes/canvas.tsx:1898
 msgid "compress"
 msgstr "compress"
 
@@ -746,7 +753,7 @@ msgstr "Compress"
 msgid "Compress images"
 msgstr "Compress images"
 
-#: src/routes/canvas.tsx:1702
+#: src/routes/canvas.tsx:1895
 msgid "Compress selected assets"
 msgstr "Compress selected assets"
 
@@ -770,35 +777,47 @@ msgstr "Compression quality"
 msgid "Compression result"
 msgstr "Compression result"
 
-#: src/routes/canvas.tsx:1855
+#: src/routes/canvas.tsx:2048
 msgid "convert and copy"
 msgstr "convert and copy"
 
-#: src/routes/canvas.tsx:1843
+#: src/routes/canvas.tsx:2036
 msgid "copy assets"
 msgstr "copy assets"
 
-#: src/routes/canvas.tsx:1852
+#: src/routes/canvas.tsx:2045
 msgid "Copy converted media"
 msgstr "Copy converted media"
 
-#: src/routes/canvas.tsx:1853
+#: src/routes/canvas.tsx:2046
 msgid "Copy converted output when a converter is available"
 msgstr "Copy converted output when a converter is available"
 
-#: src/routes/canvas.tsx:1841
+#: src/components/canvas/lightbox.tsx:165
+msgid "Copy image"
+msgstr "Copy image"
+
+#: src/routes/canvas.tsx:2034
 msgid "Copy original files for the active selection"
 msgstr "Copy original files for the active selection"
 
-#: src/routes/canvas.tsx:1840
+#: src/routes/canvas.tsx:2033
 msgid "Copy original media"
 msgstr "Copy original media"
 
-#: src/components/canvas/asset-list.tsx:49
-msgid "Could not load assets. Retry the listing."
-msgstr "Could not load assets. Retry the listing."
+#: src/components/canvas/lightbox.tsx:122
+msgid "Could not copy image. Try downloading it instead."
+msgstr "Could not copy image. Try downloading it instead."
 
-#: src/components/canvas/command-palette.tsx:268
+#: src/components/canvas/asset-list.tsx:53
+msgid "Could not load assets."
+msgstr "Could not load assets."
+
+#: src/components/canvas/asset-list.tsx:49
+#~ msgid "Could not load assets. Retry the listing."
+#~ msgstr "Could not load assets. Retry the listing."
+
+#: src/components/canvas/command-palette.tsx:269
 msgid "Could not load repository assets."
 msgstr "Could not load repository assets."
 
@@ -825,7 +844,7 @@ msgstr "Couldn't redo"
 msgid "Couldn't undo"
 msgstr "Couldn't undo"
 
-#: src/routes/canvas.tsx:1727
+#: src/routes/canvas.tsx:1920
 msgid "cover"
 msgstr "cover"
 
@@ -833,7 +852,7 @@ msgstr "cover"
 msgid "Cover"
 msgstr "Cover"
 
-#: src/routes/canvas.tsx:1496
+#: src/routes/canvas.tsx:1689
 msgid "Create a semantic set from selected Canvas items"
 msgstr "Create a semantic set from selected Canvas items"
 
@@ -849,11 +868,11 @@ msgstr "Create compressed copy"
 msgid "Create New Repo"
 msgstr "Create New Repo"
 
-#: src/components/repo-picker-modal.tsx:116
+#: src/components/repo-picker-modal.tsx:132
 msgid "Create repo here"
 msgstr "Create repo here"
 
-#: src/routes/canvas.tsx:1495
+#: src/routes/canvas.tsx:1688
 msgid "Create set"
 msgstr "Create set"
 
@@ -862,7 +881,7 @@ msgstr "Create set"
 #~ msgid "Create Set ({0})"
 #~ msgstr "Create Set ({0})"
 
-#: src/components/canvas/canvas-dock.tsx:181
+#: src/components/canvas/canvas-dock.tsx:180
 msgid "Create Set ({selectionCount})"
 msgstr "Create Set ({selectionCount})"
 
@@ -870,11 +889,11 @@ msgstr "Create Set ({selectionCount})"
 msgid "Crop"
 msgstr "Crop"
 
-#: src/routes/canvas.tsx:2494
+#: src/routes/canvas.tsx:2720
 msgid "Ctrl/Cmd-drag image → image or set to create a relationship."
 msgstr "Ctrl/Cmd-drag image → image or set to create a relationship."
 
-#: src/components/canvas/detail-panel.tsx:426
+#: src/components/canvas/detail-panel.tsx:411
 msgid "Ctrl/Cmd-drag this image onto another image or set to create a relationship."
 msgstr "Ctrl/Cmd-drag this image onto another image or set to create a relationship."
 
@@ -882,7 +901,7 @@ msgstr "Ctrl/Cmd-drag this image onto another image or set to create a relations
 msgid "Current"
 msgstr "Current"
 
-#: src/components/settings-dialog.tsx:157
+#: src/components/settings-dialog.tsx:123
 msgid "Dark"
 msgstr "Dark"
 
@@ -890,11 +909,11 @@ msgstr "Dark"
 #~ msgid "Date"
 #~ msgstr "Date"
 
-#: src/routes/canvas.tsx:1363
+#: src/routes/canvas.tsx:1556
 msgid "Decrease Canvas zoom"
 msgstr "Decrease Canvas zoom"
 
-#: src/routes/canvas.tsx:1260
+#: src/routes/canvas.tsx:1453
 msgid "decrease gallery density"
 msgstr "decrease gallery density"
 
@@ -902,7 +921,7 @@ msgstr "decrease gallery density"
 msgid "Delete"
 msgstr "Delete"
 
-#: src/routes/canvas.tsx:1550
+#: src/routes/canvas.tsx:1743
 msgid "delete assets"
 msgstr "delete assets"
 
@@ -914,27 +933,32 @@ msgstr "delete assets"
 msgid "Delete saved view"
 msgstr "Delete saved view"
 
-#: src/routes/canvas.tsx:1141
+#: src/routes/canvas.tsx:1334
 msgid "density"
 msgstr "density"
 
-#: src/components/settings-dialog.tsx:161
+#: src/components/settings-dialog.tsx:128
+#: src/components/settings-dialog.tsx:133
 msgid "Density"
 msgstr "Density"
 
-#: src/components/canvas/detail-panel.tsx:398
+#: src/components/canvas/detail-panel.tsx:383
 msgid "Derived"
 msgstr "Derived"
 
-#: src/components/canvas/lightbox.tsx:150
+#: src/components/canvas/lightbox.tsx:198
 msgid "Derived from"
 msgstr "Derived from"
 
-#: src/routes/canvas.tsx:1796
+#: src/routes/canvas.tsx:1989
 msgid "derived image"
 msgstr "derived image"
 
-#: src/routes/canvas.tsx:1455
+#: src/components/canvas/lightbox.tsx:224
+msgid "Derived images"
+msgstr "Derived images"
+
+#: src/routes/canvas.tsx:1648
 msgid "deselect"
 msgstr "deselect"
 
@@ -942,7 +966,7 @@ msgstr "deselect"
 #~ msgid "Detail"
 #~ msgstr "Detail"
 
-#: src/routes/canvas.tsx:1054
+#: src/routes/canvas.tsx:1247
 msgid "details"
 msgstr "details"
 
@@ -950,11 +974,11 @@ msgstr "details"
 msgid "Dimensions"
 msgstr "Dimensions"
 
-#: src/routes/canvas.tsx:1208
+#: src/routes/canvas.tsx:1401
 msgid "directories"
 msgstr "directories"
 
-#: src/routes/canvas.tsx:2229
+#: src/routes/canvas.tsx:2481
 msgid "Dismiss"
 msgstr "Dismiss"
 
@@ -962,12 +986,16 @@ msgstr "Dismiss"
 #~ msgid "Display"
 #~ msgstr "Display"
 
-#: src/components/canvas/detail-panel.tsx:277
-#: src/routes/canvas.tsx:1605
+#: src/components/canvas/detail-panel.tsx:279
+#: src/routes/canvas.tsx:1798
 msgid "Dissolve set"
 msgstr "Dissolve set"
 
-#: src/routes/canvas.tsx:2487
+#: src/components/canvas/lightbox.tsx:166
+msgid "Download"
+msgstr "Download"
+
+#: src/routes/canvas.tsx:2713
 msgid "Drag an asset from Assets onto the canvas."
 msgstr "Drag an asset from Assets onto the canvas."
 
@@ -979,15 +1007,15 @@ msgstr "Drag any image to pan all views. Zoom applies to every variant."
 #~ msgid "Drag from a node's edge to link images — a dedicated link tool arrives in a later stage"
 #~ msgstr "Drag from a node's edge to link images — a dedicated link tool arrives in a later stage"
 
-#: src/routes/canvas.tsx:1678
+#: src/routes/canvas.tsx:1871
 msgid "edit prompt"
 msgstr "edit prompt"
 
-#: src/routes/canvas.tsx:1746
+#: src/routes/canvas.tsx:1939
 msgid "Edit set kind"
 msgstr "Edit set kind"
 
-#: src/routes/canvas.tsx:1735
+#: src/routes/canvas.tsx:1928
 msgid "Edit set name"
 msgstr "Edit set name"
 
@@ -995,12 +1023,12 @@ msgstr "Edit set name"
 msgid "edits metadata for the current selection."
 msgstr "edits metadata for the current selection."
 
-#: src/components/canvas/detail-panel.tsx:509
+#: src/components/canvas/detail-panel.tsx:494
 msgid "Enter a tag name."
 msgstr "Enter a tag name."
 
-#: src/routes/canvas.tsx:3024
-#: src/routes/canvas.tsx:3035
+#: src/routes/canvas.tsx:3261
+#: src/routes/canvas.tsx:3272
 msgid "Exit Focus Canvas"
 msgstr "Exit Focus Canvas"
 
@@ -1009,15 +1037,15 @@ msgstr "Exit Focus Canvas"
 #~ msgid "Exit Focus Canvas ({0})"
 #~ msgstr "Exit Focus Canvas ({0})"
 
-#: src/routes/canvas.tsx:3029
+#: src/routes/canvas.tsx:3266
 msgid "Exit Focus Canvas mode"
 msgstr "Exit Focus Canvas mode"
 
-#: src/routes/canvas.tsx:1757
+#: src/routes/canvas.tsx:1950
 msgid "Expand selected set"
 msgstr "Expand selected set"
 
-#: src/components/settings-dialog.tsx:147
+#: src/components/settings-dialog.tsx:104
 msgid "Explicit file imports use the repository root and add assets without placing them on the Canvas. Import destination preferences are not available yet."
 msgstr "Explicit file imports use the repository root and add assets without placing them on the Canvas. Import destination preferences are not available yet."
 
@@ -1025,7 +1053,7 @@ msgstr "Explicit file imports use the repository root and add assets without pla
 #~ msgid "Explorer"
 #~ msgstr "Explorer"
 
-#: src/components/canvas/detail-panel.tsx:432
+#: src/components/canvas/detail-panel.tsx:417
 msgid "File"
 msgstr "File"
 
@@ -1033,11 +1061,11 @@ msgstr "File"
 #~ msgid "File explorer"
 #~ msgstr "File explorer"
 
-#: src/components/canvas/image-node.tsx:87
+#: src/components/canvas/image-node.tsx:88
 msgid "File not found on disk"
 msgstr "File not found on disk"
 
-#: src/components/canvas/detail-panel.tsx:451
+#: src/components/canvas/detail-panel.tsx:436
 msgid "File path"
 msgstr "File path"
 
@@ -1045,19 +1073,19 @@ msgstr "File path"
 msgid "Filename"
 msgstr "Filename"
 
-#: src/routes/canvas.tsx:1208
+#: src/routes/canvas.tsx:1401
 msgid "filesystem"
 msgstr "filesystem"
 
-#: src/components/canvas/library-panel.tsx:353
+#: src/components/canvas/library-panel.tsx:367
 msgid "Filters"
 msgstr "Filters"
 
-#: src/routes/canvas.tsx:1296
+#: src/routes/canvas.tsx:1489
 msgid "find asset"
 msgstr "find asset"
 
-#: src/routes/canvas.tsx:1484
+#: src/routes/canvas.tsx:1677
 msgid "find in assets"
 msgstr "find in assets"
 
@@ -1065,8 +1093,8 @@ msgstr "find in assets"
 #~ msgid "Find in assets"
 #~ msgstr "Find in assets"
 
-#: src/routes/canvas.tsx:1621
-#: src/routes/canvas.tsx:2211
+#: src/routes/canvas.tsx:1814
+#: src/routes/canvas.tsx:2449
 msgid "Find in Assets"
 msgstr "Find in Assets"
 
@@ -1074,43 +1102,44 @@ msgstr "Find in Assets"
 #~ msgid "Find in list"
 #~ msgstr "Find in list"
 
-#: src/routes/canvas.tsx:1309
+#: src/routes/canvas.tsx:1502
 msgid "find media"
 msgstr "find media"
 
 #: src/components/canvas/asset-view-controls.tsx:223
-#: src/components/canvas/zoom-controls.tsx:49
+#: src/components/canvas/zoom-controls.tsx:44
+#: src/components/canvas/zoom-controls.tsx:47
 msgid "Fit"
 msgstr "Fit"
 
-#: src/components/canvas/canvas-dock.tsx:107
-#: src/routes/canvas.tsx:1316
+#: src/components/canvas/canvas-dock.tsx:106
+#: src/routes/canvas.tsx:1509
 msgid "Fit all"
 msgstr "Fit all"
 
-#: src/components/canvas/canvas-dock.tsx:115
-#: src/components/canvas/canvas-dock.tsx:161
-#: src/routes/canvas.tsx:1328
+#: src/components/canvas/canvas-dock.tsx:114
+#: src/components/canvas/canvas-dock.tsx:160
+#: src/routes/canvas.tsx:1521
 msgid "Fit selection"
 msgstr "Fit selection"
 
-#: src/routes/canvas.tsx:1293
+#: src/routes/canvas.tsx:1486
 msgid "Focus asset search"
 msgstr "Focus asset search"
 
-#: src/routes/canvas.tsx:1108
+#: src/routes/canvas.tsx:1301
 msgid "focus mode"
 msgstr "focus mode"
 
-#: src/routes/canvas.tsx:1665
+#: src/routes/canvas.tsx:1858
 msgid "Focus the Inspector tag field for the active selection"
 msgstr "Focus the Inspector tag field for the active selection"
 
-#: src/routes/canvas.tsx:1747
+#: src/routes/canvas.tsx:1940
 msgid "Focus the selected set kind field"
 msgstr "Focus the selected set kind field"
 
-#: src/routes/canvas.tsx:1736
+#: src/routes/canvas.tsx:1929
 msgid "Focus the selected set name field"
 msgstr "Focus the selected set name field"
 
@@ -1122,7 +1151,7 @@ msgstr "Focused the window showing \"{targetName}\"."
 #~ msgid "Folder name…"
 #~ msgstr "Folder name…"
 
-#: src/components/canvas/library-panel.tsx:310
+#: src/components/canvas/library-panel.tsx:324
 msgid "Folders"
 msgstr "Folders"
 
@@ -1130,19 +1159,19 @@ msgstr "Folders"
 msgid "Format"
 msgstr "Format"
 
-#: src/routes/canvas.tsx:1319
+#: src/routes/canvas.tsx:1512
 msgid "frame canvas"
 msgstr "frame canvas"
 
-#: src/routes/canvas.tsx:1317
+#: src/routes/canvas.tsx:1510
 msgid "Frame every placed item in the Canvas"
 msgstr "Frame every placed item in the Canvas"
 
-#: src/routes/canvas.tsx:1329
+#: src/routes/canvas.tsx:1522
 msgid "Frame the selected Canvas items"
 msgstr "Frame the selected Canvas items"
 
-#: src/routes/canvas.tsx:1224
+#: src/routes/canvas.tsx:1417
 msgid "gallery view"
 msgstr "gallery view"
 
@@ -1160,17 +1189,17 @@ msgstr "Gallery view"
 #~ msgid "Go to {0} asset"
 #~ msgstr "Go to {0} asset"
 
-#: src/components/canvas/detail-panel.tsx:313
-#: src/routes/canvas.tsx:1793
+#: src/components/canvas/detail-panel.tsx:315
+#: src/routes/canvas.tsx:1986
 msgid "Go to derived"
 msgstr "Go to derived"
 
-#: src/components/canvas/detail-panel.tsx:692
+#: src/components/canvas/detail-panel.tsx:677
 msgid "Go to derived asset"
 msgstr "Go to derived asset"
 
 #. placeholder {0}: r.derivedImageId
-#: src/components/canvas/detail-panel.tsx:310
+#: src/components/canvas/detail-panel.tsx:312
 msgid "Go to derived asset {0}"
 msgstr "Go to derived asset {0}"
 
@@ -1178,21 +1207,21 @@ msgstr "Go to derived asset {0}"
 #~ msgid "Go to library"
 #~ msgstr "Go to library"
 
-#: src/components/canvas/detail-panel.tsx:305
-#: src/routes/canvas.tsx:1779
+#: src/components/canvas/detail-panel.tsx:307
+#: src/routes/canvas.tsx:1972
 msgid "Go to source"
 msgstr "Go to source"
 
-#: src/components/canvas/detail-panel.tsx:692
+#: src/components/canvas/detail-panel.tsx:677
 msgid "Go to source asset"
 msgstr "Go to source asset"
 
 #. placeholder {0}: r.sourceImageId
-#: src/components/canvas/detail-panel.tsx:302
+#: src/components/canvas/detail-panel.tsx:304
 msgid "Go to source asset {0}"
 msgstr "Go to source asset {0}"
 
-#: src/routes/canvas.tsx:1498
+#: src/routes/canvas.tsx:1691
 msgid "group"
 msgstr "group"
 
@@ -1208,30 +1237,34 @@ msgstr "group"
 #~ msgid "Grouping arrives in a later stage"
 #~ msgstr "Grouping arrives in a later stage"
 
-#: src/routes/canvas.tsx:1119
+#: src/routes/canvas.tsx:1312
 msgid "help"
 msgstr "help"
 
-#: src/components/canvas/command-palette.tsx:395
+#: src/components/canvas/command-palette.tsx:396
 msgid "Help"
 msgstr "Help"
 
-#: src/routes/canvas.tsx:1021
-#: src/routes/canvas.tsx:1576
+#: src/routes/canvas.tsx:1214
+#: src/routes/canvas.tsx:1769
 msgid "hide assets"
 msgstr "hide assets"
 
-#: src/routes/canvas.tsx:1075
+#: src/routes/canvas.tsx:1268
 msgid "hide inspector"
 msgstr "hide inspector"
 
-#: src/routes/canvas.tsx:1106
+#: src/routes/canvas.tsx:1299
 msgid "Hide or restore Canvas controls and drawers"
 msgstr "Hide or restore Canvas controls and drawers"
 
-#: src/routes/canvas.tsx:1574
+#: src/routes/canvas.tsx:1767
 msgid "Hide selected assets from the active catalog"
 msgstr "Hide selected assets from the active catalog"
+
+#: src/components/canvas/lightbox.tsx:119
+msgid "Image copied"
+msgstr "Image copied"
 
 #: src/components/canvas/asset-view-controls.tsx:212
 #: src/components/canvas/asset-view-controls.tsx:215
@@ -1246,60 +1279,60 @@ msgstr "Image fit"
 #~ msgid "Import"
 #~ msgstr "Import"
 
-#: src/routes/canvas.tsx:1865
+#: src/routes/canvas.tsx:2058
 msgid "Import copied or native clipboard media"
 msgstr "Import copied or native clipboard media"
 
-#: src/components/settings-dialog.tsx:146
+#: src/components/settings-dialog.tsx:103
 msgid "Import defaults"
 msgstr "Import defaults"
 
-#: src/routes/canvas.tsx:1179
-#: src/routes/canvas.tsx:3004
+#: src/routes/canvas.tsx:1372
+#: src/routes/canvas.tsx:3241
 msgid "Import media"
 msgstr "Import media"
 
-#: src/routes/canvas.tsx:2489
+#: src/routes/canvas.tsx:2715
 msgid "Import media or drop files onto the canvas."
 msgstr "Import media or drop files onto the canvas."
 
-#: src/routes/canvas.tsx:1352
+#: src/routes/canvas.tsx:1545
 msgid "Increase Canvas zoom"
 msgstr "Increase Canvas zoom"
 
-#: src/routes/canvas.tsx:1278
+#: src/routes/canvas.tsx:1471
 msgid "increase gallery density"
 msgstr "increase gallery density"
 
-#: src/routes/canvas.tsx:1276
+#: src/routes/canvas.tsx:1469
 msgid "Increase the thumbnail gallery card size"
 msgstr "Increase the thumbnail gallery card size"
 
-#: src/components/canvas/canvas-dock.tsx:154
+#: src/components/canvas/canvas-dock.tsx:153
 msgid "Inspect"
 msgstr "Inspect"
 
-#: src/routes/canvas.tsx:1087
-#: src/routes/canvas.tsx:1098
-#: src/routes/canvas.tsx:2847
-#: src/routes/canvas.tsx:2938
+#: src/routes/canvas.tsx:1280
+#: src/routes/canvas.tsx:1291
+#: src/routes/canvas.tsx:3088
+#: src/routes/canvas.tsx:3175
 #: src/routes/landing.tsx:59
 msgid "Inspector"
 msgstr "Inspector"
 
-#: src/routes/canvas.tsx:1064
+#: src/routes/canvas.tsx:1257
 msgid "inspector drawer"
 msgstr "inspector drawer"
 
-#: src/routes/canvas.tsx:1078
+#: src/routes/canvas.tsx:1271
 msgid "Inspector is already closed"
 msgstr "Inspector is already closed"
 
-#: src/routes/canvas.tsx:1100
+#: src/routes/canvas.tsx:1293
 msgid "Inspector is not pinned"
 msgstr "Inspector is not pinned"
 
-#: src/routes/canvas.tsx:1054
+#: src/routes/canvas.tsx:1247
 msgid "inspector shelf"
 msgstr "inspector shelf"
 
@@ -1307,29 +1340,29 @@ msgstr "inspector shelf"
 #~ msgid "Keep {title} open"
 #~ msgstr "Keep {title} open"
 
-#: src/routes/canvas.tsx:1032
+#: src/routes/canvas.tsx:1225
 msgid "keep assets open"
 msgstr "keep assets open"
 
-#: src/routes/canvas.tsx:1030
+#: src/routes/canvas.tsx:1223
 msgid "Keep Assets open during Canvas interactions"
 msgstr "Keep Assets open during Canvas interactions"
 
-#: src/routes/canvas.tsx:1086
+#: src/routes/canvas.tsx:1279
 msgid "keep inspector open"
 msgstr "keep inspector open"
 
-#: src/routes/canvas.tsx:1084
+#: src/routes/canvas.tsx:1277
 msgid "Keep Inspector open during Canvas interactions"
 msgstr "Keep Inspector open during Canvas interactions"
 
-#: src/components/settings-dialog.tsx:129
-#: src/components/settings-dialog.tsx:170
+#: src/components/settings-dialog.tsx:86
+#: src/components/settings-dialog.tsx:154
 msgid "Keyboard"
 msgstr "Keyboard"
 
-#: src/components/canvas/command-palette.tsx:196
-#: src/components/canvas/command-palette.tsx:250
+#: src/components/canvas/command-palette.tsx:197
+#: src/components/canvas/command-palette.tsx:251
 msgid "Keyboard shortcuts"
 msgstr "Keyboard shortcuts"
 
@@ -1337,22 +1370,22 @@ msgstr "Keyboard shortcuts"
 #~ msgid "Keyboard shortcuts are available from the command palette."
 #~ msgstr "Keyboard shortcuts are available from the command palette."
 
-#: src/components/canvas/detail-panel.tsx:240
+#: src/components/canvas/detail-panel.tsx:242
 msgid "Kind"
 msgstr "Kind"
 
 #: src/components/canvas/asset-view-controls.tsx:179
 #: src/components/canvas/asset-view-controls.tsx:182
-#: src/routes/canvas.tsx:1275
+#: src/routes/canvas.tsx:1468
 msgid "Larger gallery cards"
 msgstr "Larger gallery cards"
 
-#: src/routes/canvas.tsx:1278
+#: src/routes/canvas.tsx:1471
 msgid "larger thumbnails"
 msgstr "larger thumbnails"
 
-#: src/routes/canvas.tsx:1376
-#: src/routes/canvas.tsx:1387
+#: src/routes/canvas.tsx:1569
+#: src/routes/canvas.tsx:1580
 msgid "layout"
 msgstr "layout"
 
@@ -1360,7 +1393,7 @@ msgstr "layout"
 #~ msgid "Layout"
 #~ msgstr "Layout"
 
-#: src/routes/canvas.tsx:1000
+#: src/routes/canvas.tsx:1193
 msgid "library"
 msgstr "library"
 
@@ -1369,11 +1402,11 @@ msgstr "library"
 #~ msgid "Library"
 #~ msgstr "Library"
 
-#: src/components/settings-dialog.tsx:157
+#: src/components/settings-dialog.tsx:122
 msgid "Light"
 msgstr "Light"
 
-#: src/routes/canvas.tsx:1470
+#: src/routes/canvas.tsx:1663
 msgid "lightbox"
 msgstr "lightbox"
 
@@ -1381,7 +1414,7 @@ msgstr "lightbox"
 #~ msgid "Link source…"
 #~ msgstr "Link source…"
 
-#: src/routes/canvas.tsx:1242
+#: src/routes/canvas.tsx:1435
 msgid "list view"
 msgstr "list view"
 
@@ -1390,8 +1423,8 @@ msgstr "list view"
 msgid "List view"
 msgstr "List view"
 
-#: src/components/canvas/asset-list.tsx:47
-#: src/components/canvas/command-palette.tsx:265
+#: src/components/canvas/asset-list.tsx:50
+#: src/components/canvas/command-palette.tsx:266
 msgid "Loading assets…"
 msgstr "Loading assets…"
 
@@ -1403,23 +1436,23 @@ msgstr "Loading assets…"
 msgid "Loading saved views…"
 msgstr "Loading saved views…"
 
-#: src/components/canvas/detail-panel.tsx:346
+#: src/components/canvas/detail-panel.tsx:331
 msgid "Loading selection…"
 msgstr "Loading selection…"
 
-#: src/components/canvas/detail-panel.tsx:495
+#: src/components/canvas/detail-panel.tsx:480
 msgid "Loading tag summary…"
 msgstr "Loading tag summary…"
 
-#: src/components/canvas/canvas-dock.tsx:148
+#: src/components/canvas/canvas-dock.tsx:147
 msgid "Locate"
 msgstr "Locate"
 
-#: src/routes/canvas.tsx:1624
+#: src/routes/canvas.tsx:1817
 msgid "locate file"
 msgstr "locate file"
 
-#: src/routes/canvas.tsx:1481
+#: src/routes/canvas.tsx:1674
 msgid "Locate in Assets"
 msgstr "Locate in Assets"
 
@@ -1431,7 +1464,7 @@ msgstr "Loom"
 #~ msgid "Loom keeps every derived-image relationship on a canvas that stays fast — even at thousands of images."
 #~ msgstr "Loom keeps every derived-image relationship on a canvas that stays fast — even at thousands of images."
 
-#: src/routes/canvas.tsx:1354
+#: src/routes/canvas.tsx:1547
 msgid "magnify"
 msgstr "magnify"
 
@@ -1463,21 +1496,21 @@ msgstr "Media transcode returned no result"
 #~ msgid "members"
 #~ msgstr "members"
 
-#: src/routes/canvas.tsx:1667
+#: src/routes/canvas.tsx:1860
 msgid "metadata"
 msgstr "metadata"
 
-#: src/components/canvas/library-panel.tsx:378
+#: src/components/canvas/library-panel.tsx:392
 msgid "missing"
 msgstr "missing"
 
-#: src/components/canvas/detail-panel.tsx:414
-#: src/components/canvas/library-panel.tsx:431
+#: src/components/canvas/detail-panel.tsx:399
+#: src/components/canvas/library-panel.tsx:451
 #: src/components/canvas/panel-image-row.tsx:112
 msgid "Missing"
 msgstr "Missing"
 
-#: src/components/canvas/detail-panel.tsx:578
+#: src/components/canvas/detail-panel.tsx:563
 msgid "Mixed prompts — edit to replace all"
 msgstr "Mixed prompts — edit to replace all"
 
@@ -1485,7 +1518,7 @@ msgstr "Mixed prompts — edit to replace all"
 #~ msgid "Mixed prompts — enter text to replace all"
 #~ msgstr "Mixed prompts — enter text to replace all"
 
-#: src/components/canvas/detail-panel.tsx:582
+#: src/components/canvas/detail-panel.tsx:567
 msgid "Mixed values. Editing and saving replaces every selected prompt."
 msgstr "Mixed values. Editing and saving replaces every selected prompt."
 
@@ -1517,28 +1550,28 @@ msgstr "Mixed values. Editing and saving replaces every selected prompt."
 #~ msgid "Move — left-drag to pan the canvas"
 #~ msgstr "Move — left-drag to pan the canvas"
 
-#: src/routes/canvas.tsx:1656
+#: src/routes/canvas.tsx:1849
 msgid "move file"
 msgstr "move file"
 
-#: src/components/canvas/detail-panel.tsx:460
+#: src/components/canvas/detail-panel.tsx:445
 msgid "Move or rename"
 msgstr "Move or rename"
 
-#: src/routes/canvas.tsx:1653
+#: src/routes/canvas.tsx:1846
 msgid "Move or rename file path"
 msgstr "Move or rename file path"
 
-#: src/routes/canvas.tsx:1548
+#: src/routes/canvas.tsx:1741
 msgid "Move selected Assets to the repository trash"
 msgstr "Move selected Assets to the repository trash"
 
-#: src/routes/canvas.tsx:1562
+#: src/routes/canvas.tsx:1755
 msgid "Move selected Canvas assets to repository trash"
 msgstr "Move selected Canvas assets to repository trash"
 
-#: src/components/canvas/detail-panel.tsx:662
-#: src/routes/canvas.tsx:3176
+#: src/components/canvas/detail-panel.tsx:647
+#: src/routes/canvas.tsx:3390
 msgid "Move to trash"
 msgstr "Move to trash"
 
@@ -1558,15 +1591,15 @@ msgstr "Name this view"
 msgid "Name Z to A"
 msgstr "Name Z to A"
 
-#: src/components/canvas/command-palette.tsx:385
+#: src/components/canvas/command-palette.tsx:386
 msgid "Navigate"
 msgstr "Navigate"
 
-#: src/routes/canvas.tsx:1794
+#: src/routes/canvas.tsx:1987
 msgid "Navigate to the derived asset of the selected relationship"
 msgstr "Navigate to the derived asset of the selected relationship"
 
-#: src/routes/canvas.tsx:1780
+#: src/routes/canvas.tsx:1973
 msgid "Navigate to the source asset of the selected relationship"
 msgstr "Navigate to the source asset of the selected relationship"
 
@@ -1594,21 +1627,21 @@ msgstr "Newest first"
 #~ msgid "Next"
 #~ msgstr "Next"
 
-#: src/components/canvas/lightbox.tsx:53
-#: src/components/canvas/lightbox.tsx:56
+#: src/components/canvas/lightbox.tsx:55
+#: src/components/canvas/lightbox.tsx:58
 msgid "Next image"
 msgstr "Next image"
 
-#: src/components/canvas/asset-list.tsx:51
+#: src/components/canvas/asset-list.tsx:57
 msgid "No assets in this folder."
 msgstr "No assets in this folder."
 
-#: src/components/canvas/asset-gallery.tsx:272
-#: src/components/canvas/asset-list.tsx:59
+#: src/components/canvas/asset-gallery.tsx:268
+#: src/components/canvas/asset-list.tsx:65
 msgid "No assets match these filters."
 msgstr "No assets match these filters."
 
-#: src/components/canvas/asset-list.tsx:61
+#: src/components/canvas/asset-list.tsx:67
 msgid "No assets yet. Import files or rescan the repository."
 msgstr "No assets yet. Import files or rescan the repository."
 
@@ -1629,35 +1662,35 @@ msgstr "No assets yet. Import files or rescan the repository."
 #~ msgid "No matching assets"
 #~ msgstr "No matching assets"
 
-#: src/components/canvas/command-palette.tsx:375
+#: src/components/canvas/command-palette.tsx:376
 msgid "No matching assets. Search is limited to the first 50 matches."
 msgstr "No matching assets. Search is limited to the first 50 matches."
 
-#: src/components/canvas/command-palette.tsx:375
+#: src/components/canvas/command-palette.tsx:376
 msgid "No matching commands"
 msgstr "No matching commands"
 
-#: src/components/canvas/asset-list.tsx:53
+#: src/components/canvas/asset-list.tsx:59
 msgid "No missing assets match this query."
 msgstr "No missing assets match this query."
 
-#: src/components/canvas/detail-panel.tsx:577
+#: src/components/canvas/detail-panel.tsx:562
 msgid "No prompt"
 msgstr "No prompt"
 
-#: src/components/canvas/lightbox.tsx:126
+#: src/components/canvas/lightbox.tsx:174
 msgid "No prompt attached"
 msgstr "No prompt attached"
 
-#: src/components/canvas/detail-panel.tsx:354
+#: src/components/canvas/detail-panel.tsx:339
 msgid "No Selection"
 msgstr "No Selection"
 
-#: src/components/repo-picker-modal.tsx:82
+#: src/components/repo-picker-modal.tsx:98
 msgid "No subfolders here."
 msgstr "No subfolders here."
 
-#: src/components/canvas/detail-panel.tsx:495
+#: src/components/canvas/detail-panel.tsx:480
 msgid "No tags"
 msgstr "No tags"
 
@@ -1665,11 +1698,11 @@ msgstr "No tags"
 msgid "No tags yet"
 msgstr "No tags yet"
 
-#: src/components/canvas/asset-list.tsx:57
+#: src/components/canvas/asset-list.tsx:63
 msgid "No unplaced assets match. Try All placements."
 msgstr "No unplaced assets match. Try All placements."
 
-#: src/components/canvas/detail-panel.tsx:670
+#: src/components/canvas/detail-panel.tsx:655
 msgid "None"
 msgstr "None"
 
@@ -1677,12 +1710,11 @@ msgstr "None"
 msgid "Oldest first"
 msgstr "Oldest first"
 
-#: src/routes/canvas.tsx:1811
+#: src/routes/canvas.tsx:2004
 msgid "One relationship"
 msgstr "One relationship"
 
-#: src/components/canvas/detail-panel.tsx:329
-#: src/components/canvas/detail-panel.tsx:715
+#: src/components/canvas/detail-panel.tsx:700
 msgid "Only the relationship will be removed. The assets and their metadata will remain."
 msgstr "Only the relationship will be removed. The assets and their metadata will remain."
 
@@ -1707,27 +1739,27 @@ msgstr "Open"
 msgid "Open an image folder as a local Loom repository. Assets stay on disk, and only the images you place appear on the Canvas."
 msgstr "Open an image folder as a local Loom repository. Assets stay on disk, and only the images you place appear on the Canvas."
 
-#: src/routes/canvas.tsx:1139
+#: src/routes/canvas.tsx:1332
 msgid "Open appearance preferences"
 msgstr "Open appearance preferences"
 
-#: src/routes/canvas.tsx:997
+#: src/routes/canvas.tsx:1190
 msgid "Open Assets"
 msgstr "Open Assets"
 
-#: src/routes/canvas.tsx:1294
+#: src/routes/canvas.tsx:1487
 msgid "Open Assets and focus its search field"
 msgstr "Open Assets and focus its search field"
 
-#: src/routes/canvas.tsx:1035
+#: src/routes/canvas.tsx:1228
 msgid "Open Assets before pinning"
 msgstr "Open Assets before pinning"
 
-#: src/routes/canvas.tsx:1703
+#: src/routes/canvas.tsx:1896
 msgid "Open compression settings for selected Assets"
 msgstr "Open compression settings for selected Assets"
 
-#: src/routes/canvas.tsx:1128
+#: src/routes/canvas.tsx:1321
 msgid "Open device preferences"
 msgstr "Open device preferences"
 
@@ -1736,23 +1768,23 @@ msgstr "Open device preferences"
 msgid "Open Folder"
 msgstr "Open Folder"
 
-#: src/routes/canvas.tsx:1760
+#: src/routes/canvas.tsx:1953
 msgid "open group"
 msgstr "open group"
 
-#: src/routes/canvas.tsx:1051
+#: src/routes/canvas.tsx:1244
 msgid "Open Inspector"
 msgstr "Open Inspector"
 
-#: src/routes/canvas.tsx:1089
+#: src/routes/canvas.tsx:1282
 msgid "Open Inspector before pinning"
 msgstr "Open Inspector before pinning"
 
-#: src/routes/canvas.tsx:1008
+#: src/routes/canvas.tsx:1201
 msgid "Open or close the Assets navigator"
 msgstr "Open or close the Assets navigator"
 
-#: src/routes/canvas.tsx:1062
+#: src/routes/canvas.tsx:1255
 msgid "Open or close the Inspector"
 msgstr "Open or close the Inspector"
 
@@ -1760,39 +1792,39 @@ msgstr "Open or close the Inspector"
 #~ msgid "Open preview"
 #~ msgstr "Open preview"
 
-#: src/routes/canvas.tsx:1172
+#: src/routes/canvas.tsx:1365
 msgid "open repository"
 msgstr "open repository"
 
-#: src/routes/canvas.tsx:1127
+#: src/routes/canvas.tsx:1320
 msgid "Open Settings"
 msgstr "Open Settings"
 
-#: src/routes/canvas.tsx:1654
+#: src/routes/canvas.tsx:1847
 msgid "Open the Inspector file path field"
 msgstr "Open the Inspector file path field"
 
-#: src/routes/canvas.tsx:1206
+#: src/routes/canvas.tsx:1399
 msgid "Open the physical folder navigator"
 msgstr "Open the physical folder navigator"
 
-#: src/routes/canvas.tsx:1468
+#: src/routes/canvas.tsx:1661
 msgid "Open the selected Canvas image in the preview viewer"
 msgstr "Open the selected Canvas image in the preview viewer"
 
-#: src/routes/canvas.tsx:1714
+#: src/routes/canvas.tsx:1907
 msgid "Open the selected set comparison"
 msgstr "Open the selected set comparison"
 
-#: src/routes/canvas.tsx:1190
+#: src/routes/canvas.tsx:1383
 msgid "Open the semantic repository catalog"
 msgstr "Open the semantic repository catalog"
 
-#: src/components/repo-picker-modal.tsx:114
+#: src/components/repo-picker-modal.tsx:130
 msgid "Open this folder"
 msgstr "Open this folder"
 
-#: src/routes/canvas.tsx:1705
+#: src/routes/canvas.tsx:1898
 msgid "optimize media"
 msgstr "optimize media"
 
@@ -1805,27 +1837,27 @@ msgstr "organizes selected images and source → derived links."
 msgid "Original"
 msgstr "Original"
 
-#: src/routes/canvas.tsx:1867
+#: src/routes/canvas.tsx:2060
 msgid "paste files"
 msgstr "paste files"
 
-#: src/routes/canvas.tsx:1864
+#: src/routes/canvas.tsx:2057
 msgid "Paste media"
 msgstr "Paste media"
 
-#: src/routes/canvas.tsx:1829
+#: src/routes/canvas.tsx:2022
 msgid "permanent delete"
 msgstr "permanent delete"
 
-#: src/routes/canvas.tsx:3174
+#: src/routes/canvas.tsx:3388
 msgid "Permanently delete"
 msgstr "Permanently delete"
 
-#: src/routes/canvas.tsx:1826
+#: src/routes/canvas.tsx:2019
 msgid "Permanently purge selected assets"
 msgstr "Permanently purge selected assets"
 
-#: src/routes/canvas.tsx:1827
+#: src/routes/canvas.tsx:2020
 msgid "Permanently remove selected files and metadata"
 msgstr "Permanently remove selected files and metadata"
 
@@ -1834,34 +1866,34 @@ msgstr "Permanently remove selected files and metadata"
 msgid "Pin {title} drawer"
 msgstr "Pin {title} drawer"
 
-#: src/routes/canvas.tsx:1029
+#: src/routes/canvas.tsx:1222
 msgid "Pin Assets drawer"
 msgstr "Pin Assets drawer"
 
-#: src/routes/canvas.tsx:1083
+#: src/routes/canvas.tsx:1276
 msgid "Pin Inspector drawer"
 msgstr "Pin Inspector drawer"
 
-#: src/components/canvas/library-panel.tsx:391
+#: src/components/canvas/library-panel.tsx:405
 msgid "placed"
 msgstr "placed"
 
-#: src/components/canvas/detail-panel.tsx:418
-#: src/components/canvas/library-panel.tsx:440
+#: src/components/canvas/detail-panel.tsx:403
+#: src/components/canvas/library-panel.tsx:463
 msgid "Placed"
 msgstr "Placed"
 
-#: src/components/canvas/library-panel.tsx:383
-#: src/components/canvas/lightbox.tsx:175
+#: src/components/canvas/library-panel.tsx:397
+#: src/components/canvas/lightbox.tsx:238
 msgid "Placement"
 msgstr "Placement"
 
-#: src/routes/canvas.tsx:1130
+#: src/routes/canvas.tsx:1323
 msgid "preferences"
 msgstr "preferences"
 
-#: src/components/canvas/canvas-dock.tsx:142
-#: src/routes/canvas.tsx:1467
+#: src/components/canvas/canvas-dock.tsx:141
+#: src/routes/canvas.tsx:1660
 msgid "Preview"
 msgstr "Preview"
 
@@ -1869,23 +1901,23 @@ msgstr "Preview"
 #~ msgid "Preview {fileName}"
 #~ msgstr "Preview {fileName}"
 
-#: src/components/canvas/lightbox.tsx:37
-#: src/components/canvas/lightbox.tsx:40
+#: src/components/canvas/lightbox.tsx:39
+#: src/components/canvas/lightbox.tsx:42
 msgid "Previous image"
 msgstr "Previous image"
 
-#: src/routes/canvas.tsx:1172
+#: src/routes/canvas.tsx:1365
 msgid "project picker"
 msgstr "project picker"
 
 #: src/components/canvas/asset-view-controls.tsx:231
-#: src/components/canvas/detail-panel.tsx:544
-#: src/components/canvas/detail-panel.tsx:571
-#: src/components/canvas/lightbox.tsx:123
+#: src/components/canvas/detail-panel.tsx:529
+#: src/components/canvas/detail-panel.tsx:556
+#: src/components/canvas/lightbox.tsx:171
 msgid "Prompt"
 msgstr "Prompt"
 
-#: src/routes/canvas.tsx:1678
+#: src/routes/canvas.tsx:1871
 msgid "prompt text"
 msgstr "prompt text"
 
@@ -1901,48 +1933,48 @@ msgstr "Quality: {quality}"
 #~ msgid "Quick Action"
 #~ msgstr "Quick Action"
 
-#: src/routes/canvas.tsx:1889
+#: src/routes/canvas.tsx:2082
 msgid "reapply"
 msgstr "reapply"
 
 #: src/components/canvas/asset-view-controls.tsx:83
-#: src/components/canvas/command-palette.tsx:355
+#: src/components/canvas/command-palette.tsx:356
 #: src/routes/landing.tsx:97
 msgid "Recent"
 msgstr "Recent"
 
-#: src/routes/canvas.tsx:1886
+#: src/routes/canvas.tsx:2079
 msgid "Redo"
 msgstr "Redo"
 
-#: src/routes/canvas.tsx:1887
+#: src/routes/canvas.tsx:2080
 msgid "Redo the last undone repository operation"
 msgstr "Redo the last undone repository operation"
 
-#: src/routes/canvas.tsx:1258
+#: src/routes/canvas.tsx:1451
 msgid "Reduce the thumbnail gallery card size"
 msgstr "Reduce the thumbnail gallery card size"
 
-#: src/routes/canvas.tsx:1162
+#: src/routes/canvas.tsx:1355
 msgid "refresh"
 msgstr "refresh"
 
-#: src/routes/canvas.tsx:1160
+#: src/routes/canvas.tsx:1353
 msgid "Refresh the repository asset catalog"
 msgstr "Refresh the repository asset catalog"
 
-#: src/routes/canvas.tsx:1783
-#: src/routes/canvas.tsx:1797
+#: src/routes/canvas.tsx:1976
+#: src/routes/canvas.tsx:1990
 msgid "Relationship or image"
 msgstr "Relationship or image"
 
-#: src/routes/canvas.tsx:1781
-#: src/routes/canvas.tsx:1795
-#: src/routes/canvas.tsx:1809
+#: src/routes/canvas.tsx:1974
+#: src/routes/canvas.tsx:1988
+#: src/routes/canvas.tsx:2002
 msgid "Relationships"
 msgstr "Relationships"
 
-#: src/routes/canvas.tsx:1162
+#: src/routes/canvas.tsx:1355
 msgid "reload"
 msgstr "reload"
 
@@ -1951,40 +1983,50 @@ msgstr "reload"
 #~ msgid "Remove"
 #~ msgstr "Remove"
 
+#: src/components/canvas/library-panel.tsx:445
+msgid "Remove asset state filter: {status}"
+msgstr "Remove asset state filter: {status}"
+
 #: src/components/board/detail-panel.tsx:310
 #: src/routes/board.tsx:1151
 #: src/routes/board.tsx:1207
 #~ msgid "Remove from board"
 #~ msgstr "Remove from board"
 
-#: src/routes/canvas.tsx:1532
+#: src/routes/canvas.tsx:1725
 msgid "remove from canvas"
 msgstr "remove from canvas"
 
-#: src/routes/canvas.tsx:2196
-#: src/routes/canvas.tsx:2212
+#: src/routes/canvas.tsx:2434
+#: src/routes/canvas.tsx:2450
 msgid "Remove from canvas"
 msgstr "Remove from canvas"
 
-#: src/components/canvas/detail-panel.tsx:320
-#: src/components/canvas/detail-panel.tsx:336
-#: src/components/canvas/detail-panel.tsx:703
-#: src/components/canvas/detail-panel.tsx:722
-#: src/routes/canvas.tsx:1807
+#: src/components/canvas/library-panel.tsx:457
+msgid "Remove placement filter: {placement}"
+msgstr "Remove placement filter: {placement}"
+
+#: src/components/canvas/detail-panel.tsx:322
+#: src/components/canvas/detail-panel.tsx:688
+#: src/components/canvas/detail-panel.tsx:707
+#: src/routes/canvas.tsx:2000
 msgid "Remove relationship"
 msgstr "Remove relationship"
 
 #. placeholder {0}: (data.images ?? []).find((i) => i.id === endpointId)?.fileName ?? t`Asset ${endpointId}`
-#: src/components/canvas/detail-panel.tsx:700
+#: src/components/canvas/detail-panel.tsx:685
 msgid "Remove relationship with {0}"
 msgstr "Remove relationship with {0}"
 
-#: src/components/canvas/detail-panel.tsx:328
-#: src/components/canvas/detail-panel.tsx:714
+#: src/components/canvas/detail-panel.tsx:699
 msgid "Remove relationship?"
 msgstr "Remove relationship?"
 
-#: src/routes/canvas.tsx:1530
+#: src/components/canvas/library-panel.tsx:433
+msgid "Remove search filter: {search}"
+msgstr "Remove search filter: {search}"
+
+#: src/routes/canvas.tsx:1723
 msgid "Remove selected nodes while keeping their assets"
 msgstr "Remove selected nodes while keeping their assets"
 
@@ -1992,7 +2034,12 @@ msgstr "Remove selected nodes while keeping their assets"
 #~ msgid "Remove tag"
 #~ msgstr "Remove tag"
 
-#: src/routes/canvas.tsx:1606
+#. placeholder {0}: tagName ?? 'Unavailable tag'
+#: src/components/canvas/library-panel.tsx:469
+msgid "Remove tag filter: {0}"
+msgstr "Remove tag filter: {0}"
+
+#: src/routes/canvas.tsx:1799
 msgid "Remove the selected set while keeping its assets"
 msgstr "Remove the selected set while keeping its assets"
 
@@ -2000,7 +2047,7 @@ msgstr "Remove the selected set while keeping its assets"
 msgid "Rename"
 msgstr "Rename"
 
-#: src/routes/canvas.tsx:1656
+#: src/routes/canvas.tsx:1849
 msgid "rename asset"
 msgstr "rename asset"
 
@@ -2009,7 +2056,7 @@ msgstr "rename asset"
 msgid "Rename file"
 msgstr "Rename file"
 
-#: src/routes/canvas.tsx:1738
+#: src/routes/canvas.tsx:1931
 msgid "rename set"
 msgstr "rename set"
 
@@ -2021,7 +2068,7 @@ msgstr "Rename…"
 msgid "Replace original"
 msgstr "Replace original"
 
-#: src/components/canvas/detail-panel.tsx:617
+#: src/components/canvas/detail-panel.tsx:602
 msgid "Replace prompts"
 msgstr "Replace prompts"
 
@@ -2029,41 +2076,41 @@ msgstr "Replace prompts"
 msgid "Replacement keeps the asset ID and can be undone."
 msgstr "Replacement keeps the asset ID and can be undone."
 
-#: src/components/repo-picker-modal.tsx:96
+#: src/components/repo-picker-modal.tsx:112
 msgid "repo"
 msgstr "repo"
 
-#: src/routes/canvas.tsx:1374
+#: src/routes/canvas.tsx:1567
 msgid "Reposition all placed items using their relationships"
 msgstr "Reposition all placed items using their relationships"
 
-#: src/routes/canvas.tsx:1400
+#: src/routes/canvas.tsx:1593
 msgid "Reposition selected items as a connected subgraph"
 msgstr "Reposition selected items as a connected subgraph"
 
 #: src/components/canvas/folder-navigator.tsx:20
-#: src/components/settings-dialog.tsx:127
-#: src/components/settings-dialog.tsx:134
-#: src/routes/canvas.tsx:1310
+#: src/components/settings-dialog.tsx:84
+#: src/components/settings-dialog.tsx:91
+#: src/routes/canvas.tsx:1503
 msgid "Repository"
 msgstr "Repository"
 
-#: src/routes/canvas.tsx:2954
-#: src/routes/canvas.tsx:2957
-#: src/routes/canvas.tsx:2970
+#: src/routes/canvas.tsx:3191
+#: src/routes/canvas.tsx:3194
+#: src/routes/canvas.tsx:3207
 msgid "Repository actions"
 msgstr "Repository actions"
 
-#: src/components/canvas/command-palette.tsx:248
-#: src/components/canvas/command-palette.tsx:261
+#: src/components/canvas/command-palette.tsx:249
+#: src/components/canvas/command-palette.tsx:262
 msgid "Repository assets"
 msgstr "Repository assets"
 
-#: src/components/settings-dialog.tsx:136
+#: src/components/settings-dialog.tsx:93
 msgid "Repository identity"
 msgstr "Repository identity"
 
-#: src/components/settings-dialog.tsx:138
+#: src/components/settings-dialog.tsx:95
 msgid "Repository location is available in the repository selector."
 msgstr "Repository location is available in the repository selector."
 
@@ -2075,8 +2122,8 @@ msgstr "Repository location is available in the repository selector."
 #~ msgid "Rescan folder for new images"
 #~ msgstr "Rescan folder for new images"
 
-#: src/routes/canvas.tsx:1159
-#: src/routes/canvas.tsx:2993
+#: src/routes/canvas.tsx:1352
+#: src/routes/canvas.tsx:3230
 msgid "Rescan repository"
 msgstr "Rescan repository"
 
@@ -2084,11 +2131,11 @@ msgstr "Rescan repository"
 msgid "Reset"
 msgstr "Reset"
 
-#: src/components/canvas/canvas-dock.tsx:123
+#: src/components/canvas/canvas-dock.tsx:122
 msgid "Reset 100%"
 msgstr "Reset 100%"
 
-#: src/routes/canvas.tsx:1340
+#: src/routes/canvas.tsx:1533
 msgid "Reset zoom to 100%"
 msgstr "Reset zoom to 100%"
 
@@ -2096,12 +2143,12 @@ msgstr "Reset zoom to 100%"
 msgid "Resize {title} shelf"
 msgstr "Resize {title} shelf"
 
-#: src/routes/canvas.tsx:1689
+#: src/routes/canvas.tsx:1882
 msgid "restore assets"
 msgstr "restore assets"
 
-#: src/components/canvas/detail-panel.tsx:647
-#: src/routes/canvas.tsx:1686
+#: src/components/canvas/detail-panel.tsx:632
+#: src/routes/canvas.tsx:1879
 msgid "Restore from trash"
 msgstr "Restore from trash"
 
@@ -2109,20 +2156,21 @@ msgstr "Restore from trash"
 msgid "Result"
 msgstr "Result"
 
+#: src/components/canvas/asset-list.tsx:54
 #: src/components/canvas/asset-view-controls.tsx:64
-#: src/components/canvas/command-palette.tsx:269
+#: src/components/canvas/command-palette.tsx:270
 msgid "Retry"
 msgstr "Retry"
 
-#: src/routes/canvas.tsx:1590
+#: src/routes/canvas.tsx:1783
 msgid "Return selected assets to the active catalog"
 msgstr "Return selected assets to the active catalog"
 
-#: src/routes/canvas.tsx:1687
+#: src/routes/canvas.tsx:1880
 msgid "Return selected trashed assets to the repository"
 msgstr "Return selected trashed assets to the repository"
 
-#: src/routes/canvas.tsx:1769
+#: src/routes/canvas.tsx:1962
 msgid "Return the expanded set to its compact thumbnail stack"
 msgstr "Return the expanded set to its compact thumbnail stack"
 
@@ -2130,31 +2178,31 @@ msgstr "Return the expanded set to its compact thumbnail stack"
 msgid "Reuse a prompt"
 msgstr "Reuse a prompt"
 
-#: src/components/canvas/detail-panel.tsx:694
+#: src/components/canvas/detail-panel.tsx:679
 msgid "Reveal derived asset {endpointId} in Folders"
 msgstr "Reveal derived asset {endpointId} in Folders"
 
-#: src/components/canvas/detail-panel.tsx:695
+#: src/components/canvas/detail-panel.tsx:680
 msgid "Reveal in Folders"
 msgstr "Reveal in Folders"
 
-#: src/components/canvas/detail-panel.tsx:694
+#: src/components/canvas/detail-panel.tsx:679
 msgid "Reveal source asset {endpointId} in Folders"
 msgstr "Reveal source asset {endpointId} in Folders"
 
-#: src/routes/canvas.tsx:1640
+#: src/routes/canvas.tsx:1833
 msgid "Reveal the selected Asset in its physical directory"
 msgstr "Reveal the selected Asset in its physical directory"
 
-#: src/routes/canvas.tsx:1482
+#: src/routes/canvas.tsx:1675
 msgid "Reveal the selected Canvas item in Assets"
 msgstr "Reveal the selected Canvas item in Assets"
 
-#: src/routes/canvas.tsx:1878
+#: src/routes/canvas.tsx:2071
 msgid "revert"
 msgstr "revert"
 
-#: src/components/canvas/command-palette.tsx:388
+#: src/components/canvas/command-palette.tsx:389
 msgid "Run"
 msgstr "Run"
 
@@ -2162,12 +2210,12 @@ msgstr "Run"
 msgid "Save changes"
 msgstr "Save changes"
 
-#: src/components/canvas/detail-panel.tsx:590
-#: src/routes/canvas.tsx:1675
+#: src/components/canvas/detail-panel.tsx:575
+#: src/routes/canvas.tsx:1868
 msgid "Save prompt"
 msgstr "Save prompt"
 
-#: src/routes/canvas.tsx:1676
+#: src/routes/canvas.tsx:1869
 msgid "Save the current prompt from the Inspector"
 msgstr "Save the current prompt from the Inspector"
 
@@ -2195,28 +2243,28 @@ msgstr "Saved views could not be loaded."
 msgid "Saving view…"
 msgstr "Saving view…"
 
-#: src/components/canvas/library-panel.tsx:422
+#: src/components/canvas/library-panel.tsx:439
 msgid "Search"
 msgstr "Search"
 
-#: src/routes/canvas.tsx:1151
+#: src/routes/canvas.tsx:1344
 msgid "search actions"
 msgstr "search actions"
 
-#: src/components/canvas/library-panel.tsx:342
-#: src/components/canvas/library-panel.tsx:343
+#: src/components/canvas/library-panel.tsx:356
+#: src/components/canvas/library-panel.tsx:357
 msgid "Search assets"
 msgstr "Search assets"
 
-#: src/components/canvas/detail-panel.tsx:372
+#: src/components/canvas/detail-panel.tsx:357
 msgid "Search assets in palette"
 msgstr "Search assets in palette"
 
-#: src/routes/canvas.tsx:1149
+#: src/routes/canvas.tsx:1342
 msgid "Search Canvas commands and repository assets"
 msgstr "Search Canvas commands and repository assets"
 
-#: src/components/canvas/command-palette.tsx:220
+#: src/components/canvas/command-palette.tsx:221
 msgid "Search commands"
 msgstr "Search commands"
 
@@ -2224,19 +2272,19 @@ msgstr "Search commands"
 #~ msgid "Search commands or @ assets"
 #~ msgstr "Search commands or @ assets"
 
-#: src/components/canvas/command-palette.tsx:199
+#: src/components/canvas/command-palette.tsx:200
 msgid "Search commands or type at sign to search repository assets."
 msgstr "Search commands or type at sign to search repository assets."
 
-#: src/routes/canvas.tsx:1307
+#: src/routes/canvas.tsx:1500
 msgid "Search filenames, tags, and paths with @"
 msgstr "Search filenames, tags, and paths with @"
 
-#: src/routes/canvas.tsx:1296
+#: src/routes/canvas.tsx:1489
 msgid "search files"
 msgstr "search files"
 
-#: src/components/canvas/command-palette.tsx:219
+#: src/components/canvas/command-palette.tsx:220
 msgid "Search keyboard shortcuts"
 msgstr "Search keyboard shortcuts"
 
@@ -2244,11 +2292,11 @@ msgstr "Search keyboard shortcuts"
 #~ msgid "Search prompts, filenames, tags…"
 #~ msgstr "Search prompts, filenames, tags…"
 
-#: src/routes/canvas.tsx:1306
+#: src/routes/canvas.tsx:1499
 msgid "Search repository assets"
 msgstr "Search repository assets"
 
-#: src/components/canvas/command-palette.tsx:228
+#: src/components/canvas/command-palette.tsx:229
 msgid "Search shortcuts"
 msgstr "Search shortcuts"
 
@@ -2260,29 +2308,29 @@ msgstr "Search shortcuts"
 #~ msgid "Select (default)"
 #~ msgstr "Select (default)"
 
-#: src/routes/canvas.tsx:2500
+#: src/routes/canvas.tsx:2726
 msgid "Select 2+ images, then Create set or press Ctrl/Cmd+G."
 msgstr "Select 2+ images, then Create set or press Ctrl/Cmd+G."
 
-#: src/routes/canvas.tsx:1335
-#: src/routes/canvas.tsx:1627
+#: src/routes/canvas.tsx:1528
+#: src/routes/canvas.tsx:1820
 msgid "Select a Canvas item"
 msgstr "Select a Canvas item"
 
-#: src/routes/canvas.tsx:1785
-#: src/routes/canvas.tsx:1799
+#: src/routes/canvas.tsx:1978
+#: src/routes/canvas.tsx:1992
 msgid "Select a related image or relationship"
 msgstr "Select a related image or relationship"
 
-#: src/routes/canvas.tsx:1611
-#: src/routes/canvas.tsx:1741
-#: src/routes/canvas.tsx:1752
-#: src/routes/canvas.tsx:1763
+#: src/routes/canvas.tsx:1804
+#: src/routes/canvas.tsx:1934
+#: src/routes/canvas.tsx:1945
+#: src/routes/canvas.tsx:1956
 msgid "Select a set"
 msgstr "Select a set"
 
-#: src/routes/canvas.tsx:1719
-#: src/routes/canvas.tsx:1730
+#: src/routes/canvas.tsx:1912
+#: src/routes/canvas.tsx:1923
 msgid "Select a set with at least two assets"
 msgstr "Select a set with at least two assets"
 
@@ -2298,39 +2346,39 @@ msgstr "Select a set with at least two assets"
 #~ msgid "Select a single image on the canvas, or ctrl/cmd+click a row in Library or Explorer, to see its details here."
 #~ msgstr "Select a single image on the canvas, or ctrl/cmd+click a row in Library or Explorer, to see its details here."
 
-#: src/routes/canvas.tsx:1692
+#: src/routes/canvas.tsx:1885
 msgid "Select a trashed Asset"
 msgstr "Select a trashed Asset"
 
-#: src/routes/canvas.tsx:1433
+#: src/routes/canvas.tsx:1626
 msgid "Select all"
 msgstr "Select all"
 
-#: src/routes/canvas.tsx:1436
+#: src/routes/canvas.tsx:1629
 msgid "select all canvas items"
 msgstr "select all canvas items"
 
-#: src/components/canvas/library-panel.tsx:491
+#: src/components/canvas/library-panel.tsx:521
 msgid "Select all files in folder"
 msgstr "Select all files in folder"
 
-#: src/routes/canvas.tsx:1410
+#: src/routes/canvas.tsx:1603
 msgid "Select all in active surface"
 msgstr "Select all in active surface"
 
-#: src/components/canvas/detail-panel.tsx:366
+#: src/components/canvas/detail-panel.tsx:351
 msgid "Select all on active surface"
 msgstr "Select all on active surface"
 
-#: src/components/canvas/library-panel.tsx:489
+#: src/components/canvas/library-panel.tsx:519
 msgid "Select all results"
 msgstr "Select all results"
 
-#: src/routes/canvas.tsx:1411
+#: src/routes/canvas.tsx:1604
 msgid "Select all visible Assets or placed Canvas items"
 msgstr "Select all visible Assets or placed Canvas items"
 
-#: src/routes/canvas.tsx:1595
+#: src/routes/canvas.tsx:1788
 msgid "Select an archived Asset"
 msgstr "Select an archived Asset"
 
@@ -2338,68 +2386,68 @@ msgstr "Select an archived Asset"
 #~ msgid "Select an asset, set, or relationship."
 #~ msgstr "Select an asset, set, or relationship."
 
-#: src/components/canvas/detail-panel.tsx:357
+#: src/components/canvas/detail-panel.tsx:342
 msgid "Select an image, set, or relationship on the Canvas or in Assets to view metadata and links."
 msgstr "Select an image, set, or relationship on the Canvas or in Assets to view metadata and links."
 
-#: src/routes/canvas.tsx:1579
+#: src/routes/canvas.tsx:1772
 msgid "Select an unarchived Asset"
 msgstr "Select an unarchived Asset"
 
-#: src/routes/canvas.tsx:1622
+#: src/routes/canvas.tsx:1815
 msgid "Select and reveal the active asset in Assets"
 msgstr "Select and reveal the active asset in Assets"
 
-#: src/routes/canvas.tsx:1555
-#: src/routes/canvas.tsx:1670
-#: src/routes/canvas.tsx:1681
-#: src/routes/canvas.tsx:1708
+#: src/routes/canvas.tsx:1748
+#: src/routes/canvas.tsx:1863
+#: src/routes/canvas.tsx:1874
+#: src/routes/canvas.tsx:1901
 msgid "Select Assets"
 msgstr "Select Assets"
 
-#: src/routes/canvas.tsx:1847
-#: src/routes/canvas.tsx:1859
+#: src/routes/canvas.tsx:2040
+#: src/routes/canvas.tsx:2052
 msgid "Select assets to copy"
 msgstr "Select assets to copy"
 
-#: src/routes/canvas.tsx:1834
+#: src/routes/canvas.tsx:2027
 msgid "Select assets to purge"
 msgstr "Select assets to purge"
 
-#: src/routes/canvas.tsx:1513
-#: src/routes/canvas.tsx:1524
+#: src/routes/canvas.tsx:1706
+#: src/routes/canvas.tsx:1717
 msgid "Select at least two Canvas items"
 msgstr "Select at least two Canvas items"
 
-#: src/routes/canvas.tsx:1502
+#: src/routes/canvas.tsx:1695
 msgid "Select at least two ungrouped Canvas items"
 msgstr "Select at least two ungrouped Canvas items"
 
-#: src/routes/canvas.tsx:1405
-#: src/routes/canvas.tsx:1539
-#: src/routes/canvas.tsx:1567
+#: src/routes/canvas.tsx:1598
+#: src/routes/canvas.tsx:1732
+#: src/routes/canvas.tsx:1760
 msgid "Select Canvas items"
 msgstr "Select Canvas items"
 
-#: src/routes/canvas.tsx:1434
+#: src/routes/canvas.tsx:1627
 msgid "Select every placed Canvas item"
 msgstr "Select every placed Canvas item"
 
-#: src/routes/canvas.tsx:1413
+#: src/routes/canvas.tsx:1606
 msgid "select everything"
 msgstr "select everything"
 
-#: src/routes/canvas.tsx:1645
-#: src/routes/canvas.tsx:1659
+#: src/routes/canvas.tsx:1838
+#: src/routes/canvas.tsx:1852
 msgid "Select one Asset"
 msgstr "Select one Asset"
 
-#: src/routes/canvas.tsx:1473
-#: src/routes/canvas.tsx:1487
+#: src/routes/canvas.tsx:1666
+#: src/routes/canvas.tsx:1680
 msgid "Select one Canvas item"
 msgstr "Select one Canvas item"
 
-#: src/routes/canvas.tsx:1813
+#: src/routes/canvas.tsx:2006
 msgid "Select one relationship"
 msgstr "Select one relationship"
 
@@ -2411,29 +2459,29 @@ msgstr "Select one relationship"
 #~ msgid "Selection Actions"
 #~ msgstr "Selection Actions"
 
-#: src/routes/canvas.tsx:1412
-#: src/routes/canvas.tsx:1435
-#: src/routes/canvas.tsx:1454
-#: src/routes/canvas.tsx:1469
-#: src/routes/canvas.tsx:1483
-#: src/routes/canvas.tsx:1497
-#: src/routes/canvas.tsx:1509
-#: src/routes/canvas.tsx:1520
-#: src/routes/canvas.tsx:1607
-#: src/routes/canvas.tsx:1715
-#: src/routes/canvas.tsx:1726
-#: src/routes/canvas.tsx:1737
-#: src/routes/canvas.tsx:1748
-#: src/routes/canvas.tsx:1759
-#: src/routes/canvas.tsx:1770
+#: src/routes/canvas.tsx:1605
+#: src/routes/canvas.tsx:1628
+#: src/routes/canvas.tsx:1647
+#: src/routes/canvas.tsx:1662
+#: src/routes/canvas.tsx:1676
+#: src/routes/canvas.tsx:1690
+#: src/routes/canvas.tsx:1702
+#: src/routes/canvas.tsx:1713
+#: src/routes/canvas.tsx:1800
+#: src/routes/canvas.tsx:1908
+#: src/routes/canvas.tsx:1919
+#: src/routes/canvas.tsx:1930
+#: src/routes/canvas.tsx:1941
+#: src/routes/canvas.tsx:1952
+#: src/routes/canvas.tsx:1963
 msgid "Selection and sets"
 msgstr "Selection and sets"
 
-#: src/routes/canvas.tsx:1331
+#: src/routes/canvas.tsx:1524
 msgid "selection bounds"
 msgstr "selection bounds"
 
-#: src/components/canvas/detail-panel.tsx:228
+#: src/components/canvas/detail-panel.tsx:230
 msgid "Set"
 msgstr "Set"
 
@@ -2441,67 +2489,67 @@ msgstr "Set"
 #~ msgid "Set as cover"
 #~ msgstr "Set as cover"
 
-#: src/routes/canvas.tsx:1341
+#: src/routes/canvas.tsx:1534
 msgid "Set Canvas zoom to its original scale"
 msgstr "Set Canvas zoom to its original scale"
 
-#: src/routes/canvas.tsx:1724
+#: src/routes/canvas.tsx:1917
 msgid "Set cover image"
 msgstr "Set cover image"
 
-#: src/components/canvas/detail-panel.tsx:231
+#: src/components/canvas/detail-panel.tsx:233
 msgid "Set name"
 msgstr "Set name"
 
-#: src/routes/canvas.tsx:1609
-#: src/routes/canvas.tsx:1717
-#: src/routes/canvas.tsx:1728
-#: src/routes/canvas.tsx:1739
-#: src/routes/canvas.tsx:1750
-#: src/routes/canvas.tsx:1761
+#: src/routes/canvas.tsx:1802
+#: src/routes/canvas.tsx:1910
+#: src/routes/canvas.tsx:1921
+#: src/routes/canvas.tsx:1932
+#: src/routes/canvas.tsx:1943
+#: src/routes/canvas.tsx:1954
 msgid "Set selection"
 msgstr "Set selection"
 
-#: src/routes/canvas.tsx:1130
+#: src/routes/canvas.tsx:1323
 msgid "settings"
 msgstr "settings"
 
-#: src/components/settings-dialog.tsx:123
+#: src/components/settings-dialog.tsx:80
 msgid "Settings"
 msgstr "Settings"
 
-#: src/components/settings-dialog.tsx:126
+#: src/components/settings-dialog.tsx:83
 msgid "Settings sections"
 msgstr "Settings sections"
 
-#: src/routes/canvas.tsx:2982
+#: src/routes/canvas.tsx:3219
 msgid "Settings…"
 msgstr "Settings…"
 
-#: src/routes/canvas.tsx:1119
+#: src/routes/canvas.tsx:1312
 msgid "shortcut reference"
 msgstr "shortcut reference"
 
-#: src/routes/canvas.tsx:1189
+#: src/routes/canvas.tsx:1382
 msgid "Show All Assets"
 msgstr "Show All Assets"
 
-#: src/routes/canvas.tsx:1592
+#: src/routes/canvas.tsx:1785
 msgid "show archived assets"
 msgstr "show archived assets"
 
-#: src/routes/canvas.tsx:1221
+#: src/routes/canvas.tsx:1414
 msgid "Show Assets gallery"
 msgstr "Show Assets gallery"
 
-#: src/routes/canvas.tsx:1239
+#: src/routes/canvas.tsx:1432
 msgid "Show Assets list"
 msgstr "Show Assets list"
 
 #: src/components/canvas/library-context-menu.tsx:151
-#: src/routes/canvas.tsx:1148
-#: src/routes/canvas.tsx:2896
-#: src/routes/canvas.tsx:2901
+#: src/routes/canvas.tsx:1341
+#: src/routes/canvas.tsx:3133
+#: src/routes/canvas.tsx:3138
 msgid "Show commands"
 msgstr "Show commands"
 
@@ -2515,7 +2563,7 @@ msgstr "Show commands"
 #~ msgid "Show details"
 #~ msgstr "Show details"
 
-#: src/routes/canvas.tsx:1642
+#: src/routes/canvas.tsx:1835
 msgid "show file location"
 msgstr "show file location"
 
@@ -2523,9 +2571,14 @@ msgstr "show file location"
 #~ msgid "Show file names on hover"
 #~ msgstr "Show file names on hover"
 
-#: src/routes/canvas.tsx:1205
+#: src/routes/canvas.tsx:1398
 msgid "Show Folders"
 msgstr "Show Folders"
+
+#: src/components/repo-picker-modal.tsx:86
+#: src/components/repo-picker-modal.tsx:88
+msgid "Show hidden"
+msgstr "Show hidden"
 
 #: src/components/board/explorer-panel.tsx:392
 #: src/components/board/library-panel.tsx:283
@@ -2533,20 +2586,20 @@ msgstr "Show Folders"
 #~ msgid "Show in file explorer"
 #~ msgstr "Show in file explorer"
 
-#: src/components/canvas/detail-panel.tsx:468
-#: src/routes/canvas.tsx:1639
+#: src/components/canvas/detail-panel.tsx:453
+#: src/routes/canvas.tsx:1832
 msgid "Show in Folders"
 msgstr "Show in Folders"
 
-#: src/routes/canvas.tsx:1484
+#: src/routes/canvas.tsx:1677
 msgid "show in library"
 msgstr "show in library"
 
-#: src/routes/canvas.tsx:1116
+#: src/routes/canvas.tsx:1309
 msgid "Show keyboard shortcuts"
 msgstr "Show keyboard shortcuts"
 
-#: src/routes/canvas.tsx:1052
+#: src/routes/canvas.tsx:1245
 msgid "Show metadata for the active selection"
 msgstr "Show metadata for the active selection"
 
@@ -2554,19 +2607,27 @@ msgstr "Show metadata for the active selection"
 #~ msgid "Show on board"
 #~ msgstr "Show on board"
 
-#: src/routes/canvas.tsx:998
+#: src/components/settings-dialog.tsx:148
+msgid "Show resolution"
+msgstr "Show resolution"
+
+#: src/routes/canvas.tsx:1191
 msgid "Show the repository asset navigator"
 msgstr "Show the repository asset navigator"
 
-#: src/routes/canvas.tsx:1758
+#: src/routes/canvas.tsx:1951
 msgid "Show the selected set members at their stored positions"
 msgstr "Show the selected set members at their stored positions"
 
-#: src/routes/canvas.tsx:1365
+#: src/components/settings-dialog.tsx:144
+msgid "Show titles"
+msgstr "Show titles"
+
+#: src/routes/canvas.tsx:1558
 msgid "shrink"
 msgstr "shrink"
 
-#: src/routes/canvas.tsx:1657
+#: src/routes/canvas.tsx:1850
 msgid "Single Asset"
 msgstr "Single Asset"
 
@@ -2576,11 +2637,11 @@ msgstr "Size"
 
 #: src/components/canvas/asset-view-controls.tsx:161
 #: src/components/canvas/asset-view-controls.tsx:166
-#: src/routes/canvas.tsx:1257
+#: src/routes/canvas.tsx:1450
 msgid "Smaller gallery cards"
 msgstr "Smaller gallery cards"
 
-#: src/routes/canvas.tsx:1260
+#: src/routes/canvas.tsx:1453
 msgid "smaller thumbnails"
 msgstr "smaller thumbnails"
 
@@ -2588,19 +2649,19 @@ msgstr "smaller thumbnails"
 msgid "Sort assets"
 msgstr "Sort assets"
 
-#: src/routes/canvas.tsx:1782
+#: src/routes/canvas.tsx:1975
 msgid "source image"
 msgstr "source image"
 
-#: src/components/canvas/detail-panel.tsx:397
+#: src/components/canvas/detail-panel.tsx:382
 msgid "Sources"
 msgstr "Sources"
 
-#: src/routes/canvas.tsx:2483
+#: src/routes/canvas.tsx:2709
 msgid "Start with an asset"
 msgstr "Start with an asset"
 
-#: src/components/canvas/detail-panel.tsx:622
+#: src/components/canvas/detail-panel.tsx:607
 msgid "State"
 msgstr "State"
 
@@ -2608,16 +2669,16 @@ msgstr "State"
 #~ msgid "Status"
 #~ msgstr "Status"
 
-#: src/routes/canvas.tsx:1222
+#: src/routes/canvas.tsx:1415
 msgid "Switch Assets to a thumbnail gallery"
 msgstr "Switch Assets to a thumbnail gallery"
 
-#: src/routes/canvas.tsx:1240
+#: src/routes/canvas.tsx:1433
 msgid "Switch Assets to the compact list"
 msgstr "Switch Assets to the compact list"
 
 #: src/components/canvas/repo-select.tsx:113
-#: src/routes/canvas.tsx:1169
+#: src/routes/canvas.tsx:1362
 msgid "Switch repository"
 msgstr "Switch repository"
 
@@ -2625,25 +2686,25 @@ msgstr "Switch repository"
 msgid "Switched to existing window"
 msgstr "Switched to existing window"
 
-#: src/components/settings-dialog.tsx:157
+#: src/components/settings-dialog.tsx:121
 msgid "System"
 msgstr "System"
 
-#: src/routes/canvas.tsx:1667
+#: src/routes/canvas.tsx:1860
 msgid "tag assets"
 msgstr "tag assets"
 
-#: src/components/canvas/library-panel.tsx:399
+#: src/components/canvas/library-panel.tsx:413
 msgid "Tag filter"
 msgstr "Tag filter"
 
-#: src/components/canvas/detail-panel.tsx:487
+#: src/components/canvas/detail-panel.tsx:472
 msgid "Tag summary"
 msgstr "Tag summary"
 
 #: src/components/canvas/asset-view-controls.tsx:230
-#: src/components/canvas/detail-panel.tsx:485
-#: src/components/canvas/lightbox.tsx:131
+#: src/components/canvas/detail-panel.tsx:470
+#: src/components/canvas/lightbox.tsx:179
 msgid "Tags"
 msgstr "Tags"
 
@@ -2651,11 +2712,11 @@ msgstr "Tags"
 #~ msgid "Tags: any"
 #~ msgstr "Tags: any"
 
-#: src/components/settings-dialog.tsx:137
+#: src/components/settings-dialog.tsx:94
 msgid "The repository name uses its folder name. Display-name overrides are not available yet."
 msgstr "The repository name uses its folder name. Display-name overrides are not available yet."
 
-#: src/components/canvas/detail-panel.tsx:482
+#: src/components/canvas/detail-panel.tsx:467
 msgid "The selected assets are unavailable. Bulk edits are disabled."
 msgstr "The selected assets are unavailable. Bulk edits are disabled."
 
@@ -2663,73 +2724,74 @@ msgstr "The selected assets are unavailable. Bulk edits are disabled."
 #~ msgid "The selected assets will move to repository trash."
 #~ msgstr "The selected assets will move to repository trash."
 
-#: src/routes/canvas.tsx:3147
+#: src/routes/canvas.tsx:3361
 msgid "The selected assets will move to repository trash. They are retained for 30 days, then permanently purged automatically."
 msgstr "The selected assets will move to repository trash. They are retained for 30 days, then permanently purged automatically."
 
-#: src/routes/canvas.tsx:271
+#: src/routes/canvas.tsx:664
 msgid "The selection changed or some assets are unavailable. No changes were made."
 msgstr "The selection changed or some assets are unavailable. No changes were made."
 
-#: src/routes/canvas.tsx:257
+#: src/routes/canvas.tsx:650
 msgid "The selection changed. Review the Inspector and try again."
 msgstr "The selection changed. Review the Inspector and try again."
 
-#: src/routes/canvas.tsx:1141
+#: src/routes/canvas.tsx:1334
 msgid "theme"
 msgstr "theme"
 
-#: src/components/settings-dialog.tsx:155
+#: src/components/settings-dialog.tsx:112
+#: src/components/settings-dialog.tsx:117
 msgid "Theme"
 msgstr "Theme"
 
-#: src/routes/canvas.tsx:1323
-#: src/routes/canvas.tsx:1379
-#: src/routes/canvas.tsx:1391
-#: src/routes/canvas.tsx:1439
+#: src/routes/canvas.tsx:1516
+#: src/routes/canvas.tsx:1572
+#: src/routes/canvas.tsx:1584
+#: src/routes/canvas.tsx:1632
 msgid "There are no placed items"
 msgstr "There are no placed items"
 
-#: src/routes/canvas.tsx:1417
+#: src/routes/canvas.tsx:1610
 msgid "There are no selectable items"
 msgstr "There are no selectable items"
 
-#: src/routes/canvas.tsx:1462
+#: src/routes/canvas.tsx:1655
 msgid "There is no active selection"
 msgstr "There is no active selection"
 
-#: src/routes/canvas.tsx:1774
+#: src/routes/canvas.tsx:1967
 msgid "There is no expanded set"
 msgstr "There is no expanded set"
 
-#: src/components/canvas/detail-panel.tsx:605
+#: src/components/canvas/detail-panel.tsx:590
 msgid "This clears the prompt on every selected asset."
 msgstr "This clears the prompt on every selected asset."
 
-#: src/routes/canvas.tsx:277
+#: src/routes/canvas.tsx:670
 msgid "This file cannot be moved in its current state."
 msgstr "This file cannot be moved in its current state."
 
-#: src/routes/canvas.tsx:3142
+#: src/routes/canvas.tsx:3356
 msgid "This removes the files and Loom metadata immediately. Trash retention does not apply, and this action cannot be undone."
 msgstr "This removes the files and Loom metadata immediately. Trash retention does not apply, and this action cannot be undone."
 
-#: src/components/canvas/detail-panel.tsx:605
+#: src/components/canvas/detail-panel.tsx:590
 msgid "This replaces the prompt on every selected asset."
 msgstr "This replaces the prompt on every selected asset."
 
-#: src/routes/canvas.tsx:1376
-#: src/routes/canvas.tsx:1387
+#: src/routes/canvas.tsx:1569
+#: src/routes/canvas.tsx:1580
 msgid "tidy all"
 msgstr "tidy all"
 
-#: src/routes/canvas.tsx:1387
-#: src/routes/canvas.tsx:1402
+#: src/routes/canvas.tsx:1580
+#: src/routes/canvas.tsx:1595
 msgid "tidy selection"
 msgstr "tidy selection"
 
-#: src/routes/canvas.tsx:1007
-#: src/routes/canvas.tsx:2910
+#: src/routes/canvas.tsx:1200
+#: src/routes/canvas.tsx:3147
 msgid "Toggle Assets"
 msgstr "Toggle Assets"
 
@@ -2742,12 +2804,12 @@ msgstr "Toggle Assets"
 #~ msgid "Toggle Assets shelf (Cmd+B)"
 #~ msgstr "Toggle Assets shelf (Cmd+B)"
 
-#: src/routes/canvas.tsx:1105
+#: src/routes/canvas.tsx:1298
 msgid "Toggle Focus Canvas"
 msgstr "Toggle Focus Canvas"
 
-#: src/routes/canvas.tsx:1061
-#: src/routes/canvas.tsx:2932
+#: src/routes/canvas.tsx:1254
+#: src/routes/canvas.tsx:3169
 msgid "Toggle Inspector"
 msgstr "Toggle Inspector"
 
@@ -2760,8 +2822,8 @@ msgstr "Toggle Inspector"
 #~ msgid "Toggle Inspector shelf (Cmd+I)"
 #~ msgstr "Toggle Inspector shelf (Cmd+I)"
 
-#: src/components/canvas/library-panel.tsx:431
-#: src/routes/canvas.tsx:2216
+#: src/components/canvas/library-panel.tsx:451
+#: src/routes/canvas.tsx:2454
 msgid "Trash"
 msgstr "Trash"
 
@@ -2770,42 +2832,42 @@ msgstr "Trash"
 #~ msgid "Trash {0} files"
 #~ msgstr "Trash {0} files"
 
-#: src/routes/canvas.tsx:1564
+#: src/routes/canvas.tsx:1757
 msgid "trash canvas items"
 msgstr "trash canvas items"
 
-#: src/components/canvas/asset-list.tsx:55
+#: src/components/canvas/asset-list.tsx:61
 msgid "Trash is empty."
 msgstr "Trash is empty."
 
-#: src/components/settings-dialog.tsx:141
+#: src/components/settings-dialog.tsx:98
 msgid "Trash retention"
 msgstr "Trash retention"
 
-#: src/routes/canvas.tsx:1547
+#: src/routes/canvas.tsx:1740
 msgid "Trash selected Assets"
 msgstr "Trash selected Assets"
 
-#: src/routes/canvas.tsx:1561
-#: src/routes/canvas.tsx:2199
+#: src/routes/canvas.tsx:1754
+#: src/routes/canvas.tsx:2437
 msgid "Trash selection"
 msgstr "Trash selection"
 
-#: src/components/canvas/library-panel.tsx:375
+#: src/components/canvas/library-panel.tsx:389
 msgid "trashed"
 msgstr "trashed"
 
-#: src/components/canvas/detail-panel.tsx:416
+#: src/components/canvas/detail-panel.tsx:401
 #: src/components/canvas/panel-image-row.tsx:117
 msgid "Trashed"
 msgstr "Trashed"
 
-#: src/components/settings-dialog.tsx:142
+#: src/components/settings-dialog.tsx:99
 msgid "Trashed assets are retained for 30 days, then removed automatically during repository cleanup."
 msgstr "Trashed assets are retained for 30 days, then removed automatically during repository cleanup."
 
-#: src/components/canvas/detail-panel.tsx:635
-#: src/routes/canvas.tsx:1589
+#: src/components/canvas/detail-panel.tsx:620
+#: src/routes/canvas.tsx:1782
 msgid "Unarchive"
 msgstr "Unarchive"
 
@@ -2819,19 +2881,19 @@ msgstr "Unarchive"
 #~ msgid "Unassigned"
 #~ msgstr "Unassigned"
 
-#: src/components/canvas/library-panel.tsx:449
+#: src/components/canvas/library-panel.tsx:475
 msgid "Unavailable tag"
 msgstr "Unavailable tag"
 
-#: src/routes/canvas.tsx:1875
+#: src/routes/canvas.tsx:2068
 msgid "Undo"
 msgstr "Undo"
 
-#: src/routes/canvas.tsx:1876
+#: src/routes/canvas.tsx:2069
 msgid "Undo the last repository operation"
 msgstr "Undo the last repository operation"
 
-#: src/routes/canvas.tsx:1608
+#: src/routes/canvas.tsx:1801
 msgid "ungroup"
 msgstr "ungroup"
 
@@ -2840,11 +2902,11 @@ msgstr "ungroup"
 #~ msgid "Ungroup"
 #~ msgstr "Ungroup"
 
-#: src/routes/canvas.tsx:1810
+#: src/routes/canvas.tsx:2003
 msgid "unlink"
 msgstr "unlink"
 
-#: src/routes/canvas.tsx:1808
+#: src/routes/canvas.tsx:2001
 msgid "Unlink the selected relationship"
 msgstr "Unlink the selected relationship"
 
@@ -2853,46 +2915,46 @@ msgstr "Unlink the selected relationship"
 msgid "Unpin {title} drawer"
 msgstr "Unpin {title} drawer"
 
-#: src/routes/canvas.tsx:1043
+#: src/routes/canvas.tsx:1236
 msgid "unpin assets"
 msgstr "unpin assets"
 
-#: src/routes/canvas.tsx:1040
+#: src/routes/canvas.tsx:1233
 msgid "Unpin Assets drawer"
 msgstr "Unpin Assets drawer"
 
-#: src/routes/canvas.tsx:1097
+#: src/routes/canvas.tsx:1290
 msgid "unpin inspector"
 msgstr "unpin inspector"
 
-#: src/routes/canvas.tsx:1094
+#: src/routes/canvas.tsx:1287
 msgid "Unpin Inspector drawer"
 msgstr "Unpin Inspector drawer"
 
-#: src/components/canvas/canvas-dock.tsx:169
+#: src/components/canvas/canvas-dock.tsx:168
 msgid "Unplace"
 msgstr "Unplace"
 
-#: src/routes/canvas.tsx:1529
+#: src/routes/canvas.tsx:1722
 msgid "Unplace selected Canvas items"
 msgstr "Unplace selected Canvas items"
 
-#: src/components/canvas/canvas-dock.tsx:208
+#: src/components/canvas/canvas-dock.tsx:207
 msgid "Unplace Selection"
 msgstr "Unplace Selection"
 
-#: src/components/canvas/library-panel.tsx:394
+#: src/components/canvas/library-panel.tsx:408
 msgid "unplaced"
 msgstr "unplaced"
 
 #: src/components/canvas/asset-view-controls.tsx:85
-#: src/components/canvas/detail-panel.tsx:420
-#: src/components/canvas/library-panel.tsx:440
-#: src/components/canvas/lightbox.tsx:178
+#: src/components/canvas/detail-panel.tsx:405
+#: src/components/canvas/library-panel.tsx:463
+#: src/components/canvas/lightbox.tsx:241
 msgid "Unplaced"
 msgstr "Unplaced"
 
-#: src/components/settings-dialog.tsx:143
+#: src/components/settings-dialog.tsx:100
 msgid "Unplacing keeps an asset in the repository. Trash removes it from active use. Permanent purge removes it immediately and cannot be undone."
 msgstr "Unplacing keeps an asset in the repository. Trash removes it from active use. Permanent purge removes it immediately and cannot be undone."
 
@@ -2901,7 +2963,7 @@ msgstr "Unplacing keeps an asset in the repository. Trash removes it from active
 #~ msgid "Untitled set"
 #~ msgstr "Untitled set"
 
-#: src/routes/canvas.tsx:1182
+#: src/routes/canvas.tsx:1375
 msgid "upload"
 msgstr "upload"
 
@@ -2909,7 +2971,7 @@ msgstr "upload"
 msgid "Use as cover"
 msgstr "Use as cover"
 
-#: src/routes/canvas.tsx:1470
+#: src/routes/canvas.tsx:1663
 msgid "view image"
 msgstr "view image"
 
@@ -2921,69 +2983,71 @@ msgstr "View saved"
 msgid "Welcome to Loom"
 msgstr "Welcome to Loom"
 
-#: src/routes/canvas.tsx:999
-#: src/routes/canvas.tsx:1001
-#: src/routes/canvas.tsx:1009
-#: src/routes/canvas.tsx:1012
-#: src/routes/canvas.tsx:1020
-#: src/routes/canvas.tsx:1022
-#: src/routes/canvas.tsx:1031
-#: src/routes/canvas.tsx:1042
-#: src/routes/canvas.tsx:1053
-#: src/routes/canvas.tsx:1055
-#: src/routes/canvas.tsx:1063
-#: src/routes/canvas.tsx:1066
-#: src/routes/canvas.tsx:1074
-#: src/routes/canvas.tsx:1076
-#: src/routes/canvas.tsx:1085
-#: src/routes/canvas.tsx:1096
-#: src/routes/canvas.tsx:1107
-#: src/routes/canvas.tsx:1110
-#: src/routes/canvas.tsx:1118
-#: src/routes/canvas.tsx:1121
-#: src/routes/canvas.tsx:1129
-#: src/routes/canvas.tsx:1132
-#: src/routes/canvas.tsx:1140
-#: src/routes/canvas.tsx:1142
-#: src/routes/canvas.tsx:1150
-#: src/routes/canvas.tsx:1153
-#: src/routes/canvas.tsx:1161
-#: src/routes/canvas.tsx:1163
-#: src/routes/canvas.tsx:1171
-#: src/routes/canvas.tsx:1173
-#: src/routes/canvas.tsx:1181
-#: src/routes/canvas.tsx:1183
-#: src/routes/canvas.tsx:1880
-#: src/routes/canvas.tsx:1892
+#: src/routes/canvas.tsx:1192
+#: src/routes/canvas.tsx:1194
+#: src/routes/canvas.tsx:1202
+#: src/routes/canvas.tsx:1205
+#: src/routes/canvas.tsx:1213
+#: src/routes/canvas.tsx:1215
+#: src/routes/canvas.tsx:1224
+#: src/routes/canvas.tsx:1235
+#: src/routes/canvas.tsx:1246
+#: src/routes/canvas.tsx:1248
+#: src/routes/canvas.tsx:1256
+#: src/routes/canvas.tsx:1259
+#: src/routes/canvas.tsx:1267
+#: src/routes/canvas.tsx:1269
+#: src/routes/canvas.tsx:1278
+#: src/routes/canvas.tsx:1289
+#: src/routes/canvas.tsx:1300
+#: src/routes/canvas.tsx:1303
+#: src/routes/canvas.tsx:1311
+#: src/routes/canvas.tsx:1314
+#: src/routes/canvas.tsx:1322
+#: src/routes/canvas.tsx:1325
+#: src/routes/canvas.tsx:1333
+#: src/routes/canvas.tsx:1335
+#: src/routes/canvas.tsx:1343
+#: src/routes/canvas.tsx:1346
+#: src/routes/canvas.tsx:1354
+#: src/routes/canvas.tsx:1356
+#: src/routes/canvas.tsx:1364
+#: src/routes/canvas.tsx:1366
+#: src/routes/canvas.tsx:1374
+#: src/routes/canvas.tsx:1376
+#: src/routes/canvas.tsx:2073
+#: src/routes/canvas.tsx:2085
 msgid "Workspace"
 msgstr "Workspace"
 
-#: src/routes/canvas.tsx:1108
+#: src/routes/canvas.tsx:1301
 msgid "zen"
 msgstr "zen"
 
-#: src/routes/canvas.tsx:1319
+#: src/routes/canvas.tsx:1512
 msgid "zoom extents"
 msgstr "zoom extents"
 
+#: src/components/canvas/lightbox.tsx:163
 #: src/components/canvas/set-comparison-dialog.tsx:76
 #: src/components/canvas/zoom-controls.tsx:33
 #: src/components/canvas/zoom-controls.tsx:36
-#: src/routes/canvas.tsx:1351
+#: src/routes/canvas.tsx:1544
 msgid "Zoom in"
 msgstr "Zoom in"
 
+#: src/components/canvas/lightbox.tsx:164
 #: src/components/canvas/set-comparison-dialog.tsx:60
 #: src/components/canvas/zoom-controls.tsx:20
 #: src/components/canvas/zoom-controls.tsx:23
-#: src/routes/canvas.tsx:1362
+#: src/routes/canvas.tsx:1555
 msgid "Zoom out"
 msgstr "Zoom out"
 
-#: src/routes/canvas.tsx:1343
+#: src/routes/canvas.tsx:1536
 msgid "zoom reset"
 msgstr "zoom reset"
 
-#: src/routes/canvas.tsx:1331
+#: src/routes/canvas.tsx:1524
 msgid "zoom to selection"
 msgstr "zoom to selection"

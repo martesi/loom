@@ -170,7 +170,9 @@ async function measureInteractions(page: Page, selectionSize: number) {
   const beforeZoom = await viewport.getAttribute('style')
   await page.mouse.move(center.x, center.y)
   const zoomPaint = nextInputPaint(page, 'wheel')
+  await page.keyboard.down('Control')
   await page.mouse.wheel(0, -300)
+  await page.keyboard.up('Control')
   const zoomInputToPaint = await zoomPaint
   await expect(viewport).not.toHaveAttribute('style', beforeZoom ?? '')
 
