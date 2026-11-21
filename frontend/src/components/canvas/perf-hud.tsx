@@ -15,6 +15,7 @@ interface PerfSummary {
   zoom: number
   totalNodes: number
   mountedNodes: number
+  jsHeapMB: { used: number | null; total: number | null } | null
   frames: number
   fps: number | null
   frameGapMs: {
@@ -38,6 +39,7 @@ export function PerfHud({ onClose }: { onClose: () => void }) {
   const flow = useReactFlow()
   const [liveFps, setLiveFps] = useState<number | null>(null)
   const [liveZoom, setLiveZoom] = useState<number | null>(null)
+  const [liveHeapMB, setLiveHeapMB] = useState<number | null>(null)
   const [recording, setRecording] = useState(false)
   const [result, setResult] = useState<PerfSummary | null>(null)
   const [copied, setCopied] = useState(false)
@@ -77,6 +79,14 @@ export function PerfHud({ onClose }: { onClose: () => void }) {
         } catch {
           // Flow instance unavailable; leave the last value.
         }
+        const memory = (
+          performance as Performance & {
+            memory?: { usedJSHeapSize: number }
+          }
+        ).memory
+        setLiveHeapMB(
+          memory ? Math.round(memory.usedJSHeapSize / 1048576) : null
+        )
       }
     }
     raf = requestAnimationFrame(tick)
@@ -160,6 +170,7 @@ export function PerfHud({ onClose }: { onClose: () => void }) {
       zoom: Math.round(flow.getZoom() * 1000) / 1000,
       totalNodes: flow.getNodes().length,
       mountedNodes: document.querySelectorAll('.react-flow__node').length,
+      jsHeapMB: readHeapMB(),
       frames: frames.length,
       fps:
         frames.length > 1 && spanMs > 0
@@ -183,7 +194,20 @@ export function PerfHud({ onClose }: { onClose: () => void }) {
     })
   }
 
-  async function copyResult() {
+  function readHeapMB(): { used: number | null; total: number | null } | null {
+  const memory = (
+    performance as Performance & {
+      memory?: { usedJSHeapSize: number; totalJSHeapSize: number }
+    }
+  ).memory
+  if (!memory) return null
+  return {
+    used: Math.round(memory.usedJSHeapSize / 1048576),
+    total: Math.round(memory.totalJSHeapSize / 1048576),
+  }
+}
+
+async function copyResult() {
     if (!result) return
     const text = JSON.stringify(result, null, 2)
     try {
@@ -231,6 +255,12 @@ export function PerfHud({ onClose }: { onClose: () => void }) {
           zoom{' '}
           <strong className="text-ink">
             {liveZoom === null ? '—' : liveZoom}
+          </strong>
+        </span>
+        <span className="col-span-2">
+          js heap{' '}
+          <strong className="text-ink">
+            {liveHeapMB === null ? '— (not Chromium)' : `${liveHeapMB} MB`}
           </strong>
         </span>
       </div>
@@ -296,6 +326,12 @@ export function PerfHud({ onClose }: { onClose: () => void }) {
           <dt>nodes total/mounted</dt>
           <dd className="text-right text-ink">
             {result.totalNodes}/{result.mountedNodes}
+          </dd>
+          <dt>js heap used/total</dt>
+          <dd className="text-right text-ink">
+            {result.jsHeapMB
+              ? `${result.jsHeapMB.used ?? '—'}/${result.jsHeapMB.total ?? '—'} MB`
+              : 'n/a'}
           </dd>
         </dl>
       )}
