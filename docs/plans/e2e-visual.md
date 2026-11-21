@@ -25,7 +25,7 @@ should isolate the missing transition and assert the final user-visible result.
 | Relationships and sets | `board-behaviors.spec.ts` covers cycles, self-links, collapsed set source rejection, navigation, set persistence, unplaced-to-set drop and pan. `canvas.spec.ts` covers relationship gesture and semantic sets. | Explicitly test grabbed source during multi-selection, canceled drop and rejection feedback; verify fan-out is a snapshot after membership changes, transfer between sets and empty-set cleanup through UI. |
 | Lifecycle and clipboard | `canvas.spec.ts` covers browser original-copy/paste into Assets and import; `board-behaviors.spec.ts` covers Canvas paste/file drop. Existing purge assertions cover confirmation. | Test identical shortcuts after ownership switches, exact target and final purge count, canceled confirmation, fresh copies without relationships/set metadata, and arbitrary text not treated as a path. Native OS clipboard remains separate smoke coverage. |
 | Viewport and accessibility | `canvas.spec.ts` checks saved viewport; `canvas-dock.spec.ts` checks shortcuts; `card-deck.spec.ts` checks some contrast and visual classes. | Assert reset keeps center, fit selection survives reload, and overlay transitions do not fit/reset. Test keyboard focus, accessible states, reduced motion and screen-reader announcements; CSS/class checks alone cannot prove these. |
-| Harness | `retry-fixtures.spec.ts` deliberately fails once and verifies clean retry; harness unit tests cover isolation and lock behavior. | `workers: 1` is required: per-attempt restoration shares browse/config roots and one attempt file. Do not turn on parallel workers until those resources and the server are isolated per worker. |
+| Harness | Harness node tests cover fixture isolation (including per-worker attempts and retry replacement), the build lock and process trees. Each Playwright worker now owns its server, config root and attempt file, so the suite runs in parallel. | Keep per-worker resources isolated when adding setup code. A single shared browse root is safe only because each test writes to its own attempt directory. |
 
 Migration has Go coverage according to the earlier audit, but its UI-visible
 union of board memberships still needs a dedicated legacy-repository E2E
@@ -120,20 +120,19 @@ fixture assets; compare IDs, file existence and persisted state where relevant.
   Smoke verified: typecheck passed and all 4 tests in
   `server-mode.spec.ts` passed (12.1 s; Playwright 1.65.0, Nix Chromium
   157.0.8103.38). This focused check does not replace the full suite.
-- Preserve `frontend/playwright.config.ts`'s `workers: 1`, isolated run ID,
-  run-scoped report/output, production server, failure trace and screenshot.
-  The fixture restores immutable templates per **attempt**, including config;
-  `retry-fixtures.spec.ts` intentionally reports a first-fail/second-pass.
-  Do not count that expected result as an unrelated product flake.
+- Preserve `frontend/playwright.config.ts`'s run-scoped ID, run-scoped
+  report/output, production server, failure trace and screenshot. The fixture
+  restores immutable templates per **attempt**, including config, and each
+  worker has its own server config root, so attempts cannot collide. Benchmark
+  specs live under `frontend/e2e/benchmarks/` and use
+  `playwright.benchmark.config.ts`; they never run in `test:e2e`.
 - Use event/response or locator assertions for readiness, never fixed sleeps.
   Keep fixtures deterministic, wait for actual persistence before reload, and
   assert the clicked item and mutation, not just a node count. Use real pointer
   gestures for drag boundaries and keyboard actions for focus ownership.
-- Before increasing concurrency, give every worker independent fixture roots,
-  attempt discovery, app config, server and output; add a collision test with
-  concurrent workers and retries. Separate concurrent invocations already use
-  run-scoped resources and a checkout-wide build lock; do not assume that
-  implies worker safety.
+- Concurrency is per worker: every worker has its own server, app config root,
+  attempt file and browser context, all under one run ID. Concurrent
+  invocations still use run-scoped resources and a checkout-wide build lock.
 - Triage a failure with its first-attempt trace, screenshot, server logs, test
   ID and environment/resource headroom. Classify setup/browser crash, fixture
   leak, timing/gesture, or product assertion; rerun the isolated test and then

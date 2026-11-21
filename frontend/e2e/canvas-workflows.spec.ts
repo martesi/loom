@@ -1,3 +1,4 @@
+import { setViewportMethodID } from './bindings'
 import { expect, test } from './test-fixtures'
 import { dropAsset, imageNodes, openFixtureRepo } from './test-helpers'
 
@@ -85,7 +86,10 @@ test('select, arrange, align, create and expand a set, then restore viewport', a
     page.waitForResponse(
       (response) =>
         response.url().endsWith('/wails/runtime') &&
-        response.request().postData()?.includes('"methodID":248266558') === true
+        response
+          .request()
+          .postData()
+          ?.includes(`"methodID":${setViewportMethodID}`) === true
     )
   const fitSaved = waitForViewportSave()
   await page.keyboard.press('Shift+1')

@@ -11,15 +11,15 @@ import {
   shortcutForEvent,
 } from '../lib/action-catalog'
 import {
+  type Preferences,
+  preferencesStorageKey,
+  readPreferences,
+} from '../lib/preferences'
+import {
   readShortcutOverrides,
   shortcutParts,
   writeShortcutOverrides,
 } from '../lib/shortcut-overrides'
-import {
-  type Preferences,
-  preferencesStorageKey,
-  readPreferences,
-} from '../routes/root'
 import { AppearanceSettings } from './settings-appearance'
 import { Button } from './ui/button'
 import { Kbd } from './ui/kbd'

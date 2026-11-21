@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:net'
+import os from 'node:os'
 import path from 'node:path'
 import { defineConfig } from '@playwright/test'
 import { getE2ERunId } from './e2e/run-context'
@@ -18,21 +19,32 @@ const baseURL = `http://127.0.0.1:${port}`
 const chromiumBin = process.env.CHROMIUM_BIN
 const cacheDir = path.resolve(import.meta.dirname, '../.cache/e2e')
 const runDir = path.join(cacheDir, 'runs', runId)
+const workers = Math.max(
+  1,
+  Number(
+    process.env.E2E_WORKERS ??
+      Math.min(process.env.CI ? 2 : 4, os.availableParallelism())
+  )
+)
+process.env.E2E_WORKERS = String(workers)
 
 export default defineConfig({
   testDir: './e2e',
   testMatch: '**/*.spec.ts',
+  // Benchmarks are measurement runs, not behavior tests. They have their own
+  // config (playwright.benchmark.config.ts) and fixture set.
+  testIgnore: '**/benchmarks/**',
   globalTeardown: './e2e/teardown.ts',
-  testIgnore:
-    process.env.LOOM_BENCHMARK === '1' ? undefined : '**/*-benchmark.spec.ts',
-  fullyParallel: false,
-  workers: 1,
+  // Each worker owns one app server, config root, and browser context, so
+  // tests are isolated and can run in parallel.
+  fullyParallel: true,
+  workers,
   timeout: 60_000,
   expect: {
     timeout: 10_000,
   },
   forbidOnly: !!process.env.CI,
-  // Test fixtures are restored from immutable templates before each attempt.
+  // Fixtures are restored from immutable templates before each attempt.
   retries: process.env.CI ? 1 : 0,
   reporter: [
     ['list'],
@@ -62,6 +74,7 @@ export default defineConfig({
     reuseExistingServer: false,
     env: {
       E2E_PORT: String(port),
+      E2E_WORKERS: String(workers),
       LOOM_E2E_RUN_ID: runId,
     },
   },

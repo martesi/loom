@@ -108,10 +108,10 @@
           shellHook = commonHook;
         };
 
-        # GUI/test closure (Xvfb, xdotool, screenshots, sqlite3 CLI for e2e
-        # fixtures) split out from `default` so everyday development doesn't
-        # pay for it — see docs/panel-unification-plan.md's e2e verification
-        # steps, which are the only thing that needs this shell.
+        # GUI/test closure (Xvfb, xdotool, screenshots) split out from `default`
+        # so everyday development doesn't pay for it — see
+        # docs/panel-unification-plan.md's e2e verification steps, which are
+        # the only thing that needs this shell.
         devShells.e2e = pkgs.mkShell {
           buildInputs = commonBuildInputs ++ [
             pkgs.chromium
@@ -120,10 +120,6 @@
             pkgs.xdotool
             # `import` for screenshots (see .agents/skills/e2e/references/).
             pkgs.imagemagick
-            # Only used by e2e specs (frontend/e2e/library.spec.ts seeds
-            # fixtures via the sqlite3 CLI); the app itself uses the pure-Go
-            # modernc.org/sqlite driver, no CLI needed.
-            pkgs.sqlite
           ];
           shellHook = ''
             ${commonHook}

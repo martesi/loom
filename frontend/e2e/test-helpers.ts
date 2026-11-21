@@ -4,13 +4,14 @@ import { expect, type Locator, type Page } from '@playwright/test'
 import { getE2ERunId } from './run-context'
 
 const runId = getE2ERunId()
-const fixtureRootFile = path.resolve(
+const runDir = path.resolve(
   import.meta.dirname,
-  `../../.cache/e2e/runs/${runId}/fixture-root.json`
+  `../../.cache/e2e/runs/${runId}`
 )
-const fixtureAttemptFile = path.resolve(
-  import.meta.dirname,
-  `../../.cache/e2e/runs/${runId}/fixture-attempt.json`
+const fixtureRootFile = path.join(runDir, 'fixture-root.json')
+const fixtureAttemptFile = path.join(
+  runDir,
+  `fixture-attempt-${process.env.TEST_PARALLEL_INDEX ?? '0'}.json`
 )
 
 async function fixtureRoots() {
@@ -78,6 +79,7 @@ export async function autoArrangeCanvas(page: Page) {
   const subgraphAction = page.getByTestId('dock-arrange-selection')
   if (await subgraphAction.isVisible()) {
     await subgraphAction.click()
+    await waitForStableNodePositions(page)
     return
   }
   const canvasAction = page.getByTestId('dock-auto-arrange')
@@ -87,6 +89,31 @@ export async function autoArrangeCanvas(page: Page) {
       .click({ position: { x: 600, y: 400 } })
   }
   await canvasAction.click()
+  await waitForStableNodePositions(page)
+}
+
+// Layout actions can animate the viewport, so a node's screen box read right
+// after the action may be stale by the time a pointer gesture uses it.
+export async function waitForStableNodePositions(page: Page) {
+  const positions = () =>
+    page.locator('.react-flow__node').evaluateAll((elements) =>
+      elements
+        .map((element) => {
+          const rect = element.getBoundingClientRect()
+          return `${Math.round(rect.x)},${Math.round(rect.y)}`
+        })
+        .join('|')
+    )
+  await expect
+    .poll(
+      async () => {
+        const before = await positions()
+        await page.waitForTimeout(120)
+        return before === (await positions())
+      },
+      { timeout: 5_000 }
+    )
+    .toBe(true)
 }
 
 export function assets(page: Page) {

@@ -242,7 +242,9 @@ test('set shortcut and undo/redo work without stealing text-input undo', async (
 test('file drop and canvas clipboard paste create placed assets and errors are dismissible', async ({
   page,
   context,
+  clipboardAccess,
 }) => {
+  void clipboardAccess
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
   await openFixtureRepo(page, 'media-fixtures')
 
@@ -285,9 +287,18 @@ test('file drop and canvas clipboard paste create placed assets and errors are d
   await page.keyboard.press('Control+v')
   await expect(imageNodes(page)).toHaveCount(2)
 
-  await asset(page, 'media-alpha.png').click()
+  const sourceAsset = asset(page, 'media-alpha.png')
+  await sourceAsset.click()
+  await expect(sourceAsset).toHaveAttribute('aria-selected', 'true')
   await page.keyboard.press('Control+Shift+c')
-  await expect(page.getByRole('alert')).toHaveCount(0)
+  // Copy-converted has no converter in this build. It must report that and
+  // leave the existing clipboard payload intact so the next paste still works.
+  const convertedError = page.getByRole('alert')
+  await expect(convertedError).toContainText(
+    'Converted copy is unavailable. No converter is installed.'
+  )
+  await convertedError.getByRole('button', { name: 'Dismiss' }).click()
+  await expect(convertedError).toHaveCount(0)
   await expect
     .poll(() => page.evaluate(() => navigator.clipboard.readText()))
     .toContain('canvas-paste.png')
@@ -296,7 +307,8 @@ test('file drop and canvas clipboard paste create placed assets and errors are d
 
   await page.evaluate(() => navigator.clipboard.writeText('not Loom media'))
   await page.keyboard.press('Control+v')
-  await expect(page.getByRole('alert')).toContainText(
-    'Clipboard contains no media files'
-  )
+  const pasteError = page.getByRole('alert')
+  await expect(pasteError).toContainText('Clipboard contains no media files')
+  await pasteError.getByRole('button', { name: 'Dismiss' }).click()
+  await expect(pasteError).toHaveCount(0)
 })
