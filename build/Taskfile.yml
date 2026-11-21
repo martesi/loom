@@ -74,6 +74,8 @@ tasks:
     summary: Generates Windows `.ico` and Mac `.icns` from an image; on macOS, `-iconcomposerinput appicon.icon -macassetdir darwin` also produces `Assets.car` from a `.icon` file (skipped on other platforms).
     run: once
     dir: build
+    deps:
+      - task: generate:appicon
     sources:
       - "appicon.png"
       - "appicon.icon"
@@ -82,6 +84,19 @@ tasks:
       - "windows/icon.ico"
     cmds:
       - wails3 generate icons -input appicon.png -macfilename darwin/icons.icns -windowsfilename windows/icon.ico -iconcomposerinput appicon.icon -macassetdir darwin
+
+  generate:appicon:
+    summary: Rasterizes the Loom mark SVG into the PNG that generate:icons consumes
+    run: once
+    dir: build
+    deps:
+      - task: install:frontend:deps
+    # Deliberately no sources/generates: appicon.png is a derived file that git
+    # restores with a fresh mtime, which would make a timestamp check skip a
+    # rebuild and package the previous artwork. Rasterizing takes ~40 ms and is
+    # deterministic, so it always runs.
+    cmds:
+      - bun ../frontend/scripts/build-appicon.ts appicon.png
 
   dev:frontend:
     summary: Runs the frontend in development mode
