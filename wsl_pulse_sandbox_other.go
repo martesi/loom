@@ -2,4 +2,4 @@
 
 package main
 
-func registerWSLgPulseSocketInWebKitSandbox() {}
+func configureWSLgPulseSandbox() error { return nil }

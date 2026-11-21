@@ -446,7 +446,8 @@ msgstr "Auto-arrange selection"
 #~ msgid "Auto-arrange Subgraph"
 #~ msgstr "Auto-arrange Subgraph"
 
-#: src/components/canvas/lightbox.tsx:157
+#: src/components/canvas/lightbox.tsx:83
+#: src/components/canvas/lightbox.tsx:87
 msgid "Back"
 msgstr "Back"
 
@@ -651,8 +652,8 @@ msgstr "Close Inspector"
 msgid "Close operation"
 msgstr "Close operation"
 
-#: src/components/canvas/lightbox.tsx:23
-#: src/components/canvas/lightbox.tsx:26
+#: src/components/canvas/lightbox.tsx:62
+#: src/components/canvas/lightbox.tsx:66
 msgid "Close preview"
 msgstr "Close preview"
 
@@ -793,7 +794,8 @@ msgstr "Copy converted media"
 msgid "Copy converted output when a converter is available"
 msgstr "Copy converted output when a converter is available"
 
-#: src/components/canvas/lightbox.tsx:165
+#: src/components/canvas/lightbox.tsx:152
+#: src/components/canvas/lightbox.tsx:156
 msgid "Copy image"
 msgstr "Copy image"
 
@@ -805,7 +807,7 @@ msgstr "Copy original files for the active selection"
 msgid "Copy original media"
 msgstr "Copy original media"
 
-#: src/components/canvas/lightbox.tsx:122
+#: src/components/canvas/lightbox.tsx:305
 msgid "Could not copy image. Try downloading it instead."
 msgstr "Could not copy image. Try downloading it instead."
 
@@ -946,7 +948,7 @@ msgstr "Density"
 msgid "Derived"
 msgstr "Derived"
 
-#: src/components/canvas/lightbox.tsx:198
+#: src/components/canvas/lightbox.tsx:396
 msgid "Derived from"
 msgstr "Derived from"
 
@@ -954,7 +956,7 @@ msgstr "Derived from"
 msgid "derived image"
 msgstr "derived image"
 
-#: src/components/canvas/lightbox.tsx:224
+#: src/components/canvas/lightbox.tsx:422
 msgid "Derived images"
 msgstr "Derived images"
 
@@ -991,6 +993,7 @@ msgstr "Dismiss"
 msgid "Dissolve set"
 msgstr "Dissolve set"
 
+#: src/components/canvas/lightbox.tsx:163
 #: src/components/canvas/lightbox.tsx:166
 msgid "Download"
 msgstr "Download"
@@ -1159,6 +1162,11 @@ msgstr "Folders"
 msgid "Format"
 msgstr "Format"
 
+#: src/components/canvas/lightbox.tsx:95
+#: src/components/canvas/lightbox.tsx:99
+msgid "Forward"
+msgstr "Forward"
+
 #: src/routes/canvas.tsx:1512
 msgid "frame canvas"
 msgstr "frame canvas"
@@ -1250,6 +1258,11 @@ msgstr "Help"
 msgid "hide assets"
 msgstr "hide assets"
 
+#: src/components/canvas/lightbox.tsx:176
+#: src/components/canvas/lightbox.tsx:182
+msgid "Hide info panel"
+msgstr "Hide info panel"
+
 #: src/routes/canvas.tsx:1268
 msgid "hide inspector"
 msgstr "hide inspector"
@@ -1262,7 +1275,7 @@ msgstr "Hide or restore Canvas controls and drawers"
 msgid "Hide selected assets from the active catalog"
 msgstr "Hide selected assets from the active catalog"
 
-#: src/components/canvas/lightbox.tsx:119
+#: src/components/canvas/lightbox.tsx:302
 msgid "Image copied"
 msgstr "Image copied"
 
@@ -1270,6 +1283,10 @@ msgstr "Image copied"
 #: src/components/canvas/asset-view-controls.tsx:215
 msgid "Image fit"
 msgstr "Image fit"
+
+#: src/components/canvas/lightbox.tsx:361
+msgid "Image info"
+msgstr "Image info"
 
 #: src/components/board/detail-panel.tsx:172
 #~ msgid "images selected"
@@ -1627,8 +1644,8 @@ msgstr "Newest first"
 #~ msgid "Next"
 #~ msgstr "Next"
 
-#: src/components/canvas/lightbox.tsx:55
-#: src/components/canvas/lightbox.tsx:58
+#: src/components/canvas/lightbox.tsx:118
+#: src/components/canvas/lightbox.tsx:122
 msgid "Next image"
 msgstr "Next image"
 
@@ -1678,7 +1695,7 @@ msgstr "No missing assets match this query."
 msgid "No prompt"
 msgstr "No prompt"
 
-#: src/components/canvas/lightbox.tsx:174
+#: src/components/canvas/lightbox.tsx:372
 msgid "No prompt attached"
 msgstr "No prompt attached"
 
@@ -1884,7 +1901,7 @@ msgid "Placed"
 msgstr "Placed"
 
 #: src/components/canvas/library-panel.tsx:397
-#: src/components/canvas/lightbox.tsx:238
+#: src/components/canvas/lightbox.tsx:447
 msgid "Placement"
 msgstr "Placement"
 
@@ -1901,8 +1918,12 @@ msgstr "Preview"
 #~ msgid "Preview {fileName}"
 #~ msgstr "Preview {fileName}"
 
-#: src/components/canvas/lightbox.tsx:39
-#: src/components/canvas/lightbox.tsx:42
+#: src/components/canvas/lightbox.tsx:77
+msgid "Preview actions"
+msgstr "Preview actions"
+
+#: src/components/canvas/lightbox.tsx:107
+#: src/components/canvas/lightbox.tsx:111
 msgid "Previous image"
 msgstr "Previous image"
 
@@ -1913,7 +1934,7 @@ msgstr "project picker"
 #: src/components/canvas/asset-view-controls.tsx:231
 #: src/components/canvas/detail-panel.tsx:529
 #: src/components/canvas/detail-panel.tsx:556
-#: src/components/canvas/lightbox.tsx:171
+#: src/components/canvas/lightbox.tsx:369
 msgid "Prompt"
 msgstr "Prompt"
 
@@ -2595,6 +2616,11 @@ msgstr "Show in Folders"
 msgid "show in library"
 msgstr "show in library"
 
+#: src/components/canvas/lightbox.tsx:176
+#: src/components/canvas/lightbox.tsx:182
+msgid "Show info panel"
+msgstr "Show info panel"
+
 #: src/routes/canvas.tsx:1309
 msgid "Show keyboard shortcuts"
 msgstr "Show keyboard shortcuts"
@@ -2704,7 +2730,7 @@ msgstr "Tag summary"
 
 #: src/components/canvas/asset-view-controls.tsx:230
 #: src/components/canvas/detail-panel.tsx:470
-#: src/components/canvas/lightbox.tsx:179
+#: src/components/canvas/lightbox.tsx:377
 msgid "Tags"
 msgstr "Tags"
 
@@ -2950,7 +2976,7 @@ msgstr "unplaced"
 #: src/components/canvas/asset-view-controls.tsx:85
 #: src/components/canvas/detail-panel.tsx:405
 #: src/components/canvas/library-panel.tsx:463
-#: src/components/canvas/lightbox.tsx:241
+#: src/components/canvas/lightbox.tsx:450
 msgid "Unplaced"
 msgstr "Unplaced"
 
@@ -3028,7 +3054,8 @@ msgstr "zen"
 msgid "zoom extents"
 msgstr "zoom extents"
 
-#: src/components/canvas/lightbox.tsx:163
+#: src/components/canvas/lightbox.tsx:130
+#: src/components/canvas/lightbox.tsx:134
 #: src/components/canvas/set-comparison-dialog.tsx:76
 #: src/components/canvas/zoom-controls.tsx:33
 #: src/components/canvas/zoom-controls.tsx:36
@@ -3036,7 +3063,8 @@ msgstr "zoom extents"
 msgid "Zoom in"
 msgstr "Zoom in"
 
-#: src/components/canvas/lightbox.tsx:164
+#: src/components/canvas/lightbox.tsx:141
+#: src/components/canvas/lightbox.tsx:145
 #: src/components/canvas/set-comparison-dialog.tsx:60
 #: src/components/canvas/zoom-controls.tsx:20
 #: src/components/canvas/zoom-controls.tsx:23

@@ -103,6 +103,16 @@
           pkgs.ffmpeg
           pkgs.imagemagick
 
+          # WebKitGTK relies on GStreamer for WebAudio/media playback. The
+          # engine does not provide these runtime plugins itself: base has
+          # appsink, good provides autoaudiosink, and libav/ugly provide
+          # common audio/video codecs such as MP3 and AAC.
+          pkgs.gst_all_1.gstreamer
+          pkgs.gst_all_1.gst-plugins-base
+          pkgs.gst_all_1.gst-plugins-good
+          pkgs.gst_all_1.gst-libav
+          pkgs.gst_all_1.gst-plugins-ugly
+
           # Graphics stack. Nothing here pulls in a GPU: mesa carries the
           # llvmpipe/swrast DRI drivers and the lavapipe Vulkan ICD, which are
           # what GTK4 and WebKit fall back to when there is no render node.

@@ -9,6 +9,10 @@ import (
 )
 
 func main() {
+	if err := configureWSLgPulseSandbox(); err != nil {
+		log.Fatal(err)
+	}
+
 	app := application.New(appOptions())
 
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
