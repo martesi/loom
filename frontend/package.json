@@ -15,7 +15,9 @@
     "i18n:extract": "lingui extract",
     "typecheck:e2e": "tsc -p e2e/tsconfig.json --noEmit",
     "test:e2e": "bash ../build/e2e/setup-workspace.sh && bun run typecheck:e2e && playwright test",
-    "benchmark:1k": "bash ../build/e2e/setup-workspace.sh && bun run typecheck:e2e && LOOM_BENCHMARK=1 playwright test e2e/canvas-benchmark.spec.ts"
+    "benchmark:1k": "bash ../build/e2e/setup-workspace.sh && bun run typecheck:e2e && LOOM_BENCHMARK=1 playwright test e2e/canvas-benchmark.spec.ts",
+    "benchmark:drag": "bash ../build/e2e/setup-workspace.sh && bun run typecheck:e2e && LOOM_BENCHMARK=1 playwright test e2e/drag-fps-benchmark.spec.ts",
+    "benchmark:pan": "bash ../build/e2e/setup-workspace.sh && bun run typecheck:e2e && LOOM_BENCHMARK=1 playwright test e2e/canvas-pan-benchmark.spec.ts"
   },
   "dependencies": {
     "@base-ui-components/react": "^1.0.0-rc.0",

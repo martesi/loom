@@ -27,6 +27,7 @@ import {
   TagService,
 } from '../../bindings/loom/internal/service'
 import { CanvasDock } from '../components/canvas/canvas-dock'
+import { PerfHud } from '../components/canvas/perf-hud'
 import {
   CommandPalette,
   type PaletteAsset,
@@ -58,6 +59,12 @@ import { cn } from '../lib/utils'
 
 const nodeTypes = { image: ImageNode, group: GroupNode }
 const RELATION_DRAG_THRESHOLD = 5
+function rememberFocus(target: { current: HTMLElement | null }) {
+  target.current =
+    document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null
+}
 export function CanvasWorkspace({ repo }: { repo: RepoInfo }) {
   return (
     <ReactFlowProvider>
@@ -150,6 +157,37 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   const [inspectorPinned, setInspectorPinned] = useState(false)
   const [focusCanvas, setFocusCanvas] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
+  // Manual perf harness for real-hardware measurement: Shift+P toggles,
+  // ?perf=1 opens on load. Never part of the product UI.
+  const [perfHud, setPerfHud] = useState(
+    () =>
+      typeof window !== 'undefined' &&
+      new URLSearchParams(window.location.search).has('perf')
+  )
+  useEffect(() => {
+    const toggle = (event: KeyboardEvent) => {
+      if (
+        event.code !== 'KeyP' ||
+        !event.shiftKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.altKey
+      )
+        return
+      const target = event.target
+      const element = target instanceof Element ? target : null
+      if (
+        element?.closest(
+          'input,textarea,select,[contenteditable]:not([contenteditable=false]),[role=dialog]'
+        )
+      )
+        return
+      event.preventDefault()
+      setPerfHud((visible) => !visible)
+    }
+    window.addEventListener('keydown', toggle)
+    return () => window.removeEventListener('keydown', toggle)
+  }, [])
   const [settingsSection, setSettingsSection] = useState<
     'appearance' | 'keyboard' | null
   >(null)
@@ -180,25 +218,22 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   const inspectorReturnFocus = useRef<HTMLElement | null>(null)
   const paletteReturnFocus = useRef<HTMLElement | null>(null)
 
-  function rememberFocus(target: { current: HTMLElement | null }) {
-    target.current =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null
-  }
-  function openAssets() {
+  const openAssets = useCallback(() => {
     if (!assetsOpen) rememberFocus(assetsReturnFocus)
     setFocusCanvas(false)
     if (window.matchMedia('(max-width: 720px)').matches) setInspectorOpen(false)
     setAssetsOpen(true)
-  }
-  function closeAssets(restoreFocus = true) {
-    setAssetsOpen(false)
-    if (restoreFocus)
-      requestAnimationFrame(() => {
-        if (!focusCanvas) assetsReturnFocus.current?.focus()
-      })
-  }
+  }, [assetsOpen])
+  const closeAssets = useCallback(
+    (restoreFocus = true) => {
+      setAssetsOpen(false)
+      if (restoreFocus)
+        requestAnimationFrame(() => {
+          if (!focusCanvas) assetsReturnFocus.current?.focus()
+        })
+    },
+    [focusCanvas]
+  )
   function toggleAssets() {
     if (assetsOpen) closeAssets()
     else openAssets()
@@ -235,73 +270,6 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       current?.request === request ? { ...current, pending: false } : current
     )
   }, [])
-  async function submitInspectorField(
-    command: 'move-rename-file' | 'add-tag' | 'save-prompt',
-    value: string,
-    imageIds: number[],
-    fileName?: string,
-    expected?: { owner: Selection['surface']; revision: number }
-  ) {
-    if (fieldSubmissionPending.current) throw new Error(t`A save is already in progress.`)
-    fieldSubmissionPending.current = true
-    try {
-    const revision = submissionScopeRef.current.revision
-    const ids = [...new Set(imageIds)].sort((a, b) => a - b)
-    const currentIds = [...new Set(selectedIds())].sort((a, b) => a - b)
-    const owner = selection.surface
-    const repository = repo.path
-    if (
-      !ids.length || ids.length !== imageIds.length ||
-      ids.some((id, index) => id !== currentIds[index]) ||
-      ids.length !== currentIds.length
-    )
-      throw new Error(t`The selection changed. Review the Inspector and try again.`)
-    const records = await Promise.all(ids.map((id) => ImageService.GetImage(repository, id)))
-    const liveIds = [...new Set([
-      ...selectionRef.current.ids,
-      ...(selectionRef.current.group ? groupMembers(selectionRef.current.group) : []),
-    ])].sort((a, b) => a - b)
-    if (
-      submissionScopeRef.current.revision !== revision ||
-      (expected && (expected.owner !== owner || expected.revision !== revision)) ||
-      selectionRef.current.surface !== owner ||
-      ids.length !== liveIds.length ||
-      ids.some((id, index) => id !== liveIds[index]) ||
-      records.some((record) => !record)
-    )
-      throw new Error(t`The selection changed or some assets are unavailable. No changes were made.`)
-    if (command === 'move-rename-file') {
-      const path = value.trim()
-      if (ids.length !== 1 || !path || path === records[0]?.filePath.slice(repository.length + 1)) return
-      const image = records[0]
-      if (!image || image.missing || image.trashed)
-        throw new Error(t`This file cannot be moved in its current state.`)
-       await ImageService.MoveFile(repository, ids[0], path)
-      await reload()
-      return
-    }
-    if (command === 'add-tag') {
-      const tag = value.trim()
-      if (!tag) return
-      const results = await Promise.allSettled(ids.map((id) => TagService.AddTag(repository, id, tag)))
-      const failedIds = results.flatMap((result, index) => result.status === 'rejected' ? [ids[index]] : [])
-      await reload()
-      if (failedIds.length) throw new Error(t`${ids.length - failedIds.length} of ${ids.length} assets updated; failed asset IDs: ${failedIds.join(', ')}. The current state was refreshed.`)
-      return
-    }
-    if (command === 'save-prompt') {
-      const results = await Promise.allSettled(ids.map((id) =>
-        value === '' ? PromptService.DetachPrompt(repository, id) :
-          PromptService.CreateAndAttachPrompt(repository, id, '', value, '')
-      ))
-      const failedIds = results.flatMap((result, index) => result.status === 'rejected' ? [ids[index]] : [])
-      await reload()
-      if (failedIds.length) throw new Error(t`${ids.length - failedIds.length} of ${ids.length} assets updated; failed asset IDs: ${failedIds.join(', ')}. The current state was refreshed.`)
-    }
-    } finally {
-      fieldSubmissionPending.current = false
-    }
-  }
   function openPalette(shortcuts = false, initialQuery = '') {
     rememberFocus(paletteReturnFocus)
     setShortcutsOnly(shortcuts)
@@ -330,6 +298,12 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   } | null>(null)
   const visible = useRef<number[]>([]),
     relation = useRef<{ source: number; x: number; y: number } | null>(null)
+  // Drag-target resolution state. Node drags resolve against these refs only,
+  // so per-pointermove work stays O(groups) instead of O(all nodes).
+  const pendingDragNode = useRef<Node | null>(null)
+  const dragTargetRaf = useRef(0)
+  const zoomRaf = useRef(0)
+  const pendingZoom = useRef(0)
   const [relationshipPreview, setRelationshipPreview] = useState<{
     x1: number
     y1: number
@@ -358,22 +332,21 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     targetRef.current = next
     setTarget(next)
   }, [])
-  const report = (e: unknown) => {
+  const report = useCallback((e: unknown) => {
     console.error('canvas operation failed', e)
     setError(e instanceof Error ? e.message : String(e))
-  }
-  const callbacks = useRef({ report, run, selectAssets })
-  callbacks.current = { report, run, selectAssets }
-  function reload(): Promise<void>
-  function reload(returnData: true): Promise<CanvasData | null>
-  async function reload(
-    returnData = false
-  ): Promise<void | CanvasData | null> {
+  }, [])
+  const reload = useCallback(async (): Promise<void> => {
     const result = await ImageService.LoadCanvas(repo.path)
     if (result) setData(result)
     setRefresh((n) => n + 1)
-    if (returnData) return result
-  }
+  }, [repo.path])
+  const reloadForData = useCallback(async (): Promise<CanvasData | null> => {
+    const result = await ImageService.LoadCanvas(repo.path)
+    if (result) setData(result)
+    setRefresh((n) => n + 1)
+    return result
+  }, [repo.path])
   // Refreshes invalidate cached trash and archive state for selected assets.
   const assetSelectionKey =
     selection.surface === 'assets' && selection.ids.length
@@ -401,9 +374,12 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       cancelled = true
     }
   }, [assetSelectionKey, repo.path])
-  function run(action: () => Promise<unknown>) {
-    void action().then(() => reload()).catch(report)
-  }
+  const run = useCallback(
+    (action: () => Promise<unknown>) => {
+      void action().then(() => reload()).catch(report)
+    },
+    [reload, report]
+  )
   useEffect(() => {
     void Promise.all([
       ImageService.LoadCanvas(repo.path),
@@ -502,59 +478,130 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     () => new Set(selection.ids),
     [selection.ids]
   )
-  function isCanvasNodeSelected(node: Node) {
-    if (selection.surface !== 'canvas') return false
-    if (node.type !== 'group') return selectedImageIds.has(Number(node.id))
-    const groupId = Number(node.id.slice(4))
-    const members = groupMembers(groupId).filter((id) =>
-      (data.images ?? []).some(
-        (image) => image.id === id && image.placed && !image.trashed
-      )
-    )
-    return (
-      selection.group === groupId ||
-      (members.length > 0 && members.every((id) => selectedImageIds.has(id)))
-    )
-  }
-  const previousDisplayNodes = useRef(new Map<string, Node>())
-  const displayNodes = nodes.map((node) => {
-    const selected = isCanvasNodeSelected(node)
-    const className =
-      target?.id === node.id
-        ? target.valid
-          ? 'ring-4 ring-green-500'
-          : 'ring-4 ring-red-500'
-        : ''
-    const previous = previousDisplayNodes.current.get(node.id)
-    if (
-      previous &&
-      previous.data === node.data &&
-      previous.position === node.position &&
-      previous.measured === node.measured &&
-      previous.width === node.width &&
-      previous.height === node.height &&
-      previous.selected === selected &&
-      previous.className === className &&
-      previous.dragging === node.dragging &&
-      previous.zIndex === node.zIndex
-    )
-      return previous
-    return { ...node, selected, className }
-  })
-  previousDisplayNodes.current = new Map(
-    displayNodes.map((node) => [node.id, node])
+  const placedImageIds = useMemo(
+    () =>
+      new Set(
+        (data.images ?? [])
+          .filter((image) => image.placed && !image.trashed)
+          .map((image) => image.id)
+      ),
+    [data.images]
   )
-  const displayEdges: Edge[] = edges.map((e) => {
-    const selected =
-      selection.surface === 'canvas' && selection.edges.includes(Number(e.id))
-    const color = selected ? 'var(--color-ink)' : 'var(--color-primary)'
-    return {
-      ...e,
-      selected,
-      style: { stroke: color, strokeWidth: selected ? 3 : 2 },
-      markerEnd: { type: MarkerType.ArrowClosed, color },
-    }
-  })
+  const groupMemberMap = useMemo(
+    () =>
+      new Map(
+        (data.groups ?? []).map(
+          (group) => [group.id, new Set(group.memberIds ?? [])] as const
+        )
+      ),
+    [data.groups]
+  )
+  // Cheapest correct drop target for node drags: AABB overlap against the few
+  // collapsed-set targets. This is the dispatch point for drag-target
+  // strategies: the previous flow.getIntersectingNodes scan (O(N) rect tests
+  // over every node per pointermove) is intentionally not used here.
+  const resolveSetDropTarget = useCallback((node: Node) => {
+    const nodeWidth = node.measured?.width ?? node.width ?? 150
+    const nodeHeight = node.measured?.height ?? node.height ?? 110
+    return (
+      dropTargets.current.find((candidate) => {
+        const groupWidth =
+          candidate.measured?.width ?? candidate.width ?? 160
+        const groupHeight =
+          candidate.measured?.height ?? candidate.height ?? 128
+        return (
+          node.position.x < candidate.position.x + groupWidth &&
+          node.position.x + nodeWidth > candidate.position.x &&
+          node.position.y < candidate.position.y + groupHeight &&
+          node.position.y + nodeHeight > candidate.position.y
+        )
+      }) ?? null
+    )
+  }, [])
+  const selectedIdsList = useMemo(
+    () => [
+      ...new Set([
+        ...selection.ids,
+        ...(selection.group
+          ? [...(groupMemberMap.get(selection.group) ?? [])]
+          : []),
+      ]),
+    ],
+    [selection.ids, selection.group, groupMemberMap]
+  )
+  const isCanvasNodeSelected = useCallback(
+    (node: Node) => {
+      if (selection.surface !== 'canvas') return false
+      if (node.type !== 'group') return selectedImageIds.has(Number(node.id))
+      const groupId = Number(node.id.slice(4))
+      if (selection.group === groupId) return true
+      const members = groupMemberMap.get(groupId)
+      if (!members) return false
+      let placedCount = 0
+      for (const id of members) {
+        if (!placedImageIds.has(id)) continue
+        placedCount += 1
+        if (!selectedImageIds.has(id)) return false
+      }
+      return placedCount > 0
+    },
+    [
+      selection.surface,
+      selection.group,
+      selectedImageIds,
+      placedImageIds,
+      groupMemberMap,
+    ]
+  )
+  const previousDisplayNodes = useRef(new Map<string, Node>())
+  // Memoized so the per-pointermove setNodes during a drag does not rebuild
+  // every node/edge wrapper or rescan membership for the whole board.
+  const displayNodes = useMemo(() => {
+    const mapped = nodes.map((node) => {
+      const selected = isCanvasNodeSelected(node)
+      const className =
+        target?.id === node.id
+          ? target.valid
+            ? 'ring-4 ring-green-500'
+            : 'ring-4 ring-red-500'
+          : ''
+      const previous = previousDisplayNodes.current.get(node.id)
+      if (
+        previous &&
+        previous.data === node.data &&
+        previous.position === node.position &&
+        previous.measured === node.measured &&
+        previous.width === node.width &&
+        previous.height === node.height &&
+        previous.selected === selected &&
+        previous.className === className &&
+        previous.dragging === node.dragging &&
+        previous.zIndex === node.zIndex
+      )
+        return previous
+      return { ...node, selected, className }
+    })
+    previousDisplayNodes.current = new Map(
+      mapped.map((node) => [node.id, node])
+    )
+    return mapped
+  }, [nodes, isCanvasNodeSelected, target])
+  const displayEdges: Edge[] = useMemo(
+    () =>
+      edges.map((e) => {
+        const selected =
+          selection.surface === 'canvas' &&
+          selection.edges.includes(Number(e.id))
+        const color = selected ? 'var(--color-ink)' : 'var(--color-primary)'
+        return {
+          ...e,
+          selected,
+          style: { stroke: color, strokeWidth: selected ? 3 : 2 },
+          markerEnd: { type: MarkerType.ArrowClosed, color },
+        }
+      }),
+    [edges, selection.surface, selection.edges]
+  )
   function center() {
     const b = host.current?.getBoundingClientRect()
     return flow.screenToFlowPosition({
@@ -562,30 +609,104 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       y: (b?.top ?? 0) + (b?.height ?? 600) / 2,
     })
   }
-  function selectAssets(ids: number[]) {
+  const selectAssets = useCallback((ids: number[]) => {
     setExpanded(null)
     setSelection({ surface: 'assets', ids, edges: [], group: null })
-  }
-  function groupMembers(id: number) {
-    return data.groups?.find((g) => g.id === id)?.memberIds ?? []
-  }
+  }, [])
+  const groupMembers = useCallback(
+    (id: number) => data.groups?.find((g) => g.id === id)?.memberIds ?? [],
+    [data.groups]
+  )
   function selectedIds() {
-    return [
-      ...new Set([
-        ...selection.ids,
-        ...(selection.group ? groupMembers(selection.group) : []),
-      ]),
-    ]
+    return selectedIdsList
   }
-  const canCreateSet =
-    selection.surface === 'canvas' &&
-    selection.group === null &&
-    selection.ids.length >= 2 &&
-    new Set(selection.ids).size === selection.ids.length &&
-    selection.ids.every((id) => {
-      const image = (data.images ?? []).find((item) => item.id === id)
-      return image?.placed && !image.trashed && !image.groupId
-    })
+  const callbacks = useRef({ report, run, selectAssets })
+  callbacks.current = { report, run, selectAssets }
+  // Stable field-submission handler for the Inspector: identity changes only
+  // when the selection, group membership, repository, or reloader changes,
+  // so the memoized DetailPanel is not re-rendered by node-drag frames.
+  const submitInspectorField = useCallback(
+    async (
+      command: 'move-rename-file' | 'add-tag' | 'save-prompt',
+      value: string,
+      imageIds: number[],
+      fileName?: string,
+      expected?: { owner: Selection['surface']; revision: number }
+    ) => {
+      if (fieldSubmissionPending.current) throw new Error(t`A save is already in progress.`)
+      fieldSubmissionPending.current = true
+      try {
+      const revision = submissionScopeRef.current.revision
+      const ids = [...new Set(imageIds)].sort((a, b) => a - b)
+      const currentIds = [...new Set(selectedIdsList)].sort((a, b) => a - b)
+      const owner = selection.surface
+      const repository = repo.path
+      if (
+        !ids.length || ids.length !== imageIds.length ||
+        ids.some((id, index) => id !== currentIds[index]) ||
+        ids.length !== currentIds.length
+      )
+        throw new Error(t`The selection changed. Review the Inspector and try again.`)
+      const records = await Promise.all(ids.map((id) => ImageService.GetImage(repository, id)))
+      const liveIds = [...new Set([
+        ...selectionRef.current.ids,
+        ...(selectionRef.current.group ? groupMembers(selectionRef.current.group) : []),
+      ])].sort((a, b) => a - b)
+      if (
+        submissionScopeRef.current.revision !== revision ||
+        (expected && (expected.owner !== owner || expected.revision !== revision)) ||
+        selectionRef.current.surface !== owner ||
+        ids.length !== liveIds.length ||
+        ids.some((id, index) => id !== liveIds[index]) ||
+        records.some((record) => !record)
+      )
+        throw new Error(t`The selection changed or some assets are unavailable. No changes were made.`)
+      if (command === 'move-rename-file') {
+        const path = value.trim()
+        if (ids.length !== 1 || !path || path === records[0]?.filePath.slice(repository.length + 1)) return
+        const image = records[0]
+        if (!image || image.missing || image.trashed)
+          throw new Error(t`This file cannot be moved in its current state.`)
+         await ImageService.MoveFile(repository, ids[0], path)
+        await reload()
+        return
+      }
+      if (command === 'add-tag') {
+        const tag = value.trim()
+        if (!tag) return
+        const results = await Promise.allSettled(ids.map((id) => TagService.AddTag(repository, id, tag)))
+        const failedIds = results.flatMap((result, index) => result.status === 'rejected' ? [ids[index]] : [])
+        await reload()
+        if (failedIds.length) throw new Error(t`${ids.length - failedIds.length} of ${ids.length} assets updated; failed asset IDs: ${failedIds.join(', ')}. The current state was refreshed.`)
+        return
+      }
+      if (command === 'save-prompt') {
+        const results = await Promise.allSettled(ids.map((id) =>
+          value === '' ? PromptService.DetachPrompt(repository, id) :
+            PromptService.CreateAndAttachPrompt(repository, id, '', value, '')
+        ))
+        const failedIds = results.flatMap((result, index) => result.status === 'rejected' ? [ids[index]] : [])
+        await reload()
+        if (failedIds.length) throw new Error(t`${ids.length - failedIds.length} of ${ids.length} assets updated; failed asset IDs: ${failedIds.join(', ')}. The current state was refreshed.`)
+      }
+      } finally {
+        fieldSubmissionPending.current = false
+      }
+    },
+    [repo.path, selection.surface, selectedIdsList, groupMembers, reload]
+  )
+  const canCreateSet = useMemo(
+    () =>
+      selection.surface === 'canvas' &&
+      selection.group === null &&
+      selection.ids.length >= 2 &&
+      new Set(selection.ids).size === selection.ids.length &&
+      selection.ids.every((id) => {
+        const image = (data.images ?? []).find((item) => item.id === id)
+        return image?.placed && !image.trashed && !image.groupId
+      }),
+    [selection.surface, selection.group, selection.ids, data.images]
+  )
   async function createSet() {
     if (!canCreateSet) return
     const ids = selection.ids
@@ -610,30 +731,33 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     )
     return () => window.clearInterval(timer)
   }, [repo.path])
-  async function go(id: number, folder = false) {
-    const image = await ImageService.GetImage(repo.path, id)
-    if (!image) return
-    if (folder || !image.placed) {
-      openAssets()
-      selectAssets([id])
-      setReveal({
-        id,
-        folder: folder
-          ? image.filePath
-              .slice(repo.path.length + 1)
-              .split('/')
-              .slice(0, -1)
-              .join('/')
-          : null,
+  const go = useCallback(
+    async (id: number, folder = false) => {
+      const image = await ImageService.GetImage(repo.path, id)
+      if (!image) return
+      if (folder || !image.placed) {
+        openAssets()
+        selectAssets([id])
+        setReveal({
+          id,
+          folder: folder
+            ? image.filePath
+                .slice(repo.path.length + 1)
+                .split('/')
+                .slice(0, -1)
+                .join('/')
+            : null,
+        })
+        return
+      }
+      setExpanded(image.groupId || null)
+      setSelection({ surface: 'canvas', ids: [id], edges: [], group: null })
+      await flow.setCenter(image.canvasX + 75, image.canvasY + 55, {
+        zoom: flow.getZoom(),
       })
-      return
-    }
-    setExpanded(image.groupId || null)
-    setSelection({ surface: 'canvas', ids: [id], edges: [], group: null })
-    await flow.setCenter(image.canvasX + 75, image.canvasY + 55, {
-      zoom: flow.getZoom(),
-    })
-  }
+    },
+    [repo.path, flow, openAssets, selectAssets]
+  )
   async function paste(
     media?: Awaited<ReturnType<typeof readMedia>>,
     surface = selection.surface
@@ -1014,23 +1138,43 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     setFocusCanvas((focused) => !focused)
     requestAnimationFrame(() => host.current?.focus())
   }
-  const selectedImageRecords =
-    selection.surface === 'assets'
-      ? assetSelectionRecords.key === assetSelectionKey
-        ? assetSelectionRecords.records
-        : []
-      : (data.images ?? []).filter((image) => selectedIds().includes(image.id))
-  const selectedRelationships = (data.relationships ?? []).filter(
-    (relationship) => selection.edges.includes(relationship.id)
+  const selectedIdsSet = useMemo(
+    () => new Set(selectedIdsList),
+    [selectedIdsList]
   )
-  const singleImageRelations =
-    selectedImageRecords.length === 1
-      ? (data.relationships ?? []).filter(
-          (relationship) =>
-            relationship.sourceImageId === selectedImageRecords[0].id ||
-            relationship.derivedImageId === selectedImageRecords[0].id
-        )
-      : []
+  const selectedImageRecords = useMemo(
+    () =>
+      selection.surface === 'assets'
+        ? assetSelectionRecords.key === assetSelectionKey
+          ? assetSelectionRecords.records
+          : []
+        : (data.images ?? []).filter((image) => selectedIdsSet.has(image.id)),
+    [
+      selection.surface,
+      assetSelectionKey,
+      assetSelectionRecords,
+      data.images,
+      selectedIdsSet,
+    ]
+  )
+  const selectedRelationships = useMemo(
+    () =>
+      (data.relationships ?? []).filter((relationship) =>
+        selection.edges.includes(relationship.id)
+      ),
+    [data.relationships, selection.edges]
+  )
+  const singleImageRelations = useMemo(
+    () =>
+      selectedImageRecords.length === 1
+        ? (data.relationships ?? []).filter(
+            (relationship) =>
+              relationship.sourceImageId === selectedImageRecords[0].id ||
+              relationship.derivedImageId === selectedImageRecords[0].id
+          )
+        : [],
+    [data.relationships, selectedImageRecords]
+  )
   const relationshipActions = selectedRelationships.length
     ? selectedRelationships
     : singleImageRelations
@@ -1958,6 +2102,46 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     (id: string) => dockActionRef.current(id),
     []
   )
+  // Stable shelf/panel callbacks: identity changes only when drawer state
+  // changes, so the memoized LibraryPanel/DetailPanel survive node-drag
+  // frames (which otherwise re-render the whole route per pointermove).
+  const setAssetsOpenAction = useCallback(
+    (open: boolean) => runDockAction(open ? 'open-assets' : 'close-assets'),
+    [runDockAction]
+  )
+  const setAssetsPinnedAction = useCallback(
+    (pinned: boolean) =>
+      runDockAction(pinned ? 'pin-assets' : 'unpin-assets'),
+    [runDockAction]
+  )
+  const setInspectorOpenAction = useCallback(
+    (open: boolean) =>
+      runDockAction(open ? 'open-inspector' : 'close-inspector'),
+    [runDockAction]
+  )
+  const setInspectorPinnedAction = useCallback(
+    (pinned: boolean) =>
+      runDockAction(pinned ? 'pin-inspector' : 'unpin-inspector'),
+    [runDockAction]
+  )
+  const markAssetsVisible = useCallback((ids: number[]) => {
+    visible.current = ids
+  }, [])
+  const compressAssets = useCallback(
+    (ids: number[]) => {
+      selectAssets(ids)
+      requestAnimationFrame(() => runDockAction('compress-selection'))
+    },
+    [selectAssets, runDockAction]
+  )
+  const showCommandsAction = useCallback(
+    () => runDockAction('show-commands'),
+    [runDockAction]
+  )
+  const goDetail = useCallback(
+    (id: number, folder?: boolean) => void go(id, folder).catch(report),
+    [go, report]
+  )
   function runPaletteAction(action: CanvasAction) {
     const currentAction = actionById.get(action.id)
     if (!currentAction?.enabled) return
@@ -2287,13 +2471,9 @@ function Canvas({ repo }: { repo: RepoInfo }) {
           title={t`Assets`}
           side="left"
           open={assetsOpen}
-          onOpenChange={(open) =>
-            executeActionById(open ? 'open-assets' : 'close-assets')
-          }
+          onOpenChange={setAssetsOpenAction}
           pinned={assetsPinned}
-          onPinnedChange={(pinned) =>
-            executeActionById(pinned ? 'pin-assets' : 'unpin-assets')
-          }
+          onPinnedChange={setAssetsPinnedAction}
           focusHidden={focusCanvas}
           shortcutHint={actionById.get('toggle-assets')?.shortcut}
         >
@@ -2304,22 +2484,13 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             select={selectAssets}
             refresh={refresh}
             onError={report}
-            visible={(ids) => {
-              visible.current = ids
-            }}
+            visible={markAssetsVisible}
             reveal={reveal}
-            change={async () => {
-              await reload()
-            }}
-            compress={(ids) => {
-              selectAssets(ids)
-              requestAnimationFrame(() =>
-                executeActionById('compress-selection')
-              )
-            }}
+            change={reload}
+            compress={compressAssets}
             searchFocusRequest={searchFocusRequest}
             navigatorModeRequest={navigatorModeRequest}
-            onShowCommands={() => executeActionById('show-commands')}
+            onShowCommands={showCommandsAction}
           />
         </ShelfPanel>
         <main
@@ -2481,7 +2652,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
                     p.y,
                     group
                   )
-                  const refreshed = await reload(true)
+                  const refreshed = await reloadForData()
                   if (!assetsPinned) {
                     closeAssets(false)
                     requestAnimationFrame(() => host.current?.focus())
@@ -2550,6 +2721,11 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             nodeTypes={nodeTypes}
             minZoom={0.05}
             maxZoom={4}
+            // Viewport culling: only mounted nodes subscribe and render, so
+            // per-pointermove store fan-out and the reconciler walk scale
+            // with the visible set. Offscreen nodes keep their data and
+            // remount with current positions when scrolled into view.
+            onlyRenderVisibleElements
             nodesConnectable={false}
             edgesReconnectable={false}
             deleteKeyCode={null}
@@ -2688,36 +2864,33 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             }}
             onNodeDrag={(_, node) => {
               if (node.type !== 'image') return
-              const group =
-                flow
-                  .getIntersectingNodes(node)
-                .find((candidate) => candidate.type === 'group') ??
-                dropTargets.current.find((candidate) => {
-                  const nodeWidth = node.measured?.width ?? node.width ?? 150
-                  const nodeHeight = node.measured?.height ?? node.height ?? 110
-                  const groupWidth =
-                    candidate.measured?.width ?? candidate.width ?? 160
-                  const groupHeight =
-                    candidate.measured?.height ?? candidate.height ?? 128
-                  return (
-                    node.position.x < candidate.position.x + groupWidth &&
-                    node.position.x + nodeWidth > candidate.position.x &&
-                    node.position.y < candidate.position.y + groupHeight &&
-                    node.position.y + nodeHeight > candidate.position.y
-                  )
-                })
-              updateTarget(
-                group
-                  ? {
-                      id: group.id,
-                      valid: true,
-                      kind: 'set',
-                      reason: 'Release to add or move into this set',
-                    }
-                  : null
-              )
+              // Coalesce pointermove bursts to one target resolution per frame.
+              pendingDragNode.current = node
+              if (dragTargetRaf.current) return
+              dragTargetRaf.current = requestAnimationFrame(() => {
+                dragTargetRaf.current = 0
+                const current = pendingDragNode.current
+                pendingDragNode.current = null
+                if (!current) return
+                const group = resolveSetDropTarget(current)
+                updateTarget(
+                  group
+                    ? {
+                        id: group.id,
+                        valid: true,
+                        kind: 'set',
+                        reason: 'Release to add or move into this set',
+                      }
+                    : null
+                )
+              })
             }}
             onNodeDragStop={(_, node, moved) => {
+              if (dragTargetRaf.current) {
+                cancelAnimationFrame(dragTargetRaf.current)
+                dragTargetRaf.current = 0
+              }
+              pendingDragNode.current = null
               updateTarget(null)
               run(async () => {
                 if (node.type === 'group') {
@@ -2744,9 +2917,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
                   )
                   return
                 }
-                const target = flow
-                  .getIntersectingNodes(node)
-                  .find((n) => n.type === 'group')
+                const target = resolveSetDropTarget(node)
                 if (target) {
                   await ImageService.PlaceImages(
                     repo.path,
@@ -2769,7 +2940,16 @@ function Canvas({ repo }: { repo: RepoInfo }) {
               if (ready)
                 void ImageService.SetViewport(repo.path, v).catch(report)
             }}
-            onMove={(_, viewport) => updateZoomCompensation(viewport.zoom)}
+            onMove={(_, viewport) => {
+              // Zoom badges read this once per frame at most; onMove fires
+              // per input event during pans.
+              pendingZoom.current = viewport.zoom
+              if (zoomRaf.current) return
+              zoomRaf.current = requestAnimationFrame(() => {
+                zoomRaf.current = 0
+                updateZoomCompensation(pendingZoom.current)
+              })
+            }}
             onPaneContextMenu={(event) => {
               event.preventDefault()
               setMenu({ kind: 'pane', x: event.clientX, y: event.clientY })
@@ -2897,19 +3077,16 @@ function Canvas({ repo }: { repo: RepoInfo }) {
               onAction={runDockAction}
             />
           )}
+          {perfHud && <PerfHud onClose={() => setPerfHud(false)} />}
         </main>
         <ShelfPanel
           title={t`Inspector`}
           deferOpeningFocus={inspectorCommandRequest?.pending ?? false}
           side="right"
           open={inspectorOpen}
-          onOpenChange={(open) =>
-            executeActionById(open ? 'open-inspector' : 'close-inspector')
-          }
+          onOpenChange={setInspectorOpenAction}
           pinned={inspectorPinned}
-          onPinnedChange={(pinned) =>
-            executeActionById(pinned ? 'pin-inspector' : 'unpin-inspector')
-          }
+          onPinnedChange={setInspectorPinnedAction}
           focusHidden={focusCanvas}
           shortcutHint={actionById.get('toggle-inspector')?.shortcut}
         >
@@ -2919,11 +3096,11 @@ function Canvas({ repo }: { repo: RepoInfo }) {
             data={data}
             selection={selection}
             change={reload}
-            go={(id, folder) => void go(id, folder).catch(report)}
+            go={goDetail}
             onError={report}
             commandRequest={inspectorCommandRequest}
             onCommandRequestHandled={handleInspectorCommandRequest}
-            onAction={executeActionById}
+            onAction={runDockAction}
             onSubmitField={submitInspectorField}
             selectionRevision={submissionScopeRef.current.revision}
             restoreEnabled={

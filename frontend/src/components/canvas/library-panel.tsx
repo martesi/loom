@@ -1,6 +1,6 @@
 import { plural, t } from '@lingui/core/macro'
 import { Trans } from '@lingui/react/macro'
-import { type DragEvent, useEffect, useRef, useState } from 'react'
+import { type DragEvent, memo, useEffect, useRef, useState } from 'react'
 import {
   ImageService,
   type LibraryRow,
@@ -50,7 +50,11 @@ interface Props {
   } | null
   onShowCommands: () => void
 }
-export function LibraryPanel({
+// Memoized: the Canvas route re-renders on every node-drag pointermove, but
+// all props here are referentially stable across drag frames (stable
+// callbacks from the route, unchanged selection/data), so the library list
+// is skipped while dragging.
+export const LibraryPanel = memo(function LibraryPanel({
   path,
   selection,
   select,
@@ -558,4 +562,4 @@ export function LibraryPanel({
       />
     </div>
   )
-}
+})

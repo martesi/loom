@@ -35,6 +35,27 @@ describe('action catalog helpers', () => {
     expect(shortcutMatches(question, '?')).toBe(true)
   })
 
+  it('matches symbol shortcuts with modifiers by produced character', () => {
+    const zoomOut = {
+      code: 'Minus',
+      key: '-',
+      ctrlKey: true,
+      metaKey: false,
+      altKey: false,
+      shiftKey: false,
+    }
+    const zoomIn = {
+      code: 'Equal',
+      key: '=',
+      ctrlKey: true,
+      metaKey: false,
+      altKey: false,
+      shiftKey: false,
+    }
+    expect(shortcutMatches(zoomOut, 'Mod+-')).toBe(true)
+    expect(shortcutMatches(zoomIn, 'Mod+=')).toBe(true)
+  })
+
   it('fuzzy matches word starts and consecutive characters with ranges', () => {
     const match = fuzzyMatch('fa', 'Fit all')
     expect(match).not.toBeNull()

@@ -2,7 +2,7 @@ import { Dialog } from '@base-ui-components/react/dialog'
 import { plural, t } from '@lingui/core/macro'
 import { Plural, Trans } from '@lingui/react/macro'
 import { Info } from 'lucide-react'
-import { type ReactNode, useEffect, useRef, useState } from 'react'
+import { type ReactNode, memo, useEffect, useRef, useState } from 'react'
 import {
   type CanvasData,
   GroupService,
@@ -59,7 +59,9 @@ interface Props {
   selectionRevision: number
   restoreEnabled: boolean
 }
-export function DetailPanel({
+// Memoized for the same reason as LibraryPanel: stable props across
+// node-drag frames skip the Inspector subtree while dragging.
+export const DetailPanel = memo(function DetailPanel({
   open,
   path,
   data,
@@ -709,4 +711,4 @@ export function DetailPanel({
       </Dialog.Root>
     </div>
   )
-}
+})

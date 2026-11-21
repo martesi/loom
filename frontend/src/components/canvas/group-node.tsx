@@ -1,8 +1,12 @@
 import { Plural } from '@lingui/react/macro'
 import { Handle, type NodeProps, Position } from '@xyflow/react'
+import { memo } from 'react'
 import { cn } from '../../lib/utils'
 
-export function GroupNode({ data, selected }: NodeProps) {
+// Memoized: group nodes re-render on every node-drag pointermove otherwise;
+// props are stable unless the set itself changes.
+export const GroupNode = memo(
+  function GroupNode({ data, selected, dragging }: NodeProps) {
   const count = Number(data.count ?? 0)
   const name = String(data.name ?? '')
   const thumbUrl = data.thumbUrl ? String(data.thumbUrl) : ''
@@ -43,7 +47,10 @@ export function GroupNode({ data, selected }: NodeProps) {
       {/* Top cover */}
       <div
         data-testid="group-deck-top"
-        className="relative flex h-full w-full flex-col overflow-hidden rounded-lg bg-card border border-border shadow-md"
+        className={cn(
+          'relative flex h-full w-full flex-col overflow-hidden rounded-lg bg-card border border-border',
+          dragging ? 'shadow-none' : 'shadow-md'
+        )}
       >
         <div className="relative flex-1 min-h-0 bg-muted/20">
           {thumbUrl ? (
@@ -51,6 +58,7 @@ export function GroupNode({ data, selected }: NodeProps) {
               src={thumbUrl}
               alt=""
               draggable={false}
+              decoding="async"
               className="h-full w-full object-cover"
             />
           ) : (
@@ -75,4 +83,10 @@ export function GroupNode({ data, selected }: NodeProps) {
       </div>
     </div>
   )
-}
+},
+  (previous, next) =>
+    previous.id === next.id &&
+    previous.data === next.data &&
+    previous.selected === next.selected &&
+    previous.dragging === next.dragging
+)

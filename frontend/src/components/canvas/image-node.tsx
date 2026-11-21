@@ -69,6 +69,7 @@ export const ImageNode = memo(
               src={thumbUrl}
               alt=""
               draggable={false}
+              decoding="async"
               className="h-full w-full rounded-t-lg object-cover"
               onError={() => setImgFailed(true)}
               onLoad={(e) => {
@@ -91,10 +92,13 @@ export const ImageNode = memo(
             </div>
           )}
 
-          {/* Metadata stays on the card; selection actions live in the Canvas Dock. */}
+          {/* Metadata stays on the card; selection actions live in the Canvas Dock.
+              invisible keeps hover-only layers out of paint entirely (no
+              backdrop cost while panning); group-hover/focus-within restores
+              them with the existing opacity fade. */}
           <div
             data-testid="image-node-hud"
-            className="pointer-events-none absolute inset-0 z-10 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 motion-reduce:transition-none"
+            className="pointer-events-none absolute inset-0 z-10 invisible opacity-0 transition-opacity duration-150 group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100 motion-reduce:transition-none"
           >
             <div
               data-testid="image-node-metadata"
