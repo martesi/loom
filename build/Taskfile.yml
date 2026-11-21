@@ -124,6 +124,11 @@ tasks:
       - '{{if eq .OBFUSCATED "true"}}garble {{.GARBLE_ARGS}} build{{else}}go build{{end}} {{.BUILD_FLAGS}} -o "{{.BIN_DIR}}/{{.APP_NAME}}-server{{exeExt}}"'
     vars:
       BUILD_FLAGS: '-tags server{{if eq .DEV "true"}}{{if eq .OBFUSCATED "true"}},wails_obfuscated{{end}}{{if .EXTRA_TAGS}},{{.EXTRA_TAGS}}{{end}} -buildvcs=false -gcflags=all="-l"{{else}},production{{if eq .OBFUSCATED "true"}},wails_obfuscated{{end}}{{if .EXTRA_TAGS}},{{.EXTRA_TAGS}}{{end}} -trimpath -buildvcs=false -ldflags="-w -s"{{end}}'
+    env:
+      # Server-tagged builds exclude all GUI code (!server) and depend only
+      # on pure-Go libraries, so no C toolchain is needed. This also matches
+      # Dockerfile.server, which defaults CGO_ENABLED to 0.
+      CGO_ENABLED: 0
 
   run:server:
     summary: Builds and runs the production server
@@ -143,6 +148,10 @@ tasks:
       - task: generate:bindings
         vars:
           BUILD_FLAGS: "-tags server"
+    env:
+      # Same as build:server: server-tagged builds are pure Go (no GUI, no
+      # cgo), so disable cgo rather than floating with the ambient default.
+      CGO_ENABLED: 0
     cmds:
       - |
         set -euo pipefail
