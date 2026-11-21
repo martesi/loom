@@ -35,6 +35,45 @@ Build the desktop app with:
 task build
 ```
 
+### NixOS on WSLg: desktop startup abort
+
+If `task dev` builds successfully but Loom exits with `SIGABRT` in
+`webkit_web_view_evaluate_javascript` before a window opens, compare the
+two WSLg display backends. Run each command in `nix develop` and close any
+window that opens before running the next command:
+
+```sh
+task build
+GDK_BACKEND=wayland ./bin/loom
+GDK_BACKEND=x11 ./bin/loom
+```
+
+This tests window startup without Vite. If X11 opens the window and Wayland
+aborts, use WSLg's XWayland for desktop development:
+
+```sh
+GDK_BACKEND=x11 task dev
+```
+
+This sets the backend for this command only and keeps the WebKit sandbox
+enabled. X11 startup is verified under Xvfb, not on the affected WSLg host.
+WebKit can start its web process on the first JavaScript call, before it
+loads a page. The `Overriding existing handler for signal 10` message also
+appears on successful launches; it does not identify the cause of the abort.
+
+If both backends abort, capture a native backtrace in the Nix shell. Use the
+backend that failed in place of `x11` if needed:
+
+```sh
+GDK_BACKEND=x11 nix shell --inputs-from . nixpkgs#gdb -c \
+  gdb --batch \
+  -ex 'handle SIGUSR1 SIGURG SIGPIPE nostop noprint pass' \
+  -ex run -ex 'bt 25' --args ./bin/loom
+```
+
+Report the backtrace and the result for each backend. Use `task dev:server`
+for browser development in the meantime.
+
 ## Checks
 
 ```sh
