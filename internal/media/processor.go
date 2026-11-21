@@ -120,7 +120,11 @@ func probeDimensions(path string) (Dimensions, error) {
 	if err != nil {
 		return Dimensions{}, err
 	}
-	parts := strings.SplitN(strings.TrimSpace(string(out)), "x", 2)
+	// ffprobe joins csv fields with the separator and can emit a trailing
+	// one when the stream carries side data (e.g. EXIF: "2560x1440x"), so
+	// trim it before splitting or the height parse fails.
+	line := strings.TrimSpace(string(out))
+	parts := strings.SplitN(strings.TrimSuffix(line, "x"), "x", 2)
 	if len(parts) != 2 {
 		return Dimensions{}, fmt.Errorf("unexpected ffprobe output: %q", out)
 	}
