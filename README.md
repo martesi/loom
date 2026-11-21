@@ -37,12 +37,17 @@ task build
 
 ### NixOS on WSLg: desktop startup abort
 
-If `task dev` builds successfully but Loom exits with `SIGABRT` in
-`webkit_web_view_evaluate_javascript` before a window opens, compare the
-two WSLg display backends. Run each command in `nix develop` and close any
-window that opens before running the next command:
+WebKitGTK 2.54.1 could abort in `bubblewrapSpawn` when `PULSE_SERVER`
+contained a `unix:` socket address. Use the WebKitGTK version from the flake
+(2.54.2 or later). The development shells keep the sandbox enabled and
+select the WSLg socket only when it exists and `PULSE_SERVER` is unset.
+
+If Loom still exits with `SIGABRT` before a window opens, enter a new Nix
+shell, check the WebKitGTK version, and rebuild. Compare the two WSLg display
+backends, closing any window that opens before the next command:
 
 ```sh
+pkg-config --modversion webkitgtk-6.0
 task build
 GDK_BACKEND=wayland ./bin/loom
 GDK_BACKEND=x11 ./bin/loom
@@ -55,11 +60,9 @@ aborts, use WSLg's XWayland for desktop development:
 GDK_BACKEND=x11 task dev
 ```
 
-This sets the backend for this command only and keeps the WebKit sandbox
-enabled. X11 startup is verified under Xvfb, not on the affected WSLg host.
-WebKit can start its web process on the first JavaScript call, before it
-loads a page. The `Overriding existing handler for signal 10` message also
-appears on successful launches; it does not identify the cause of the abort.
+This sets the backend for this command only. The `Overriding existing
+handler for signal 10` message also appears on successful launches; it does
+not identify the cause of the abort.
 
 If both backends abort, capture a native backtrace in the Nix shell. Use the
 backend that failed in place of `x11` if needed:

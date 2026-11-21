@@ -56,6 +56,12 @@
           # GIO actually searches, so do that here.
           export XDG_DATA_DIRS="$GSETTINGS_SCHEMAS_PATH''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
 
+          # WebKitGTK 2.54.2 can bind an explicit Unix PulseAudio socket into
+          # its sandbox. WSLg's default PulseAudio symlink points outside it.
+          if [ -S /mnt/wslg/PulseServer ]; then
+            export PULSE_SERVER="''${PULSE_SERVER-unix:/mnt/wslg/PulseServer}"
+          fi
+
           # WSLg may expose a DRM render node backed by a host driver that is
           # not usable by the NixOS WebKitGTK closure. Treat WSL as a
           # software-rendered environment even when that node exists; without
@@ -124,17 +130,7 @@
 
         devShells.default = pkgs.mkShell {
           buildInputs = commonBuildInputs;
-          shellHook = commonHook + ''
-            # WSLg's PulseAudio socket can make WebKitGTK's bubblewrap
-            # launcher abort during startup. Unset this only in the default
-            # development shell so Loom can open. This does not configure a
-            # replacement audio route: WebView audio may be unavailable, and
-            # child processes in this shell will not inherit WSLg's explicit
-            # PulseAudio server address.
-            if [ -n "''${WSL_DISTRO_NAME:-}" ] || [ -n "''${WSL_INTEROP:-}" ]; then
-              unset PULSE_SERVER
-            fi
-          '';
+          shellHook = commonHook;
         };
 
         # GUI closure (Xvfb, xdotool, imagemagick) split out from `default`
