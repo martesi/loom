@@ -13,3 +13,13 @@ the shell:
   `nix develop .#e2e --command bash -lc '<cmd>'`
 
 `.envrc` (`use flake`) loads only the default shell, never `.#e2e`.
+
+- Work in your own git worktree by default; do not edit the shared checkout.
+- Run tests for changed paths: frontend logic → `cd frontend && bun run test`
+  plus affected Playwright specs; Go → `go test` for affected packages; e2e
+  harness → `cd frontend && bun run test:harness` plus one focused spec.
+- Run focused specs from `frontend`: `bunx playwright test e2e/<spec>.spec.ts`.
+  Set `E2E_WORKERS` to control parallel workers. Artifacts are in
+  `.cache/e2e/runs/<run-id>/`.
+- Full `bun run test:e2e` is not the default for scoped local changes; CI runs
+  the full suite.

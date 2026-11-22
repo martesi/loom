@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          restore-keys: go-${{ runner.os }}-
+      - run: nix develop --command go test ./...
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('frontend/bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+      # The frontend imports Wails bindings that are generated in a clean checkout.
+      - run: nix develop --command wails3 generate bindings -clean=true -ts -i
+      - run: nix develop --command bash -lc 'cd frontend && bun install --frozen-lockfile'
+      - run: nix develop --command bash -lc 'cd frontend && bun run build'
+      - run: nix develop --command bash -lc 'cd frontend && bun run test'
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('frontend/bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+      - run: nix develop --command wails3 generate bindings -clean=true -ts -i
+      - run: nix develop --command bash -lc 'cd frontend && bun install --frozen-lockfile'
+      - run: nix develop .#e2e --command bash -lc 'cd frontend && E2E_WORKERS=2 bun run test:e2e'
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-runs
+          path: frontend/.cache/e2e/runs/
+          if-no-files-found: ignore
