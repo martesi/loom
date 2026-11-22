@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -41,12 +40,36 @@ func (s *ImageService) InvalidateRenditions(repoPath string) (int, error) {
 	defer repo.Close()
 	count := 0
 	var releases []func()
-	seen := map[int64]bool{}
 	defer func() {
 		for i := len(releases) - 1; i >= 0; i-- {
 			releases[i]()
 		}
 	}()
+	rows, err := repo.DB.Query(`SELECT id FROM images`)
+	if err != nil {
+		return 0, err
+	}
+	var imageIDs []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return 0, err
+		}
+		imageIDs = append(imageIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, err
+	}
+	_ = rows.Close()
+	for _, id := range imageIDs {
+		release, ok := acquirePreviewLock(context.Background(), fmt.Sprintf("%s\x00%d", repo.Path, id))
+		if !ok {
+			return count, fmt.Errorf("rendition lock unavailable for image %d", id)
+		}
+		releases = append(releases, release)
+	}
 	for _, dir := range []string{filepath.Join(repo.Path, ".loom", "thumbs"), filepath.Join(repo.Path, ".loom", "previews")} {
 		entries, readErr := os.ReadDir(dir)
 		if os.IsNotExist(readErr) {
@@ -60,17 +83,6 @@ func (s *ImageService) InvalidateRenditions(repoPath string) (int, error) {
 			if entry.IsDir() || !(strings.HasSuffix(name, ".webp") || strings.HasSuffix(name, ".avif")) {
 				continue
 			}
-			id := cacheImageID(name)
-			if id <= 0 {
-				continue
-			}
-			if !seen[id] {
-				release, _ := acquirePreviewLock(context.Background(), fmt.Sprintf("%s\x00%d", repo.Path, id))
-				if release != nil {
-					releases = append(releases, release)
-				}
-				seen[id] = true
-			}
 			if removeErr := os.Remove(filepath.Join(dir, name)); removeErr != nil && !os.IsNotExist(removeErr) {
 				return count, removeErr
 			}
@@ -78,17 +90,6 @@ func (s *ImageService) InvalidateRenditions(repoPath string) (int, error) {
 		}
 	}
 	return count, nil
-}
-
-func cacheImageID(name string) int64 {
-	part := strings.SplitN(name, "-", 2)[0]
-	if strings.Contains(name, "-") {
-		id, _ := strconv.ParseInt(part, 10, 64)
-		return id
-	}
-	part = strings.TrimSuffix(name, ".avif")
-	id, _ := strconv.ParseInt(part, 10, 64)
-	return id
 }
 
 // RescanRepository discovers sources without generating renditions.

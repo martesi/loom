@@ -298,6 +298,10 @@ test.describe('Canvas progressive previews', () => {
       const node = imageNodes(page).first()
       await expect(node).toBeVisible()
       const thumb = node.locator('img').first()
+      await expect(thumb).toHaveJSProperty('complete', true)
+      await expect
+        .poll(() => thumb.evaluate((image: HTMLImageElement) => image.naturalWidth))
+        .toBeGreaterThan(0)
       await expect(thumb).toHaveAttribute('src', /\?v=[^&]+$/)
       const box = await node.boundingBox()
       if (!box) throw new Error('Canvas node has no bounds')

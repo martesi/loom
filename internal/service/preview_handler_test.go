@@ -199,7 +199,7 @@ func TestServePreviewReturnsUnavailableWhenEncodeSlotsStayBusy(t *testing.T) {
 	}
 }
 
-func TestRenditionLockCoalescesAndCancelledWaiterDoesNotCancelEncoder(t *testing.T) {
+func TestCancelledOwnerDoesNotCancelSharedEncoderNeededByWaiter(t *testing.T) {
 	repoPath, id, _ := previewTestAsset(t)
 	url := previewTestURL(t, repoPath, id, 640)
 	key := fmt.Sprintf("%s\x00%d", repoPath, id)
@@ -210,39 +210,30 @@ func TestRenditionLockCoalescesAndCancelledWaiterDoesNotCancelEncoder(t *testing
 		<-finish
 		return os.WriteFile(destination, []byte("coalesced"), 0o600)
 	}}
-	type response struct{ recorder *httptest.ResponseRecorder }
-	firstDone := make(chan response, 1)
+	firstDone := make(chan struct{})
 	first := httptest.NewRecorder()
+	ownerCtx, cancelOwner := context.WithCancel(context.Background())
 	go func() {
-		ServePreviewWithProcessor(first, httptest.NewRequest("GET", url, nil), processor)
-		firstDone <- response{first}
+		ServePreviewWithProcessor(first, httptest.NewRequest("GET", url, nil).WithContext(ownerCtx), processor)
+		close(firstDone)
 	}()
 	<-started
-	cancelCtx, cancel := context.WithCancel(context.Background())
-	cancelled := httptest.NewRecorder()
-	cancelDone := make(chan struct{})
+	waiter := httptest.NewRecorder()
+	waiterDone := make(chan struct{})
 	go func() {
-		ServePreviewWithProcessor(cancelled, httptest.NewRequest("GET", url, nil).WithContext(cancelCtx), processor)
-		close(cancelDone)
+		ServePreviewWithProcessor(waiter, httptest.NewRequest("GET", url, nil), processor)
+		close(waiterDone)
 	}()
 	waitForRenditionRefs(t, key, 2)
-	third := httptest.NewRecorder()
-	thirdDone := make(chan struct{})
-	go func() {
-		ServePreviewWithProcessor(third, httptest.NewRequest("GET", url, nil), processor)
-		close(thirdDone)
-	}()
-	waitForRenditionRefs(t, key, 3)
-	cancel()
-	<-cancelDone
-	if cancelled.Body.Len() != 0 {
-		t.Fatalf("cancelled waiter wrote response: %q", cancelled.Body.String())
+	cancelOwner()
+	<-firstDone
+	if first.Body.Len() != 0 {
+		t.Fatalf("cancelled owner wrote response: %q", first.Body.String())
 	}
 	close(finish)
-	<-firstDone
-	<-thirdDone
-	if first.Code != http.StatusOK || third.Code != http.StatusOK || processor.calls != 1 {
-		t.Fatalf("first=%d third=%d encoder calls=%d", first.Code, third.Code, processor.calls)
+	<-waiterDone
+	if waiter.Code != http.StatusOK || processor.calls != 1 {
+		t.Fatalf("waiter=%d encoder calls=%d", waiter.Code, processor.calls)
 	}
 }
 
@@ -284,7 +275,7 @@ func TestRenditionDeadlineCoversLockAndSlotWaits(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") != "1" {
 		t.Fatalf("status=%d retry=%q", rec.Code, rec.Header().Get("Retry-After"))
 	}
-	if elapsed := time.Since(started); elapsed < 70*time.Millisecond || elapsed > 250*time.Millisecond {
+	if elapsed := time.Since(started); elapsed < 70*time.Millisecond || elapsed >= 140*time.Millisecond {
 		t.Fatalf("shared deadline elapsed %s, want about 80ms", elapsed)
 	}
 }
@@ -295,8 +286,8 @@ func TestRenditionWaitQueueIsBounded(t *testing.T) {
 	if !ok {
 		t.Fatal("owner lock unavailable")
 	}
-	results := make(chan func(), 6)
-	for i := 0; i < 6; i++ {
+	results := make(chan func(), 8)
+	for i := 0; i < 8; i++ {
 		go func() {
 			release, ok := acquireRenditionLock(context.Background(), key)
 			if ok {
@@ -306,16 +297,46 @@ func TestRenditionWaitQueueIsBounded(t *testing.T) {
 			}
 		}()
 	}
-	waitForRenditionRefs(t, key, 6)
+	waitForRenditionRefs(t, key, 8)
 	if _, ok := acquireRenditionLock(context.Background(), key); ok {
 		t.Fatal("over-capacity waiter admitted")
 	}
 	owner()
-	for i := 0; i < 6; i++ {
+	for i := 0; i < 8; i++ {
 		release := <-results
 		if release != nil {
 			release()
 		}
+	}
+}
+
+func TestGlobalAdmissionBoundsDistinctImageWaiters(t *testing.T) {
+	repoPath, id, _ := previewTestAsset(t)
+	url := previewTestURL(t, repoPath, id, 640)
+	var keys []string
+	for i := 0; i < cap(renditionAdmissions); i++ {
+		if !acquireRenditionAdmission() {
+			t.Fatalf("admission %d rejected before global capacity", i)
+		}
+		key := fmt.Sprintf("distinct-image-%d", i)
+		lease, ok := acquireRenditionLease(context.Background(), key)
+		if !ok {
+			t.Fatalf("distinct key %q lock rejected", key)
+		}
+		keys = append(keys, key)
+		defer lease.Release()
+	}
+	if acquireRenditionAdmission() {
+		<-renditionAdmissions
+		t.Fatal("global admission accepted a ninth distinct key")
+	}
+	rec := httptest.NewRecorder()
+	ServePreviewWithProcessor(rec, httptest.NewRequest("GET", url, nil), &previewTestProcessor{})
+	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") != "1" {
+		t.Fatalf("saturated request status=%d retry=%q", rec.Code, rec.Header().Get("Retry-After"))
+	}
+	for range keys {
+		<-renditionAdmissions
 	}
 }
 

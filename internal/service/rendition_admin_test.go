@@ -1,8 +1,11 @@
 package service
 
 import (
+	"fmt"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -99,5 +102,42 @@ func TestRescanRepositoryRefreshesSizeWithoutEncoding(t *testing.T) {
 	}
 	if image.FileSize != info.Size() {
 		t.Fatalf("stored size = %d, source = %d", image.FileSize, info.Size())
+	}
+}
+
+func TestInvalidateWaitsForInFlightRendition(t *testing.T) {
+	repoPath, id, _ := previewTestAsset(t)
+	url := previewTestURL(t, repoPath, id, 640)
+	started := make(chan struct{})
+	finish := make(chan struct{})
+	processor := &previewTestProcessor{onPreview: func(_, destination string, _ int) error {
+		close(started)
+		<-finish
+		return os.WriteFile(destination, []byte("encoded after invalidate began"), 0o600)
+	}}
+	rec := httptest.NewRecorder()
+	requestDone := make(chan struct{})
+	go func() {
+		ServePreviewWithProcessor(rec, httptest.NewRequest("GET", url, nil), processor)
+		close(requestDone)
+	}()
+	<-started
+	key := fmt.Sprintf("%s\x00%d", repoPath, id)
+	invalidateDone := make(chan error, 1)
+	go func() { _, err := (&ImageService{}).InvalidateRenditions(repoPath); invalidateDone <- err }()
+	waitForRenditionRefs(t, key, 2)
+	close(finish)
+	<-requestDone
+	if err := <-invalidateDone; err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(filepath.Join(repoPath, ".loom", "thumbs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".webp") {
+			t.Fatalf("rendition published after invalidation: %s", entry.Name())
+		}
 	}
 }
