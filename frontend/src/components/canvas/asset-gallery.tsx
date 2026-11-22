@@ -247,6 +247,8 @@ export function AssetGallery({
                   <img
                     src={row.thumbUrl}
                     alt=""
+                    loading="lazy"
+                    decoding="async"
                     draggable={false}
                     className={`aspect-square w-full bg-black/[0.04] ${fit === 'cover' ? 'object-cover' : 'object-contain'}`}
                   />

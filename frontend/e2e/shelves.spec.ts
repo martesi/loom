@@ -11,6 +11,32 @@ import {
 } from './test-helpers'
 
 test.describe('floating Canvas drawers', () => {
+  test('defers Assets thumbnails until the closed drawer opens', async ({
+    page,
+  }) => {
+    const thumbnailRequests: string[] = []
+    page.on('request', (request) => {
+      if (request.url().includes('/loom-asset/thumb/'))
+        thumbnailRequests.push(request.url())
+    })
+
+    await openFixtureRepo(page, 'library-fixtures', { drawers: 'closed' })
+    await expect(page.locator('aside[aria-label="Assets"]')).toHaveAttribute(
+      'data-state',
+      'closed'
+    )
+    await page.waitForTimeout(500)
+    const closedCount = thumbnailRequests.length
+    expect(closedCount).toBe(0)
+
+    await page.getByTestId('toggle-assets-shelf').click()
+    await expect(page.locator('aside[aria-label="Assets"]')).toHaveAttribute(
+      'data-state',
+      'open'
+    )
+    await expect.poll(() => thumbnailRequests.length).toBeGreaterThan(0)
+  })
+
   test('clips overflowing content at both bottom corners of Assets and Inspector', async ({
     page,
   }) => {
