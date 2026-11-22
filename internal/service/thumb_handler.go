@@ -4,11 +4,11 @@ import (
 	"encoding/base64"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"loom/internal/media"
 	"loom/internal/store"
 )
 
@@ -18,9 +18,9 @@ const (
 	previewURLPrefix = "/loom-asset/preview/"
 )
 
-func thumbURL(repoPath string, imageID int64) string {
+func thumbURL(repoPath string, imageID int64, filePath string) string {
 	enc := base64.RawURLEncoding.EncodeToString([]byte(repoPath))
-	return thumbURLPrefix + enc + "/" + strconv.FormatInt(imageID, 10)
+	return thumbURLPrefix + enc + "/" + strconv.FormatInt(imageID, 10) + "?v=" + sourceRevision(filePath)
 }
 
 func fullURL(repoPath string, imageID int64) string {
@@ -39,6 +39,13 @@ func previewURL(repoPath string, imageID int64, filePath string) string {
 	}
 	revision := previewRevision(filePath, size, modified)
 	return previewURLPrefix + enc + "/" + strconv.FormatInt(imageID, 10) + "?v=" + revision
+}
+
+func previewURLForImage(repoPath string, image store.Image) string {
+	if store.IsVideoFile(image.FilePath) {
+		return ""
+	}
+	return previewURL(repoPath, image.ID, image.FilePath)
 }
 
 // IsThumbRequest reports whether path should be routed to ServeThumb.
@@ -74,9 +81,7 @@ func ServeThumb(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	thumbPath := filepath.Join(string(repoPathBytes), ".loom", "thumbs", strconv.FormatInt(imageID, 10)+".avif")
-	w.Header().Set("Cache-Control", "no-cache")
-	http.ServeFile(w, r, thumbPath)
+	serveRendition(w, r, media.FFmpegProcessor{}, 320, string(repoPathBytes), imageID)
 }
 
 // ServeFull serves an image's actual full-resolution file off disk, keyed

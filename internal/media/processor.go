@@ -162,6 +162,9 @@ func probeDimensions(path string) (Dimensions, error) {
 	return Dimensions{Width: width, Height: height}, nil
 }
 
+// ProbeDimensions reads source dimensions without generating a rendition.
+func ProbeDimensions(path string) (Dimensions, error) { return probeDimensions(path) }
+
 func probeMidpoint(path string) (float64, error) {
 	return probeMidpointContext(context.Background(), path)
 }

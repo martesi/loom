@@ -87,7 +87,11 @@ func (r *Repo) ScanAndRegisterImages() (int, error) {
 
 	inserted := 0
 	for _, p := range found {
-		res, err := r.DB.Exec(`INSERT OR IGNORE INTO images (file_path) VALUES (?)`, p)
+		info, err := os.Stat(p)
+		if err != nil {
+			return inserted, err
+		}
+		res, err := r.DB.Exec(`INSERT OR IGNORE INTO images (file_path, file_size) VALUES (?, ?)`, p, info.Size())
 		if err != nil {
 			return inserted, err
 		}
@@ -96,6 +100,17 @@ func (r *Repo) ScanAndRegisterImages() (int, error) {
 			return inserted, err
 		}
 		inserted += int(n)
+		if n == 0 {
+			res, err = r.DB.Exec(`UPDATE images SET file_size = ?, width = NULL, height = NULL WHERE file_path = ? AND COALESCE(file_size, 0) != ?`, info.Size(), p, info.Size())
+			if err != nil {
+				return inserted, err
+			}
+			changed, err := res.RowsAffected()
+			if err != nil {
+				return inserted, err
+			}
+			inserted += int(changed)
+		}
 	}
 	return inserted, nil
 }

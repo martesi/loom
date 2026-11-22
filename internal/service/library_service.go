@@ -70,7 +70,7 @@ func (s *LibraryService) ListImages(repoPath string, query LibraryQuery) ([]Libr
 			ID:         img.ID,
 			FileName:   filepath.Base(img.FilePath),
 			FilePath:   img.FilePath,
-			ThumbURL:   thumbURL(repoPath, img.ID),
+			ThumbURL:   thumbURL(repoPath, img.ID, img.FilePath),
 			Width:      img.Width,
 			Height:     img.Height,
 			PromptText: img.PromptText,

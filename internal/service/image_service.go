@@ -1,12 +1,15 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"loom/internal/media"
@@ -23,6 +26,107 @@ func (s *ImageService) mediaProcessor() media.Processor {
 		return s.Media
 	}
 	return media.FFmpegProcessor{}
+}
+
+// InvalidateRenditions is the manual answer to #4's same-size/same-mtime
+// limitation: revisions intentionally avoid hashing file contents on requests.
+// It removes generated cache files only and serializes with active encodes.
+func (s *ImageService) InvalidateRenditions(repoPath string) (int, error) {
+	repo, unlock, err := openOperationRepo(repoPath)
+	if err != nil {
+		return 0, err
+	}
+	defer unlock()
+	defer repo.Close()
+	count := 0
+	var releases []func()
+	seen := map[int64]bool{}
+	defer func() {
+		for i := len(releases) - 1; i >= 0; i-- {
+			releases[i]()
+		}
+	}()
+	for _, dir := range []string{filepath.Join(repo.Path, ".loom", "thumbs"), filepath.Join(repo.Path, ".loom", "previews")} {
+		entries, readErr := os.ReadDir(dir)
+		if os.IsNotExist(readErr) {
+			continue
+		}
+		if readErr != nil {
+			return count, readErr
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			if entry.IsDir() || !(strings.HasSuffix(name, ".webp") || strings.HasSuffix(name, ".avif")) {
+				continue
+			}
+			id := cacheImageID(name)
+			if id <= 0 {
+				continue
+			}
+			if !seen[id] {
+				release, _ := acquirePreviewLock(context.Background(), fmt.Sprintf("%s\x00%d", repo.Path, id))
+				if release != nil {
+					releases = append(releases, release)
+				}
+				seen[id] = true
+			}
+			if removeErr := os.Remove(filepath.Join(dir, name)); removeErr != nil && !os.IsNotExist(removeErr) {
+				return count, removeErr
+			}
+			count++
+		}
+	}
+	return count, nil
+}
+
+func cacheImageID(name string) int64 {
+	part := strings.SplitN(name, "-", 2)[0]
+	if strings.Contains(name, "-") {
+		id, _ := strconv.ParseInt(part, 10, 64)
+		return id
+	}
+	part = strings.TrimSuffix(name, ".avif")
+	id, _ := strconv.ParseInt(part, 10, 64)
+	return id
+}
+
+// RescanRepository discovers sources without generating renditions.
+func (s *ImageService) RescanRepository(repoPath string) (int, error) {
+	repo, unlock, err := openOperationRepo(repoPath)
+	if err != nil {
+		return 0, err
+	}
+	defer unlock()
+	defer repo.Close()
+	changed, err := repo.ScanAndRegisterImages()
+	if err != nil {
+		return changed, err
+	}
+	images, err := repo.ListImages()
+	if err != nil {
+		return changed, err
+	}
+	for _, image := range images {
+		if image.Width > 0 && image.Height > 0 {
+			continue
+		}
+		before, statErr := os.Stat(image.FilePath)
+		if statErr != nil {
+			continue
+		}
+		dimensions, probeErr := media.ProbeDimensions(image.FilePath)
+		if probeErr != nil {
+			continue
+		}
+		after, statErr := os.Stat(image.FilePath)
+		if statErr != nil || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
+			continue
+		}
+		if _, err := repo.DB.Exec(`UPDATE images SET width = ?, height = ? WHERE id = ? AND file_path = ? AND file_size = ?`, dimensions.Width, dimensions.Height, image.ID, image.FilePath, after.Size()); err != nil {
+			return changed, err
+		}
+	}
+	return changed, nil
 }
 
 type ImageInfo struct {
@@ -89,35 +193,13 @@ func (s *ImageService) LoadCanvas(repoPath string) (*CanvasData, error) {
 		return nil, err
 	}
 
-	thumbsDir := filepath.Join(repoPath, ".loom", "thumbs")
-	if err := os.MkdirAll(thumbsDir, 0o755); err != nil {
-		return nil, err
-	}
-
 	missingByID := make(map[int64]bool, len(allImages))
 	for i := range allImages {
 		img := &allImages[i]
-
 		if _, statErr := os.Stat(img.FilePath); statErr != nil {
 			missingByID[img.ID] = true
-		} else if img.ThumbPath == "" {
-			dest := filepath.Join(thumbsDir, fmt.Sprintf("%d.avif", img.ID))
-			if dimensions, genErr := s.mediaProcessor().Thumbnail(img.FilePath, dest, store.IsVideoFile(img.FilePath)); genErr == nil {
-				if err := repo.SetThumbInfo(img.ID, dest, dimensions.Width, dimensions.Height); err != nil {
-					return nil, err
-				}
-			}
-			// A single file that fails to thumbnail (corrupt/unsupported)
-			// shouldn't take down the whole board load — it just renders
-			// without a preview until the next load retries it.
 		}
-
 	}
-
-	// Thumbnail generation writes thumb_path/width/height via SetThumbInfo
-	// as a side effect above; re-read from the DB rather than threading
-	// those values back through allImages, so board-scoped and repo-wide
-	// callers share one code path.
 	boardImages, err := repo.ListImages()
 	if err != nil {
 		return nil, err
@@ -169,8 +251,8 @@ func (s *ImageService) LoadCanvas(repoPath string) (*CanvasData, error) {
 			ID:         img.ID,
 			FileName:   filepath.Base(img.FilePath),
 			FilePath:   img.FilePath,
-			ThumbURL:   thumbURL(repoPath, img.ID),
-			PreviewURL: previewURL(repoPath, img.ID, img.FilePath),
+			ThumbURL:   thumbURL(repoPath, img.ID, img.FilePath),
+			PreviewURL: previewURLForImage(repoPath, img),
 			FullURL:    fullURL(repoPath, img.ID),
 			Width:      img.Width,
 			Height:     img.Height,
@@ -227,8 +309,8 @@ func (s *ImageService) GetImage(repoPath string, imageID int64) (*ImageInfo, err
 		ID:         img.ID,
 		FileName:   filepath.Base(img.FilePath),
 		FilePath:   img.FilePath,
-		ThumbURL:   thumbURL(repoPath, img.ID),
-		PreviewURL: previewURL(repoPath, img.ID, img.FilePath),
+		ThumbURL:   thumbURL(repoPath, img.ID, img.FilePath),
+		PreviewURL: previewURLForImage(repoPath, img),
 		FullURL:    fullURL(repoPath, img.ID),
 		Width:      img.Width,
 		Height:     img.Height,
@@ -617,8 +699,8 @@ func (s *ImageService) ListDirectory(repoPath, relPath string) (*DirListing, err
 			ID:         img.ID,
 			FileName:   filepath.Base(img.FilePath),
 			FilePath:   img.FilePath,
-			ThumbURL:   thumbURL(repoPath, img.ID),
-			PreviewURL: previewURL(repoPath, img.ID, img.FilePath),
+			ThumbURL:   thumbURL(repoPath, img.ID, img.FilePath),
+			PreviewURL: previewURLForImage(repoPath, img),
 			FullURL:    fullURL(repoPath, img.ID),
 			Width:      img.Width,
 			Height:     img.Height,

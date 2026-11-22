@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"loom/internal/media"
@@ -27,6 +28,7 @@ const (
 
 var previewSlotWait = 15 * time.Second
 var previewSlots = make(chan struct{}, 2)
+var previewWaiters atomic.Int32
 var previewLocks = struct {
 	sync.Mutex
 	byKey map[string]*previewLockEntry
@@ -54,18 +56,43 @@ func ServePreview(w http.ResponseWriter, r *http.Request) {
 }
 
 func ServePreviewWithProcessor(w http.ResponseWriter, r *http.Request, processor media.Processor) {
+	tier, err := strconv.Atoi(r.URL.Query().Get("w"))
+	if err != nil || (tier != 640 && tier != 1280 && tier != 2048) {
+		w.Header().Set("Cache-Control", "no-store")
+		http.Error(w, "invalid preview width", http.StatusBadRequest)
+		return
+	}
+	serveRendition(w, r, processor, tier, "", 0)
+}
+
+func sourceRevision(path string) string {
+	info, err := os.Stat(path)
+	if err != nil {
+		return previewRevision(path, 0, time.Time{})
+	}
+	return previewRevision(path, info.Size(), info.ModTime())
+}
+
+func serveRendition(w http.ResponseWriter, r *http.Request, processor media.Processor, forcedTier int, forcedRepo string, forcedID int64) {
 	w.Header().Set("Cache-Control", "no-store")
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	tier, err := strconv.Atoi(r.URL.Query().Get("w"))
-	if err != nil || (tier != 640 && tier != 1280 && tier != 2048) {
-		http.Error(w, "invalid preview width", http.StatusBadRequest)
-		return
+	tier := forcedTier
+	if tier == 0 {
+		tier, _ = strconv.Atoi(r.URL.Query().Get("w"))
+		if tier != 640 && tier != 1280 && tier != 2048 {
+			http.Error(w, "invalid preview width", http.StatusBadRequest)
+			return
+		}
 	}
-	parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, previewURLPrefix), "/", 2)
+	prefix := previewURLPrefix
+	if forcedTier == 320 {
+		prefix = thumbURLPrefix
+	}
+	parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, prefix), "/", 2)
 	if len(parts) != 2 || parts[1] == "" {
 		http.NotFound(w, r)
 		return
@@ -76,12 +103,17 @@ func ServePreviewWithProcessor(w http.ResponseWriter, r *http.Request, processor
 		return
 	}
 	repoPath := string(repoBytes)
+	id, parseErr := strconv.ParseInt(parts[1], 10, 64)
+	if forcedID != 0 {
+		repoPath = forcedRepo
+		id = forcedID
+		parseErr = nil
+	}
 	if !store.IsRepo(repoPath) {
 		http.NotFound(w, r)
 		return
 	}
-	id, err := strconv.ParseInt(parts[1], 10, 64)
-	if err != nil || id <= 0 {
+	if parseErr != nil || id <= 0 {
 		http.NotFound(w, r)
 		return
 	}
@@ -92,25 +124,45 @@ func ServePreviewWithProcessor(w http.ResponseWriter, r *http.Request, processor
 	}
 	defer repo.Close()
 
-	lockKey := fmt.Sprintf("%s\x00%d\x00%d", repo.Path, id, tier)
-	release, ok := acquirePreviewLock(r.Context(), lockKey)
+	deadline := 5 * time.Second
+	if store.IsVideoFile(mustImagePath(repo, id)) {
+		deadline = 30 * time.Second
+	} // 30 s is conservative pending measurement.
+	ctx, cancel := context.WithTimeout(r.Context(), deadline)
+	defer cancel()
+	lockKey := fmt.Sprintf("%s\x00%d", repo.Path, id)
+	release, ok := acquireRenditionLock(ctx, lockKey)
 	if !ok {
+		if r.Context().Err() == nil {
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "rendition generation busy", http.StatusServiceUnavailable)
+		}
 		return
 	}
 	defer release()
 
-	cacheDir := filepath.Join(repo.Path, ".loom", "previews")
+	cacheDir := filepath.Join(repo.Path, ".loom", "thumbs")
 	for attempt := 0; attempt < 2; attempt++ {
 		_, source, err := getPreviewSource(repo, id)
 		if err != nil {
 			writePreviewSourceError(w, r, err)
 			return
 		}
+		if supplied := r.URL.Query().Get("v"); supplied == "" || supplied != previewRevision(source.path, source.size, source.modTime) {
+			w.Header().Set("Cache-Control", "no-store")
+			http.Error(w, "source revision changed", http.StatusConflict)
+			return
+		}
+		video := store.IsVideoFile(source.path)
+		if video && tier != 320 {
+			http.Error(w, "video previews are limited to 320", http.StatusBadRequest)
+			return
+		}
 		if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 			http.Error(w, "preview cache unavailable", http.StatusInternalServerError)
 			return
 		}
-		cachePath := previewCachePath(cacheDir, id, tier, source)
+		cachePath := renditionCachePath(cacheDir, id, tier, source)
 		served, err := serveCachedPreview(w, r, cachePath)
 		if err != nil {
 			http.Error(w, "preview cache unavailable", http.StatusInternalServerError)
@@ -120,9 +172,10 @@ func ServePreviewWithProcessor(w http.ResponseWriter, r *http.Request, processor
 			return
 		}
 
-		slotRelease, status := acquirePreviewSlot(r.Context())
+		slotRelease, status := acquirePreviewSlot(ctx)
 		if status != 0 {
 			if status == http.StatusServiceUnavailable {
+				w.Header().Set("Retry-After", "1")
 				http.Error(w, "preview generation busy", status)
 			}
 			return
@@ -140,10 +193,15 @@ func ServePreviewWithProcessor(w http.ResponseWriter, r *http.Request, processor
 			http.Error(w, "preview generation failed", http.StatusInternalServerError)
 			return
 		}
-		if err := processor.Preview(r.Context(), source.path, tmpPath, tier, store.IsVideoFile(source.path)); err != nil {
+		if err := processor.Preview(ctx, source.path, tmpPath, tier, video); err != nil {
 			slotRelease()
 			_ = os.Remove(tmpPath)
 			if r.Context().Err() != nil {
+				return
+			}
+			if ctx.Err() != nil {
+				w.Header().Set("Retry-After", "1")
+				http.Error(w, "rendition generation timed out", http.StatusServiceUnavailable)
 				return
 			}
 			http.Error(w, "preview generation failed", http.StatusInternalServerError)
@@ -188,6 +246,12 @@ func ServePreviewWithProcessor(w http.ResponseWriter, r *http.Request, processor
 		}
 		return
 	}
+}
+
+func mustImagePath(repo *store.Repo, id int64) string { path, _ := repo.GetFilePath(id); return path }
+
+func renditionCachePath(dir string, id int64, tier int, source previewSource) string {
+	return filepath.Join(dir, fmt.Sprintf("%d-%d-%s.webp", id, tier, previewRevision(source.path, source.size, source.modTime)))
 }
 
 func getPreviewSource(repo *store.Repo, id int64) (store.Image, previewSource, error) {
@@ -296,19 +360,14 @@ func servePreviewFileLocked(w http.ResponseWriter, r *http.Request, path string)
 // purge has removed the old ones.
 func lockAndRemovePreviewCacheForImage(repoPath string, imageID int64) (func(), error) {
 	var releases []func()
-	for _, tier := range []int{640, 1280, 2048} {
-		key := fmt.Sprintf("%s\x00%d\x00%d", repoPath, imageID, tier)
-		release, ok := acquirePreviewLock(context.Background(), key)
-		if !ok {
-			for i := len(releases) - 1; i >= 0; i-- {
-				releases[i]()
-			}
-			return nil, fmt.Errorf("preview lock unavailable")
-		}
-		releases = append(releases, release)
+	key := fmt.Sprintf("%s\x00%d", repoPath, imageID)
+	release, ok := acquirePreviewLock(context.Background(), key)
+	if !ok {
+		return nil, fmt.Errorf("preview lock unavailable")
 	}
+	releases = append(releases, release)
 	previewCacheFiles.Lock()
-	matches, err := filepath.Glob(filepath.Join(repoPath, ".loom", "previews", fmt.Sprintf("%d-*.webp", imageID)))
+	matches, err := filepath.Glob(filepath.Join(repoPath, ".loom", "thumbs", fmt.Sprintf("%d-*.webp", imageID)))
 	if err == nil {
 		for _, match := range matches {
 			if removeErr := os.Remove(match); removeErr != nil && !os.IsNotExist(removeErr) {
@@ -385,6 +444,11 @@ func prunePreviewCache(dir string, now time.Time) {
 }
 
 func acquirePreviewSlot(ctx context.Context) (func(), int) {
+	if previewWaiters.Add(1) > 6 {
+		previewWaiters.Add(-1)
+		return nil, http.StatusServiceUnavailable
+	}
+	defer previewWaiters.Add(-1)
 	waitCtx, cancel := context.WithTimeout(ctx, previewSlotWait)
 	defer cancel()
 	select {
@@ -427,4 +491,36 @@ func acquirePreviewLock(ctx context.Context, key string) (func(), bool) {
 		previewLocks.Unlock()
 		return nil, false
 	}
+}
+
+// Request admission is bounded independently from the legacy purge lock path.
+func acquireRenditionLock(ctx context.Context, key string) (func(), bool) {
+	previewLocks.Lock()
+	entry := previewLocks.byKey[key]
+	if entry == nil {
+		entry = &previewLockEntry{lock: make(chan struct{}, 1)}
+		previewLocks.byKey[key] = entry
+	}
+	if entry.refs >= 6 {
+		previewLocks.Unlock()
+		return nil, false
+	}
+	entry.refs++
+	previewLocks.Unlock()
+	select {
+	case entry.lock <- struct{}{}:
+		return func() { <-entry.lock; releasePreviewLockRef(key, entry) }, true
+	case <-ctx.Done():
+		releasePreviewLockRef(key, entry)
+		return nil, false
+	}
+}
+
+func releasePreviewLockRef(key string, entry *previewLockEntry) {
+	previewLocks.Lock()
+	entry.refs--
+	if entry.refs == 0 {
+		delete(previewLocks.byKey, key)
+	}
+	previewLocks.Unlock()
 }
