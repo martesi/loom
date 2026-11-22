@@ -153,6 +153,8 @@ export function AssetList({
           <img
             src={row.thumbUrl}
             alt=""
+            loading="lazy"
+            decoding="async"
             draggable={false}
             className="h-9 w-9 rounded object-cover"
           />
