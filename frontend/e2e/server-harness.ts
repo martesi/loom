@@ -207,7 +207,16 @@ const fixtureRepos = [
     files: ['group-alpha.png', 'group-beta.png', 'group-gamma.png'],
   },
   { name: 'resize-fixtures', files: ['resize-alpha.png'] },
-  { name: 'rescan-fixtures', files: ['rescan-alpha.png'] },
+  {
+    name: 'rescan-fixtures',
+    files: [
+      'rescan-alpha.png',
+      ...Array.from(
+        { length: 79 },
+        (_, index) => `rescan-added-${String(index + 1).padStart(3, '0')}.png`
+      ),
+    ],
+  },
   { name: 'recent-fixtures', files: ['recent-alpha.png'] },
   { name: 'switch-a-fixtures', files: ['switch-a.png'] },
   { name: 'switch-b-fixtures', files: ['switch-b.png'] },

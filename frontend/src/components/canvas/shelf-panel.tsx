@@ -1,6 +1,12 @@
 import { t } from '@lingui/core/macro'
 import { ChevronLeft, ChevronRight, Pin } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
 import { cn } from '../../lib/utils'
 import { ShortcutKeys, Tooltip } from '../ui/tooltip'
 
@@ -44,6 +50,38 @@ export function ShelfPanel({
   const asideRef = useRef<HTMLElement>(null)
   const openingFocusDeferred = useRef(false)
   const visible = open && !focusHidden
+  const [contentHidden, setContentHidden] = useState(() => !visible)
+
+  useLayoutEffect(() => {
+    if (visible) {
+      setContentHidden(false)
+      return
+    }
+    const reducedMotion = window.matchMedia(
+      '(prefers-reduced-motion: reduce)'
+    ).matches
+    if (reducedMotion) {
+      setContentHidden(true)
+      return
+    }
+
+    const timer = window.setTimeout(() => setContentHidden(true), 250)
+    const handleTransitionEnd = (event: TransitionEvent) => {
+      if (
+        event.target === asideRef.current &&
+        (event.propertyName === 'opacity' || event.propertyName === 'transform')
+      ) {
+        window.clearTimeout(timer)
+        setContentHidden(true)
+      }
+    }
+    const aside = asideRef.current
+    aside?.addEventListener('transitionend', handleTransitionEnd)
+    return () => {
+      window.clearTimeout(timer)
+      aside?.removeEventListener('transitionend', handleTransitionEnd)
+    }
+  }, [visible])
 
   useEffect(() => {
     if (width !== undefined) {
@@ -202,7 +240,7 @@ export function ShelfPanel({
 
       <div
         className="flex min-h-0 flex-1 flex-col overflow-auto rounded-b-xl"
-        style={{ contentVisibility: visible ? 'visible' : 'hidden' }}
+        style={{ contentVisibility: contentHidden ? 'hidden' : 'visible' }}
       >
         {children}
       </div>

@@ -166,6 +166,8 @@ export function AssetGallery({
           className="grid gap-2"
           style={{
             gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))`,
+            contentVisibility: 'auto',
+            containIntrinsicSize: 'auto 240px',
           }}
         >
           {cardRow.map((row) => {

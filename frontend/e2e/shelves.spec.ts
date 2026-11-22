@@ -25,7 +25,13 @@ test.describe('floating Canvas drawers', () => {
       'data-state',
       'closed'
     )
-    await page.waitForTimeout(500)
+    const closedDrawer = page.locator('aside[aria-label="Assets"]')
+    await expect(closedDrawer.locator('[role="option"]')).toHaveCount(4)
+    await expect(
+      closedDrawer
+        .locator('[role="option"]')
+        .filter({ hasText: 'root-alpha.png' })
+    ).toHaveCount(1)
     const closedCount = thumbnailRequests.length
     expect(closedCount).toBe(0)
 
@@ -35,6 +41,111 @@ test.describe('floating Canvas drawers', () => {
       'open'
     )
     await expect.poll(() => thumbnailRequests.length).toBeGreaterThan(0)
+  })
+
+  test('lazy gallery requests distant thumbnails only after scrolling near them', async ({
+    page,
+  }) => {
+    const thumbnailRequests: string[] = []
+    page.on('request', (request) => {
+      if (request.url().includes('/loom-asset/thumb/'))
+        thumbnailRequests.push(request.url())
+    })
+
+    await page.addInitScript(() => {
+      const style = document.createElement('style')
+      style.textContent = `
+        /* Simulate a long scroll so the target is beyond Chrome's prefetch range. */
+        aside[aria-label="Assets"] [role="grid"] [role="row"]:first-child { margin-bottom: 100000px !important; }
+      `
+      document.documentElement.append(style)
+    })
+    const fixtureRepo = 'rescan-fixtures'
+    await openFixtureRepo(page, fixtureRepo, { drawers: 'closed' })
+    const drawer = page.locator('aside[aria-label="Assets"]')
+    await expect(drawer.locator('[role="option"]')).toHaveCount(80)
+    await drawer
+      .locator('input[aria-label="Search assets"]')
+      .evaluate((input) => {
+        const setter = Object.getOwnPropertyDescriptor(
+          HTMLInputElement.prototype,
+          'value'
+        )?.set
+        setter?.call(input, 'rescan-alpha.png')
+        input.dispatchEvent(
+          new InputEvent('input', {
+            bubbles: true,
+            inputType: 'insertText',
+            data: 'rescan-alpha.png',
+          })
+        )
+      })
+    await expect(drawer.locator('[role="option"]')).toHaveCount(1)
+    await page.getByTestId('toggle-assets-shelf').click()
+    await expect(drawer).toHaveAttribute('data-visible', 'true')
+    await expect(page.getByText('1 asset', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Gallery view' }).click()
+    const gallery = page.getByRole('grid', { name: 'Asset gallery' })
+    await page.getByRole('textbox', { name: 'Search assets' }).fill('')
+    await expect(gallery.getByRole('gridcell')).toHaveCount(80)
+
+    const imageCandidates = await gallery.locator('img').evaluateAll((images) =>
+      images.map((image, index) => ({
+        index,
+        url: image.getAttribute('src') ?? '',
+        top: image.getBoundingClientRect().top,
+      }))
+    )
+    const requestedPaths = new Set(
+      thumbnailRequests.map((url) => new URL(url).pathname)
+    )
+    const viewportHeight = await page.evaluate(() => window.innerHeight)
+    const baseUrl = page.url()
+    const distant = [...imageCandidates]
+      .reverse()
+      .find(
+        (candidate) =>
+          candidate.top > viewportHeight * 3 &&
+          !requestedPaths.has(new URL(candidate.url, baseUrl).pathname)
+      )
+    if (!distant) throw new Error('No unrequested distant gallery row found')
+    const distantImage = gallery.locator('img').nth(distant.index)
+    const distantUrl = distant.url
+    const targetPath = new URL(distantUrl, baseUrl).pathname
+    const targetWasRequested = () =>
+      thumbnailRequests.some(
+        (requestUrl) => new URL(requestUrl).pathname === targetPath
+      )
+    // Native lazy loading can prefetch a few screens ahead in Chrome. The
+    // accepted bound is that a far-off row in this long, scrollable gallery
+    // is not requested until it is scrolled near the viewport.
+    await expect.poll(targetWasRequested).toBe(false)
+    await distantImage.scrollIntoViewIfNeeded()
+    await distantImage.evaluate((image) =>
+      image.scrollIntoView({ block: 'center', behavior: 'instant' })
+    )
+    await expect.poll(targetWasRequested).toBe(true)
+  })
+
+  test('keeps drawer content through close animation, reopens rapidly, and hides immediately for reduced motion', async ({
+    page,
+  }) => {
+    await openFixtureRepo(page, 'library-fixtures', { drawers: 'assets' })
+    const drawer = page.locator('aside[aria-label="Assets"]')
+    const content = drawer.locator(':scope > div').nth(1)
+    await expect(content).toHaveCSS('content-visibility', 'visible')
+
+    await page.getByTestId('collapse-shelf-left').click()
+    await expect(drawer).toHaveAttribute('inert', '')
+    await expect(content).toHaveCSS('content-visibility', 'visible')
+    await page.getByTestId('toggle-assets-shelf').click()
+    await expect(drawer).toHaveAttribute('data-visible', 'true')
+    await expect(content).toHaveCSS('content-visibility', 'visible')
+
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.getByTestId('collapse-shelf-left').click()
+    await expect(drawer).toHaveAttribute('inert', '')
+    await expect(content).toHaveCSS('content-visibility', 'hidden')
   })
 
   test('clips overflowing content at both bottom corners of Assets and Inspector', async ({
