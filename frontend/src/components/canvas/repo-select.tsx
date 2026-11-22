@@ -1,9 +1,10 @@
 import { t } from '@lingui/core/macro'
 import { Trans } from '@lingui/react/macro'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { RepoInfo } from '../../../bindings/loom/internal/service'
 import { RepoService } from '../../../bindings/loom/internal/service'
 import { useCapabilities } from '../../lib/capabilities-store'
+import { createRepoListRefresh, listenForWindowFocus } from '../../lib/repo-list-refresh'
 import {
   Select,
   SelectContent,
@@ -30,7 +31,6 @@ interface RepoSelectProps {
 export function RepoSelect({ repo, openRequest = 0 }: RepoSelectProps) {
   const [open, setOpen] = useState(false)
   const [recent, setRecent] = useState<RepoInfo[]>([])
-  const requestId = useRef(0)
   const toast = useToast()
   const capabilities = useCapabilities()
 
@@ -55,18 +55,10 @@ export function RepoSelect({ repo, openRequest = 0 }: RepoSelectProps) {
     [entries]
   )
 
-  const refreshRecent = () => {
-    const request = ++requestId.current
-    RepoService.ListRecentRepos().then((list) => {
-      if (request === requestId.current) setRecent(list ?? [])
-    })
-  }
+  const refreshRecent = createRepoListRefresh(RepoService.ListRecentRepos, setRecent)
 
   useEffect(() => {
-    if (!open) return
-    const refreshOnFocus = () => refreshRecent()
-    window.addEventListener('focus', refreshOnFocus)
-    return () => window.removeEventListener('focus', refreshOnFocus)
+    return listenForWindowFocus(open, refreshRecent)
   }, [open])
 
   const handleOpenChange = (nextOpen: boolean) => {

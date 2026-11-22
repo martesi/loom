@@ -132,7 +132,7 @@ func (s *RepoService) open(path string) (*RepoInfo, error) {
 		return nil, err
 	}
 
-	registerRepoWindow(path, application.Get().Window.Current())
+	registerCurrentRepoWindow(path)
 	return info, nil
 }
 
@@ -153,7 +153,6 @@ func (s *RepoService) SwitchTo(path string) (*RepoInfo, error) {
 	if _, err := bootstrapAndTouch(path); err != nil {
 		return nil, err
 	}
-
 	// Deliberately NOT calling registerRepoWindow here. WindowManager.NewWithOptions
 	// inserts the new window into the app's window map synchronously — before its
 	// webview has loaded or run any frontend code — so registering path against it
@@ -166,7 +165,7 @@ func (s *RepoService) SwitchTo(path string) (*RepoInfo, error) {
 	// would never navigate past a blank page. Leaving registration to that window's
 	// own open() call (same as every other repo-opening entry point) avoids the
 	// self-registration race entirely.
-	application.Get().Window.NewWithOptions(application.WebviewWindowOptions{
+	newRepoWindow(application.WebviewWindowOptions{
 		Title:            "Loom",
 		Width:            1200,
 		Height:           800,
@@ -175,6 +174,10 @@ func (s *RepoService) SwitchTo(path string) (*RepoInfo, error) {
 	})
 
 	return &RepoInfo{ID: path, Path: path, OpenedElsewhere: true}, nil
+}
+
+var newRepoWindow = func(options application.WebviewWindowOptions) {
+	application.Get().Window.NewWithOptions(options)
 }
 
 // bootstrapAndTouch bootstraps (or opens the existing) .loom/ at path,

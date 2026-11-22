@@ -69,3 +69,8 @@ var focusedWindowForRepo = func(repoPath string) (focusableWindow, bool) {
 	}
 	return window, true
 }
+
+// These adapters keep service behavior testable without a live Wails app.
+var registerCurrentRepoWindow = func(repoPath string) {
+	registerRepoWindow(repoPath, application.Get().Window.Current())
+}
