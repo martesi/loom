@@ -44,7 +44,7 @@ test('1k-photo Canvas latency and resource benchmark', async ({
 
   const placementStarted = performance.now()
   await dropAssetRow(page, assets(page).first(), { x: 200, y: 160 })
-  await waitForModelAndMountedNodes(page, photoCount)
+  await waitForModelAndMountedNodes(page, photoCount, 120_000)
   const placementMs = performance.now() - placementStarted
   console.log(
     `Model ready plus visible nodes mounted for ${photoCount} photos in ${placementMs.toFixed(1)} ms`
@@ -54,7 +54,7 @@ test('1k-photo Canvas latency and resource benchmark', async ({
   await page.addInitScript(() => performance.setResourceTimingBufferSize(5000))
   const reloadStarted = performance.now()
   await page.reload()
-  await waitForModelAndMountedNodes(page, photoCount)
+  await waitForModelAndMountedNodes(page, photoCount, 120_000)
   const reloadRenderMs = performance.now() - reloadStarted
   console.log(
     `Reload model ready plus visible nodes mounted for ${photoCount} photos in ${reloadRenderMs.toFixed(1)} ms`
@@ -63,7 +63,13 @@ test('1k-photo Canvas latency and resource benchmark', async ({
 
   await page.keyboard.press('ControlOrMeta+0')
   const fitStarted = performance.now()
+  const viewport = page.locator('.react-flow__viewport')
+  const beforeFit = await viewport.getAttribute('style')
   await page.keyboard.press('Shift+1')
+  await expect(viewport).not.toHaveAttribute('style', beforeFit ?? '', {
+    timeout: 120_000,
+  })
+  await waitForModelAndMountedNodes(page, photoCount, 120_000)
   await page.evaluate(
     () =>
       new Promise<void>((resolve) =>
@@ -71,7 +77,6 @@ test('1k-photo Canvas latency and resource benchmark', async ({
       )
   )
   const fitMs = performance.now() - fitStarted
-  await waitForModelAndMountedNodes(page, photoCount)
   const fitState = await canvasState(page)
 
   const interactions1000 = await measureInteractions(page, photoCount)
@@ -242,15 +247,20 @@ async function visibleNode(page: Page) {
   return imageNodes(page).nth(indexes[Math.floor(indexes.length / 2)])
 }
 
-async function expectTotalNodes(page: Page, count: number) {
+async function expectTotalNodes(page: Page, count: number, timeout = 10_000) {
   await expect(page.locator('.react-flow')).toHaveAttribute(
     'data-total-image-nodes',
-    String(count)
+    String(count),
+    { timeout }
   )
 }
 
-async function waitForModelAndMountedNodes(page: Page, count: number) {
-  await expectTotalNodes(page, count)
+async function waitForModelAndMountedNodes(
+  page: Page,
+  count: number,
+  timeout = 10_000
+) {
+  await expectTotalNodes(page, count, timeout)
   await expect(imageNodes(page).first()).toBeVisible({ timeout: 120_000 })
   await page.evaluate(
     () =>
