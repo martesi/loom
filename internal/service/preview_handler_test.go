@@ -332,7 +332,7 @@ func waitForRenditionRefs(t *testing.T, key string, want int) {
 		entry := previewLocks.byKey[key]
 		refs := 0
 		if entry != nil {
-			refs = entry.refs
+			refs = entry.renditionRefs
 		}
 		previewLocks.Unlock()
 		if refs >= want {
@@ -341,6 +341,25 @@ func waitForRenditionRefs(t *testing.T, key string, want int) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("rendition refs for %q did not reach %d", key, want)
+}
+
+func waitForAdminRefs(t *testing.T, key string, want int) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		previewLocks.Lock()
+		entry := previewLocks.byKey[key]
+		refs := 0
+		if entry != nil {
+			refs = entry.adminRefs
+		}
+		previewLocks.Unlock()
+		if refs >= want {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("admin refs for %q did not reach %d", key, want)
 }
 
 func TestSuccessorWorkCancelSurvivesPreviousWorkCleanup(t *testing.T) {

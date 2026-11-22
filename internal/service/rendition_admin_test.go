@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"net/http/httptest"
 	"os"
@@ -125,7 +126,7 @@ func TestInvalidateWaitsForInFlightRendition(t *testing.T) {
 	key := fmt.Sprintf("%s\x00%d", repoPath, id)
 	invalidateDone := make(chan error, 1)
 	go func() { _, err := (&ImageService{}).InvalidateRenditions(repoPath); invalidateDone <- err }()
-	waitForRenditionRefs(t, key, 2)
+	waitForAdminRefs(t, key, 1)
 	close(finish)
 	<-requestDone
 	if err := <-invalidateDone; err != nil {
@@ -143,4 +144,46 @@ func TestInvalidateWaitsForInFlightRendition(t *testing.T) {
 			t.Fatalf("rendition published after invalidation: %s", entry.Name())
 		}
 	}
+}
+
+func TestAdminLockDoesNotKeepOrCancelSharedEncodeAlive(t *testing.T) {
+	repoPath, id, _ := previewTestAsset(t)
+	url := previewTestURL(t, repoPath, id, 640)
+	key := fmt.Sprintf("%s\x00%d", repoPath, id)
+	processor := &contextAwarePreviewProcessor{started: make(chan context.Context, 1), finish: make(chan struct{}), cancelled: make(chan struct{})}
+	ownerCtx, cancelOwner := context.WithCancel(context.Background())
+	owner := httptest.NewRecorder()
+	ownerDone := make(chan struct{})
+	go func() {
+		ServePreviewWithProcessor(owner, httptest.NewRequest("GET", url, nil).WithContext(ownerCtx), processor)
+		close(ownerDone)
+	}()
+	workerCtx := <-processor.started
+	waiterCtx, cancelWaiter := context.WithCancel(context.Background())
+	waiter := httptest.NewRecorder()
+	waiterDone := make(chan struct{})
+	go func() {
+		ServePreviewWithProcessor(waiter, httptest.NewRequest("GET", url, nil).WithContext(waiterCtx), processor)
+		close(waiterDone)
+	}()
+	waitForRenditionRefs(t, key, 2)
+	invalidateDone := make(chan error, 1)
+	go func() { _, err := (&ImageService{}).InvalidateRenditions(repoPath); invalidateDone <- err }()
+	waitForAdminRefs(t, key, 1)
+	cancelOwner()
+	<-ownerDone
+	if err := workerCtx.Err(); err != nil {
+		t.Fatalf("worker canceled while rendition waiter remained: %v", err)
+	}
+	cancelWaiter()
+	<-waiterDone
+	select {
+	case <-processor.cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("worker was not canceled when rendition references reached zero")
+	}
+	if err := <-invalidateDone; err != nil {
+		t.Fatalf("invalidation did not proceed after canceled work: %v", err)
+	}
+	waitForNoRenditionLock(t, key)
 }

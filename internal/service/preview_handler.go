@@ -38,9 +38,10 @@ var previewLocks = struct {
 var previewCacheFiles sync.RWMutex
 
 type previewLockEntry struct {
-	lock chan struct{}
-	refs int
-	work *renditionWork
+	lock          chan struct{}
+	renditionRefs int
+	adminRefs     int
+	work          *renditionWork
 }
 
 type renditionWork struct{ cancel context.CancelFunc }
@@ -563,16 +564,16 @@ func acquirePreviewLock(ctx context.Context, key string) (func(), bool) {
 		entry = &previewLockEntry{lock: make(chan struct{}, 1)}
 		previewLocks.byKey[key] = entry
 	}
-	entry.refs++
+	entry.adminRefs++
 	previewLocks.Unlock()
 	select {
 	case entry.lock <- struct{}{}:
 		return func() {
 			<-entry.lock
-			releasePreviewLockRef(key, entry)
+			releasePreviewLockRef(key, entry, true)
 		}, true
 	case <-ctx.Done():
-		releasePreviewLockRef(key, entry)
+		releasePreviewLockRef(key, entry, true)
 		return nil, false
 	}
 }
@@ -593,26 +594,26 @@ func acquireRenditionLease(ctx context.Context, key string) (*renditionLease, bo
 		entry = &previewLockEntry{lock: make(chan struct{}, 1)}
 		previewLocks.byKey[key] = entry
 	}
-	if entry.refs >= cap(renditionAdmissions) {
+	if entry.renditionRefs >= cap(renditionAdmissions) {
 		previewLocks.Unlock()
 		return nil, false
 	}
-	entry.refs++
+	entry.renditionRefs++
 	previewLocks.Unlock()
 	if ctx.Err() != nil {
-		releasePreviewLockRef(key, entry)
+		releasePreviewLockRef(key, entry, false)
 		return nil, false
 	}
 	select {
 	case entry.lock <- struct{}{}:
 		if ctx.Err() != nil {
 			<-entry.lock
-			releasePreviewLockRef(key, entry)
+			releasePreviewLockRef(key, entry, false)
 			return nil, false
 		}
 		return &renditionLease{key: key, entry: entry, ownsToken: true}, true
 	case <-ctx.Done():
-		releasePreviewLockRef(key, entry)
+		releasePreviewLockRef(key, entry, false)
 		return nil, false
 	}
 }
@@ -625,7 +626,7 @@ func (lease *renditionLease) Release() {
 	if lease.ownsToken {
 		<-lease.entry.lock
 	}
-	releasePreviewLockRef(lease.key, lease.entry)
+	releasePreviewLockRef(lease.key, lease.entry, false)
 }
 
 func (lease *renditionLease) Transfer(cancel context.CancelFunc) func() {
@@ -640,20 +641,24 @@ func (lease *renditionLease) Transfer(cancel context.CancelFunc) func() {
 			lease.entry.work = nil
 		}
 		<-lease.entry.lock
-		if lease.entry.refs == 0 {
+		if lease.entry.renditionRefs+lease.entry.adminRefs == 0 {
 			delete(previewLocks.byKey, lease.key)
 		}
 		previewLocks.Unlock()
 	}
 }
 
-func releasePreviewLockRef(key string, entry *previewLockEntry) {
+func releasePreviewLockRef(key string, entry *previewLockEntry, admin bool) {
 	previewLocks.Lock()
-	entry.refs--
-	if entry.refs == 0 && entry.work != nil {
+	if admin {
+		entry.adminRefs--
+	} else {
+		entry.renditionRefs--
+	}
+	if entry.renditionRefs == 0 && entry.work != nil {
 		entry.work.cancel()
 	}
-	if entry.refs == 0 && len(entry.lock) == 0 && entry.work == nil {
+	if entry.renditionRefs+entry.adminRefs == 0 && len(entry.lock) == 0 && entry.work == nil {
 		delete(previewLocks.byKey, key)
 	}
 	previewLocks.Unlock()
