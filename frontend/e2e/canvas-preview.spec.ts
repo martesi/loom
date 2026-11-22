@@ -1,3 +1,4 @@
+import { createServer } from 'node:http'
 import { previewTierForNode } from '../src/lib/preview-tier'
 import { expect, test } from './test-fixtures'
 import { dropAsset, imageNodes, openFixtureRepo } from './test-helpers'
@@ -11,21 +12,39 @@ test.describe('Canvas progressive previews', () => {
     page,
   }) => {
     await page.setViewportSize({ width: 1280, height: 800 })
-    let release!: () => void
-    const held = new Promise<void>((resolve) => {
-      release = resolve
+    let releaseBody!: () => void
+    const bodyGate = new Promise<void>((resolve) => {
+      releaseBody = resolve
     })
+    let responseStarted!: () => void
+    const partialResponseWritten = new Promise<void>((resolve) => {
+      responseStarted = resolve
+    })
+    const previewServer = createServer(async (_request, response) => {
+      response.writeHead(200, {
+        'Content-Type': 'image/png',
+        'Content-Length': pngBytes.length,
+        'Cache-Control': 'no-store',
+      })
+      response.write(pngBytes.subarray(0, 30))
+      responseStarted()
+      await bodyGate
+      response.end(pngBytes.subarray(30))
+    })
+    await new Promise<void>((resolve) =>
+      previewServer.listen(0, '127.0.0.1', resolve)
+    )
+    const address = previewServer.address()
+    if (!address || typeof address === 'string')
+      throw new Error('Preview stream server did not bind')
     let requested!: (url: URL) => void
     const requestSeen = new Promise<URL>((resolve) => {
       requested = resolve
     })
     await page.route('**/loom-asset/preview/**', async (route) => {
       requested(new URL(route.request().url()))
-      await held
-      await route.fulfill({
-        status: 200,
-        contentType: 'image/png',
-        body: pngBytes,
+      await route.continue({
+        url: `http://127.0.0.1:${address.port}/preview.png`,
       })
     })
     try {
@@ -67,11 +86,12 @@ test.describe('Canvas progressive previews', () => {
           expected.dpr
         )
       )
+      await partialResponseWritten
       const pending = node.getByTestId('image-node-preview')
       await expect(pending).toBeVisible()
       await expect(pending).toHaveCSS('opacity', '0')
       await expect(thumb).toBeVisible()
-      release()
+      releaseBody()
       const loaded = node.getByTestId('image-node-preview-loaded')
       await expect(loaded).toBeVisible()
       await expect(loaded).toHaveCSS('opacity', '1')
@@ -87,8 +107,9 @@ test.describe('Canvas progressive previews', () => {
         )
         .toBeGreaterThan(0)
     } finally {
-      release()
+      releaseBody()
       await page.unroute('**/loom-asset/preview/**')
+      await new Promise<void>((resolve) => previewServer.close(() => resolve()))
     }
   })
 
@@ -107,13 +128,16 @@ test.describe('Canvas progressive previews', () => {
     const retryGate = new Promise<void>((resolve) => {
       releaseRetry = resolve
     })
-    const heldResponses: Array<{ url: URL; release: () => void }> = []
-    let heldSeen!: (entry: { url: URL; release: () => void }) => void
-    let heldRequested = new Promise<{ url: URL; release: () => void }>(
-      (resolve) => {
-        heldSeen = resolve
-      }
-    )
+    type HeldResponse = {
+      url: URL
+      release: () => void
+      fulfilled: Promise<void>
+    }
+    const heldResponses: HeldResponse[] = []
+    let heldSeen!: (entry: HeldResponse) => void
+    let heldRequested = new Promise<HeldResponse>((resolve) => {
+      heldSeen = resolve
+    })
     await page.route('**/loom-asset/preview/**', async (route) => {
       const url = new URL(route.request().url())
       if (initialFailure) {
@@ -137,7 +161,11 @@ test.describe('Canvas progressive previews', () => {
       const gate = new Promise<void>((resolve) => {
         release = resolve
       })
-      const entry = { url, release }
+      let markFulfilled!: () => void
+      const fulfilled = new Promise<void>((resolve) => {
+        markFulfilled = resolve
+      })
+      const entry = { url, release, fulfilled }
       heldResponses.push(entry)
       heldSeen(entry)
       heldRequested = new Promise((resolve) => {
@@ -149,6 +177,7 @@ test.describe('Canvas progressive previews', () => {
         contentType: 'image/png',
         body: pngBytes,
       })
+      markFulfilled()
     })
     try {
       await openFixtureRepo(page, 'preview-fixtures', { drawers: 'closed' })
@@ -206,6 +235,13 @@ test.describe('Canvas progressive previews', () => {
         new RegExp(`w=${latest.url.searchParams.get('w')}`)
       )
       older.release()
+      await older.fulfilled
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+          )
+      )
       await expect(loaded).toHaveAttribute(
         'src',
         new RegExp(`w=${latest.url.searchParams.get('w')}`)
