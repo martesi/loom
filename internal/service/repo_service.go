@@ -23,13 +23,15 @@ type RepoInfo struct {
 	ImageCount int    `json:"imageCount"`
 	OpenedAt   string `json:"openedAt"`
 
-	// IsOpen reports whether this repo currently has a live window showing
-	// it (used by ListRecentRepos so the recent-repos list can flag entries
-	// that are already open elsewhere).
+	// IsOpen reports whether this repo currently has a live native window.
+	// Server mode has no native windows, so this is always false there; browser
+	// tabs are not tracked.
 	IsOpen bool `json:"isOpen"`
 
 	// OpenedElsewhere is set on the return value of open/SwitchTo when the
-	// requested repo turned out to already be open in another window. That
+	// caller must not navigate into the repo. SwitchTo also sets this for a
+	// newly created window; it does not mean an existing window was focused. If the
+	// requested repo turned out to already be open in another window, that
 	// window was focused instead of reusing/creating one for the caller, so
 	// the calling window's frontend must NOT navigate itself into this
 	// repo. Only ID/Path are populated alongside it — the calling window
@@ -41,6 +43,8 @@ type RepoInfo struct {
 // ListRecentRepos returns the global recent-repos list, most recently
 // opened first. Entries that no longer exist on disk are silently dropped.
 func (s *RepoService) ListRecentRepos() ([]RepoInfo, error) {
+	// Headless server mode has no native window registry entries. IsOpen is
+	// deliberately false there; browser tabs are outside this contract.
 	cfg, err := repoconfig.Load()
 	if err != nil {
 		return nil, err
