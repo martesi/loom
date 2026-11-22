@@ -61,10 +61,13 @@ test('1k-photo Canvas latency and resource benchmark', async ({
   )
   const reloadState = await canvasState(page)
 
-  await page.keyboard.press('ControlOrMeta+0')
-  const fitStarted = performance.now()
   const viewport = page.locator('.react-flow__viewport')
+  await page.keyboard.press('ControlOrMeta+0')
+  await expect(viewport).toHaveAttribute('style', /scale\(1(?:\.0+)?\)/, {
+    timeout: 120_000,
+  })
   const beforeFit = await viewport.getAttribute('style')
+  const fitStarted = performance.now()
   await page.keyboard.press('Shift+1')
   await expect(viewport).not.toHaveAttribute('style', beforeFit ?? '', {
     timeout: 120_000,
@@ -174,6 +177,7 @@ async function measureInteractions(page: Page, selectionSize: number) {
   const viewport = page.locator('.react-flow__viewport')
   const beforePan = await viewport.getAttribute('style')
   await page.keyboard.down('Space')
+  await expect(pane).toHaveClass(/\bdraggable\b/, { timeout: 10_000 })
   await page.mouse.move(center.x, center.y)
   await page.mouse.down()
   const panPaint = nextInputPaint(page, 'pointermove')
