@@ -93,8 +93,20 @@ func TestSwitchToNewWindowRegistersOnlyWhenOpenRecentRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 	registered := false
+	window := &fakeFocusWindow{}
 	findCalls := 0
-	setRepoServiceAdapters(t, func(string) (focusableWindow, bool) { findCalls++; return nil, false }, func(string) { registered = true }, func(application.WebviewWindowOptions) {
+	setRepoServiceAdapters(t, func(candidate string) (focusableWindow, bool) {
+		findCalls++
+		if candidate == path && registered {
+			return window, true
+		}
+		return nil, false
+	}, func(candidate string) {
+		if candidate != path {
+			t.Fatalf("registered %q, want %q", candidate, path)
+		}
+		registered = true
+	}, func(application.WebviewWindowOptions) {
 		if registered {
 			t.Fatal("SwitchTo registered destination before new window OpenRecent")
 		}
@@ -110,8 +122,8 @@ func TestSwitchToNewWindowRegistersOnlyWhenOpenRecentRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Name != "destination" || got.OpenedElsewhere || !registered || findCalls != 2 {
-		t.Fatalf("OpenRecent() = %#v registered=%v find calls=%d", got, registered, findCalls)
+	if got.Name != "destination" || got.ImageCount != 0 || got.OpenedElsewhere || !registered || findCalls != 2 || window.calls != 0 {
+		t.Fatalf("OpenRecent() = %#v registered=%v find calls=%d self-focus calls=%d", got, registered, findCalls, window.calls)
 	}
 }
 

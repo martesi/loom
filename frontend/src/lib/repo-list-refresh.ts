@@ -5,16 +5,29 @@ export function createRepoListRefresh(
   update: (repos: RepoInfo[]) => void
 ) {
   let requestId = 0
-  return () => {
+  let open = false
+  const refresh = () => {
+    if (!open) return Promise.resolve()
     const request = ++requestId
     return fetchRepos().then((repos) => {
-      if (request === requestId) update(repos ?? [])
+      if (open && request === requestId) update(repos ?? [])
     })
   }
-}
 
-export function listenForWindowFocus(open: boolean, refresh: () => void) {
-  if (!open) return () => {}
-  window.addEventListener('focus', refresh)
-  return () => window.removeEventListener('focus', refresh)
+  const onFocus = () => void refresh()
+  return {
+    refresh,
+    setOpen(nextOpen: boolean) {
+      if (open === nextOpen) return
+      open = nextOpen
+      requestId++
+      if (open) window.addEventListener('focus', onFocus)
+      else window.removeEventListener('focus', onFocus)
+    },
+    dispose() {
+      open = false
+      requestId++
+      window.removeEventListener('focus', onFocus)
+    },
+  }
 }

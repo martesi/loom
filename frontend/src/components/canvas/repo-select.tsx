@@ -1,10 +1,10 @@
 import { t } from '@lingui/core/macro'
 import { Trans } from '@lingui/react/macro'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { RepoInfo } from '../../../bindings/loom/internal/service'
 import { RepoService } from '../../../bindings/loom/internal/service'
 import { useCapabilities } from '../../lib/capabilities-store'
-import { createRepoListRefresh, listenForWindowFocus } from '../../lib/repo-list-refresh'
+import { createRepoListRefresh } from '../../lib/repo-list-refresh'
 import {
   Select,
   SelectContent,
@@ -55,18 +55,29 @@ export function RepoSelect({ repo, openRequest = 0 }: RepoSelectProps) {
     [entries]
   )
 
-  const refreshRecent = createRepoListRefresh(RepoService.ListRecentRepos, setRecent)
+  const refreshController = useRef<ReturnType<
+    typeof createRepoListRefresh
+  > | null>(null)
+  if (refreshController.current === null) {
+    refreshController.current = createRepoListRefresh(
+      RepoService.ListRecentRepos,
+      setRecent
+    )
+  }
+  const refresh = refreshController.current
 
   useEffect(() => {
-    return listenForWindowFocus(open, refreshRecent)
-  }, [open])
+    refresh.setOpen(open)
+  }, [open, refresh])
+
+  useEffect(() => () => refresh.dispose(), [refresh])
 
   const handleOpenChange = (nextOpen: boolean) => {
     // Refresh on every open (not on every render) so "open elsewhere"
     // flags reflect windows opened/closed since the last look, without
     // hammering the backend while the panel just sits there.
-    if (!nextOpen) return
-    refreshRecent()
+    refresh.setOpen(nextOpen)
+    if (nextOpen) void refresh.refresh()
   }
 
   const handleValueChange = (value: unknown) => {
