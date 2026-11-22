@@ -38,6 +38,7 @@ test('relationships reject cycles, support ctrl-click selection, and delete as e
 
   const nodes = imageNodes(page)
   await nodes.nth(0).click()
+  await page.getByTestId('toggle-inspector-shelf').click()
   await expect(page.getByText(/Ctrl\/Cmd-drag this image/)).toBeVisible()
 
   const first = await nodeBox(nodes.nth(0))

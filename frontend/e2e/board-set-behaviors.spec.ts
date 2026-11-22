@@ -211,7 +211,7 @@ test('set shortcut and undo/redo work without stealing text-input undo', async (
   await paletteSearch.fill('Create set')
   await expect(
     page.getByRole('option', { name: /Select at least two ungrouped/ })
-  ).toHaveAttribute('aria-disabled', 'true')
+  ).toHaveCount(0)
   await page.keyboard.press('Escape')
 
   await dropAsset(page, 'shortcut-beta.png', { x: 360, y: 180 })

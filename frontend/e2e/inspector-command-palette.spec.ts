@@ -212,6 +212,7 @@ test.describe('Inspector commands from the Canvas command palette', () => {
     const inspector = page.locator('aside[aria-label="Inspector"]')
     const group = page.locator('.react-flow__node-group')
     await group.click()
+    await page.getByTestId('toggle-inspector-shelf').click()
     await expect(group).toHaveClass(/selected/)
     await expect(inspector.getByLabel('Set name')).toBeVisible()
 
@@ -279,6 +280,6 @@ test.describe('Inspector commands from the Canvas command palette', () => {
     const search = page.getByRole('combobox', { name: 'Search commands' })
     await search.fill('> Restore from trash')
     const restore = page.getByRole('option', { name: /Restore from trash/ })
-    await expect(restore).toHaveAttribute('aria-disabled', 'true')
+    await expect(restore).toHaveCount(0)
   })
 })

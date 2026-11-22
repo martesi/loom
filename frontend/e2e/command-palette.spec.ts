@@ -2,10 +2,11 @@ import { expect, test } from './test-fixtures'
 import { asset, openFixtureRepo, placeAssets } from './test-helpers'
 
 test.describe('Canvas command palette', () => {
-  test('searches labels, aliases, categories, and keeps unavailable actions explained', async ({
+  test('searches labels, aliases, and categories while hiding unavailable actions', async ({
     page,
   }) => {
     await openFixtureRepo(page, 'direct-fixtures', { drawers: 'closed' })
+    await placeAssets(page, ['direct-alpha.png'])
     await page.keyboard.press('ControlOrMeta+k')
 
     const dialog = page.getByRole('dialog', { name: 'Command palette' })
@@ -17,7 +18,7 @@ test.describe('Canvas command palette', () => {
     await expect(inputShell.locator('svg')).toBeVisible()
     await expect(search).toHaveClass(/text-sm/)
     expect((await search.boundingBox())?.height).toBe(44)
-    await search.fill('> zoom extents')
+    await search.fill('zoom extents')
     await expect(page.getByRole('option', { name: /Fit all/ })).toBeVisible()
     await expect(page.locator('[role=status]')).toContainText('results')
 
@@ -28,7 +29,7 @@ test.describe('Canvas command palette', () => {
     await search.fill('Fit selection')
     await expect(
       page.getByRole('option', { name: /Select a Canvas item/ })
-    ).toHaveAttribute('aria-disabled', 'true')
+    ).toHaveCount(0)
   })
 
   test('executes navigation actions and searches repository assets with @', async ({

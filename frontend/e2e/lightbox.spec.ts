@@ -26,6 +26,7 @@ test('lightbox chrome layout, info toggle, and history navigation', async ({
   // points (same preamble as board-behaviors: click + hint assertion).
   const nodes = imageNodes(page)
   await nodes.nth(0).click()
+  await page.getByTestId('toggle-inspector-shelf').click()
   await expect(page.getByText(/Ctrl\/Cmd-drag this image/)).toBeVisible()
 
   // Alpha -> beta relationship so the info panel has a "Derived from" jump.
