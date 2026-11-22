@@ -161,3 +161,40 @@ await writeFile(
 console.log(
   `Rendered all candidates at ${sizes.join(', ')} px and wrote ${outputDir}/legibility-sheet.png`
 )
+
+const macLayer = await readFile(
+  '../build/appicon.icon/Assets/loom-mark.svg',
+  'utf8'
+)
+const macLayerPngs: Record<number, Buffer> = {}
+for (const size of [16, 32, 1024]) {
+  const png = new Resvg(macLayer, { fitTo: { mode: 'width', value: size } })
+    .render()
+    .asPng()
+  macLayerPngs[size] = png
+  await writeFile(`${outputDir}/macos-layer-${size}.png`, png)
+}
+const macProof = [
+  '<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="250" viewBox="0 0 1000 250">',
+  '<rect width="100%" height="100%" fill="#e8edf3"/>',
+  '<text x="24" y="30" font-family="sans-serif" font-size="18" fill="#172033">Composed macOS layer · 1024 px raster, full-size placement</text>',
+  `<image href="data:image/png;base64,${macLayerPngs[1024].toString('base64')}" x="24" y="44" width="184" height="184"/>`,
+  '<text x="240" y="62" font-family="sans-serif" font-size="14" fill="#526070">Native 16 px</text>',
+  `<image href="data:image/png;base64,${macLayerPngs[16].toString('base64')}" x="240" y="74" width="64" height="64"/>`,
+  '<text x="330" y="62" font-family="sans-serif" font-size="14" fill="#526070">Native 32 px</text>',
+  `<image href="data:image/png;base64,${macLayerPngs[32].toString('base64')}" x="330" y="74" width="64" height="64"/>`,
+  '<text x="430" y="62" font-family="sans-serif" font-size="14" fill="#526070">16 px · 4× NN</text>',
+  `<image href="data:image/png;base64,${nearestNeighbor(macLayerPngs[16], 4).toString('base64')}" x="430" y="74" width="64" height="64"/>`,
+  '<text x="540" y="62" font-family="sans-serif" font-size="14" fill="#526070">32 px · 2× NN</text>',
+  `<image href="data:image/png;base64,${nearestNeighbor(macLayerPngs[32], 2).toString('base64')}" x="540" y="74" width="64" height="64"/>`,
+  '<text x="660" y="62" font-family="sans-serif" font-size="14" fill="#526070">Full-bleed edges</text>',
+  '<text x="660" y="86" font-family="sans-serif" font-size="12" fill="#526070">Artwork fills the box;</text>',
+  '<text x="660" y="104" font-family="sans-serif" font-size="12" fill="#526070">system mask supplies the</text>',
+  '<text x="660" y="122" font-family="sans-serif" font-size="12" fill="#526070">outer rounded silhouette.</text>',
+  '</svg>',
+]
+await writeFile(
+  `${outputDir}/macos-layer-check.png`,
+  new Resvg(macProof.join('')).render().asPng()
+)
+console.log(`Rendered macOS layer at 16, 32, 1024 px to ${outputDir}`)
