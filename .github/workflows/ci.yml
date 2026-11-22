@@ -76,5 +76,5 @@ jobs:
         if: failure()
         with:
           name: e2e-runs
-          path: frontend/.cache/e2e/runs/
+          path: .cache/e2e/runs/
           if-no-files-found: ignore

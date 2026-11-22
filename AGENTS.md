@@ -20,6 +20,6 @@ the shell:
   harness → `cd frontend && bun run test:harness` plus one focused spec.
 - Run focused specs from `frontend`: `bunx playwright test e2e/<spec>.spec.ts`.
   Set `E2E_WORKERS` to control parallel workers. Artifacts are in
-  `.cache/e2e/runs/<run-id>/`.
+  `.cache/e2e/runs/<run-id>/` relative to the repository root.
 - Full `bun run test:e2e` is not the default for scoped local changes; CI runs
   the full suite.
