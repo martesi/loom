@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -256,28 +257,161 @@ func waitForRenditionRefs(t *testing.T, key string, want int) {
 	t.Fatalf("rendition refs for %q did not reach %d", key, want)
 }
 
-func TestRenditionDeadlineCoversLockAndSlotWaits(t *testing.T) {
+func TestSuccessorWorkCancelSurvivesPreviousWorkCleanup(t *testing.T) {
+	key := fmt.Sprintf("successor-work-%d", time.Now().UnixNano())
+	first, ok := acquireRenditionLease(context.Background(), key)
+	if !ok {
+		t.Fatal("first lease unavailable")
+	}
+	_, cancelFirst := context.WithCancel(context.Background())
+	finishFirst := first.Transfer(cancelFirst)
+	nextLease := make(chan *renditionLease, 1)
+	go func() {
+		lease, _ := acquireRenditionLease(context.Background(), key)
+		nextLease <- lease
+	}()
+	waitForRenditionRefs(t, key, 2)
+	finishFirst()
+	second := <-nextLease
+	secondCtx, cancelSecond := context.WithCancel(context.Background())
+	finishSecond := second.Transfer(cancelSecond)
+	first.Release()
+	second.Release()
+	select {
+	case <-secondCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("successor work was not cancelled when its last waiter left")
+	}
+	finishSecond()
+}
+
+func TestRenditionRequestUsesOneDeadlineAcrossLockAndGenerationWait(t *testing.T) {
 	repoPath, id, _ := previewTestAsset(t)
 	key := fmt.Sprintf("%s\x00%d", repoPath, id)
 	unlock, ok := acquirePreviewLock(context.Background(), key)
 	if !ok {
 		t.Fatal("could not reserve test lock")
 	}
+	releasedLock := false
+	defer func() {
+		if !releasedLock {
+			unlock()
+		}
+	}()
 	previewSlots <- struct{}{}
 	previewSlots <- struct{}{}
 	defer func() { <-previewSlots; <-previewSlots }()
+	originalFactory := newRenditionRequestContext
+	originalWorkFactory := newRenditionWorkContext
+	originalNow := renditionNow
+	originalDeadline := stillRenditionDeadline
 	stillRenditionDeadline = 80 * time.Millisecond
-	defer func() { stillRenditionDeadline = 5 * time.Second }()
-	go func() { time.Sleep(40 * time.Millisecond); unlock() }()
-	started := time.Now()
+	fakeNow := time.Unix(1_000, 0)
+	renditionNow = func() time.Time { return fakeNow }
+	factoryCalls := 0
+	budgets := make(chan *manualDeadlineContext, 1)
+	workTimeouts := make(chan time.Duration, 1)
+	newRenditionRequestContext = func(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+		factoryCalls++
+		budget := newManualDeadlineContext(parent, fakeNow.Add(timeout))
+		budgets <- budget
+		return budget, budget.cancel
+	}
+	newRenditionWorkContext = func(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+		workTimeouts <- timeout
+		work := newManualDeadlineContext(parent, fakeNow.Add(timeout))
+		return work, work.cancel
+	}
+	defer func() {
+		newRenditionRequestContext = originalFactory
+		newRenditionWorkContext = originalWorkFactory
+		renditionNow = originalNow
+		stillRenditionDeadline = originalDeadline
+	}()
+	requestDone := make(chan *httptest.ResponseRecorder, 1)
 	rec := httptest.NewRecorder()
-	ServePreviewWithProcessor(rec, httptest.NewRequest("GET", previewTestURL(t, repoPath, id, 640), nil), &previewTestProcessor{})
+	go func() {
+		ServePreviewWithProcessor(rec, httptest.NewRequest("GET", previewTestURL(t, repoPath, id, 640), nil), &previewTestProcessor{})
+		requestDone <- rec
+	}()
+	budget := <-budgets
+	awaitSignal(t, budget.doneCalls) // Request is waiting on the per-key lock.
+	fakeNow = fakeNow.Add(40 * time.Millisecond)
+	unlock()
+	releasedLock = true
+	awaitSignal(t, budget.doneCalls) // Same context now governs waiting for shared generation.
+	if factoryCalls != 1 {
+		t.Fatalf("request deadline contexts created = %d", factoryCalls)
+	}
+	if workTimeout := <-workTimeouts; workTimeout != 40*time.Millisecond {
+		t.Fatalf("generation got %s after 40 ms lock wait; want remaining 40 ms", workTimeout)
+	}
+	budget.expire()
+	<-requestDone
 	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") != "1" {
 		t.Fatalf("status=%d retry=%q", rec.Code, rec.Header().Get("Retry-After"))
 	}
-	if elapsed := time.Since(started); elapsed < 70*time.Millisecond || elapsed >= 140*time.Millisecond {
-		t.Fatalf("shared deadline elapsed %s, want about 80ms", elapsed)
+	waitForNoRenditionLock(t, key)
+}
+
+type manualDeadlineContext struct {
+	parent    context.Context
+	deadline  time.Time
+	done      chan struct{}
+	doneCalls chan struct{}
+	once      sync.Once
+	mu        sync.Mutex
+	err       error
+}
+
+func newManualDeadlineContext(parent context.Context, deadline time.Time) *manualDeadlineContext {
+	return &manualDeadlineContext{parent: parent, deadline: deadline, done: make(chan struct{}), doneCalls: make(chan struct{}, 16)}
+}
+func (ctx *manualDeadlineContext) Deadline() (time.Time, bool) { return ctx.deadline, true }
+func (ctx *manualDeadlineContext) Done() <-chan struct{} {
+	select {
+	case ctx.doneCalls <- struct{}{}:
+	default:
 	}
+	return ctx.done
+}
+func (ctx *manualDeadlineContext) Err() error {
+	ctx.mu.Lock()
+	defer ctx.mu.Unlock()
+	if ctx.err != nil {
+		return ctx.err
+	}
+	return ctx.parent.Err()
+}
+func (ctx *manualDeadlineContext) Value(key any) any { return ctx.parent.Value(key) }
+func (ctx *manualDeadlineContext) expire()           { ctx.end(context.DeadlineExceeded) }
+func (ctx *manualDeadlineContext) cancel()           { ctx.end(context.Canceled) }
+func (ctx *manualDeadlineContext) end(err error) {
+	ctx.once.Do(func() { ctx.mu.Lock(); ctx.err = err; close(ctx.done); ctx.mu.Unlock() })
+}
+
+func awaitSignal(t *testing.T, signal <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for admission stage")
+	}
+}
+
+func waitForNoRenditionLock(t *testing.T, key string) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		previewLocks.Lock()
+		entry := previewLocks.byKey[key]
+		previewLocks.Unlock()
+		if entry == nil {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("rendition lock %q was not released", key)
 }
 
 func TestRenditionWaitQueueIsBounded(t *testing.T) {
@@ -337,6 +471,26 @@ func TestGlobalAdmissionBoundsDistinctImageWaiters(t *testing.T) {
 	}
 	for range keys {
 		<-renditionAdmissions
+	}
+}
+
+func TestCancelledRequestAtGlobalAdmissionDoesNotWriteResponse(t *testing.T) {
+	repoPath, id, _ := previewTestAsset(t)
+	url := previewTestURL(t, repoPath, id, 640)
+	for range cap(renditionAdmissions) {
+		renditionAdmissions <- struct{}{}
+	}
+	defer func() {
+		for range cap(renditionAdmissions) {
+			<-renditionAdmissions
+		}
+	}()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	rec := httptest.NewRecorder()
+	ServePreviewWithProcessor(rec, httptest.NewRequest("GET", url, nil).WithContext(ctx), &previewTestProcessor{})
+	if rec.Body.Len() != 0 || rec.Code != http.StatusOK || rec.Header().Get("Retry-After") != "" {
+		t.Fatalf("cancelled admission response: status=%d body=%q retry=%q", rec.Code, rec.Body.String(), rec.Header().Get("Retry-After"))
 	}
 }
 

@@ -27,6 +27,9 @@ const (
 
 var stillRenditionDeadline = 5 * time.Second
 var videoRenditionDeadline = 30 * time.Second
+var newRenditionRequestContext = context.WithTimeout
+var newRenditionWorkContext = context.WithTimeout
+var renditionNow = time.Now
 var previewSlots = make(chan struct{}, 2)
 var renditionAdmissions = make(chan struct{}, 8)
 var previewLocks = struct {
@@ -36,10 +39,12 @@ var previewLocks = struct {
 var previewCacheFiles sync.RWMutex
 
 type previewLockEntry struct {
-	lock       chan struct{}
-	refs       int
-	workCancel context.CancelFunc
+	lock chan struct{}
+	refs int
+	work *renditionWork
 }
+
+type renditionWork struct{ cancel context.CancelFunc }
 
 type renditionLease struct {
 	key       string
@@ -136,9 +141,12 @@ func serveRendition(w http.ResponseWriter, r *http.Request, processor media.Proc
 	if store.IsVideoFile(mustImagePath(repo, id)) {
 		deadline = videoRenditionDeadline
 	} // 30 s is conservative pending measurement.
-	ctx, cancel := context.WithTimeout(r.Context(), deadline)
+	ctx, cancel := newRenditionRequestContext(r.Context(), deadline)
 	defer cancel()
 	if !acquireRenditionAdmission() {
+		if r.Context().Err() != nil {
+			return
+		}
 		w.Header().Set("Retry-After", "1")
 		http.Error(w, "rendition service busy", http.StatusServiceUnavailable)
 		return
@@ -204,29 +212,44 @@ func serveRendition(w http.ResponseWriter, r *http.Request, processor media.Proc
 			return
 		}
 
-		workCtx, workCancel := context.WithTimeout(context.Background(), deadline)
-		finishWork := lease.Transfer(workCancel)
-		type generationResult struct {
-			status int
-			err    error
+		workDeadline := deadline
+		if requestDeadline, ok := ctx.Deadline(); ok {
+			remaining := requestDeadline.Sub(renditionNow())
+			if remaining <= 0 {
+				if r.Context().Err() != nil {
+					return
+				}
+				w.Header().Set("Retry-After", "1")
+				http.Error(w, "rendition request timed out", http.StatusServiceUnavailable)
+				return
+			}
+			if remaining < workDeadline {
+				workDeadline = remaining
+			}
 		}
+		workCtx, workCancel := newRenditionWorkContext(context.Background(), workDeadline)
+		finishWork := lease.Transfer(workCancel)
 		generated := make(chan generationResult, 1)
 		go func() {
-			status, generateErr := generateRendition(workCtx, repo.Path, id, tier, video, source, cacheDir, processor)
+			file, status, generateErr := generateRendition(workCtx, repo.Path, id, tier, video, source, cacheDir, processor)
 			workCancel()
 			finishWork()
-			generated <- generationResult{status: status, err: generateErr}
+			generated <- generationResult{file: file, status: status, err: generateErr}
 		}()
+		var resultFile *os.File
 		select {
 		case <-r.Context().Done():
+			go closeGeneratedFile(generated)
 			return
 		case <-ctx.Done():
 			if r.Context().Err() == nil {
 				w.Header().Set("Retry-After", "1")
 				http.Error(w, "rendition request timed out", http.StatusServiceUnavailable)
 			}
+			go closeGeneratedFile(generated)
 			return
 		case result := <-generated:
+			resultFile = result.file
 			if result.status != 0 {
 				if result.status == http.StatusServiceUnavailable {
 					w.Header().Set("Retry-After", "1")
@@ -243,7 +266,12 @@ func serveRendition(w http.ResponseWriter, r *http.Request, processor media.Proc
 				return
 			}
 		}
-		if err := servePreviewFile(w, r, cachePath); err != nil {
+		if resultFile == nil { // Cache hit paths return before generation; this is defensive.
+			http.Error(w, "preview cache unavailable", http.StatusInternalServerError)
+			return
+		}
+		defer resultFile.Close()
+		if err := serveOpenedPreviewFile(w, r, resultFile); err != nil {
 			http.Error(w, "preview cache unavailable", http.StatusInternalServerError)
 		}
 		return
@@ -259,55 +287,72 @@ func acquireRenditionAdmission() bool {
 	}
 }
 
-func generateRendition(ctx context.Context, repoPath string, id int64, tier int, video bool, source previewSource, cacheDir string, processor media.Processor) (int, error) {
+func closeGeneratedFile(result <-chan generationResult) {
+	generated := <-result
+	if generated.file != nil {
+		_ = generated.file.Close()
+	}
+}
+
+type generationResult struct {
+	file   *os.File
+	status int
+	err    error
+}
+
+func generateRendition(ctx context.Context, repoPath string, id int64, tier int, video bool, source previewSource, cacheDir string, processor media.Processor) (*os.File, int, error) {
 	slotRelease, status := acquirePreviewSlot(ctx)
 	if status != 0 {
-		return http.StatusServiceUnavailable, nil
+		return nil, http.StatusServiceUnavailable, nil
 	}
 	defer slotRelease()
 	tmp, err := os.CreateTemp(cacheDir, ".preview-*.webp")
 	if err != nil {
-		return http.StatusInternalServerError, err
+		return nil, http.StatusInternalServerError, err
 	}
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
 	if err := tmp.Close(); err != nil {
-		return http.StatusInternalServerError, err
+		return nil, http.StatusInternalServerError, err
 	}
 	if err := processor.Preview(ctx, source.path, tmpPath, tier, video); err != nil {
 		if ctx.Err() != nil {
-			return http.StatusServiceUnavailable, nil
+			return nil, http.StatusServiceUnavailable, nil
 		}
-		return http.StatusInternalServerError, err
+		return nil, http.StatusInternalServerError, err
 	}
 	if ctx.Err() != nil {
-		return http.StatusServiceUnavailable, nil
+		return nil, http.StatusServiceUnavailable, nil
 	}
 	info, err := os.Stat(tmpPath)
 	if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
-		return http.StatusInternalServerError, fmt.Errorf("encoder produced no rendition")
+		return nil, http.StatusInternalServerError, fmt.Errorf("encoder produced no rendition")
 	}
 	repo, err := store.Bootstrap(repoPath)
 	if err != nil {
-		return http.StatusInternalServerError, err
+		return nil, http.StatusInternalServerError, err
 	}
 	_, current, sourceErr := getPreviewSource(repo, id)
 	_ = repo.Close()
 	if sourceErr != nil {
-		return http.StatusNotFound, sourceErr
+		return nil, http.StatusNotFound, sourceErr
 	}
 	if !samePreviewSource(source, current) {
-		return http.StatusConflict, nil
+		return nil, http.StatusConflict, nil
 	}
 	cachePath := renditionCachePath(cacheDir, id, tier, source)
 	if err := os.Rename(tmpPath, cachePath); err != nil {
-		return http.StatusInternalServerError, err
+		return nil, http.StatusInternalServerError, err
 	}
 	previewCacheFiles.Lock()
 	prunePreviewRevisions(cacheDir, id, previewRevision(source.path, source.size, source.modTime))
 	prunePreviewCache(cacheDir, time.Now())
 	previewCacheFiles.Unlock()
-	return 0, nil
+	file, err := os.Open(cachePath)
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+	return file, 0, nil
 }
 
 func mustImagePath(repo *store.Repo, id int64) string { path, _ := repo.GetFilePath(id); return path }
@@ -390,10 +435,23 @@ func serveCachedPreview(w http.ResponseWriter, r *http.Request, path string) (bo
 	return true, err
 }
 
-func servePreviewFile(w http.ResponseWriter, r *http.Request, path string) error {
-	previewCacheFiles.RLock()
-	defer previewCacheFiles.RUnlock()
-	return servePreviewFileLocked(w, r, path)
+func serveOpenedPreviewFile(w http.ResponseWriter, r *http.Request, file *os.File) error {
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Size() == 0 {
+		return fmt.Errorf("rendition is not a nonempty file")
+	}
+	w.Header().Set("Content-Type", "image/webp")
+	w.Header().Set("Cache-Control", "no-store")
+	request := r.Clone(r.Context())
+	request.Header = r.Header.Clone()
+	request.Header.Del("If-Modified-Since")
+	request.Header.Del("If-None-Match")
+	request.Header.Del("If-Range")
+	http.ServeContent(w, request, info.Name(), info.ModTime(), file)
+	return nil
 }
 
 func servePreviewFileLocked(w http.ResponseWriter, r *http.Request, path string) error {
@@ -587,14 +645,17 @@ func (lease *renditionLease) Release() {
 }
 
 func (lease *renditionLease) Transfer(cancel context.CancelFunc) func() {
+	work := &renditionWork{cancel: cancel}
 	previewLocks.Lock()
-	lease.entry.workCancel = cancel
+	lease.entry.work = work
 	lease.ownsToken = false
 	previewLocks.Unlock()
 	return func() {
-		<-lease.entry.lock
 		previewLocks.Lock()
-		lease.entry.workCancel = nil
+		if lease.entry.work == work {
+			lease.entry.work = nil
+		}
+		<-lease.entry.lock
 		if lease.entry.refs == 0 {
 			delete(previewLocks.byKey, lease.key)
 		}
@@ -605,10 +666,10 @@ func (lease *renditionLease) Transfer(cancel context.CancelFunc) func() {
 func releasePreviewLockRef(key string, entry *previewLockEntry) {
 	previewLocks.Lock()
 	entry.refs--
-	if entry.refs == 0 && entry.workCancel != nil {
-		entry.workCancel()
+	if entry.refs == 0 && entry.work != nil {
+		entry.work.cancel()
 	}
-	if entry.refs == 0 && len(entry.lock) == 0 && entry.workCancel == nil {
+	if entry.refs == 0 && len(entry.lock) == 0 && entry.work == nil {
 		delete(previewLocks.byKey, key)
 	}
 	previewLocks.Unlock()

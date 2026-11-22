@@ -131,6 +131,9 @@ func TestInvalidateWaitsForInFlightRendition(t *testing.T) {
 	if err := <-invalidateDone; err != nil {
 		t.Fatal(err)
 	}
+	if rec.Code != 200 || rec.Body.String() != "encoded after invalidate began" {
+		t.Fatalf("original response after invalidation: status=%d body=%q", rec.Code, rec.Body.String())
+	}
 	entries, err := os.ReadDir(filepath.Join(repoPath, ".loom", "thumbs"))
 	if err != nil {
 		t.Fatal(err)
