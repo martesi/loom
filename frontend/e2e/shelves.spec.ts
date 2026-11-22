@@ -32,8 +32,16 @@ test.describe('floating Canvas drawers', () => {
         .locator('[role="option"]')
         .filter({ hasText: 'root-alpha.png' })
     ).toHaveCount(1)
-    const closedCount = thumbnailRequests.length
-    expect(closedCount).toBe(0)
+    await expect(closedDrawer).toHaveAttribute('data-visible', 'false')
+    await closedDrawer.evaluate(
+      () =>
+        new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    )
+    // Observe a bounded 250 ms window after the hidden panel has settled.
+    for (let sample = 0; sample < 5; sample++) {
+      await page.waitForTimeout(50)
+      expect(thumbnailRequests.length).toBe(0)
+    }
 
     await page.getByTestId('toggle-assets-shelf').click()
     await expect(page.locator('aside[aria-label="Assets"]')).toHaveAttribute(
@@ -52,14 +60,6 @@ test.describe('floating Canvas drawers', () => {
         thumbnailRequests.push(request.url())
     })
 
-    await page.addInitScript(() => {
-      const style = document.createElement('style')
-      style.textContent = `
-        /* Simulate a long scroll so the target is beyond Chrome's prefetch range. */
-        aside[aria-label="Assets"] [role="grid"] [role="row"]:first-child { margin-bottom: 100000px !important; }
-      `
-      document.documentElement.append(style)
-    })
     const fixtureRepo = 'rescan-fixtures'
     await openFixtureRepo(page, fixtureRepo, { drawers: 'closed' })
     const drawer = page.locator('aside[aria-label="Assets"]')
@@ -86,32 +86,38 @@ test.describe('floating Canvas drawers', () => {
     await expect(page.getByText('1 asset', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Gallery view' }).click()
     const gallery = page.getByRole('grid', { name: 'Asset gallery' })
+    await page.getByLabel('Sort assets').selectOption('name-asc')
     await page.getByRole('textbox', { name: 'Search assets' }).fill('')
     await expect(gallery.getByRole('gridcell')).toHaveCount(80)
-
-    const imageCandidates = await gallery.locator('img').evaluateAll((images) =>
-      images.map((image, index) => ({
-        index,
-        url: image.getAttribute('src') ?? '',
-        top: image.getBoundingClientRect().top,
-      }))
-    )
-    const requestedPaths = new Set(
-      thumbnailRequests.map((url) => new URL(url).pathname)
-    )
-    const viewportHeight = await page.evaluate(() => window.innerHeight)
-    const baseUrl = page.url()
-    const distant = [...imageCandidates]
-      .reverse()
-      .find(
-        (candidate) =>
-          candidate.top > viewportHeight * 3 &&
-          !requestedPaths.has(new URL(candidate.url, baseUrl).pathname)
+    await expect
+      .poll(() =>
+        gallery.evaluate((element) => {
+          const bounds = element.getBoundingClientRect()
+          return [...element.querySelectorAll('img')]
+            .filter((image) => {
+              const rect = image.getBoundingClientRect()
+              return rect.bottom > bounds.top && rect.top < bounds.bottom
+            })
+            .every((image) => image.complete)
+        })
       )
-    if (!distant) throw new Error('No unrequested distant gallery row found')
-    const distantImage = gallery.locator('img').nth(distant.index)
-    const distantUrl = distant.url
+      .toBe(true)
+
+    const distantImage = gallery
+      .getByRole('button', { name: 'rescan-added-040.png' })
+      .locator('img')
+    const distantUrl = await distantImage.getAttribute('src')
+    if (!distantUrl) throw new Error('Distant fixture thumbnail has no URL')
+    const baseUrl = page.url()
     const targetPath = new URL(distantUrl, baseUrl).pathname
+    const distance = await distantImage.evaluate((image) => {
+      const galleryElement = image.closest('[role="grid"]')
+      if (!galleryElement) throw new Error('Thumbnail is outside the gallery')
+      const galleryBounds = galleryElement.getBoundingClientRect()
+      return image.getBoundingClientRect().top - galleryBounds.bottom
+    })
+    const viewportHeight = await page.evaluate(() => window.innerHeight)
+    expect(distance).toBeGreaterThan(viewportHeight * 2)
     const targetWasRequested = () =>
       thumbnailRequests.some(
         (requestUrl) => new URL(requestUrl).pathname === targetPath
@@ -125,6 +131,28 @@ test.describe('floating Canvas drawers', () => {
       image.scrollIntoView({ block: 'center', behavior: 'instant' })
     )
     await expect.poll(targetWasRequested).toBe(true)
+
+    const rows = gallery.getByRole('row')
+    const rowCount = await rows.count()
+    const lastRow = rows.last()
+    // Keep the final row far outside the scrollport to make Chromium skip it
+    // under content-visibility:auto before the keyboard focuses into it.
+    await lastRow.evaluate((row) => {
+      row.style.marginTop = '10000px'
+    })
+    await gallery.evaluate((element) => {
+      element.scrollTop = 0
+    })
+    await expect(lastRow).toHaveCSS('content-visibility', 'auto')
+    await expect(lastRow).not.toBeInViewport()
+    await rows.first().getByRole('button').first().focus()
+    for (let row = 1; row < rowCount; row++) {
+      await page.keyboard.press('ArrowDown')
+    }
+    const focusedCard = lastRow.locator('[data-gallery-card]:focus')
+    await expect(focusedCard).toHaveCount(1)
+    await expect(focusedCard).toBeInViewport()
+    await expect(lastRow).toBeInViewport()
   })
 
   test('keeps drawer content through close animation, reopens rapidly, and hides immediately for reduced motion', async ({
@@ -138,9 +166,43 @@ test.describe('floating Canvas drawers', () => {
     await page.getByTestId('collapse-shelf-left').click()
     await expect(drawer).toHaveAttribute('inert', '')
     await expect(content).toHaveCSS('content-visibility', 'visible')
+
+    const closeTransition = drawer.evaluate(
+      (element) =>
+        new Promise<void>((resolve) => {
+          const complete = () => {
+            element.removeEventListener('transitionend', onTransitionEnd)
+            window.clearTimeout(fallback)
+            resolve()
+          }
+          const onTransitionEnd = (event: Event) => {
+            const transition = event as TransitionEvent
+            if (
+              event.target === element &&
+              (transition.propertyName === 'opacity' ||
+                transition.propertyName === 'transform')
+            ) {
+              complete()
+            }
+          }
+          const fallback = window.setTimeout(complete, 300)
+          element.addEventListener('transitionend', onTransitionEnd)
+        })
+    )
+    await closeTransition
+    await expect(content).toHaveCSS('content-visibility', 'hidden')
+
     await page.getByTestId('toggle-assets-shelf').click()
     await expect(drawer).toHaveAttribute('data-visible', 'true')
     await expect(content).toHaveCSS('content-visibility', 'visible')
+    await page.getByTestId('collapse-shelf-left').click()
+    await expect(drawer).toHaveAttribute('inert', '')
+    await page.getByTestId('toggle-assets-shelf').click()
+    await expect(drawer).toHaveAttribute('data-visible', 'true')
+    await expect(content).toHaveCSS('content-visibility', 'visible')
+    // Wait beyond the original close timer; it must not hide a rapid reopen.
+    await page.waitForTimeout(300)
+    await expect(content).not.toHaveCSS('content-visibility', 'hidden')
 
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await page.getByTestId('collapse-shelf-left').click()
