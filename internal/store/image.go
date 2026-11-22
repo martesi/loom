@@ -91,7 +91,11 @@ func (r *Repo) ScanAndRegisterImages() (int, error) {
 		if err != nil {
 			return inserted, err
 		}
-		res, err := r.DB.Exec(`INSERT OR IGNORE INTO images (file_path, file_size) VALUES (?, ?)`, p, info.Size())
+		// content_hash remains nullable and is used here as a cheap source-stat
+		// marker; the request path never hashes file contents. This detects mtime
+		// changes without adding a schema column.
+		statMarker := fmt.Sprintf("stat:%d:%d", info.Size(), info.ModTime().UnixNano())
+		res, err := r.DB.Exec(`INSERT OR IGNORE INTO images (file_path, file_size, content_hash) VALUES (?, ?, ?)`, p, info.Size(), statMarker)
 		if err != nil {
 			return inserted, err
 		}
@@ -101,7 +105,7 @@ func (r *Repo) ScanAndRegisterImages() (int, error) {
 		}
 		inserted += int(n)
 		if n == 0 {
-			res, err = r.DB.Exec(`UPDATE images SET file_size = ?, width = NULL, height = NULL WHERE file_path = ? AND COALESCE(file_size, 0) != ?`, info.Size(), p, info.Size())
+			res, err = r.DB.Exec(`UPDATE images SET file_size = ?, width = NULL, height = NULL, content_hash = ? WHERE file_path = ? AND COALESCE(content_hash, '') != ?`, info.Size(), statMarker, p, statMarker)
 			if err != nil {
 				return inserted, err
 			}

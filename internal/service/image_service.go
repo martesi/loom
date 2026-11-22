@@ -122,7 +122,8 @@ func (s *ImageService) RescanRepository(repoPath string) (int, error) {
 		if statErr != nil || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
 			continue
 		}
-		if _, err := repo.DB.Exec(`UPDATE images SET width = ?, height = ? WHERE id = ? AND file_path = ? AND file_size = ?`, dimensions.Width, dimensions.Height, image.ID, image.FilePath, after.Size()); err != nil {
+		marker := fmt.Sprintf("stat:%d:%d", after.Size(), after.ModTime().UnixNano())
+		if _, err := repo.DB.Exec(`UPDATE images SET width = ?, height = ? WHERE id = ? AND file_path = ? AND file_size = ? AND content_hash = ?`, dimensions.Width, dimensions.Height, image.ID, image.FilePath, after.Size(), marker); err != nil {
 			return changed, err
 		}
 	}

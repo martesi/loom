@@ -60,7 +60,7 @@ func (FFmpegProcessor) Thumbnail(srcPath, destPath string, isVideo bool) (Dimens
 }
 
 func (FFmpegProcessor) Preview(ctx context.Context, srcPath, destPath string, maxWidth int, isVideo bool) error {
-	if maxWidth != 640 && maxWidth != 1280 && maxWidth != 2048 {
+	if maxWidth != 320 && maxWidth != 640 && maxWidth != 1280 && maxWidth != 2048 {
 		return fmt.Errorf("unsupported preview width %d", maxWidth)
 	}
 	args := []string{"-y"}

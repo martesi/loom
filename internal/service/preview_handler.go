@@ -143,7 +143,7 @@ func serveRendition(w http.ResponseWriter, r *http.Request, processor media.Proc
 
 	cacheDir := filepath.Join(repo.Path, ".loom", "thumbs")
 	for attempt := 0; attempt < 2; attempt++ {
-		_, source, err := getPreviewSource(repo, id)
+		image, source, err := getPreviewSource(repo, id)
 		if err != nil {
 			writePreviewSourceError(w, r, err)
 			return
@@ -157,6 +157,22 @@ func serveRendition(w http.ResponseWriter, r *http.Request, processor media.Proc
 		if video && tier != 320 {
 			http.Error(w, "video previews are limited to 320", http.StatusBadRequest)
 			return
+		}
+		if image.Width == 0 || image.Height == 0 {
+			slotRelease, status := acquirePreviewSlot(ctx)
+			if status != 0 {
+				w.Header().Set("Retry-After", "1")
+				http.Error(w, "rendition generation busy", http.StatusServiceUnavailable)
+				return
+			}
+			dimensions, probeErr := media.ProbeDimensions(source.path)
+			slotRelease()
+			if probeErr == nil {
+				if after, statErr := os.Stat(source.path); statErr == nil && after.Size() == source.size && after.ModTime().Equal(source.modTime) {
+					marker := fmt.Sprintf("stat:%d:%d", source.size, source.modTime.UnixNano())
+					_, _ = repo.DB.Exec(`UPDATE images SET width = ?, height = ? WHERE id = ? AND file_path = ? AND file_size = ? AND content_hash = ?`, dimensions.Width, dimensions.Height, id, source.path, source.size, marker)
+				}
+			}
 		}
 		if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 			http.Error(w, "preview cache unavailable", http.StatusInternalServerError)

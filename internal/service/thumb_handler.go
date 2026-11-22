@@ -63,6 +63,10 @@ func IsFullRequest(path string) bool {
 // URL by thumbURL — this keeps thumbnail bytes off the Wails IPC channel,
 // letting the webview cache them like any other image request.
 func ServeThumb(w http.ResponseWriter, r *http.Request) {
+	ServeThumbWithProcessor(w, r, media.FFmpegProcessor{})
+}
+
+func ServeThumbWithProcessor(w http.ResponseWriter, r *http.Request, processor media.Processor) {
 	rest := strings.TrimPrefix(r.URL.Path, thumbURLPrefix)
 	parts := strings.SplitN(rest, "/", 2)
 	if len(parts) != 2 {
@@ -81,7 +85,7 @@ func ServeThumb(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	serveRendition(w, r, media.FFmpegProcessor{}, 320, string(repoPathBytes), imageID)
+	serveRendition(w, r, processor, 320, string(repoPathBytes), imageID)
 }
 
 // ServeFull serves an image's actual full-resolution file off disk, keyed

@@ -34,7 +34,7 @@ func (p *recordingMediaProcessor) Transcode(_, _ string, _ media.TranscodeOption
 	return nil
 }
 
-func TestImageServiceUsesMediaProcessorForThumbnails(t *testing.T) {
+func TestLoadCanvasDoesNotEncodeThumbnails(t *testing.T) {
 	repoPath := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoPath, "asset.png"), []byte("fixture"), 0o644); err != nil {
 		t.Fatal(err)
@@ -45,14 +45,14 @@ func TestImageServiceUsesMediaProcessorForThumbnails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if processor.thumbnailCalls != 1 {
-		t.Fatalf("thumbnail calls = %d, want 1", processor.thumbnailCalls)
+	if processor.thumbnailCalls != 0 {
+		t.Fatalf("thumbnail calls = %d, want 0", processor.thumbnailCalls)
 	}
 	if len(canvas.Images) != 1 {
 		t.Fatalf("images = %d, want 1", len(canvas.Images))
 	}
-	if canvas.Images[0].Width != 12 || canvas.Images[0].Height != 34 {
-		t.Fatalf("dimensions = %dx%d, want 12x34", canvas.Images[0].Width, canvas.Images[0].Height)
+	if canvas.Images[0].Width != 0 || canvas.Images[0].Height != 0 {
+		t.Fatalf("dimensions before lazy probe = %dx%d, want 0x0", canvas.Images[0].Width, canvas.Images[0].Height)
 	}
 }
 
@@ -228,7 +228,7 @@ func TestReplaceMediaPreservesIdentityAndUndoRedo(t *testing.T) {
 	if _, err := os.Stat(stashDir); err != nil {
 		t.Fatalf("replacement stash missing before purge: %v", err)
 	}
-	previewDir := filepath.Join(repoPath, ".loom", "previews")
+	previewDir := filepath.Join(repoPath, ".loom", "thumbs")
 	if err := os.MkdirAll(previewDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

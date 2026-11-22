@@ -42,6 +42,20 @@ func previewTestAsset(t *testing.T) (string, int64, string) {
 	return previewTestAssetWithExtension(t, ".png")
 }
 
+func previewTestURL(t *testing.T, repoPath string, id int64, tier int) string {
+	t.Helper()
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := repo.GetFilePath(id)
+	_ = repo.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fmt.Sprintf("%s&w=%d", previewURL(repoPath, id, path), tier)
+}
+
 func previewTestAssetWithExtension(t *testing.T, extension string) (string, int64, string) {
 	t.Helper()
 	repoPath := t.TempDir()
@@ -95,9 +109,8 @@ func TestServePreviewValidationAndMissingAssets(t *testing.T) {
 	if err := os.Remove(asset); err != nil {
 		t.Fatal(err)
 	}
-	encoded := base64.RawURLEncoding.EncodeToString([]byte(repoPath))
 	missingRec := httptest.NewRecorder()
-	ServePreviewWithProcessor(missingRec, httptest.NewRequest("GET", fmt.Sprintf("%s%s/%d?w=640", previewURLPrefix, encoded, id), nil), processor)
+	ServePreviewWithProcessor(missingRec, httptest.NewRequest("GET", previewTestURL(t, repoPath, id, 640), nil), processor)
 	if missingRec.Code != 404 {
 		t.Fatalf("missing source status = %d, want 404", missingRec.Code)
 	}
@@ -113,7 +126,7 @@ func TestServePreviewValidationAndMissingAssets(t *testing.T) {
 	}
 	_ = repo.Close()
 	rec := httptest.NewRecorder()
-	ServePreviewWithProcessor(rec, httptest.NewRequest("GET", fmt.Sprintf("%s%s/%d?w=640", previewURLPrefix, encoded, id), nil), processor)
+	ServePreviewWithProcessor(rec, httptest.NewRequest("GET", previewTestURL(t, repoPath, id, 640), nil), processor)
 	if rec.Code != 404 {
 		t.Fatalf("trashed asset status = %d, want 404", rec.Code)
 	}
@@ -140,11 +153,10 @@ func TestPreviewURLChangesWithSourceRevision(t *testing.T) {
 
 func TestServePreviewRequiresGetOrHeadAndExistingRepo(t *testing.T) {
 	repoPath, id, _ := previewTestAsset(t)
-	encoded := base64.RawURLEncoding.EncodeToString([]byte(repoPath))
 	processor := &previewTestProcessor{}
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(method, fmt.Sprintf("%s%s/%d?w=640", previewURLPrefix, encoded, id), nil)
+		req := httptest.NewRequest(method, previewTestURL(t, repoPath, id, 640), nil)
 		ServePreviewWithProcessor(rec, req, processor)
 		if rec.Code != http.StatusMethodNotAllowed || rec.Header().Get("Allow") != "GET, HEAD" {
 			t.Errorf("method %s: status=%d Allow=%q", method, rec.Code, rec.Header().Get("Allow"))
@@ -168,6 +180,7 @@ func TestServePreviewRequiresGetOrHeadAndExistingRepo(t *testing.T) {
 
 func TestServePreviewReturnsUnavailableWhenEncodeSlotsStayBusy(t *testing.T) {
 	repoPath, id, _ := previewTestAsset(t)
+	url := previewTestURL(t, repoPath, id, 640)
 	previewSlotWait = 10 * time.Millisecond
 	defer func() { previewSlotWait = 15 * time.Second }()
 	previewSlots <- struct{}{}
@@ -176,7 +189,6 @@ func TestServePreviewReturnsUnavailableWhenEncodeSlotsStayBusy(t *testing.T) {
 		<-previewSlots
 		<-previewSlots
 	}()
-	url := fmt.Sprintf("%s%s/%d?w=640", previewURLPrefix, base64.RawURLEncoding.EncodeToString([]byte(repoPath)), id)
 	rec := httptest.NewRecorder()
 	ServePreviewWithProcessor(rec, httptest.NewRequest("GET", url, nil), &previewTestProcessor{})
 	if rec.Code != http.StatusServiceUnavailable {
@@ -187,8 +199,7 @@ func TestServePreviewReturnsUnavailableWhenEncodeSlotsStayBusy(t *testing.T) {
 func TestServePreviewCacheNoUpscaleAndRevision(t *testing.T) {
 	repoPath, id, asset := previewTestAsset(t)
 	processor := &previewTestProcessor{}
-	encoded := base64.RawURLEncoding.EncodeToString([]byte(repoPath))
-	url := fmt.Sprintf("%s%s/%d?w=640", previewURLPrefix, encoded, id)
+	url := previewTestURL(t, repoPath, id, 640)
 	for i := 0; i < 2; i++ {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest("GET", url, nil)
@@ -228,10 +239,10 @@ func TestServePreviewCacheNoUpscaleAndRevision(t *testing.T) {
 	changedRequest.Header.Set("If-Modified-Since", time.Now().Add(24*time.Hour).Format(http.TimeFormat))
 	changedRequest.Header.Set("If-None-Match", "*")
 	ServePreviewWithProcessor(rec, changedRequest, processor)
-	if rec.Code != 200 || processor.calls != 2 {
-		t.Fatalf("after source revision: status=%d calls=%d", rec.Code, processor.calls)
+	if rec.Code != http.StatusConflict || processor.calls != 1 {
+		t.Fatalf("stale revision: status=%d calls=%d", rec.Code, processor.calls)
 	}
-	files, err := filepath.Glob(filepath.Join(repoPath, ".loom", "previews", fmt.Sprintf("%d-640-*.webp", id)))
+	files, err := filepath.Glob(filepath.Join(repoPath, ".loom", "thumbs", fmt.Sprintf("%d-640-*.webp", id)))
 	if err != nil || len(files) != 1 {
 		t.Fatalf("cached revision files = %v, err=%v", files, err)
 	}
@@ -247,7 +258,7 @@ func TestServePreviewCacheNoUpscaleAndRevision(t *testing.T) {
 	_ = repo.Close()
 	before := processor.calls
 	rec = httptest.NewRecorder()
-	smallURL := fmt.Sprintf("%s%s/%d?w=1280", previewURLPrefix, encoded, id)
+	smallURL := previewTestURL(t, repoPath, id, 1280)
 	ServePreviewWithProcessor(rec, httptest.NewRequest("GET", smallURL, nil), processor)
 	if rec.Code != http.StatusOK || processor.calls != before+1 || rec.Header().Get("Cache-Control") != "no-store" || rec.Body.String() != "webp fixture" {
 		t.Fatalf("no-upscale response status=%d calls=%d headers=%v", rec.Code, processor.calls, rec.Header())
@@ -275,7 +286,7 @@ func TestServePreviewRegeneratesEmptyCacheAndGeneratesUnsafeStillFormats(t *test
 			if err != nil {
 				t.Fatal(err)
 			}
-			dir := filepath.Join(repoPath, ".loom", "previews")
+			dir := filepath.Join(repoPath, ".loom", "thumbs")
 			cache := previewCachePath(dir, id, 640, previewSource{path: asset, size: info.Size(), modTime: info.ModTime()})
 			if err := os.MkdirAll(dir, 0o755); err != nil {
 				t.Fatal(err)
@@ -284,7 +295,7 @@ func TestServePreviewRegeneratesEmptyCacheAndGeneratesUnsafeStillFormats(t *test
 				t.Fatal(err)
 			}
 			processor := &previewTestProcessor{}
-			url := fmt.Sprintf("%s%s/%d?w=640", previewURLPrefix, base64.RawURLEncoding.EncodeToString([]byte(repoPath)), id)
+			url := previewTestURL(t, repoPath, id, 640)
 			rec := httptest.NewRecorder()
 			ServePreviewWithProcessor(rec, httptest.NewRequest("GET", url, nil), processor)
 			if rec.Code != 200 || processor.calls != 1 || rec.Header().Get("Cache-Control") != "no-store" {
@@ -296,7 +307,8 @@ func TestServePreviewRegeneratesEmptyCacheAndGeneratesUnsafeStillFormats(t *test
 
 func TestPurgeRemovesEveryPreviewTierAndSubsequentRequest404s(t *testing.T) {
 	repoPath, id, _ := previewTestAsset(t)
-	cacheDir := filepath.Join(repoPath, ".loom", "previews")
+	url := previewTestURL(t, repoPath, id, 640)
+	cacheDir := filepath.Join(repoPath, ".loom", "thumbs")
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +325,6 @@ func TestPurgeRemovesEveryPreviewTierAndSubsequentRequest404s(t *testing.T) {
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("preview cache after purge = %v, err=%v", entries, err)
 	}
-	url := fmt.Sprintf("%s%s/%d?w=640", previewURLPrefix, base64.RawURLEncoding.EncodeToString([]byte(repoPath)), id)
 	rec := httptest.NewRecorder()
 	processor := &previewTestProcessor{}
 	ServePreviewWithProcessor(rec, httptest.NewRequest("GET", url, nil), processor)
@@ -328,12 +339,12 @@ func TestServePreviewDoesNotServeCacheDirectories(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir := filepath.Join(repoPath, ".loom", "previews")
+	dir := filepath.Join(repoPath, ".loom", "thumbs")
 	cache := previewCachePath(dir, id, 640, previewSource{path: asset, size: info.Size(), modTime: info.ModTime()})
 	if err := os.MkdirAll(cache, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	url := fmt.Sprintf("%s%s/%d?w=640", previewURLPrefix, base64.RawURLEncoding.EncodeToString([]byte(repoPath)), id)
+	url := previewTestURL(t, repoPath, id, 640)
 	rec := httptest.NewRecorder()
 	processor := &previewTestProcessor{}
 	ServePreviewWithProcessor(rec, httptest.NewRequest("GET", url, nil), processor)
@@ -342,7 +353,7 @@ func TestServePreviewDoesNotServeCacheDirectories(t *testing.T) {
 	}
 }
 
-func TestServePreviewRetriesWhenSourceChangesDuringEncode(t *testing.T) {
+func TestServePreviewRejectsSourceChangesDuringEncode(t *testing.T) {
 	repoPath, id, _ := previewTestAsset(t)
 	processor := &previewTestProcessor{
 		onPreview: func(srcPath, destination string, call int) error {
@@ -354,17 +365,17 @@ func TestServePreviewRetriesWhenSourceChangesDuringEncode(t *testing.T) {
 			return os.WriteFile(destination, []byte(fmt.Sprintf("encoded-%d", call)), 0o600)
 		},
 	}
-	url := fmt.Sprintf("%s%s/%d?w=640", previewURLPrefix, base64.RawURLEncoding.EncodeToString([]byte(repoPath)), id)
+	url := previewTestURL(t, repoPath, id, 640)
 	rec := httptest.NewRecorder()
 	ServePreviewWithProcessor(rec, httptest.NewRequest("GET", url, nil), processor)
-	if rec.Code != http.StatusOK || processor.calls != 2 || rec.Body.String() != "encoded-2" {
+	if rec.Code != http.StatusConflict || processor.calls != 1 {
 		t.Fatalf("response status=%d calls=%d body=%q", rec.Code, processor.calls, rec.Body.String())
 	}
-	entries, err := os.ReadDir(filepath.Join(repoPath, ".loom", "previews"))
+	entries, err := os.ReadDir(filepath.Join(repoPath, ".loom", "thumbs"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 || !strings.HasSuffix(entries[0].Name(), ".webp") {
+	if len(entries) != 0 {
 		t.Fatalf("cache entries after retry = %v", entries)
 	}
 }
@@ -372,17 +383,33 @@ func TestServePreviewRetriesWhenSourceChangesDuringEncode(t *testing.T) {
 func TestServePreviewGenerationFailureLeavesNoPartialFile(t *testing.T) {
 	repoPath, id, _ := previewTestAsset(t)
 	processor := &previewTestProcessor{err: fmt.Errorf("fixture failure")}
-	encoded := base64.RawURLEncoding.EncodeToString([]byte(repoPath))
 	rec := httptest.NewRecorder()
-	ServePreviewWithProcessor(rec, httptest.NewRequest("GET", fmt.Sprintf("%s%s/%d?w=640", previewURLPrefix, encoded, id), nil), processor)
+	ServePreviewWithProcessor(rec, httptest.NewRequest("GET", previewTestURL(t, repoPath, id, 640), nil), processor)
 	if rec.Code != 500 || rec.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("status = %d cache-control=%q, want 500/no-store", rec.Code, rec.Header().Get("Cache-Control"))
 	}
-	entries, err := os.ReadDir(filepath.Join(repoPath, ".loom", "previews"))
+	entries, err := os.ReadDir(filepath.Join(repoPath, ".loom", "thumbs"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(entries) != 0 {
 		t.Fatalf("partial cache files remain: %v", entries)
+	}
+}
+
+func TestVideoRenditionsAreLimitedTo320(t *testing.T) {
+	repoPath, id, asset := previewTestAssetWithExtension(t, ".mp4")
+	processor := &previewTestProcessor{}
+	url := previewTestURL(t, repoPath, id, 640)
+	rec := httptest.NewRecorder()
+	ServePreviewWithProcessor(rec, httptest.NewRequest("GET", url, nil), processor)
+	if rec.Code != http.StatusBadRequest || processor.calls != 0 {
+		t.Fatalf("large video rendition status=%d calls=%d", rec.Code, processor.calls)
+	}
+	thumb := thumbURL(repoPath, id, asset)
+	rec = httptest.NewRecorder()
+	ServeThumbWithProcessor(rec, httptest.NewRequest("GET", thumb, nil), processor)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("video thumbnail status=%d", rec.Code)
 	}
 }

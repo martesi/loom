@@ -86,9 +86,6 @@ func TestImageServiceEndToEnd(t *testing.T) {
 		if img.ThumbURL == "" {
 			t.Errorf("image %q has no thumb URL", img.FileName)
 		}
-		if img.Width == 0 || img.Height == 0 {
-			t.Errorf("image %q missing dimensions", img.FileName)
-		}
 	}
 
 	// Thumbnails must actually be servable over HTTP the way <img src> will
@@ -101,6 +98,13 @@ func TestImageServiceEndToEnd(t *testing.T) {
 	}
 	if rec.Body.Len() == 0 {
 		t.Fatalf("ServeThumb %s: empty body", loaded.Images[0].ThumbURL)
+	}
+	probed, err := s.GetImage(repoPath, loaded.Images[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if probed.Width == 0 || probed.Height == 0 {
+		t.Fatalf("lazy dimension probe = %dx%d", probed.Width, probed.Height)
 	}
 
 	// Full-res serving must work the same way, for the lightbox.
