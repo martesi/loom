@@ -28,7 +28,8 @@ test('1k-photo Canvas latency and resource benchmark', async ({
   await assets(page).first().click()
   await page.keyboard.press('Control+a')
   await dropAssetRow(page, assets(page).first(), { x: 200, y: 160 })
-  await expect(imageNodes(page)).toHaveCount(10)
+  await expectTotalNodes(page, 10)
+  await expect(imageNodes(page).first()).toBeVisible()
   await page.keyboard.press('Shift+1')
   const baselineInteractions = await measureInteractions(page, 10)
 
@@ -43,20 +44,22 @@ test('1k-photo Canvas latency and resource benchmark', async ({
 
   const placementStarted = performance.now()
   await dropAssetRow(page, assets(page).first(), { x: 200, y: 160 })
-  await expect(imageNodes(page)).toHaveCount(photoCount, { timeout: 120_000 })
+  await waitForModelAndMountedNodes(page, photoCount)
   const placementMs = performance.now() - placementStarted
   console.log(
-    `Placed and rendered ${photoCount} photos in ${placementMs.toFixed(1)} ms`
+    `Model ready plus visible nodes mounted for ${photoCount} photos in ${placementMs.toFixed(1)} ms`
   )
+  const placementState = await canvasState(page)
 
   await page.addInitScript(() => performance.setResourceTimingBufferSize(5000))
   const reloadStarted = performance.now()
   await page.reload()
-  await expect(imageNodes(page)).toHaveCount(photoCount, { timeout: 120_000 })
+  await waitForModelAndMountedNodes(page, photoCount)
   const reloadRenderMs = performance.now() - reloadStarted
   console.log(
-    `Reloaded and rendered ${photoCount} photos in ${reloadRenderMs.toFixed(1)} ms`
+    `Reload model ready plus visible nodes mounted for ${photoCount} photos in ${reloadRenderMs.toFixed(1)} ms`
   )
+  const reloadState = await canvasState(page)
 
   await page.keyboard.press('ControlOrMeta+0')
   const fitStarted = performance.now()
@@ -68,6 +71,8 @@ test('1k-photo Canvas latency and resource benchmark', async ({
       )
   )
   const fitMs = performance.now() - fitStarted
+  await waitForModelAndMountedNodes(page, photoCount)
+  const fitState = await canvasState(page)
 
   const interactions1000 = await measureInteractions(page, photoCount)
   const baseline = baselineInteractions.inputToPaintMs
@@ -123,9 +128,15 @@ test('1k-photo Canvas latency and resource benchmark', async ({
 
   const result = {
     photoCount,
+    nodeCounts: {
+      placement: placementState,
+      reload: reloadState,
+      fit: fitState,
+    },
     latencyMs: {
-      placeAndRender: Math.round(placementMs * 10) / 10,
-      reloadAndRender: Math.round(reloadRenderMs * 10) / 10,
+      placeModelReadyAndVisibleNodesMounted: Math.round(placementMs * 10) / 10,
+      reloadModelReadyAndVisibleNodesMounted:
+        Math.round(reloadRenderMs * 10) / 10,
       fit: Math.round(fitMs * 10) / 10,
     },
     interactions,
@@ -187,12 +198,14 @@ async function measureInteractions(page: Page, selectionSize: number) {
 
   await node.click()
   await page.keyboard.press('Control+a')
-  await expect(page.locator('.react-flow__node.selected')).toHaveCount(
-    selectionSize
+  await expect(page.locator('[data-testid="canvas-dock"]')).toHaveAttribute(
+    'data-selection-count',
+    String(selectionSize)
   )
+  const selectedNode = await visibleNode(page)
   const allSelectedDragInputToPaint = await dragNodeAndMeasure(
     page,
-    node,
+    selectedNode,
     40,
     30
   )
@@ -212,16 +225,53 @@ async function visibleNode(page: Page) {
   const indexes = await imageNodes(page).evaluateAll((nodes) =>
     nodes.flatMap((node, index) => {
       const rect = node.getBoundingClientRect()
+      const x = rect.left + rect.width / 2
+      const y = rect.top + rect.height / 2
+      const hit = document.elementFromPoint(x, y)
       return rect.right > 0 &&
         rect.bottom > 0 &&
         rect.left < innerWidth &&
-        rect.top < innerHeight
+        rect.top < innerHeight &&
+        hit !== null &&
+        (hit === node || node.contains(hit))
         ? [index]
         : []
     })
   )
   if (indexes.length === 0) throw new Error('No visible Canvas node')
   return imageNodes(page).nth(indexes[Math.floor(indexes.length / 2)])
+}
+
+async function expectTotalNodes(page: Page, count: number) {
+  await expect(page.locator('.react-flow')).toHaveAttribute(
+    'data-total-image-nodes',
+    String(count)
+  )
+}
+
+async function waitForModelAndMountedNodes(page: Page, count: number) {
+  await expectTotalNodes(page, count)
+  await expect(imageNodes(page).first()).toBeVisible({ timeout: 120_000 })
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+      )
+  )
+}
+
+async function canvasState(page: Page) {
+  return page.evaluate(() => ({
+    totalNodes: Number(
+      document
+        .querySelector('.react-flow')
+        ?.getAttribute('data-total-image-nodes')
+    ),
+    mountedNodes: document.querySelectorAll('.react-flow__node-image').length,
+    viewport:
+      document.querySelector('.react-flow__viewport')?.getAttribute('style') ??
+      '',
+  }))
 }
 
 async function dragNodeAndMeasure(
