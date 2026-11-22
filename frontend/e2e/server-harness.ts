@@ -93,6 +93,7 @@ function solidPng(width: number, height: number, gray = 128): Buffer {
   ])
 }
 const lightboxPng = solidPng(1600, 1200)
+const previewPng = solidPng(2400, 1200, 96)
 
 const benchmarkRepos =
   process.env.LOOM_BENCHMARK === '1'
@@ -263,6 +264,7 @@ const fixtureRepos = [
   { name: 'deck-theme-fixtures', files: ['theme-alpha.png'] },
   // Dedicated fixtures for Shelves
   { name: 'shelves-fixtures', files: ['shelf-alpha.png', 'shelf-beta.png'] },
+  { name: 'preview-fixtures', files: ['preview-alpha.png'] },
   {
     name: 'shelves-inspector-fixtures',
     files: ['shelf-alpha.png', 'shelf-beta.png'],
@@ -288,7 +290,9 @@ async function seedFixtureRepos(browseRoot: string) {
             filePath,
             fileName.startsWith('lightbox-') || fileName.includes('/lightbox-')
               ? lightboxPng
-              : fixturePng
+              : name === 'preview-fixtures'
+                ? previewPng
+                : fixturePng
           )
         })
       )
