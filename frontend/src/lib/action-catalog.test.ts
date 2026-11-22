@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'bun:test'
 import {
   actionEligibility,
+  availablePaletteActions,
   type CanvasAction,
   fuzzyMatch,
   normalizeShortcut,
+  resolveRecentActions,
   searchActions,
   shortcutMatches,
 } from './action-catalog'
@@ -94,5 +96,40 @@ describe('action catalog helpers', () => {
     expect(actionEligibility(false).disabledReason).toBe(
       'Unavailable right now'
     )
+  })
+
+  it('filters unavailable palette actions, including recent items', () => {
+    const actions: CanvasAction[] = [
+      {
+        id: 'enabled',
+        label: 'Enabled',
+        description: '',
+        category: 'Canvas',
+        aliases: [],
+        context: 'Canvas',
+        enabled: true,
+        execute: () => {},
+      },
+      {
+        id: 'disabled',
+        label: 'Disabled',
+        description: '',
+        category: 'Canvas',
+        aliases: [],
+        context: 'Canvas',
+        enabled: false,
+        execute: () => {},
+      },
+    ]
+
+    expect(availablePaletteActions(actions).map(({ id }) => id)).toEqual([
+      'enabled',
+    ])
+    expect(
+      resolveRecentActions(actions, ['disabled', 'enabled']).map(({ id }) => id)
+    ).toEqual(['enabled'])
+    expect(
+      availablePaletteActions(actions.filter(({ enabled }) => !enabled))
+    ).toEqual([])
   })
 })

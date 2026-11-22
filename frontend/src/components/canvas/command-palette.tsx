@@ -3,8 +3,10 @@ import { t } from '@lingui/core/macro'
 import { Command, Search } from 'lucide-react'
 import { useEffect, useId, useRef, useState } from 'react'
 import {
+  availablePaletteActions,
   type CanvasAction,
   fuzzyMatch,
+  resolveRecentActions,
   searchActions,
 } from '../../lib/action-catalog'
 import { Input } from '../ui/input'
@@ -54,23 +56,21 @@ export function CommandPalette({
   const trimmed = query.trim()
   const assetMode = trimmed.startsWith('@')
   const search = trimmed.replace(/^[>@]\s*/, '')
+  const availableActions = availablePaletteActions(actions)
   const searchedCommands = searchActions(
-    shortcutsOnly ? actions.filter((action) => action.shortcut) : actions,
+    shortcutsOnly
+      ? availableActions.filter((action) => action.shortcut)
+      : availableActions,
     search
   )
   const recentCommands =
     !shortcutsOnly && !search
-      ? recentActionIds.flatMap((id) => {
-          const action = actions.find((candidate) => candidate.id === id)
-          return action
-            ? [
-                {
-                  action,
-                  match: { score: Number.MAX_SAFE_INTEGER, positions: [] },
-                },
-              ]
-            : []
-        })
+      ? resolveRecentActions(actions, recentActionIds).map(
+          (action) => ({
+            action,
+            match: { score: Number.MAX_SAFE_INTEGER, positions: [] },
+          })
+        )
       : []
   const recentIds = new Set(recentCommands.map(({ action }) => action.id))
   const commandResults = [
