@@ -1,3 +1,6 @@
+import { mkdir, writeFile } from 'node:fs/promises'
+import path from 'node:path'
+import { inflateSync } from 'node:zlib'
 import { expect, test } from './test-fixtures'
 import {
   asset,
@@ -8,6 +11,62 @@ import {
 } from './test-helpers'
 
 test.describe('floating Canvas drawers', () => {
+  test('clips overflowing content at both bottom corners of Assets and Inspector', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
+    expect(await page.evaluate(() => window.devicePixelRatio)).toBe(1)
+    await openFixtureRepo(page, 'shelves-fixtures')
+    const artifacts = path.resolve(
+      import.meta.dirname,
+      '../../.cache/e2e/artifacts'
+    )
+    await mkdir(artifacts, { recursive: true })
+    for (const name of ['Assets', 'Inspector']) {
+      const shelf = page.locator(`aside[aria-label="${name}"]`)
+      await expect(shelf).toHaveAttribute('data-visible', 'true')
+      const content = shelf.locator(':scope > div').nth(1)
+      await content.evaluate((element) => {
+        element.style.background = 'rgb(255, 0, 255)'
+        const overflow = document.createElement('div')
+        overflow.style.cssText =
+          'height:1400px;min-height:1400px;background:rgb(255,0,255);flex:none'
+        element.append(overflow)
+      })
+      const screenshot = await shelf.screenshot({
+        animations: 'disabled',
+        scale: 'css',
+      })
+      const imagePath = path.join(
+        artifacts,
+        `${name.toLowerCase()}-bottom-corners.png`
+      )
+      await writeFile(imagePath, screenshot)
+      const pixels = decodePng(screenshot)
+      const magenta = (x: number, y: number) => {
+        const i = (y * pixels.width + x) * 4
+        return (
+          pixels.rgba[i] === 255 &&
+          pixels.rgba[i + 1] === 0 &&
+          pixels.rgba[i + 2] === 255
+        )
+      }
+      expect(
+        magenta(Math.floor(pixels.width / 2), pixels.height - 2),
+        `${name} overflow must reach the bottom edge`
+      ).toBe(true)
+      expect(
+        magenta(2, pixels.height - 2),
+        `${name} bottom-left corner must be clipped; see ${imagePath}`
+      ).toBe(false)
+      expect(
+        magenta(pixels.width - 3, pixels.height - 2),
+        `${name} bottom-right corner must be clipped; see ${imagePath}`
+      ).toBe(false)
+    }
+  })
+
   test('icon-only floating controls show framework tooltips with separate shortcut keys', async ({
     page,
   }) => {
@@ -265,3 +324,64 @@ test.describe('floating Canvas drawers', () => {
       .toBe('Assets')
   })
 })
+
+function decodePng(buffer: Buffer) {
+  let width = 0
+  let height = 0
+  let colorType = 0
+  const compressed: Buffer[] = []
+  for (let offset = 8; offset < buffer.length; ) {
+    const length = buffer.readUInt32BE(offset)
+    const type = buffer.toString('ascii', offset + 4, offset + 8)
+    const data = buffer.subarray(offset + 8, offset + 8 + length)
+    if (type === 'IHDR') {
+      width = data.readUInt32BE(0)
+      height = data.readUInt32BE(4)
+      colorType = data[9]
+    } else if (type === 'IDAT') compressed.push(data)
+    offset += length + 12
+  }
+  const channels = colorType === 6 ? 4 : colorType === 2 ? 3 : 0
+  if (!channels)
+    throw new Error(`Unsupported screenshot PNG color type ${colorType}`)
+  const stride = width * channels
+  const raw = inflateSync(Buffer.concat(compressed))
+  const decoded = Buffer.alloc(height * stride)
+  const paeth = (a: number, b: number, c: number) => {
+    const p = a + b - c
+    const pa = Math.abs(p - a),
+      pb = Math.abs(p - b),
+      pc = Math.abs(p - c)
+    return pa <= pb && pa <= pc ? a : pb <= pc ? b : c
+  }
+  for (let y = 0; y < height; y++) {
+    const filter = raw[y * (stride + 1)]
+    for (let x = 0; x < stride; x++) {
+      const value = raw[y * (stride + 1) + x + 1]
+      const left = x >= channels ? decoded[y * stride + x - channels] : 0
+      const above = y ? decoded[(y - 1) * stride + x] : 0
+      const upperLeft =
+        y && x >= channels ? decoded[(y - 1) * stride + x - channels] : 0
+      decoded[y * stride + x] =
+        (value +
+          (filter === 1
+            ? left
+            : filter === 2
+              ? above
+              : filter === 3
+                ? Math.floor((left + above) / 2)
+                : filter === 4
+                  ? paeth(left, above, upperLeft)
+                  : 0)) &
+        255
+    }
+  }
+  const rgba = Buffer.alloc(width * height * 4)
+  for (let i = 0; i < width * height; i++) {
+    rgba[i * 4] = decoded[i * channels]
+    rgba[i * 4 + 1] = decoded[i * channels + 1]
+    rgba[i * 4 + 2] = decoded[i * channels + 2]
+    rgba[i * 4 + 3] = channels === 4 ? decoded[i * channels + 3] : 255
+  }
+  return { width, height, rgba }
+}
