@@ -21,8 +21,12 @@ export function createRepoListRefresh(
       if (open === nextOpen) return
       open = nextOpen
       requestId++
-      if (open) window.addEventListener('focus', onFocus)
-      else window.removeEventListener('focus', onFocus)
+      if (open) {
+        window.addEventListener('focus', onFocus)
+        void refresh()
+      } else {
+        window.removeEventListener('focus', onFocus)
+      }
     },
     dispose() {
       open = false
