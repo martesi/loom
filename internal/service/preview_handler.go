@@ -254,7 +254,7 @@ func serveRendition(w http.ResponseWriter, r *http.Request, processor media.Proc
 			return
 		}
 		previewCacheFiles.Lock()
-		prunePreviewRevisions(cacheDir, id, tier, cachePath)
+		prunePreviewRevisions(cacheDir, id, previewRevision(source.path, source.size, source.modTime))
 		prunePreviewCache(cacheDir, time.Now())
 		previewCacheFiles.Unlock()
 		if err := servePreviewFile(w, r, cachePath); err != nil {
@@ -406,10 +406,10 @@ func lockAndRemovePreviewCacheForImage(repoPath string, imageID int64) (func(), 
 	}, nil
 }
 
-func prunePreviewRevisions(dir string, id int64, tier int, current string) {
-	matches, _ := filepath.Glob(filepath.Join(dir, fmt.Sprintf("%d-%d-*.webp", id, tier)))
+func prunePreviewRevisions(dir string, id int64, revision string) {
+	matches, _ := filepath.Glob(filepath.Join(dir, fmt.Sprintf("%d-*-*.webp", id)))
 	for _, old := range matches {
-		if old != current {
+		if !strings.HasSuffix(old, "-"+revision+".webp") {
 			_ = os.Remove(old)
 		}
 	}
