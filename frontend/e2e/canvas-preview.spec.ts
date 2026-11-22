@@ -91,6 +91,18 @@ test.describe('Canvas progressive previews', () => {
       await expect(pending).toBeVisible()
       await expect(pending).toHaveCSS('opacity', '0')
       await expect(thumb).toBeVisible()
+      const effectiveOpacity = await thumb.evaluate((image) => {
+        let opacity = 1
+        for (
+          let element: HTMLElement | null = image as HTMLElement;
+          element;
+          element = element.parentElement
+        ) {
+          opacity *= Number.parseFloat(getComputedStyle(element).opacity)
+        }
+        return opacity
+      })
+      expect(effectiveOpacity).toBeGreaterThan(0)
       releaseBody()
       const loaded = node.getByTestId('image-node-preview-loaded')
       await expect(loaded).toBeVisible()
