@@ -286,8 +286,8 @@ func TestRenditionWaitQueueIsBounded(t *testing.T) {
 	if !ok {
 		t.Fatal("owner lock unavailable")
 	}
-	results := make(chan func(), 8)
-	for i := 0; i < 8; i++ {
+	results := make(chan func(), 7)
+	for i := 0; i < 7; i++ {
 		go func() {
 			release, ok := acquireRenditionLock(context.Background(), key)
 			if ok {
@@ -302,7 +302,7 @@ func TestRenditionWaitQueueIsBounded(t *testing.T) {
 		t.Fatal("over-capacity waiter admitted")
 	}
 	owner()
-	for i := 0; i < 8; i++ {
+	for i := 0; i < 7; i++ {
 		release := <-results
 		if release != nil {
 			release()

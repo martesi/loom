@@ -34,12 +34,102 @@ func SourceDimensionsContext(ctx context.Context, path string) (Dimensions, erro
 		if err != nil {
 			return Dimensions{}, err
 		}
+		if strings.EqualFold(filepath.Ext(path), ".jpg") || strings.EqualFold(filepath.Ext(path), ".jpeg") {
+			orientation, _ := jpegEXIFOrientation(path)
+			if orientation >= 5 && orientation <= 8 {
+				config.Width, config.Height = config.Height, config.Width
+			}
+		}
 		return Dimensions{Width: config.Width, Height: config.Height}, nil
 	case ".webp":
 		return webpDimensions(path)
 	default:
 		return probeDimensionsContext(ctx, path)
 	}
+}
+
+func jpegEXIFOrientation(path string) (int, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+	var signature [2]byte
+	if _, err := io.ReadFull(file, signature[:]); err != nil || signature != [2]byte{0xff, 0xd8} {
+		return 0, fmt.Errorf("invalid JPEG signature")
+	}
+	for {
+		var markerPrefix byte
+		for markerPrefix != 0xff {
+			if err := binary.Read(file, binary.BigEndian, &markerPrefix); err != nil {
+				return 0, err
+			}
+		}
+		var marker byte
+		for {
+			if err := binary.Read(file, binary.BigEndian, &marker); err != nil {
+				return 0, err
+			}
+			if marker != 0xff {
+				break
+			}
+		}
+		if marker == 0xda || marker == 0xd9 {
+			return 1, nil
+		}
+		var length uint16
+		if err := binary.Read(file, binary.BigEndian, &length); err != nil {
+			return 0, err
+		}
+		if length < 2 {
+			return 0, fmt.Errorf("invalid JPEG segment size")
+		}
+		segment := make([]byte, int(length)-2)
+		if _, err := io.ReadFull(file, segment); err != nil {
+			return 0, err
+		}
+		if marker == 0xe1 && len(segment) >= 6 && string(segment[:6]) == "Exif\x00\x00" {
+			return parseTIFFOrientation(segment[6:])
+		}
+	}
+}
+
+func parseTIFFOrientation(data []byte) (int, error) {
+	if len(data) < 8 {
+		return 0, fmt.Errorf("short EXIF TIFF header")
+	}
+	var order binary.ByteOrder
+	switch string(data[:2]) {
+	case "II":
+		order = binary.LittleEndian
+	case "MM":
+		order = binary.BigEndian
+	default:
+		return 0, fmt.Errorf("invalid EXIF byte order")
+	}
+	if order.Uint16(data[2:4]) != 42 {
+		return 0, fmt.Errorf("invalid EXIF TIFF marker")
+	}
+	offset := uint64(order.Uint32(data[4:8]))
+	if offset+2 > uint64(len(data)) {
+		return 0, fmt.Errorf("invalid EXIF IFD offset")
+	}
+	count := uint64(order.Uint16(data[offset:]))
+	entries := offset + 2
+	if entries+count*12 > uint64(len(data)) {
+		return 0, fmt.Errorf("truncated EXIF IFD")
+	}
+	for i := uint64(0); i < count; i++ {
+		entry := data[entries+i*12 : entries+(i+1)*12]
+		if order.Uint16(entry[:2]) == 0x0112 && order.Uint16(entry[2:4]) == 3 && order.Uint32(entry[4:8]) == 1 {
+			orientation := int(order.Uint16(entry[8:10]))
+			if orientation >= 1 && orientation <= 8 {
+				return orientation, nil
+			}
+			return 0, fmt.Errorf("invalid EXIF orientation")
+		}
+	}
+	return 1, nil
 }
 
 func webpDimensions(path string) (Dimensions, error) {
