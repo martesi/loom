@@ -323,6 +323,7 @@ test.describe('Physical Card & Set Stack Metaphors, Studio Palette', () => {
     const source = imageNodes(page).nth(0)
     const derived = imageNodes(page).nth(1)
     await source.click()
+    await page.getByTestId('toggle-inspector-shelf').click()
     await expect(page.getByText(/Ctrl\/Cmd-drag this image/)).toBeVisible()
     const sourceBox = await nodeBox(source)
     const derivedBox = await nodeBox(derived)
