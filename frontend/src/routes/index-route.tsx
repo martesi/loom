@@ -5,6 +5,7 @@ import { RepoService } from '../../bindings/loom/internal/service'
 import { RepoPickerModal } from '../components/repo-picker-modal'
 import { useCapabilities } from '../lib/capabilities-store'
 import { setCurrentRepo } from '../lib/repo-store'
+import { enterRepo as applyEnterRepo } from '../lib/enter-repo'
 import { Landing } from './landing'
 import { rootRoute } from './root'
 
@@ -44,9 +45,7 @@ function IndexPage() {
     // OpenedElsewhere means the repo was already open in another window,
     // which was focused instead — this window must not navigate itself
     // into a repo it isn't actually showing.
-    if (repo.openedElsewhere) return
-    setCurrentRepo(repo)
-    navigate({ to: '/canvas' })
+    applyEnterRepo(repo, setCurrentRepo, () => navigate({ to: '/canvas' }))
   }
 
   // Server mode has no native folder dialog (Dialog.OpenFile isn't

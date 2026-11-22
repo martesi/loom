@@ -2,3 +2,6 @@
 # clonefile/hardlink is unreliable in this sandboxed dev environment
 # (spurious EPERM on the underlying fs) — plain file copies always work.
 backend = "copyfile"
+
+[test]
+preload = ["./src/test-setup.ts"]

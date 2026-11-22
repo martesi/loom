@@ -1,9 +1,10 @@
 import { t } from '@lingui/core/macro'
 import { Trans } from '@lingui/react/macro'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { RepoInfo } from '../../../bindings/loom/internal/service'
 import { RepoService } from '../../../bindings/loom/internal/service'
 import { useCapabilities } from '../../lib/capabilities-store'
+import { useRepoListRefresh } from '../../lib/use-repo-list-refresh'
 import {
   Select,
   SelectContent,
@@ -28,14 +29,14 @@ interface RepoSelectProps {
 // trigger correctly showing this window's own repo regardless of what was
 // clicked.
 export function RepoSelect({ repo, openRequest = 0 }: RepoSelectProps) {
-  const [open, setOpen] = useState(false)
   const [recent, setRecent] = useState<RepoInfo[]>([])
   const toast = useToast()
   const capabilities = useCapabilities()
-
-  useEffect(() => {
-    if (openRequest > 0) setOpen(true)
-  }, [openRequest])
+  const { open, setOpen } = useRepoListRefresh(
+    openRequest,
+    RepoService.ListRecentRepos,
+    setRecent
+  )
 
   // Merge the live "current repo" (always present, always up to date) with
   // whatever the last ListRecentRepos fetch returned, so the trigger can
@@ -58,8 +59,7 @@ export function RepoSelect({ repo, openRequest = 0 }: RepoSelectProps) {
     // Refresh on every open (not on every render) so "open elsewhere"
     // flags reflect windows opened/closed since the last look, without
     // hammering the backend while the panel just sits there.
-    if (!nextOpen) return
-    RepoService.ListRecentRepos().then((list) => setRecent(list ?? []))
+    setOpen(nextOpen)
   }
 
   const handleValueChange = (value: unknown) => {

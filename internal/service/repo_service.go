@@ -23,13 +23,15 @@ type RepoInfo struct {
 	ImageCount int    `json:"imageCount"`
 	OpenedAt   string `json:"openedAt"`
 
-	// IsOpen reports whether this repo currently has a live window showing
-	// it (used by ListRecentRepos so the recent-repos list can flag entries
-	// that are already open elsewhere).
+	// IsOpen reports whether this repo currently has a live native window.
+	// Server mode has no native windows, so this is always false there; browser
+	// tabs are not tracked.
 	IsOpen bool `json:"isOpen"`
 
 	// OpenedElsewhere is set on the return value of open/SwitchTo when the
-	// requested repo turned out to already be open in another window. That
+	// caller must not navigate into the repo. SwitchTo also sets this for a
+	// newly created window; it does not mean an existing window was focused. If the
+	// requested repo turned out to already be open in another window, that
 	// window was focused instead of reusing/creating one for the caller, so
 	// the calling window's frontend must NOT navigate itself into this
 	// repo. Only ID/Path are populated alongside it — the calling window
@@ -41,6 +43,8 @@ type RepoInfo struct {
 // ListRecentRepos returns the global recent-repos list, most recently
 // opened first. Entries that no longer exist on disk are silently dropped.
 func (s *RepoService) ListRecentRepos() ([]RepoInfo, error) {
+	// Headless server mode has no native window registry entries. IsOpen is
+	// deliberately false there; browser tabs are outside this contract.
 	cfg, err := repoconfig.Load()
 	if err != nil {
 		return nil, err
@@ -128,7 +132,7 @@ func (s *RepoService) open(path string) (*RepoInfo, error) {
 		return nil, err
 	}
 
-	registerRepoWindow(path, application.Get().Window.Current())
+	registerCurrentRepoWindow(path)
 	return info, nil
 }
 
@@ -149,7 +153,6 @@ func (s *RepoService) SwitchTo(path string) (*RepoInfo, error) {
 	if _, err := bootstrapAndTouch(path); err != nil {
 		return nil, err
 	}
-
 	// Deliberately NOT calling registerRepoWindow here. WindowManager.NewWithOptions
 	// inserts the new window into the app's window map synchronously — before its
 	// webview has loaded or run any frontend code — so registering path against it
@@ -162,7 +165,7 @@ func (s *RepoService) SwitchTo(path string) (*RepoInfo, error) {
 	// would never navigate past a blank page. Leaving registration to that window's
 	// own open() call (same as every other repo-opening entry point) avoids the
 	// self-registration race entirely.
-	application.Get().Window.NewWithOptions(application.WebviewWindowOptions{
+	newRepoWindow(application.WebviewWindowOptions{
 		Title:            "Loom",
 		Width:            1200,
 		Height:           800,
@@ -171,6 +174,10 @@ func (s *RepoService) SwitchTo(path string) (*RepoInfo, error) {
 	})
 
 	return &RepoInfo{ID: path, Path: path, OpenedElsewhere: true}, nil
+}
+
+var newRepoWindow = func(options application.WebviewWindowOptions) {
+	application.Get().Window.NewWithOptions(options)
 }
 
 // bootstrapAndTouch bootstraps (or opens the existing) .loom/ at path,

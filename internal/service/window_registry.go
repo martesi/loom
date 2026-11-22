@@ -52,7 +52,9 @@ func unregisterRepoWindow(repoPath string, id uint) {
 // if any. If the registry has a stale entry — the window closed without
 // (or before) its WindowClosing callback clearing the map, which can happen
 // during abrupt app teardown — the stale entry is cleaned up here too.
-func focusedWindowForRepo(repoPath string) (application.Window, bool) {
+type focusableWindow interface{ Focus() }
+
+var focusedWindowForRepo = func(repoPath string) (focusableWindow, bool) {
 	repoWindowsMu.Lock()
 	id, ok := repoWindows[repoPath]
 	repoWindowsMu.Unlock()
@@ -66,4 +68,9 @@ func focusedWindowForRepo(repoPath string) (application.Window, bool) {
 		return nil, false
 	}
 	return window, true
+}
+
+// These adapters keep service behavior testable without a live Wails app.
+var registerCurrentRepoWindow = func(repoPath string) {
+	registerRepoWindow(repoPath, application.Get().Window.Current())
 }

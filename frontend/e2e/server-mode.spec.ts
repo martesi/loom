@@ -79,6 +79,9 @@ test('server repo switcher opens another recent repo in a new tab', async ({
   await openFixtureRepo(page, 'switch-a-fixtures')
 
   await page.getByRole('combobox', { name: 'Switch repository' }).click()
+  await expect(
+    page.getByRole('option', { name: 'switch-b-fixtures' })
+  ).not.toContainText('Open')
 
   const newPagePromise = context.waitForEvent('page')
   await page.getByRole('option', { name: 'switch-b-fixtures' }).click()
@@ -93,6 +96,17 @@ test('server repo switcher opens another recent repo in a new tab', async ({
   await expect(
     newPage.getByRole('combobox', { name: 'Switch repository' })
   ).toContainText('switch-b-fixtures')
+
+  const sameRepoPage = await context.newPage()
+  const repoAPath = await fixturePath('switch-a-fixtures')
+  await sameRepoPage.goto(`/?openRepo=${encodeURIComponent(repoAPath)}`)
+  await expect(sameRepoPage).toHaveURL(/\/canvas$/)
+
+  await newPage.getByRole('combobox', { name: 'Switch repository' }).click()
+  await expect(
+    newPage.getByRole('option', { name: 'switch-a-fixtures' })
+  ).not.toContainText('Open')
+  await sameRepoPage.close()
   await newPage.close()
 })
 
