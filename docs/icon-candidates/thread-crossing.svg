@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 56" width="56" height="56" role="img" aria-label="Loom thread crossing">
+  <rect width="56" height="56" rx="12" fill="#0067c6" />
+  <path d="M14 17h28v7H14zM14 32h28v7H14z" fill="#fff" />
+  <path d="M17 14h7v28h-7zM32 14h7v28h-7z" fill="#fff" />
+  <path d="M17 24h7v8h-7zM32 24h7v8h-7z" fill="#0067c6" />
+</svg>
