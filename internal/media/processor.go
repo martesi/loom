@@ -60,7 +60,7 @@ func (FFmpegProcessor) Thumbnail(srcPath, destPath string, isVideo bool) (Dimens
 }
 
 func (FFmpegProcessor) Preview(ctx context.Context, srcPath, destPath string, maxWidth int, isVideo bool) error {
-	if maxWidth != 640 && maxWidth != 1280 && maxWidth != 2048 {
+	if maxWidth != 320 && maxWidth != 640 && maxWidth != 1280 && maxWidth != 2048 {
 		return fmt.Errorf("unsupported preview width %d", maxWidth)
 	}
 	args := []string{"-y"}
@@ -138,7 +138,11 @@ func runFFmpegContext(ctx context.Context, args ...string) error {
 }
 
 func probeDimensions(path string) (Dimensions, error) {
-	out, err := exec.Command("ffprobe", "-v", "error", "-select_streams", "v:0",
+	return probeDimensionsContext(context.Background(), path)
+}
+
+func probeDimensionsContext(ctx context.Context, path string) (Dimensions, error) {
+	out, err := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-select_streams", "v:0",
 		"-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", path).Output()
 	if err != nil {
 		return Dimensions{}, err
@@ -161,6 +165,9 @@ func probeDimensions(path string) (Dimensions, error) {
 	}
 	return Dimensions{Width: width, Height: height}, nil
 }
+
+// ProbeDimensions reads source dimensions without generating a rendition.
+func ProbeDimensions(path string) (Dimensions, error) { return probeDimensions(path) }
 
 func probeMidpoint(path string) (float64, error) {
 	return probeMidpointContext(context.Background(), path)

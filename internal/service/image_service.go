@@ -1,12 +1,14 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"loom/internal/media"
@@ -14,8 +16,9 @@ import (
 )
 
 type ImageService struct {
-	Media media.Processor
-	now   func() time.Time
+	Media          media.Processor
+	now            func() time.Time
+	dimensionProbe func(context.Context, string) (media.Dimensions, error)
 }
 
 func (s *ImageService) mediaProcessor() media.Processor {
@@ -23,6 +26,110 @@ func (s *ImageService) mediaProcessor() media.Processor {
 		return s.Media
 	}
 	return media.FFmpegProcessor{}
+}
+
+// InvalidateRenditions is the manual answer to #4's same-size/same-mtime
+// limitation: revisions intentionally avoid hashing file contents on requests.
+// It removes generated cache files only and serializes with active encodes.
+func (s *ImageService) InvalidateRenditions(repoPath string) (int, error) {
+	repo, unlock, err := openOperationRepo(repoPath)
+	if err != nil {
+		return 0, err
+	}
+	defer unlock()
+	defer repo.Close()
+	count := 0
+	var releases []func()
+	defer func() {
+		for i := len(releases) - 1; i >= 0; i-- {
+			releases[i]()
+		}
+	}()
+	rows, err := repo.DB.Query(`SELECT id FROM images`)
+	if err != nil {
+		return 0, err
+	}
+	var imageIDs []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return 0, err
+		}
+		imageIDs = append(imageIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, err
+	}
+	_ = rows.Close()
+	for _, id := range imageIDs {
+		release, ok := acquirePreviewLock(context.Background(), fmt.Sprintf("%s\x00%d", repo.Path, id))
+		if !ok {
+			return count, fmt.Errorf("rendition lock unavailable for image %d", id)
+		}
+		releases = append(releases, release)
+	}
+	for _, dir := range []string{filepath.Join(repo.Path, ".loom", "thumbs"), filepath.Join(repo.Path, ".loom", "previews")} {
+		entries, readErr := os.ReadDir(dir)
+		if os.IsNotExist(readErr) {
+			continue
+		}
+		if readErr != nil {
+			return count, readErr
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			if entry.IsDir() || !(strings.HasSuffix(name, ".webp") || strings.HasSuffix(name, ".avif")) {
+				continue
+			}
+			if removeErr := os.Remove(filepath.Join(dir, name)); removeErr != nil && !os.IsNotExist(removeErr) {
+				return count, removeErr
+			}
+			count++
+		}
+	}
+	return count, nil
+}
+
+// RescanRepository discovers sources without generating renditions.
+func (s *ImageService) RescanRepository(repoPath string) (int, error) {
+	repo, unlock, err := openOperationRepo(repoPath)
+	if err != nil {
+		return 0, err
+	}
+	defer unlock()
+	defer repo.Close()
+	changed, err := repo.ScanAndRegisterImages()
+	if err != nil {
+		return changed, err
+	}
+	images, err := repo.ListImages()
+	if err != nil {
+		return changed, err
+	}
+	for _, image := range images {
+		if image.Width > 0 && image.Height > 0 {
+			continue
+		}
+		before, statErr := os.Stat(image.FilePath)
+		if statErr != nil {
+			continue
+		}
+		dimensions, probeErr := s.probeSourceDimensions(image.FilePath)
+		if probeErr != nil {
+			continue
+		}
+		after, statErr := os.Stat(image.FilePath)
+		if statErr != nil || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
+			continue
+		}
+		marker := fmt.Sprintf("stat:%d:%d", after.Size(), after.ModTime().UnixNano())
+		if _, err := repo.DB.Exec(`UPDATE images SET width = ?, height = ? WHERE id = ? AND file_path = ? AND file_size = ? AND content_hash = ?`, dimensions.Width, dimensions.Height, image.ID, image.FilePath, after.Size(), marker); err != nil {
+			return changed, err
+		}
+	}
+	return changed, nil
 }
 
 type ImageInfo struct {
@@ -89,35 +196,30 @@ func (s *ImageService) LoadCanvas(repoPath string) (*CanvasData, error) {
 		return nil, err
 	}
 
-	thumbsDir := filepath.Join(repoPath, ".loom", "thumbs")
-	if err := os.MkdirAll(thumbsDir, 0o755); err != nil {
-		return nil, err
-	}
-
 	missingByID := make(map[int64]bool, len(allImages))
 	for i := range allImages {
 		img := &allImages[i]
-
-		if _, statErr := os.Stat(img.FilePath); statErr != nil {
+		info, statErr := os.Stat(img.FilePath)
+		if statErr != nil {
 			missingByID[img.ID] = true
-		} else if img.ThumbPath == "" {
-			dest := filepath.Join(thumbsDir, fmt.Sprintf("%d.avif", img.ID))
-			if dimensions, genErr := s.mediaProcessor().Thumbnail(img.FilePath, dest, store.IsVideoFile(img.FilePath)); genErr == nil {
-				if err := repo.SetThumbInfo(img.ID, dest, dimensions.Width, dimensions.Height); err != nil {
-					return nil, err
-				}
-			}
-			// A single file that fails to thumbnail (corrupt/unsupported)
-			// shouldn't take down the whole board load — it just renders
-			// without a preview until the next load retries it.
+			continue
 		}
-
+		if img.Width != 0 && img.Height != 0 {
+			continue
+		}
+		dimensions, probeErr := s.probeSourceDimensions(img.FilePath)
+		if probeErr != nil {
+			continue
+		}
+		after, statErr := os.Stat(img.FilePath)
+		if statErr != nil || info.Size() != after.Size() || !info.ModTime().Equal(after.ModTime()) {
+			continue
+		}
+		marker := fmt.Sprintf("stat:%d:%d", info.Size(), info.ModTime().UnixNano())
+		if _, err := repo.DB.Exec(`UPDATE images SET width = ?, height = ? WHERE id = ? AND file_path = ? AND file_size = ? AND content_hash = ?`, dimensions.Width, dimensions.Height, img.ID, img.FilePath, info.Size(), marker); err != nil {
+			continue
+		}
 	}
-
-	// Thumbnail generation writes thumb_path/width/height via SetThumbInfo
-	// as a side effect above; re-read from the DB rather than threading
-	// those values back through allImages, so board-scoped and repo-wide
-	// callers share one code path.
 	boardImages, err := repo.ListImages()
 	if err != nil {
 		return nil, err
@@ -169,8 +271,8 @@ func (s *ImageService) LoadCanvas(repoPath string) (*CanvasData, error) {
 			ID:         img.ID,
 			FileName:   filepath.Base(img.FilePath),
 			FilePath:   img.FilePath,
-			ThumbURL:   thumbURL(repoPath, img.ID),
-			PreviewURL: previewURL(repoPath, img.ID, img.FilePath),
+			ThumbURL:   thumbURL(repoPath, img.ID, img.FilePath),
+			PreviewURL: previewURLForImage(repoPath, img),
 			FullURL:    fullURL(repoPath, img.ID),
 			Width:      img.Width,
 			Height:     img.Height,
@@ -195,6 +297,15 @@ func (s *ImageService) LoadCanvas(repoPath string) (*CanvasData, error) {
 		}
 	}
 	return data, nil
+}
+
+func (s *ImageService) probeSourceDimensions(path string) (media.Dimensions, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if s.dimensionProbe != nil {
+		return s.dimensionProbe(ctx, path)
+	}
+	return media.SourceDimensionsContext(ctx, path)
 }
 
 // GetImage resolves a single image's info by ID, independent of any board —
@@ -227,8 +338,8 @@ func (s *ImageService) GetImage(repoPath string, imageID int64) (*ImageInfo, err
 		ID:         img.ID,
 		FileName:   filepath.Base(img.FilePath),
 		FilePath:   img.FilePath,
-		ThumbURL:   thumbURL(repoPath, img.ID),
-		PreviewURL: previewURL(repoPath, img.ID, img.FilePath),
+		ThumbURL:   thumbURL(repoPath, img.ID, img.FilePath),
+		PreviewURL: previewURLForImage(repoPath, img),
 		FullURL:    fullURL(repoPath, img.ID),
 		Width:      img.Width,
 		Height:     img.Height,
@@ -617,8 +728,8 @@ func (s *ImageService) ListDirectory(repoPath, relPath string) (*DirListing, err
 			ID:         img.ID,
 			FileName:   filepath.Base(img.FilePath),
 			FilePath:   img.FilePath,
-			ThumbURL:   thumbURL(repoPath, img.ID),
-			PreviewURL: previewURL(repoPath, img.ID, img.FilePath),
+			ThumbURL:   thumbURL(repoPath, img.ID, img.FilePath),
+			PreviewURL: previewURLForImage(repoPath, img),
 			FullURL:    fullURL(repoPath, img.ID),
 			Width:      img.Width,
 			Height:     img.Height,

@@ -1,7 +1,14 @@
 import { createServer } from 'node:http'
+import { execFileSync } from 'node:child_process'
+import { rm } from 'node:fs/promises'
 import { previewTierForNode } from '../src/lib/preview-tier'
 import { expect, test } from './test-fixtures'
-import { dropAsset, imageNodes, openFixtureRepo } from './test-helpers'
+import {
+  dropAsset,
+  fixturePath,
+  imageNodes,
+  openFixtureRepo,
+} from './test-helpers'
 
 // These browser-visible layer transitions use Chromium's image loading and
 // compositing behavior. Firefox and WebKit projects are not configured.
@@ -54,6 +61,8 @@ test.describe('Canvas progressive previews', () => {
       await expect(node).toBeVisible()
       const thumb = node.locator('img').first()
       await expect(thumb).toHaveJSProperty('complete', true)
+      const thumbUrl = new URL((await thumb.getAttribute('src'))!, page.url())
+      expect(thumbUrl.searchParams.get('v')).toBeTruthy()
       const box = await node.boundingBox()
       if (!box) throw new Error('Canvas node has no bounds')
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
@@ -61,6 +70,7 @@ test.describe('Canvas progressive previews', () => {
       await page.mouse.wheel(0, -900)
       await page.keyboard.up('Control')
       const url = await requestSeen
+      expect(url.searchParams.get('v')).toBe(thumbUrl.searchParams.get('v'))
       const tier = Number(url.searchParams.get('w'))
       const expected = await node.evaluate((element) => {
         const image = element.querySelector('img')!
@@ -129,6 +139,7 @@ test.describe('Canvas progressive previews', () => {
     page,
   }) => {
     await page.setViewportSize({ width: 1280, height: 800 })
+    let failedUrl: URL | undefined
     let retryUrl: URL | undefined
     let initialFailure = true
     let retryCount = 0
@@ -154,6 +165,7 @@ test.describe('Canvas progressive previews', () => {
       const url = new URL(route.request().url())
       if (initialFailure) {
         initialFailure = false
+        failedUrl = url
         await route.fulfill({ status: 503, body: 'preview unavailable' })
         return
       }
@@ -204,6 +216,10 @@ test.describe('Canvas progressive previews', () => {
       await page.keyboard.up('Control')
       await expect.poll(() => retryCount).toBe(1)
       expect(retryUrl?.searchParams.get('retry')).toBe('1')
+      expect(retryUrl?.searchParams.get('v')).toBeTruthy()
+      expect(retryUrl?.searchParams.get('v')).toBe(
+        failedUrl?.searchParams.get('v')
+      )
       await expect(thumb).toBeVisible()
       const pending = node.getByTestId('image-node-preview')
       await expect(pending).toBeVisible()
@@ -262,6 +278,42 @@ test.describe('Canvas progressive previews', () => {
       releaseRetry()
       for (const held of heldResponses) held.release()
       await page.unroute('**/loom-asset/preview/**')
+    }
+  })
+
+  test('video canvas nodes use revisioned tier 320 only', async ({ page }) => {
+    const videoPath = await fixturePath('preview-fixtures', 'video-rendition-check.mp4')
+    execFileSync('ffmpeg', [
+      '-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=red:s=320x240:d=1',
+      '-c:v', 'libx264', '-pix_fmt', 'yuv420p', videoPath,
+    ])
+    let previewRequests = 0
+    await page.route('**/loom-asset/preview/**', async (route) => {
+      previewRequests++
+      await route.fulfill({ status: 400, body: 'video previews are limited to 320' })
+    })
+    try {
+      await openFixtureRepo(page, 'preview-fixtures', { drawers: 'closed' })
+      await dropAsset(page, 'video-rendition-check.mp4', { x: 500, y: 300 })
+      const node = imageNodes(page).first()
+      await expect(node).toBeVisible()
+      const thumb = node.locator('img').first()
+      await expect(thumb).toHaveJSProperty('complete', true)
+      await expect
+        .poll(() => thumb.evaluate((image: HTMLImageElement) => image.naturalWidth))
+        .toBeGreaterThan(0)
+      await expect(thumb).toHaveAttribute('src', /\?v=[^&]+$/)
+      const box = await node.boundingBox()
+      if (!box) throw new Error('Canvas node has no bounds')
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+      await page.keyboard.down('Control')
+      await page.mouse.wheel(0, -1200)
+      await page.keyboard.up('Control')
+      await page.waitForTimeout(500)
+      expect(previewRequests).toBe(0)
+    } finally {
+      await page.unroute('**/loom-asset/preview/**')
+      await rm(videoPath, { force: true })
     }
   })
 })
