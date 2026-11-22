@@ -147,6 +147,10 @@ export function CanvasFlow(props: Props) {
         </div>
       )}
       <ReactFlow
+        data-total-image-nodes={
+          (data.images ?? []).filter((image) => image.placed && !image.trashed)
+            .length
+        }
         nodes={displayNodes}
         edges={displayEdges}
         nodeTypes={nodeTypes}
