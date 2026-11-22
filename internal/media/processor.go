@@ -138,7 +138,11 @@ func runFFmpegContext(ctx context.Context, args ...string) error {
 }
 
 func probeDimensions(path string) (Dimensions, error) {
-	out, err := exec.Command("ffprobe", "-v", "error", "-select_streams", "v:0",
+	return probeDimensionsContext(context.Background(), path)
+}
+
+func probeDimensionsContext(ctx context.Context, path string) (Dimensions, error) {
+	out, err := exec.CommandContext(ctx, "ffprobe", "-v", "error", "-select_streams", "v:0",
 		"-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", path).Output()
 	if err != nil {
 		return Dimensions{}, err

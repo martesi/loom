@@ -181,8 +181,8 @@ func TestServePreviewRequiresGetOrHeadAndExistingRepo(t *testing.T) {
 func TestServePreviewReturnsUnavailableWhenEncodeSlotsStayBusy(t *testing.T) {
 	repoPath, id, _ := previewTestAsset(t)
 	url := previewTestURL(t, repoPath, id, 640)
-	previewSlotWait = 10 * time.Millisecond
-	defer func() { previewSlotWait = 15 * time.Second }()
+	stillRenditionDeadline = 10 * time.Millisecond
+	defer func() { stillRenditionDeadline = 5 * time.Second }()
 	previewSlots <- struct{}{}
 	previewSlots <- struct{}{}
 	defer func() {
@@ -193,6 +193,129 @@ func TestServePreviewReturnsUnavailableWhenEncodeSlotsStayBusy(t *testing.T) {
 	ServePreviewWithProcessor(rec, httptest.NewRequest("GET", url, nil), &previewTestProcessor{})
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("busy encoder status = %d, want 503", rec.Code)
+	}
+	if rec.Header().Get("Retry-After") != "1" {
+		t.Fatalf("Retry-After = %q", rec.Header().Get("Retry-After"))
+	}
+}
+
+func TestRenditionLockCoalescesAndCancelledWaiterDoesNotCancelEncoder(t *testing.T) {
+	repoPath, id, _ := previewTestAsset(t)
+	url := previewTestURL(t, repoPath, id, 640)
+	key := fmt.Sprintf("%s\x00%d", repoPath, id)
+	started := make(chan struct{})
+	finish := make(chan struct{})
+	processor := &previewTestProcessor{onPreview: func(_, destination string, _ int) error {
+		close(started)
+		<-finish
+		return os.WriteFile(destination, []byte("coalesced"), 0o600)
+	}}
+	type response struct{ recorder *httptest.ResponseRecorder }
+	firstDone := make(chan response, 1)
+	first := httptest.NewRecorder()
+	go func() {
+		ServePreviewWithProcessor(first, httptest.NewRequest("GET", url, nil), processor)
+		firstDone <- response{first}
+	}()
+	<-started
+	cancelCtx, cancel := context.WithCancel(context.Background())
+	cancelled := httptest.NewRecorder()
+	cancelDone := make(chan struct{})
+	go func() {
+		ServePreviewWithProcessor(cancelled, httptest.NewRequest("GET", url, nil).WithContext(cancelCtx), processor)
+		close(cancelDone)
+	}()
+	waitForRenditionRefs(t, key, 2)
+	third := httptest.NewRecorder()
+	thirdDone := make(chan struct{})
+	go func() {
+		ServePreviewWithProcessor(third, httptest.NewRequest("GET", url, nil), processor)
+		close(thirdDone)
+	}()
+	waitForRenditionRefs(t, key, 3)
+	cancel()
+	<-cancelDone
+	if cancelled.Body.Len() != 0 {
+		t.Fatalf("cancelled waiter wrote response: %q", cancelled.Body.String())
+	}
+	close(finish)
+	<-firstDone
+	<-thirdDone
+	if first.Code != http.StatusOK || third.Code != http.StatusOK || processor.calls != 1 {
+		t.Fatalf("first=%d third=%d encoder calls=%d", first.Code, third.Code, processor.calls)
+	}
+}
+
+func waitForRenditionRefs(t *testing.T, key string, want int) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		previewLocks.Lock()
+		entry := previewLocks.byKey[key]
+		refs := 0
+		if entry != nil {
+			refs = entry.refs
+		}
+		previewLocks.Unlock()
+		if refs >= want {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("rendition refs for %q did not reach %d", key, want)
+}
+
+func TestRenditionDeadlineCoversLockAndSlotWaits(t *testing.T) {
+	repoPath, id, _ := previewTestAsset(t)
+	key := fmt.Sprintf("%s\x00%d", repoPath, id)
+	unlock, ok := acquirePreviewLock(context.Background(), key)
+	if !ok {
+		t.Fatal("could not reserve test lock")
+	}
+	previewSlots <- struct{}{}
+	previewSlots <- struct{}{}
+	defer func() { <-previewSlots; <-previewSlots }()
+	stillRenditionDeadline = 80 * time.Millisecond
+	defer func() { stillRenditionDeadline = 5 * time.Second }()
+	go func() { time.Sleep(40 * time.Millisecond); unlock() }()
+	started := time.Now()
+	rec := httptest.NewRecorder()
+	ServePreviewWithProcessor(rec, httptest.NewRequest("GET", previewTestURL(t, repoPath, id, 640), nil), &previewTestProcessor{})
+	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") != "1" {
+		t.Fatalf("status=%d retry=%q", rec.Code, rec.Header().Get("Retry-After"))
+	}
+	if elapsed := time.Since(started); elapsed < 70*time.Millisecond || elapsed > 250*time.Millisecond {
+		t.Fatalf("shared deadline elapsed %s, want about 80ms", elapsed)
+	}
+}
+
+func TestRenditionWaitQueueIsBounded(t *testing.T) {
+	key := fmt.Sprintf("queue-test-%d", time.Now().UnixNano())
+	owner, ok := acquireRenditionLock(context.Background(), key)
+	if !ok {
+		t.Fatal("owner lock unavailable")
+	}
+	results := make(chan func(), 6)
+	for i := 0; i < 6; i++ {
+		go func() {
+			release, ok := acquireRenditionLock(context.Background(), key)
+			if ok {
+				results <- release
+			} else {
+				results <- nil
+			}
+		}()
+	}
+	waitForRenditionRefs(t, key, 6)
+	if _, ok := acquireRenditionLock(context.Background(), key); ok {
+		t.Fatal("over-capacity waiter admitted")
+	}
+	owner()
+	for i := 0; i < 6; i++ {
+		release := <-results
+		if release != nil {
+			release()
+		}
 	}
 }
 

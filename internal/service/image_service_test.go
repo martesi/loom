@@ -1,6 +1,11 @@
 package service
 
 import (
+	"bytes"
+	"context"
+	"fmt"
+	"image"
+	"image/png"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -8,8 +13,125 @@ import (
 	"testing"
 	"time"
 
+	"loom/internal/media"
 	"loom/internal/store"
 )
+
+func TestLoadCanvasDimensions1000TinyFiles(t *testing.T) {
+	repoPath := t.TempDir()
+	var fixture bytes.Buffer
+	if err := png.Encode(&fixture, image.NewRGBA(image.Rect(0, 0, 2, 3))); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 1000; i++ {
+		path := filepath.Join(repoPath, fmt.Sprintf("image-%04d.png", i))
+		if err := os.WriteFile(path, fixture.Bytes(), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	start := time.Now()
+	canvas, err := (&ImageService{}).LoadCanvas(repoPath)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(canvas.Images) != 1000 {
+		t.Fatalf("canvas images = %d", len(canvas.Images))
+	}
+	for _, image := range canvas.Images {
+		if image.Width != 2 || image.Height != 3 {
+			t.Fatalf("%s dimensions=%dx%d", image.FileName, image.Width, image.Height)
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(repoPath, ".loom", "thumbs"))
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("LoadCanvas created rendition files: %v, err=%v", entries, err)
+	}
+	start = time.Now()
+	if _, err := (&ImageService{}).LoadCanvas(repoPath); err != nil {
+		t.Fatal(err)
+	}
+	warmElapsed := time.Since(start)
+	t.Logf("LoadCanvas 1000 tiny PNGs: first pass with dimension probes %s; warm pass without probes %s; probe-pass delta %s", elapsed, warmElapsed, elapsed-warmElapsed)
+}
+
+func TestLoadCanvasRefreshesRevisionGuardedDimensionsAndPreservesCanvasSize(t *testing.T) {
+	repoPath := t.TempDir()
+	asset := filepath.Join(repoPath, "image.png")
+	writePNGDimensions(t, asset, 2, 3)
+	service := &ImageService{}
+	first, err := service.LoadCanvas(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Images[0].Width != 2 || first.Images[0].Height != 3 {
+		t.Fatalf("initial dimensions=%dx%d", first.Images[0].Width, first.Images[0].Height)
+	}
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.DB.Exec(`UPDATE images SET canvas_w = 444, canvas_h = 555 WHERE id = ?`, first.Images[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	_ = repo.Close()
+	writePNGDimensions(t, asset, 5, 7)
+	changed := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(asset, changed, changed); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := service.LoadCanvas(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img := updated.Images[0]
+	if img.Width != 5 || img.Height != 7 {
+		t.Fatalf("updated dimensions=%dx%d", img.Width, img.Height)
+	}
+	if img.CanvasW != 444 || img.CanvasH != 555 {
+		t.Fatalf("saved canvas size changed: %gx%g", img.CanvasW, img.CanvasH)
+	}
+}
+
+func TestLoadCanvasDoesNotStoreProbeForChangedRevision(t *testing.T) {
+	repoPath := t.TempDir()
+	asset := filepath.Join(repoPath, "image.png")
+	writePNGDimensions(t, asset, 2, 3)
+	service := &ImageService{dimensionProbe: func(_ context.Context, path string) (media.Dimensions, error) {
+		writePNGDimensions(t, path, 5, 7)
+		return media.Dimensions{Width: 2, Height: 3}, nil
+	}}
+	first, err := service.LoadCanvas(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Images[0].Width != 0 || first.Images[0].Height != 0 {
+		t.Fatalf("stale probe was stored: %dx%d", first.Images[0].Width, first.Images[0].Height)
+	}
+	service.dimensionProbe = nil
+	second, err := service.LoadCanvas(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Images[0].Width != 5 || second.Images[0].Height != 7 {
+		t.Fatalf("current dimensions=%dx%d", second.Images[0].Width, second.Images[0].Height)
+	}
+}
+
+func writePNGDimensions(t *testing.T, path string, width, height int) {
+	t.Helper()
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(file, image.NewRGBA(image.Rect(0, 0, width, height))); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // TestImageServiceEndToEnd drives the services exactly the way the
 // frontend does: scan/register (via LoadCanvas's discovery side effect),

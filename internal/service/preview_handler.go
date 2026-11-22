@@ -26,7 +26,8 @@ const (
 	previewEncoderVersion = "webp-v1"
 )
 
-var previewSlotWait = 15 * time.Second
+var stillRenditionDeadline = 5 * time.Second
+var videoRenditionDeadline = 30 * time.Second
 var previewSlots = make(chan struct{}, 2)
 var previewWaiters atomic.Int32
 var previewLocks = struct {
@@ -124,9 +125,9 @@ func serveRendition(w http.ResponseWriter, r *http.Request, processor media.Proc
 	}
 	defer repo.Close()
 
-	deadline := 5 * time.Second
+	deadline := stillRenditionDeadline
 	if store.IsVideoFile(mustImagePath(repo, id)) {
-		deadline = 30 * time.Second
+		deadline = videoRenditionDeadline
 	} // 30 s is conservative pending measurement.
 	ctx, cancel := context.WithTimeout(r.Context(), deadline)
 	defer cancel()
@@ -161,11 +162,13 @@ func serveRendition(w http.ResponseWriter, r *http.Request, processor media.Proc
 		if image.Width == 0 || image.Height == 0 {
 			slotRelease, status := acquirePreviewSlot(ctx)
 			if status != 0 {
-				w.Header().Set("Retry-After", "1")
-				http.Error(w, "rendition generation busy", http.StatusServiceUnavailable)
+				if r.Context().Err() == nil {
+					w.Header().Set("Retry-After", "1")
+					http.Error(w, "rendition generation busy", http.StatusServiceUnavailable)
+				}
 				return
 			}
-			dimensions, probeErr := media.ProbeDimensions(source.path)
+			dimensions, probeErr := media.SourceDimensionsContext(ctx, source.path)
 			slotRelease()
 			if probeErr == nil {
 				if after, statErr := os.Stat(source.path); statErr == nil && after.Size() == source.size && after.ModTime().Equal(source.modTime) {
@@ -190,9 +193,9 @@ func serveRendition(w http.ResponseWriter, r *http.Request, processor media.Proc
 
 		slotRelease, status := acquirePreviewSlot(ctx)
 		if status != 0 {
-			if status == http.StatusServiceUnavailable {
+			if r.Context().Err() == nil {
 				w.Header().Set("Retry-After", "1")
-				http.Error(w, "preview generation busy", status)
+				http.Error(w, "preview generation busy", http.StatusServiceUnavailable)
 			}
 			return
 		}
@@ -465,16 +468,11 @@ func acquirePreviewSlot(ctx context.Context) (func(), int) {
 		return nil, http.StatusServiceUnavailable
 	}
 	defer previewWaiters.Add(-1)
-	waitCtx, cancel := context.WithTimeout(ctx, previewSlotWait)
-	defer cancel()
 	select {
 	case previewSlots <- struct{}{}:
 		return func() { <-previewSlots }, 0
-	case <-waitCtx.Done():
-		if ctx.Err() != nil {
-			return nil, -1
-		}
-		return nil, http.StatusServiceUnavailable
+	case <-ctx.Done():
+		return nil, -1
 	}
 }
 

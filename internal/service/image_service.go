@@ -17,8 +17,9 @@ import (
 )
 
 type ImageService struct {
-	Media media.Processor
-	now   func() time.Time
+	Media          media.Processor
+	now            func() time.Time
+	dimensionProbe func(context.Context, string) (media.Dimensions, error)
 }
 
 func (s *ImageService) mediaProcessor() media.Processor {
@@ -114,7 +115,7 @@ func (s *ImageService) RescanRepository(repoPath string) (int, error) {
 		if statErr != nil {
 			continue
 		}
-		dimensions, probeErr := media.ProbeDimensions(image.FilePath)
+		dimensions, probeErr := s.probeSourceDimensions(image.FilePath)
 		if probeErr != nil {
 			continue
 		}
@@ -197,8 +198,25 @@ func (s *ImageService) LoadCanvas(repoPath string) (*CanvasData, error) {
 	missingByID := make(map[int64]bool, len(allImages))
 	for i := range allImages {
 		img := &allImages[i]
-		if _, statErr := os.Stat(img.FilePath); statErr != nil {
+		info, statErr := os.Stat(img.FilePath)
+		if statErr != nil {
 			missingByID[img.ID] = true
+			continue
+		}
+		if img.Width != 0 && img.Height != 0 {
+			continue
+		}
+		dimensions, probeErr := s.probeSourceDimensions(img.FilePath)
+		if probeErr != nil {
+			continue
+		}
+		after, statErr := os.Stat(img.FilePath)
+		if statErr != nil || info.Size() != after.Size() || !info.ModTime().Equal(after.ModTime()) {
+			continue
+		}
+		marker := fmt.Sprintf("stat:%d:%d", info.Size(), info.ModTime().UnixNano())
+		if _, err := repo.DB.Exec(`UPDATE images SET width = ?, height = ? WHERE id = ? AND file_path = ? AND file_size = ? AND content_hash = ?`, dimensions.Width, dimensions.Height, img.ID, img.FilePath, info.Size(), marker); err != nil {
+			continue
 		}
 	}
 	boardImages, err := repo.ListImages()
@@ -278,6 +296,15 @@ func (s *ImageService) LoadCanvas(repoPath string) (*CanvasData, error) {
 		}
 	}
 	return data, nil
+}
+
+func (s *ImageService) probeSourceDimensions(path string) (media.Dimensions, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if s.dimensionProbe != nil {
+		return s.dimensionProbe(ctx, path)
+	}
+	return media.SourceDimensionsContext(ctx, path)
 }
 
 // GetImage resolves a single image's info by ID, independent of any board —
