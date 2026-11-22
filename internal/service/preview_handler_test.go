@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,6 +22,31 @@ type previewTestProcessor struct {
 	calls     int
 	err       error
 	onPreview func(srcPath, destPath string, call int) error
+}
+
+type contextAwarePreviewProcessor struct {
+	started   chan context.Context
+	finish    <-chan struct{}
+	cancelled chan struct{}
+	calls     int
+}
+
+func (p *contextAwarePreviewProcessor) Thumbnail(string, string, bool) (media.Dimensions, error) {
+	return media.Dimensions{}, nil
+}
+func (p *contextAwarePreviewProcessor) Transcode(string, string, media.TranscodeOptions) error {
+	return nil
+}
+func (p *contextAwarePreviewProcessor) Preview(ctx context.Context, _, destination string, _ int, _ bool) error {
+	p.calls++
+	p.started <- ctx
+	select {
+	case <-ctx.Done():
+		close(p.cancelled)
+		return ctx.Err()
+	case <-p.finish:
+		return os.WriteFile(destination, []byte("shared worker result"), 0o600)
+	}
 }
 
 func (p *previewTestProcessor) Thumbnail(string, string, bool) (media.Dimensions, error) {
@@ -238,6 +264,66 @@ func TestCancelledOwnerDoesNotCancelSharedEncoderNeededByWaiter(t *testing.T) {
 	}
 }
 
+func TestSharedWorkerOutlivesFirstWaiterDeadlineForLaterWaiter(t *testing.T) {
+	repoPath, id, _ := previewTestAsset(t)
+	key := fmt.Sprintf("%s\x00%d", repoPath, id)
+	url := previewTestURL(t, repoPath, id, 640)
+	base := time.Unix(2_000, 0)
+	var requestBudgetCalls atomic.Int32
+	requestBudgets := make(chan *manualDeadlineContext, 2)
+	originalFactory := newRenditionRequestContext
+	newRenditionRequestContext = func(parent context.Context, _ time.Duration) (context.Context, context.CancelFunc) {
+		deadline := base.Add(5 * time.Second)
+		if requestBudgetCalls.Add(1) == 1 {
+			deadline = base.Add(10 * time.Millisecond)
+		}
+		budget := newManualDeadlineContext(parent, deadline)
+		requestBudgets <- budget
+		return budget, budget.cancel
+	}
+	defer func() { newRenditionRequestContext = originalFactory }()
+	finish := make(chan struct{})
+	var finishOnce sync.Once
+	defer finishOnce.Do(func() { close(finish) })
+	processor := &contextAwarePreviewProcessor{started: make(chan context.Context, 1), finish: finish, cancelled: make(chan struct{})}
+	type response struct{ rec *httptest.ResponseRecorder }
+	first := httptest.NewRecorder()
+	firstDone := make(chan response, 1)
+	go func() {
+		ServePreviewWithProcessor(first, httptest.NewRequest("GET", url, nil), processor)
+		firstDone <- response{first}
+	}()
+	firstBudget := <-requestBudgets
+	workerContext := <-processor.started
+	second := httptest.NewRecorder()
+	secondDone := make(chan struct{})
+	go func() {
+		ServePreviewWithProcessor(second, httptest.NewRequest("GET", url, nil), processor)
+		close(secondDone)
+	}()
+	secondBudget := <-requestBudgets
+	waitForRenditionRefs(t, key, 2)
+	firstBudget.expire()
+	<-firstDone
+	if first.Code != http.StatusServiceUnavailable || first.Header().Get("Retry-After") != "1" {
+		t.Fatalf("first waiter status=%d retry=%q", first.Code, first.Header().Get("Retry-After"))
+	}
+	if err := workerContext.Err(); err != nil {
+		t.Fatalf("first waiter deadline cancelled shared worker: %v", err)
+	}
+	if err := secondBudget.Err(); err != nil {
+		t.Fatalf("later waiter deadline expired: %v", err)
+	}
+	finishOnce.Do(func() { close(finish) })
+	<-secondDone
+	if second.Code != http.StatusOK || second.Body.String() != "shared worker result" {
+		t.Fatalf("second waiter status=%d body=%q", second.Code, second.Body.String())
+	}
+	if processor.calls != 1 {
+		t.Fatalf("shared encode calls=%d", processor.calls)
+	}
+}
+
 func waitForRenditionRefs(t *testing.T, key string, want int) {
 	t.Helper()
 	deadline := time.Now().Add(time.Second)
@@ -285,7 +371,7 @@ func TestSuccessorWorkCancelSurvivesPreviousWorkCleanup(t *testing.T) {
 	finishSecond()
 }
 
-func TestRenditionRequestUsesOneDeadlineAcrossLockAndGenerationWait(t *testing.T) {
+func TestRenditionWaiterDeadlineIsIndependentFromFixedWorkerDeadline(t *testing.T) {
 	repoPath, id, _ := previewTestAsset(t)
 	key := fmt.Sprintf("%s\x00%d", repoPath, id)
 	unlock, ok := acquirePreviewLock(context.Background(), key)
@@ -303,11 +389,9 @@ func TestRenditionRequestUsesOneDeadlineAcrossLockAndGenerationWait(t *testing.T
 	defer func() { <-previewSlots; <-previewSlots }()
 	originalFactory := newRenditionRequestContext
 	originalWorkFactory := newRenditionWorkContext
-	originalNow := renditionNow
 	originalDeadline := stillRenditionDeadline
 	stillRenditionDeadline = 80 * time.Millisecond
 	fakeNow := time.Unix(1_000, 0)
-	renditionNow = func() time.Time { return fakeNow }
 	factoryCalls := 0
 	budgets := make(chan *manualDeadlineContext, 1)
 	workTimeouts := make(chan time.Duration, 1)
@@ -325,7 +409,6 @@ func TestRenditionRequestUsesOneDeadlineAcrossLockAndGenerationWait(t *testing.T
 	defer func() {
 		newRenditionRequestContext = originalFactory
 		newRenditionWorkContext = originalWorkFactory
-		renditionNow = originalNow
 		stillRenditionDeadline = originalDeadline
 	}()
 	requestDone := make(chan *httptest.ResponseRecorder, 1)
@@ -337,14 +420,17 @@ func TestRenditionRequestUsesOneDeadlineAcrossLockAndGenerationWait(t *testing.T
 	budget := <-budgets
 	awaitSignal(t, budget.doneCalls) // Request is waiting on the per-key lock.
 	fakeNow = fakeNow.Add(40 * time.Millisecond)
+	if remaining := budgetDeadlineRemaining(budget, fakeNow); remaining != 40*time.Millisecond {
+		t.Fatalf("request waiter has %s remaining after simulated lock wait", remaining)
+	}
 	unlock()
 	releasedLock = true
 	awaitSignal(t, budget.doneCalls) // Same context now governs waiting for shared generation.
 	if factoryCalls != 1 {
 		t.Fatalf("request deadline contexts created = %d", factoryCalls)
 	}
-	if workTimeout := <-workTimeouts; workTimeout != 40*time.Millisecond {
-		t.Fatalf("generation got %s after 40 ms lock wait; want remaining 40 ms", workTimeout)
+	if workTimeout := <-workTimeouts; workTimeout != stillRenditionDeadline {
+		t.Fatalf("worker deadline = %s, want fixed %s", workTimeout, stillRenditionDeadline)
 	}
 	budget.expire()
 	<-requestDone
@@ -352,6 +438,11 @@ func TestRenditionRequestUsesOneDeadlineAcrossLockAndGenerationWait(t *testing.T
 		t.Fatalf("status=%d retry=%q", rec.Code, rec.Header().Get("Retry-After"))
 	}
 	waitForNoRenditionLock(t, key)
+}
+
+func budgetDeadlineRemaining(budget *manualDeadlineContext, now time.Time) time.Duration {
+	deadline, _ := budget.Deadline()
+	return deadline.Sub(now)
 }
 
 type manualDeadlineContext struct {

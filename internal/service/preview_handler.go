@@ -29,7 +29,6 @@ var stillRenditionDeadline = 5 * time.Second
 var videoRenditionDeadline = 30 * time.Second
 var newRenditionRequestContext = context.WithTimeout
 var newRenditionWorkContext = context.WithTimeout
-var renditionNow = time.Now
 var previewSlots = make(chan struct{}, 2)
 var renditionAdmissions = make(chan struct{}, 8)
 var previewLocks = struct {
@@ -212,22 +211,7 @@ func serveRendition(w http.ResponseWriter, r *http.Request, processor media.Proc
 			return
 		}
 
-		workDeadline := deadline
-		if requestDeadline, ok := ctx.Deadline(); ok {
-			remaining := requestDeadline.Sub(renditionNow())
-			if remaining <= 0 {
-				if r.Context().Err() != nil {
-					return
-				}
-				w.Header().Set("Retry-After", "1")
-				http.Error(w, "rendition request timed out", http.StatusServiceUnavailable)
-				return
-			}
-			if remaining < workDeadline {
-				workDeadline = remaining
-			}
-		}
-		workCtx, workCancel := newRenditionWorkContext(context.Background(), workDeadline)
+		workCtx, workCancel := newRenditionWorkContext(context.Background(), deadline)
 		finishWork := lease.Transfer(workCancel)
 		generated := make(chan generationResult, 1)
 		go func() {
