@@ -196,6 +196,7 @@ async function measureInteractions(page: Page, selectionSize: number) {
   const zoomInputToPaint = await zoomPaint
   await expect(viewport).not.toHaveAttribute('style', beforeZoom ?? '')
 
+  await dismissCanvasOverlays(page)
   await page.keyboard.press('Shift+1')
   const node = await visibleNode(page)
   const singleNodeDragInputToPaint = await dragNodeAndMeasure(
@@ -205,7 +206,9 @@ async function measureInteractions(page: Page, selectionSize: number) {
     30
   )
 
-  await node.click()
+  await dismissCanvasOverlays(page)
+  const selectionNode = await visibleNode(page)
+  await selectionNode.click()
   await page.keyboard.press('Control+a')
   await expect(page.locator('[data-testid="canvas-dock"]')).toHaveAttribute(
     'data-selection-count',
@@ -228,6 +231,16 @@ async function measureInteractions(page: Page, selectionSize: number) {
     },
     selectionSize,
   }
+}
+
+async function dismissCanvasOverlays(page: Page) {
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('Escape')
+  await expect(
+    page.locator(
+      'aside[data-visible="true"], [role="dialog"]:visible, [role="menu"]:visible, [role="tooltip"]:visible'
+    )
+  ).toHaveCount(0)
 }
 
 async function visibleNode(page: Page) {
