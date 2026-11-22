@@ -108,6 +108,21 @@ export function actionEligibility(enabled: boolean, disabledReason?: string) {
       }
 }
 
+export function availablePaletteActions(actions: CanvasAction[]) {
+  return actions.filter((action) => action.enabled)
+}
+
+export function resolveRecentActions(
+  actions: CanvasAction[],
+  recentActionIds: string[]
+) {
+  const availableActions = availablePaletteActions(actions)
+  return recentActionIds.flatMap((id) => {
+    const action = availableActions.find((candidate) => candidate.id === id)
+    return action ? [action] : []
+  })
+}
+
 export function displayShortcut(shortcut: string, isMac: boolean) {
   return shortcut
     .split('+')
