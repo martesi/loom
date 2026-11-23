@@ -69,7 +69,7 @@ func TestMediaServiceTranscode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.ScanAndRegisterImages(); err != nil {
+	if _, err := repo.ScanAndRegisterImages(context.Background()); err != nil {
 		repo.Close()
 		t.Fatal(err)
 	}

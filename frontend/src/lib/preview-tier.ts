@@ -28,3 +28,13 @@ export function previewRequestUrl(
 ): string {
   return `${url}&w=${tier}`
 }
+
+export function renditionGenerationUrl(
+  url: string,
+  generation: number
+): string {
+  if (!url || generation <= 0) return url
+  const revisioned = new URL(url, 'http://loom.invalid')
+  revisioned.searchParams.set('ui', String(generation))
+  return `${revisioned.pathname}${revisioned.search}${revisioned.hash}`
+}

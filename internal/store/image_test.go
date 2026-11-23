@@ -1,8 +1,11 @@
 package store
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -111,6 +114,151 @@ func TestListDirectoryClampsEscape(t *testing.T) {
 	}
 	if _, err := repo.ListDirectory("sub"); err != nil {
 		t.Fatalf("ListDirectory(sub): %v", err)
+	}
+}
+
+func TestScanFingerprintsSameStatReplacementAndPersistsRevision(t *testing.T) {
+	repoPath := t.TempDir()
+	path := filepath.Join(repoPath, "same.png")
+	if err := os.WriteFile(path, []byte("original payload"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := repo.ScanAndRegisterImages(context.Background()); err != nil || n != 1 {
+		t.Fatalf("initial scan = %d, %v", n, err)
+	}
+	first, err := repo.GetImageByID(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.SourceRevision != 1 || first.SourceFingerprint == "" {
+		t.Fatalf("initial source identity = revision %d fingerprint %q", first.SourceRevision, first.SourceFingerprint)
+	}
+	if _, err := repo.DB.Exec(`UPDATE images SET width = 120, height = 80 WHERE id = ?`, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	old, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("replaced payload"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, old.ModTime(), old.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	if after, _ := os.Stat(path); after.Size() != old.Size() || !after.ModTime().Equal(old.ModTime()) {
+		t.Fatal("fixture did not preserve size and mtime")
+	}
+	if n, err := repo.RegisterImages(context.Background()); err != nil || n != 0 {
+		t.Fatalf("normal registration = %d, %v; same-stat detection must wait for explicit rescan", n, err)
+	}
+	beforeRescan, err := repo.GetImageByID(first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if beforeRescan.SourceRevision != first.SourceRevision || beforeRescan.SourceFingerprint != first.SourceFingerprint {
+		t.Fatalf("normal registration detected same-stat replacement: %+v", beforeRescan)
+	}
+	if n, err := repo.ScanAndRegisterImages(context.Background()); err != nil || n != 1 {
+		t.Fatalf("replacement scan = %d, %v", n, err)
+	}
+	changed, err := repo.GetImageByID(first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.SourceFingerprint == first.SourceFingerprint || changed.SourceRevision != first.SourceRevision+1 || changed.Width != 0 || changed.Height != 0 {
+		t.Fatalf("replacement image = %+v, old fingerprint %q", changed, first.SourceFingerprint)
+	}
+	if n, err := repo.ScanAndRegisterImages(context.Background()); err != nil || n != 0 {
+		t.Fatalf("unchanged scan = %d, %v; want no change", n, err)
+	}
+	_ = repo.Close()
+	repo, err = Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	restarted, err := repo.GetImageByID(first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restarted.SourceFingerprint != changed.SourceFingerprint || restarted.SourceRevision != changed.SourceRevision {
+		t.Fatalf("identity did not survive restart: before=%+v after=%+v", changed, restarted)
+	}
+}
+
+func TestFingerprintRejectsSourceChangedDuringRead(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "changing.png")
+	if err := os.WriteFile(path, []byte("stable bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = fingerprintFileWithReadComplete(context.Background(), path, func() {
+		temporary := filepath.Join(dir, "replacement.png")
+		if writeErr := os.WriteFile(temporary, []byte(strings.Repeat("x", int(before.Size()))), 0o600); writeErr != nil {
+			t.Error(writeErr)
+		}
+		if timeErr := os.Chtimes(temporary, before.ModTime(), before.ModTime()); timeErr != nil {
+			t.Error(timeErr)
+		}
+		if renameErr := os.Rename(temporary, path); renameErr != nil {
+			t.Error(renameErr)
+		}
+	})
+	if err == nil || !strings.Contains(err.Error(), "changed during hashing") {
+		t.Fatalf("fingerprint error = %v, want changed-during-hashing", err)
+	}
+}
+
+func TestFingerprintMissingSource(t *testing.T) {
+	_, _, err := FingerprintFile(context.Background(), filepath.Join(t.TempDir(), "missing.png"))
+	if !os.IsNotExist(err) {
+		t.Fatalf("missing fingerprint error = %v", err)
+	}
+}
+
+func TestFingerprintUnreadableSource(t *testing.T) {
+	directory := t.TempDir()
+	_, _, err := FingerprintFile(context.Background(), directory)
+	if err == nil {
+		t.Fatal("fingerprinting a directory should fail")
+	}
+}
+
+func TestScanPropagatesCancellationDuringHashing(t *testing.T) {
+	repoPath := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoPath, "cancel.png"), []byte("source"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	started := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		_, err := repo.scanAndRegisterImagesWithFingerprint(ctx, true, func(ctx context.Context, _ string) (string, os.FileInfo, error) {
+			close(started)
+			<-ctx.Done()
+			return "", nil, ctx.Err()
+		})
+		done <- err
+	}()
+	<-started
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("scan error = %v, want context.Canceled", err)
 	}
 }
 

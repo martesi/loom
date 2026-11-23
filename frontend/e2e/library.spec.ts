@@ -85,6 +85,10 @@ test('library selection, search, placement filters, and folder navigation', asyn
   await expect(asset(page, 'folder-gamma.png')).toHaveCount(0)
 
   await page.getByRole('button', { name: 'Repository', exact: true }).click()
+  // Repository shows only root-level assets; the renamed file remains nested.
+  await expect(asset(page, 'renamed-gamma.png')).toHaveCount(0)
+  await page.getByRole('button', { name: /nested/ }).click()
+  await page.getByRole('button', { name: /deeper/ }).click()
   await expect(asset(page, 'renamed-gamma.png')).toBeVisible()
 })
 
@@ -383,19 +387,30 @@ test('rescan discovers new files and exposes missing files', async ({
   const addedPath = await fixturePath('rescan-fixtures', 'rescan-added.png')
   await writeFile(addedPath, fixturePng)
   await page.getByTestId('repository-actions').click()
-  await page
-    .getByRole('menu', { name: 'Repository actions' })
-    .getByRole('menuitem', { name: 'Rescan repository' })
-    .click()
+  await expect(
+    page
+      .getByRole('menu', { name: 'Repository actions' })
+      .getByRole('menuitem', {
+        name: 'Rescan repository',
+      })
+  ).toHaveCount(0)
+  await page.keyboard.press('Escape')
+  await page.getByTestId('open-command-palette').click()
+  const search = page.getByRole('combobox', { name: 'Search commands' })
+  await search.fill('Rescan repository')
+  await expect(
+    page.getByRole('option', { name: /Rescan repository/ })
+  ).toBeVisible()
+  await page.getByRole('option', { name: /Rescan repository/ }).click()
   await expect(asset(page, 'rescan-added.png')).toBeVisible()
 
   await placeAssets(page, ['rescan-alpha.png'])
   await rm(await fixturePath('rescan-fixtures', 'rescan-alpha.png'))
-  await page.getByTestId('repository-actions').click()
+  await page.getByTestId('open-command-palette').click()
   await page
-    .getByRole('menu', { name: 'Repository actions' })
-    .getByRole('menuitem', { name: 'Rescan repository' })
-    .click()
+    .getByRole('combobox', { name: 'Search commands' })
+    .fill('Rescan repository')
+  await page.getByRole('option', { name: /Rescan repository/ }).click()
   await openAssetsShelf(page)
   await page.getByRole('button', { name: /^Filters/ }).click()
   await page

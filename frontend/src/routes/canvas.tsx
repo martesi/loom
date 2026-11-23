@@ -75,6 +75,10 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     relationships: [],
     groups: [],
   })
+  const [renditionGeneration, setRenditionGeneration] = useState(0)
+  const invalidateMountedRenditions = useCallback(() => {
+    setRenditionGeneration((current) => current + 1)
+  }, [])
   const [nodes, setNodes] = useState<Node[]>([]),
     [edges, setEdges] = useState<Edge[]>([])
   const modifiedMarquee = useRef<{ active: boolean; anchor: number[] }>({
@@ -151,6 +155,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     data,
     expanded,
     repoPath: repo.path,
+    renditionGeneration,
     callbacks,
     selection,
     nodes,
@@ -227,6 +232,8 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       flow={flow}
       host={host}
       data={data}
+      renditionGeneration={renditionGeneration}
+      onRenditionsInvalidated={invalidateMountedRenditions}
       nodes={nodes}
       setNodes={setNodes}
       edges={edges}

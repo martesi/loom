@@ -94,7 +94,7 @@ func previewTestAssetWithExtension(t *testing.T, extension string) (string, int6
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.ScanAndRegisterImages(); err != nil {
+	if _, err := repo.ScanAndRegisterImages(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	images, err := repo.ListImages()
@@ -166,15 +166,109 @@ func TestPreviewURLChangesWithSourceRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(source, []byte("replacement bytes and a different size"), 0o600); err != nil {
+	if err := os.WriteFile(source, []byte("replacement source by"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chtimes(source, old.ModTime(), old.ModTime()); err != nil {
 		t.Fatal(err)
 	}
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.ScanAndRegisterImages(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	_ = repo.Close()
+	clearRenditionMetadata(repoPath)
 	second := previewURL(repoPath, id, source)
 	if first == second || !strings.Contains(first, "?v=") || !strings.Contains(second, "?v=") {
 		t.Fatalf("preview URLs did not track source revision: %q, %q", first, second)
+	}
+	info, err := os.Stat(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCache := renditionCachePath(filepath.Join(repoPath, ".loom", "thumbs"), id, 640, previewSource{path: source, size: info.Size(), modTime: info.ModTime(), revision: 1})
+	newCache := renditionCachePath(filepath.Join(repoPath, ".loom", "thumbs"), id, 640, previewSource{path: source, size: info.Size(), modTime: info.ModTime(), revision: 2})
+	if oldCache == newCache {
+		t.Fatalf("rendition cache key did not change with source revision: %q", oldCache)
+	}
+}
+
+func TestRenditionsEstablishMissingUpgradeFingerprint(t *testing.T) {
+	repoPath, id, source := previewTestAsset(t)
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.DB.Exec(`UPDATE images SET source_fingerprint = NULL, file_size = NULL, content_hash = NULL, width = 100, height = 100 WHERE id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
+	_ = repo.Close()
+	// The upgraded row has the same stat marker but no fingerprint, as it does
+	// immediately after migration 0006. Normal canvas registration establishes it.
+	if _, err := (&ImageService{}).LoadCanvas(repoPath); err != nil {
+		t.Fatal(err)
+	}
+	assertRenditionRequestsSucceed(t, repoPath, id, source)
+}
+
+func TestRenditionsEstablishMissingFingerprintOnFirstRequest(t *testing.T) {
+	repoPath, id, source := previewTestAsset(t)
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.DB.Exec(`UPDATE images SET source_fingerprint = NULL, file_size = NULL, content_hash = NULL WHERE id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
+	_ = repo.Close()
+	assertRenditionRequestsSucceed(t, repoPath, id, source)
+}
+
+func TestRenditionsAfterExplorerDiscovery(t *testing.T) {
+	repoPath := t.TempDir()
+	source := filepath.Join(repoPath, "explorer.png")
+	if err := os.WriteFile(source, []byte("explorer source bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listing, err := repo.ListDirectory("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listing.Files) != 1 || listing.Files[0].SourceFingerprint == "" {
+		t.Fatalf("Explorer registration lacks a fingerprint: %+v", listing.Files)
+	}
+	id := listing.Files[0].ID
+	_ = repo.Close()
+	assertRenditionRequestsSucceed(t, repoPath, id, source)
+}
+
+func assertRenditionRequestsSucceed(t *testing.T, repoPath string, id int64, source string) {
+	t.Helper()
+	processor := &previewTestProcessor{}
+	for _, request := range []struct {
+		name, url string
+		serve     func(http.ResponseWriter, *http.Request, media.Processor)
+	}{
+		{"thumbnail", thumbURL(repoPath, id, source), ServeThumbWithProcessor},
+		{"preview", previewTestURL(t, repoPath, id, 640), ServePreviewWithProcessor},
+	} {
+		t.Run(request.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request.serve(recorder, httptest.NewRequest(http.MethodGet, request.url, nil), processor)
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status=%d response=%q", recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+	if processor.calls != 2 {
+		t.Fatalf("generated rendition requests = %d, want thumbnail and preview", processor.calls)
 	}
 }
 
@@ -654,9 +748,18 @@ func TestServePreviewCacheNoUpscaleAndRevision(t *testing.T) {
 	if err != nil || len(files) != 1 {
 		t.Fatalf("cached revision files = %v, err=%v", files, err)
 	}
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.ScanAndRegisterImages(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	_ = repo.Close()
+	clearRenditionMetadata(repoPath)
 
 	// Even a source narrower than the tier is encoded as a WebP preview.
-	repo, err := store.Bootstrap(repoPath)
+	repo, err = store.Bootstrap(repoPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -695,7 +798,7 @@ func TestServePreviewRegeneratesEmptyCacheAndGeneratesUnsafeStillFormats(t *test
 				t.Fatal(err)
 			}
 			dir := filepath.Join(repoPath, ".loom", "thumbs")
-			cache := previewCachePath(dir, id, 640, previewSource{path: asset, size: info.Size(), modTime: info.ModTime()})
+			cache := previewCachePath(dir, id, 640, previewSource{path: asset, size: info.Size(), modTime: info.ModTime(), revision: 1})
 			if err := os.MkdirAll(dir, 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -748,7 +851,7 @@ func TestServePreviewDoesNotServeCacheDirectories(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := filepath.Join(repoPath, ".loom", "thumbs")
-	cache := previewCachePath(dir, id, 640, previewSource{path: asset, size: info.Size(), modTime: info.ModTime()})
+	cache := previewCachePath(dir, id, 640, previewSource{path: asset, size: info.Size(), modTime: info.ModTime(), revision: 1})
 	if err := os.MkdirAll(cache, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -762,11 +865,18 @@ func TestServePreviewDoesNotServeCacheDirectories(t *testing.T) {
 }
 
 func TestServePreviewRejectsSourceChangesDuringEncode(t *testing.T) {
-	repoPath, id, _ := previewTestAsset(t)
+	repoPath, id, source := previewTestAsset(t)
 	processor := &previewTestProcessor{
 		onPreview: func(srcPath, destination string, call int) error {
 			if call == 1 {
-				if err := os.WriteFile(srcPath, []byte("new source revision"), 0o600); err != nil {
+				before, err := os.Stat(srcPath)
+				if err != nil {
+					return err
+				}
+				if err := os.WriteFile(srcPath, []byte("replacement source by"), 0o600); err != nil {
+					return err
+				}
+				if err := os.Chtimes(srcPath, before.ModTime(), before.ModTime()); err != nil {
 					return err
 				}
 			}
@@ -778,6 +888,9 @@ func TestServePreviewRejectsSourceChangesDuringEncode(t *testing.T) {
 	ServePreviewWithProcessor(rec, httptest.NewRequest("GET", url, nil), processor)
 	if rec.Code != http.StatusConflict || processor.calls != 1 {
 		t.Fatalf("response status=%d calls=%d body=%q", rec.Code, processor.calls, rec.Body.String())
+	}
+	if info, err := os.Stat(source); err != nil || info.Size() != int64(len("original source bytes")) {
+		t.Fatalf("replacement stat = %v, err=%v", info, err)
 	}
 	entries, err := os.ReadDir(filepath.Join(repoPath, ".loom", "thumbs"))
 	if err != nil {
