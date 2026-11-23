@@ -120,14 +120,17 @@ test.describe('Canvas progressive previews', () => {
       await expect(loaded).toHaveJSProperty('complete', true)
       await expect
         .poll(() =>
-          loaded.evaluate((image: HTMLImageElement) => image.naturalWidth)
+          loaded.evaluate((image: HTMLImageElement) => ({
+            width: image.naturalWidth,
+            height: image.naturalHeight,
+          }))
         )
-        .toBeGreaterThan(0)
-      await expect
-        .poll(() =>
-          loaded.evaluate((image: HTMLImageElement) => image.naturalHeight)
-        )
-        .toBeGreaterThan(0)
+        .toEqual({ width: 1, height: 1 })
+      const loadedSrc = await loaded.getAttribute('src')
+      if (!loadedSrc) throw new Error('Decoded preview has no source URL')
+      const loadedUrl = new URL(loadedSrc, page.url())
+      expect(loadedUrl.searchParams.get('v')).toBe(url.searchParams.get('v'))
+      expect(loadedUrl.searchParams.get('w')).toBe(url.searchParams.get('w'))
     } finally {
       releaseBody()
       await page.unroute('**/loom-asset/preview/**')
@@ -226,7 +229,23 @@ test.describe('Canvas progressive previews', () => {
       await expect(pending).toHaveCSS('opacity', '0')
       releaseRetry()
       await retrySuccess
-      await expect(node.getByTestId('image-node-preview-loaded')).toBeVisible()
+      const retryLoaded = node.getByTestId('image-node-preview-loaded')
+      await expect(retryLoaded).toBeVisible()
+      await expect
+        .poll(() =>
+          retryLoaded.evaluate((image: HTMLImageElement) => ({
+            width: image.naturalWidth,
+            height: image.naturalHeight,
+          }))
+        )
+        .toEqual({ width: 1, height: 1 })
+      const retryLoadedSrc = await retryLoaded.getAttribute('src')
+      if (!retryLoadedSrc) throw new Error('Retry preview has no source URL')
+      const retryLoadedUrl = new URL(retryLoadedSrc, page.url())
+      expect(retryLoadedUrl.searchParams.get('retry')).toBe('1')
+      expect(retryLoadedUrl.searchParams.get('v')).toBe(
+        retryUrl?.searchParams.get('v')
+      )
       expect(retryCount).toBe(1)
 
       const wheel = async (delta: number) => {
@@ -243,25 +262,77 @@ test.describe('Canvas progressive previews', () => {
       const olderRequested = heldRequested
       await wheel(300)
       const older = await olderRequested
-      const latestRequested = heldRequested
-      await wheel(-300)
-      let latest = await latestRequested
-      if (
-        latest.url.searchParams.get('w') === older.url.searchParams.get('w')
-      ) {
+      let latest: HeldResponse | undefined
+      for (let attempt = 0; attempt < 8; attempt++) {
         const nextRequested = heldRequested
         await wheel(-300)
-        latest = await nextRequested
+        const response = await Promise.race([
+          nextRequested,
+          page.waitForTimeout(250).then(() => undefined),
+        ])
+        if (response) latest = response
+        if (
+          latest &&
+          latest.url.searchParams.get('w') !== older.url.searchParams.get('w') &&
+          latest.url.searchParams.get('w') !== retryUrl?.searchParams.get('w')
+        ) {
+          break
+        }
+      }
+      if (!latest)
+        throw new Error('Canvas zoom did not request a latest preview tier')
+      if (latest.url.searchParams.get('w') === retryUrl?.searchParams.get('w')) {
+        latest.release()
+        await latest.fulfilled
+        await page.setViewportSize({ width: 1600, height: 1000 })
+        const resizeHandle = node.locator(
+          '.react-flow__resize-control.handle.bottom.right'
+        )
+        await expect(resizeHandle).toBeVisible()
+        const handleBounds = await resizeHandle.boundingBox()
+        if (!handleBounds) throw new Error('Canvas resize handle has no bounds')
+        const resizedRequest = heldRequested
+        await page.mouse.move(
+          handleBounds.x + handleBounds.width / 2,
+          handleBounds.y + handleBounds.height / 2
+        )
+        await page.mouse.down()
+        await page.mouse.move(
+          handleBounds.x + handleBounds.width / 2 + 240,
+          handleBounds.y + handleBounds.height / 2 + 240
+        )
+        await page.mouse.up()
+        latest = await resizedRequest
       }
       expect(latest.url.searchParams.get('w')).not.toBe(
         older.url.searchParams.get('w')
       )
+      expect(latest.url.searchParams.get('w')).not.toBe(
+        retryUrl?.searchParams.get('w')
+      )
+      expect(latest.url.searchParams.has('retry')).toBe(false)
       latest.release()
       const loaded = node.getByTestId('image-node-preview-loaded')
-      await expect(loaded).toHaveAttribute(
-        'src',
-        new RegExp(`w=${latest.url.searchParams.get('w')}`)
-      )
+      await expect(loaded).toBeVisible()
+      const loadedUrl = async () => {
+        const src = await loaded.getAttribute('src')
+        return src ? new URL(src, page.url()) : null
+      }
+      await expect
+        .poll(async () => (await loadedUrl())?.href)
+        .toBe(latest.url.href)
+      const latestLoadedUrl = await loadedUrl()
+      if (!latestLoadedUrl) throw new Error('Latest preview has no source URL')
+      expect(latestLoadedUrl.href).toBe(latest.url.href)
+      expect(latestLoadedUrl.searchParams.has('retry')).toBe(false)
+      await expect
+        .poll(() =>
+          loaded.evaluate((image: HTMLImageElement) => ({
+            width: image.naturalWidth,
+            height: image.naturalHeight,
+          }))
+        )
+        .toEqual({ width: 1, height: 1 })
       older.release()
       await older.fulfilled
       await page.evaluate(
@@ -270,10 +341,21 @@ test.describe('Canvas progressive previews', () => {
             requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
           )
       )
-      await expect(loaded).toHaveAttribute(
-        'src',
-        new RegExp(`w=${latest.url.searchParams.get('w')}`)
-      )
+      await expect
+        .poll(async () => (await loadedUrl())?.href)
+        .toBe(latest.url.href)
+      const finalLoadedUrl = await loadedUrl()
+      if (!finalLoadedUrl) throw new Error('Final preview has no source URL')
+      expect(finalLoadedUrl.href).toBe(latest.url.href)
+      expect(finalLoadedUrl.searchParams.has('retry')).toBe(false)
+      await expect
+        .poll(() =>
+          loaded.evaluate((image: HTMLImageElement) => ({
+            width: image.naturalWidth,
+            height: image.naturalHeight,
+          }))
+        )
+        .toEqual({ width: 1, height: 1 })
     } finally {
       releaseRetry()
       for (const held of heldResponses) held.release()

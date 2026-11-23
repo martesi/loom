@@ -1,5 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises'
-import path from 'node:path'
+import { writeFile } from 'node:fs/promises'
 import { inflateSync } from 'node:zlib'
 import { expect, test } from './test-fixtures'
 import {
@@ -212,16 +211,11 @@ test.describe('floating Canvas drawers', () => {
 
   test('clips overflowing content at both bottom corners of Assets and Inspector', async ({
     page,
-  }) => {
+  }, testInfo) => {
     await page.setViewportSize({ width: 1280, height: 800 })
     await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
     expect(await page.evaluate(() => window.devicePixelRatio)).toBe(1)
     await openFixtureRepo(page, 'shelves-fixtures')
-    const artifacts = path.resolve(
-      import.meta.dirname,
-      '../../.cache/e2e/artifacts'
-    )
-    await mkdir(artifacts, { recursive: true })
     for (const name of ['Assets', 'Inspector']) {
       const shelf = page.locator(`aside[aria-label="${name}"]`)
       await expect(shelf).toHaveAttribute('data-visible', 'true')
@@ -237,8 +231,7 @@ test.describe('floating Canvas drawers', () => {
         animations: 'disabled',
         scale: 'css',
       })
-      const imagePath = path.join(
-        artifacts,
+      const imagePath = testInfo.outputPath(
         `${name.toLowerCase()}-bottom-corners.png`
       )
       await writeFile(imagePath, screenshot)
