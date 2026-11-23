@@ -21,12 +21,13 @@ import {
   writeShortcutOverrides,
 } from '../lib/shortcut-overrides'
 import { AppearanceSettings } from './settings-appearance'
+import { RepositorySettings } from './settings-repository'
 import { Button } from './ui/button'
 import { Kbd } from './ui/kbd'
 
-type Section = 'appearance' | 'keyboard'
+type Section = 'appearance' | 'keyboard' | 'repository'
 
-const sections: Section[] = ['appearance', 'keyboard']
+const sections: Section[] = ['appearance', 'keyboard', 'repository']
 
 const MODIFIER_KEYS = new Set(['Control', 'Shift', 'Alt', 'Meta'])
 
@@ -63,11 +64,21 @@ export function SettingsDialog({
   initialSection = 'appearance',
   actions,
   defaultShortcuts,
+  repoPath,
+  rescanRepository,
+  invalidateRenditions,
+  refreshRepository,
+  onRenditionsInvalidated,
   onClose,
 }: {
   initialSection?: Section
   actions: CanvasAction[]
   defaultShortcuts: Record<string, string>
+  repoPath: string | null
+  rescanRepository: (repoPath: string) => Promise<number>
+  invalidateRenditions: (repoPath: string) => Promise<number>
+  refreshRepository: () => Promise<void>
+  onRenditionsInvalidated: () => void
   onClose: () => void
 }) {
   const [active, setActive] = useState<Section>(initialSection)
@@ -81,6 +92,7 @@ export function SettingsDialog({
   const sectionRefs = useRef<Record<Section, HTMLElement | null>>({
     appearance: null,
     keyboard: null,
+    repository: null,
   })
   const opener = useRef<HTMLElement | null>(
     document.activeElement instanceof HTMLElement
@@ -263,8 +275,10 @@ export function SettingsDialog({
               >
                 {section === 'appearance' ? (
                   <Trans>Appearance</Trans>
-                ) : (
+                ) : section === 'keyboard' ? (
                   <Trans>Keyboard</Trans>
+                ) : (
+                  <Trans>Repository</Trans>
                 )}
               </Button>
             ))}
@@ -412,6 +426,16 @@ export function SettingsDialog({
                 </p>
               </div>
             </section>
+            <RepositorySettings
+              repoPath={repoPath}
+              rescanRepository={rescanRepository}
+              invalidateRenditions={invalidateRenditions}
+              refreshRepository={refreshRepository}
+              onRenditionsInvalidated={onRenditionsInvalidated}
+              sectionRef={(element) => {
+                sectionRefs.current.repository = element
+              }}
+            />
           </main>
         </Dialog.Popup>
       </Dialog.Portal>

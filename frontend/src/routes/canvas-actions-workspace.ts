@@ -1,4 +1,5 @@
 import { t } from '@lingui/core/macro'
+import { ImageService } from '../../bindings/loom/internal/service'
 import type { CanvasAction } from '../lib/action-catalog'
 import type { CanvasActionsContext } from './canvas-actions-context'
 
@@ -26,6 +27,7 @@ export function canvasWorkspaceActions(
     setNavigatorModeRequest,
     setSearchFocusRequest,
     importInput,
+    repoPath,
   } = context
   return [
     {
@@ -196,16 +198,23 @@ export function canvasWorkspaceActions(
       enabled: true,
       execute: () => openPalette(false),
     },
-    {
-      id: 'rescan-repository',
-      label: t`Rescan repository`,
-      description: t`Refresh the repository asset catalog`,
-      category: t`Workspace`,
-      aliases: [t`reload`, t`refresh`],
-      context: t`Workspace`,
-      enabled: true,
-      execute: reload,
-    },
+    ...(repoPath
+      ? [
+          {
+            id: 'rescan-repository',
+            label: t`Rescan repository`,
+            description: t`Refresh the repository asset catalog`,
+            category: t`Workspace`,
+            aliases: [t`reload`, t`refresh`],
+            context: t`Workspace`,
+            enabled: true,
+            execute: async () => {
+              await ImageService.RescanRepository(repoPath)
+              await reload()
+            },
+          },
+        ]
+      : []),
     {
       id: 'switch-repository',
       label: t`Switch repository`,

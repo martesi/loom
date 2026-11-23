@@ -151,17 +151,6 @@ export function CanvasToolbar({
                 role="menuitem"
                 onClick={() => {
                   setRepoMenuOpen(false)
-                  executeActionById('rescan-repository')
-                }}
-                className="rounded px-3 py-2 text-left text-xs hover:bg-accent focus-visible:ring-2 focus-visible:ring-primary/40"
-              >
-                <Trans>Rescan repository</Trans>
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  setRepoMenuOpen(false)
                   importInput.current?.click()
                 }}
                 className="rounded px-3 py-2 text-left text-xs hover:bg-accent focus-visible:ring-2 focus-visible:ring-primary/40"
