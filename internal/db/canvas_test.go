@@ -50,3 +50,38 @@ func TestCanvasMigrationUsesMembership(t *testing.T) {
 		t.Fatalf("board tables remain: %d, %v", n, err)
 	}
 }
+
+func TestFingerprintMigrationUpgradesExistingImages(t *testing.T) {
+	c, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	for _, name := range []string{"0001_init.sql", "0002_operation_log.sql", "0003_canvas_size.sql", "0004_repository_canvas.sql", "0005_trash_retention.sql"} {
+		migration, err := migrationsFS.ReadFile("migrations/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.Exec(string(migration)); err != nil {
+			t.Fatalf("apply %s: %v", name, err)
+		}
+	}
+	if _, err := c.Exec(`INSERT INTO images (file_path, file_size, content_hash) VALUES ('old.png', 10, 'stat:10:1')`); err != nil {
+		t.Fatal(err)
+	}
+	migration, err := migrationsFS.ReadFile("migrations/0006_image_fingerprint.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Exec(string(migration)); err != nil {
+		t.Fatalf("upgrade existing database: %v", err)
+	}
+	var fingerprint sql.NullString
+	var revision int64
+	if err := c.QueryRow(`SELECT source_fingerprint, source_revision FROM images WHERE file_path = 'old.png'`).Scan(&fingerprint, &revision); err != nil {
+		t.Fatal(err)
+	}
+	if fingerprint.Valid || revision != 1 {
+		t.Fatalf("upgraded fingerprint=%v revision=%d", fingerprint, revision)
+	}
+}
