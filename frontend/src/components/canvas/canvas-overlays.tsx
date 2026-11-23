@@ -6,7 +6,9 @@ import type {
   CanvasData,
   ImageInfo,
 } from '../../../bindings/loom/internal/service'
+import { ImageService } from '../../../bindings/loom/internal/service'
 import type { CanvasAction } from '../../lib/action-catalog'
+import { renditionGenerationUrl } from '../../lib/preview-tier'
 import { CompressionDialog } from '../compression-dialog'
 import { SettingsDialog } from '../settings-dialog'
 import { Button } from '../ui/button'
@@ -44,6 +46,8 @@ interface Props {
   previewInfoOpen: boolean
   setPreviewInfoOpen: Dispatch<SetStateAction<boolean>>
   data: CanvasData
+  renditionGeneration: number
+  onRenditionsInvalidated: () => void
   compressIds: number[] | null
   setCompressIds: Dispatch<SetStateAction<number[] | null>>
   reload: () => Promise<void>
@@ -87,6 +91,8 @@ export function CanvasOverlays({
   previewInfoOpen,
   setPreviewInfoOpen,
   data,
+  renditionGeneration,
+  onRenditionsInvalidated,
   compressIds,
   setCompressIds,
   reload,
@@ -123,12 +129,25 @@ export function CanvasOverlays({
           initialSection={settingsSection}
           actions={actionCatalog}
           defaultShortcuts={defaultShortcuts}
+          repoPath={repoPath || null}
+          rescanRepository={(path) => ImageService.RescanRepository(path)}
+          invalidateRenditions={(path) =>
+            ImageService.InvalidateRenditions(path)
+          }
+          refreshRepository={reload}
+          onRenditionsInvalidated={onRenditionsInvalidated}
           onClose={closeSettings}
         />
       )}
       {previewImageId !== null && previewIndex >= 0 && (
         <LightboxViewer
-          images={previewImages}
+          images={previewImages.map((image) => ({
+            ...image,
+            thumbUrl: renditionGenerationUrl(
+              image.thumbUrl,
+              renditionGeneration
+            ),
+          }))}
           index={previewIndex}
           onClose={closePreview}
           onIndexChange={(idx) => {
@@ -140,8 +159,24 @@ export function CanvasOverlays({
               ? 'Canvas'
               : 'Library'
           }
-          sourcesFor={(id) => relatedImages(id, 'sources')}
-          childrenFor={(id) => relatedImages(id, 'children')}
+          sourcesFor={(id) =>
+            relatedImages(id, 'sources').map((image) => ({
+              ...image,
+              thumbUrl: renditionGenerationUrl(
+                image.thumbUrl,
+                renditionGeneration
+              ),
+            }))
+          }
+          childrenFor={(id) =>
+            relatedImages(id, 'children').map((image) => ({
+              ...image,
+              thumbUrl: renditionGenerationUrl(
+                image.thumbUrl,
+                renditionGeneration
+              ),
+            }))
+          }
           onJumpTo={onPreviewJump}
           infoOpen={previewInfoOpen}
           onInfoOpenChange={setPreviewInfoOpen}

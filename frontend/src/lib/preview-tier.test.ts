@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'bun:test'
-import { previewRequestUrl, previewTierForNode } from './preview-tier'
+import {
+  previewRequestUrl,
+  previewTierForNode,
+  renditionGenerationUrl,
+} from './preview-tier'
 
 describe('previewTierForNode', () => {
   it('uses the thumbnail below the smallest preview size', () => {
@@ -22,6 +26,15 @@ describe('previewTierForNode', () => {
   it('appends a tier to the revisioned preview URL', () => {
     expect(previewRequestUrl('/loom-asset/preview/repo/1?v=abc123', 1280)).toBe(
       '/loom-asset/preview/repo/1?v=abc123&w=1280'
+    )
+  })
+
+  it('adds a UI generation without replacing the preview revision', () => {
+    expect(
+      renditionGenerationUrl('/loom-asset/preview/repo/1?v=abc123&w=640', 2)
+    ).toBe('/loom-asset/preview/repo/1?v=abc123&w=640&ui=2')
+    expect(renditionGenerationUrl('/loom-asset/thumb/repo/1?v=abc123', 0)).toBe(
+      '/loom-asset/thumb/repo/1?v=abc123'
     )
   })
 })
