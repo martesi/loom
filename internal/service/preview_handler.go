@@ -54,16 +54,18 @@ type renditionLease struct {
 }
 
 type previewSource struct {
-	path    string
-	size    int64
-	modTime time.Time
+	path        string
+	size        int64
+	modTime     time.Time
+	revision    int64
+	fingerprint string
 }
 
 func IsPreviewRequest(path string) bool { return strings.HasPrefix(path, previewURLPrefix) }
 
-// ServePreview serves a revisioned, on-demand WebP preview. The revision
-// tracks path, size and nanosecond mtime; same-size edits with preserved mtime
-// cannot be detected without hashing the full source on every request.
+// ServePreview serves a revisioned, on-demand WebP preview. Source revisions
+// advance during explicit scans when the persisted full-content fingerprint
+// changes; request handling does not scan or hash sources to detect edits.
 func ServePreview(w http.ResponseWriter, r *http.Request) {
 	ServePreviewWithProcessor(w, r, media.FFmpegProcessor{})
 }
@@ -76,14 +78,6 @@ func ServePreviewWithProcessor(w http.ResponseWriter, r *http.Request, processor
 		return
 	}
 	serveRendition(w, r, processor, tier, "", 0)
-}
-
-func sourceRevision(path string) string {
-	info, err := os.Stat(path)
-	if err != nil {
-		return previewRevision(path, 0, time.Time{})
-	}
-	return previewRevision(path, info.Size(), info.ModTime())
 }
 
 func serveRendition(w http.ResponseWriter, r *http.Request, processor media.Processor, forcedTier int, forcedRepo string, forcedID int64) {
@@ -170,7 +164,7 @@ func serveRendition(w http.ResponseWriter, r *http.Request, processor media.Proc
 			writePreviewSourceError(w, r, err)
 			return
 		}
-		if supplied := r.URL.Query().Get("v"); supplied == "" || supplied != previewRevision(source.path, source.size, source.modTime) {
+		if supplied := r.URL.Query().Get("v"); supplied == "" || supplied != previewRevision(source.path, source.size, source.modTime, source.revision) {
 			w.Header().Set("Cache-Control", "no-store")
 			http.Error(w, "source revision changed", http.StatusConflict)
 			return
@@ -194,7 +188,7 @@ func serveRendition(w http.ResponseWriter, r *http.Request, processor media.Proc
 			if probeErr == nil {
 				if after, statErr := os.Stat(source.path); statErr == nil && after.Size() == source.size && after.ModTime().Equal(source.modTime) {
 					marker := fmt.Sprintf("stat:%d:%d", source.size, source.modTime.UnixNano())
-					_, _ = repo.DB.Exec(`UPDATE images SET width = ?, height = ? WHERE id = ? AND file_path = ? AND file_size = ? AND content_hash = ?`, dimensions.Width, dimensions.Height, id, source.path, source.size, marker)
+					_, _ = repo.DB.Exec(`UPDATE images SET width = ?, height = ? WHERE id = ? AND file_path = ? AND file_size = ? AND content_hash = ? AND source_revision = ?`, dimensions.Width, dimensions.Height, id, source.path, source.size, marker, source.revision)
 				}
 			}
 		}
@@ -325,12 +319,19 @@ func generateRendition(ctx context.Context, repoPath string, id int64, tier int,
 	if !samePreviewSource(source, current) {
 		return nil, http.StatusConflict, nil
 	}
+	// Verify the bytes read by the encoder still match the last explicit scan.
+	// This is bounded by previewSlots and prevents publishing output from a
+	// source replaced while the encoder was running, even if its stat is kept.
+	fingerprint, _, fingerprintErr := store.FingerprintFile(ctx, source.path)
+	if fingerprintErr != nil || fingerprint != source.fingerprint {
+		return nil, http.StatusConflict, fingerprintErr
+	}
 	cachePath := renditionCachePath(cacheDir, id, tier, source)
 	if err := os.Rename(tmpPath, cachePath); err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
 	previewCacheFiles.Lock()
-	prunePreviewRevisions(cacheDir, id, previewRevision(source.path, source.size, source.modTime))
+	prunePreviewRevisions(cacheDir, id, previewRevision(source.path, source.size, source.modTime, source.revision))
 	prunePreviewCache(cacheDir, time.Now())
 	previewCacheFiles.Unlock()
 	file, err := os.Open(cachePath)
@@ -343,7 +344,7 @@ func generateRendition(ctx context.Context, repoPath string, id int64, tier int,
 func mustImagePath(repo *store.Repo, id int64) string { path, _ := repo.GetFilePath(id); return path }
 
 func renditionCachePath(dir string, id int64, tier int, source previewSource) string {
-	return filepath.Join(dir, fmt.Sprintf("%d-%d-%s.webp", id, tier, previewRevision(source.path, source.size, source.modTime)))
+	return filepath.Join(dir, fmt.Sprintf("%d-%d-%s.webp", id, tier, previewRevision(source.path, source.size, source.modTime, source.revision)))
 }
 
 func getPreviewSource(repo *store.Repo, id int64) (store.Image, previewSource, error) {
@@ -366,7 +367,7 @@ func getPreviewSource(repo *store.Repo, id int64) (store.Image, previewSource, e
 		return image, previewSource{}, fmt.Errorf("asset is not a regular file")
 	}
 	return image, previewSource{
-		path: path, size: info.Size(), modTime: info.ModTime(),
+		path: path, size: info.Size(), modTime: info.ModTime(), revision: image.SourceRevision, fingerprint: image.SourceFingerprint,
 	}, nil
 }
 
@@ -378,17 +379,21 @@ func writePreviewSourceError(w http.ResponseWriter, r *http.Request, err error) 
 	http.Error(w, "image unavailable", http.StatusInternalServerError)
 }
 
-func previewRevision(path string, size int64, modTime time.Time) string {
-	revision := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%d\x00%s", path, size, modTime.UnixNano(), previewEncoderVersion)))
+func previewRevision(path string, size int64, modTime time.Time, sourceRevision ...int64) string {
+	var persisted int64
+	if len(sourceRevision) > 0 {
+		persisted = sourceRevision[0]
+	}
+	revision := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%d\x00%d\x00%s", path, size, modTime.UnixNano(), persisted, previewEncoderVersion)))
 	return hex.EncodeToString(revision[:8])
 }
 
 func previewCachePath(dir string, id int64, tier int, source previewSource) string {
-	return filepath.Join(dir, fmt.Sprintf("%d-%d-%s.webp", id, tier, previewRevision(source.path, source.size, source.modTime)))
+	return filepath.Join(dir, fmt.Sprintf("%d-%d-%s.webp", id, tier, previewRevision(source.path, source.size, source.modTime, source.revision)))
 }
 
 func samePreviewSource(left, right previewSource) bool {
-	return left.path == right.path && left.size == right.size && left.modTime.Equal(right.modTime)
+	return left.path == right.path && left.size == right.size && left.modTime.Equal(right.modTime) && left.revision == right.revision
 }
 
 func serveCachedPreview(w http.ResponseWriter, r *http.Request, path string) (bool, error) {

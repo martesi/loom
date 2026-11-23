@@ -30,7 +30,8 @@ func (s *ImageService) mediaProcessor() media.Processor {
 
 // InvalidateRenditions is the manual answer to #4's same-size/same-mtime
 // limitation: revisions intentionally avoid hashing file contents on requests.
-// It removes generated cache files only and serializes with active encodes.
+// It removes generated cache files, clears in-memory rendition metadata, and
+// serializes with active encodes so the next request regenerates every tier.
 func (s *ImageService) InvalidateRenditions(repoPath string) (int, error) {
 	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
@@ -70,6 +71,7 @@ func (s *ImageService) InvalidateRenditions(repoPath string) (int, error) {
 		}
 		releases = append(releases, release)
 	}
+	clearRenditionMetadata(repo.Path)
 	for _, dir := range []string{filepath.Join(repo.Path, ".loom", "thumbs"), filepath.Join(repo.Path, ".loom", "previews")} {
 		entries, readErr := os.ReadDir(dir)
 		if os.IsNotExist(readErr) {
@@ -101,6 +103,7 @@ func (s *ImageService) RescanRepository(repoPath string) (int, error) {
 	defer unlock()
 	defer repo.Close()
 	changed, err := repo.ScanAndRegisterImages()
+	clearRenditionMetadata(repo.Path)
 	if err != nil {
 		return changed, err
 	}
@@ -125,7 +128,7 @@ func (s *ImageService) RescanRepository(repoPath string) (int, error) {
 			continue
 		}
 		marker := fmt.Sprintf("stat:%d:%d", after.Size(), after.ModTime().UnixNano())
-		if _, err := repo.DB.Exec(`UPDATE images SET width = ?, height = ? WHERE id = ? AND file_path = ? AND file_size = ? AND content_hash = ?`, dimensions.Width, dimensions.Height, image.ID, image.FilePath, after.Size(), marker); err != nil {
+		if _, err := repo.DB.Exec(`UPDATE images SET width = ?, height = ? WHERE id = ? AND file_path = ? AND file_size = ? AND content_hash = ? AND source_revision = ?`, dimensions.Width, dimensions.Height, image.ID, image.FilePath, after.Size(), marker, image.SourceRevision); err != nil {
 			return changed, err
 		}
 	}
@@ -187,9 +190,11 @@ func (s *ImageService) LoadCanvas(repoPath string) (*CanvasData, error) {
 		return nil, err
 	}
 
-	if _, err := repo.ScanAndRegisterImages(); err != nil {
+	if _, err := repo.RegisterImages(); err != nil {
+		clearRenditionMetadata(repo.Path)
 		return nil, err
 	}
+	clearRenditionMetadata(repo.Path)
 
 	allImages, err := repo.ListImages()
 	if err != nil {
@@ -216,7 +221,7 @@ func (s *ImageService) LoadCanvas(repoPath string) (*CanvasData, error) {
 			continue
 		}
 		marker := fmt.Sprintf("stat:%d:%d", info.Size(), info.ModTime().UnixNano())
-		if _, err := repo.DB.Exec(`UPDATE images SET width = ?, height = ? WHERE id = ? AND file_path = ? AND file_size = ? AND content_hash = ?`, dimensions.Width, dimensions.Height, img.ID, img.FilePath, info.Size(), marker); err != nil {
+		if _, err := repo.DB.Exec(`UPDATE images SET width = ?, height = ? WHERE id = ? AND file_path = ? AND file_size = ? AND content_hash = ? AND source_revision = ?`, dimensions.Width, dimensions.Height, img.ID, img.FilePath, info.Size(), marker, img.SourceRevision); err != nil {
 			continue
 		}
 	}

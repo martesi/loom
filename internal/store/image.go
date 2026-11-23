@@ -1,33 +1,40 @@
 package store
 
 import (
+	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
 
 type Image struct {
-	ID            int64
-	FilePath      string
-	ThumbPath     string
-	Width         int
-	Height        int
-	FileSize      int64
-	Archived      bool
-	Trashed       bool
-	CanvasX       float64
-	CanvasY       float64
-	HasCanvasPos  bool
-	CanvasW       float64
-	CanvasH       float64
-	HasCanvasSize bool
-	PromptText    string
-	GroupID       int64
-	CreatedAt     string
+	ID                int64
+	FilePath          string
+	ThumbPath         string
+	Width             int
+	Height            int
+	FileSize          int64
+	SourceFingerprint string
+	SourceRevision    int64
+	Archived          bool
+	Trashed           bool
+	CanvasX           float64
+	CanvasY           float64
+	HasCanvasPos      bool
+	CanvasW           float64
+	CanvasH           float64
+	HasCanvasSize     bool
+	PromptText        string
+	GroupID           int64
+	CreatedAt         string
 }
 
 type Relationship struct {
@@ -63,8 +70,135 @@ func IsVideoFile(path string) bool {
 // files and inserts any not already known, keyed by file_path. Returns the
 // number of newly registered images.
 func (r *Repo) ScanAndRegisterImages() (int, error) {
-	loomDir := filepath.Join(r.Path, loomDirName)
+	found, err := r.mediaFiles()
+	if err != nil {
+		return 0, err
+	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	type result struct {
+		path, fingerprint string
+		info              os.FileInfo
+		err               error
+	}
+	jobs := make(chan string)
+	results := make(chan result, len(found))
+	const workers = 4
+	var wg sync.WaitGroup
+	for range min(workers, len(found)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for p := range jobs {
+				fingerprint, info, hashErr := fingerprintFile(ctx, p)
+				results <- result{path: p, fingerprint: fingerprint, info: info, err: hashErr}
+				if hashErr != nil {
+					cancel()
+				}
+			}
+		}()
+	}
+	go func() {
+		defer close(jobs)
+		for _, p := range found {
+			select {
+			case jobs <- p:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	go func() { wg.Wait(); close(results) }()
+	inserted := 0
+	for item := range results {
+		if item.err != nil {
+			return inserted, fmt.Errorf("fingerprint %s: %w", item.path, item.err)
+		}
+		statMarker := fmt.Sprintf("stat:%d:%d", item.info.Size(), item.info.ModTime().UnixNano())
+		res, err := r.DB.Exec(`INSERT OR IGNORE INTO images (file_path, file_size, content_hash, source_fingerprint, source_revision) VALUES (?, ?, ?, ?, 1)`, item.path, item.info.Size(), statMarker, item.fingerprint)
+		if err != nil {
+			return inserted, err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return inserted, err
+		}
+		inserted += int(n)
+		if n != 0 {
+			continue
+		}
+		res, err = r.DB.Exec(`UPDATE images SET file_size = ?, width = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN NULL ELSE width END, height = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN NULL ELSE height END, content_hash = ?, source_revision = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN source_revision + 1 WHEN source_revision = 0 THEN 1 ELSE source_revision END, source_fingerprint = ? WHERE file_path = ? AND (file_size IS NOT ? OR COALESCE(content_hash, '') != ? OR source_fingerprint IS NOT ? OR source_revision = 0)`, item.info.Size(), item.fingerprint, item.fingerprint, statMarker, item.fingerprint, item.fingerprint, item.path, item.info.Size(), statMarker, item.fingerprint)
+		if err != nil {
+			return inserted, err
+		}
+		changed, err := res.RowsAffected()
+		if err != nil {
+			return inserted, err
+		}
+		inserted += int(changed)
+	}
+	return inserted, nil
+}
+
+// RegisterImages discovers files during normal canvas loading. It only hashes
+// new sources and sources whose stat marker changed. Same-stat edits are found
+// only by ScanAndRegisterImages, the explicit rescan operation.
+func (r *Repo) RegisterImages() (int, error) {
+	found, err := r.mediaFiles()
+	if err != nil {
+		return 0, err
+	}
+	changed := 0
+	ctx := context.Background()
+	for _, path := range found {
+		info, err := os.Stat(path)
+		if err != nil {
+			return changed, err
+		}
+		marker := fmt.Sprintf("stat:%d:%d", info.Size(), info.ModTime().UnixNano())
+		var size int64
+		var oldMarker sql.NullString
+		err = r.DB.QueryRow(`SELECT file_size, content_hash FROM images WHERE file_path = ?`, path).Scan(&size, &oldMarker)
+		if err == nil && size == info.Size() && oldMarker.String == marker {
+			continue
+		}
+		if err != nil && err != sql.ErrNoRows {
+			return changed, err
+		}
+		isNew := err == sql.ErrNoRows
+		fingerprint, stableInfo, err := fingerprintFile(ctx, path)
+		if err != nil {
+			return changed, fmt.Errorf("fingerprint %s: %w", path, err)
+		}
+		marker = fmt.Sprintf("stat:%d:%d", stableInfo.Size(), stableInfo.ModTime().UnixNano())
+		if isNew {
+			res, insertErr := r.DB.Exec(`INSERT OR IGNORE INTO images (file_path, file_size, content_hash, source_fingerprint, source_revision) VALUES (?, ?, ?, ?, 1)`, path, stableInfo.Size(), marker, fingerprint)
+			if insertErr != nil {
+				return changed, insertErr
+			}
+			n, rowsErr := res.RowsAffected()
+			if rowsErr != nil {
+				return changed, rowsErr
+			}
+			changed += int(n)
+			continue
+		}
+		res, err := r.DB.Exec(`UPDATE images SET file_size = ?, width = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN NULL ELSE width END, height = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN NULL ELSE height END, content_hash = ?, source_revision = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN source_revision + 1 WHEN source_revision = 0 THEN 1 ELSE source_revision END, source_fingerprint = ? WHERE file_path = ?`, stableInfo.Size(), fingerprint, fingerprint, marker, fingerprint, fingerprint, path)
+		if err != nil {
+			return changed, err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return changed, err
+		}
+		changed += int(n)
+	}
+	return changed, nil
+}
+
+func (r *Repo) mediaFiles() ([]string, error) {
+	loomDir := filepath.Join(r.Path, loomDirName)
 	var found []string
 	err := filepath.WalkDir(r.Path, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -82,41 +216,64 @@ func (r *Repo) ScanAndRegisterImages() (int, error) {
 		return nil
 	})
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
+	return found, nil
+}
 
-	inserted := 0
-	for _, p := range found {
-		info, err := os.Stat(p)
-		if err != nil {
-			return inserted, err
+func fingerprintFile(ctx context.Context, path string) (string, os.FileInfo, error) {
+	return fingerprintFileWithReadComplete(ctx, path, nil)
+}
+
+func fingerprintFileWithReadComplete(ctx context.Context, path string, readComplete func()) (string, os.FileInfo, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", nil, err
+	}
+	defer file.Close()
+	before, err := file.Stat()
+	if err != nil {
+		return "", nil, err
+	}
+	pathBefore, err := os.Stat(path)
+	if err != nil || !os.SameFile(before, pathBefore) {
+		return "", nil, fmt.Errorf("source changed before hashing")
+	}
+	hash := sha256.New()
+	buffer := make([]byte, 128*1024)
+	for {
+		if err := ctx.Err(); err != nil {
+			return "", nil, err
 		}
-		// content_hash remains nullable and is used here as a cheap source-stat
-		// marker; the request path never hashes file contents. This detects mtime
-		// changes without adding a schema column.
-		statMarker := fmt.Sprintf("stat:%d:%d", info.Size(), info.ModTime().UnixNano())
-		res, err := r.DB.Exec(`INSERT OR IGNORE INTO images (file_path, file_size, content_hash) VALUES (?, ?, ?)`, p, info.Size(), statMarker)
-		if err != nil {
-			return inserted, err
+		n, readErr := file.Read(buffer)
+		if n > 0 {
+			_, _ = hash.Write(buffer[:n])
 		}
-		n, err := res.RowsAffected()
-		if err != nil {
-			return inserted, err
+		if readErr == io.EOF {
+			break
 		}
-		inserted += int(n)
-		if n == 0 {
-			res, err = r.DB.Exec(`UPDATE images SET file_size = ?, width = NULL, height = NULL, content_hash = ? WHERE file_path = ? AND COALESCE(content_hash, '') != ?`, info.Size(), statMarker, p, statMarker)
-			if err != nil {
-				return inserted, err
-			}
-			changed, err := res.RowsAffected()
-			if err != nil {
-				return inserted, err
-			}
-			inserted += int(changed)
+		if readErr != nil {
+			return "", nil, readErr
 		}
 	}
-	return inserted, nil
+	if readComplete != nil {
+		readComplete()
+	}
+	after, err := file.Stat()
+	if err != nil {
+		return "", nil, err
+	}
+	pathAfter, err := os.Stat(path)
+	if err != nil || !os.SameFile(before, after) || !os.SameFile(after, pathAfter) || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) || before.Size() != pathAfter.Size() || !before.ModTime().Equal(pathAfter.ModTime()) {
+		return "", nil, fmt.Errorf("source changed during hashing")
+	}
+	return hex.EncodeToString(hash.Sum(nil)), after, nil
+}
+
+// FingerprintFile returns a full SHA-256 fingerprint only when the same file
+// identity and stat marker remain stable for the complete read.
+func FingerprintFile(ctx context.Context, path string) (string, os.FileInfo, error) {
+	return fingerprintFile(ctx, path)
 }
 
 // DirListing is a non-recursive view of one directory under the repo root:
@@ -236,7 +393,7 @@ const imageSelectCols = `
 	COALESCE(height, 0), COALESCE(file_size, 0), archived, trashed, canvas_x, canvas_y,
 	canvas_w, canvas_h,
 	COALESCE((SELECT p.text FROM prompts p WHERE p.id = images.prompt_id), ''),
-	COALESCE(group_id, 0), created_at`
+	COALESCE(group_id, 0), created_at, COALESCE(source_fingerprint, ''), source_revision`
 
 func scanImage(scanner interface {
 	Scan(dest ...any) error
@@ -244,7 +401,7 @@ func scanImage(scanner interface {
 	var img Image
 	var cx, cy, cw, ch sql.NullFloat64
 	err := scanner.Scan(&img.ID, &img.FilePath, &img.ThumbPath, &img.Width, &img.Height,
-		&img.FileSize, &img.Archived, &img.Trashed, &cx, &cy, &cw, &ch, &img.PromptText, &img.GroupID, &img.CreatedAt)
+		&img.FileSize, &img.Archived, &img.Trashed, &cx, &cy, &cw, &ch, &img.PromptText, &img.GroupID, &img.CreatedAt, &img.SourceFingerprint, &img.SourceRevision)
 	if err != nil {
 		return img, err
 	}

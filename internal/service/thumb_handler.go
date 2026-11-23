@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"loom/internal/media"
@@ -18,9 +19,20 @@ const (
 	previewURLPrefix = "/loom-asset/preview/"
 )
 
+var renditionMetadata = struct {
+	sync.RWMutex
+	revisions map[string]int64
+}{revisions: make(map[string]int64)}
+
 func thumbURL(repoPath string, imageID int64, filePath string) string {
 	enc := base64.RawURLEncoding.EncodeToString([]byte(repoPath))
-	return thumbURLPrefix + enc + "/" + strconv.FormatInt(imageID, 10) + "?v=" + sourceRevision(filePath)
+	info, _ := os.Stat(filePath)
+	var size int64
+	var modified time.Time
+	if info != nil {
+		size, modified = info.Size(), info.ModTime()
+	}
+	return thumbURLPrefix + enc + "/" + strconv.FormatInt(imageID, 10) + "?v=" + previewRevision(filePath, size, modified, persistedImageRevision(repoPath, imageID))
 }
 
 func fullURL(repoPath string, imageID int64) string {
@@ -37,8 +49,42 @@ func previewURL(repoPath string, imageID int64, filePath string) string {
 		size = info.Size()
 		modified = info.ModTime()
 	}
-	revision := previewRevision(filePath, size, modified)
+	revision := previewRevision(filePath, size, modified, persistedImageRevision(repoPath, imageID))
 	return previewURLPrefix + enc + "/" + strconv.FormatInt(imageID, 10) + "?v=" + revision
+}
+
+func persistedImageRevision(repoPath string, imageID int64) int64 {
+	key := repoPath + "\x00" + strconv.FormatInt(imageID, 10)
+	renditionMetadata.RLock()
+	revision, ok := renditionMetadata.revisions[key]
+	renditionMetadata.RUnlock()
+	if ok {
+		return revision
+	}
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		return 0
+	}
+	defer repo.Close()
+	image, err := repo.GetImageByID(imageID)
+	if err != nil {
+		return 0
+	}
+	renditionMetadata.Lock()
+	renditionMetadata.revisions[key] = image.SourceRevision
+	renditionMetadata.Unlock()
+	return image.SourceRevision
+}
+
+func clearRenditionMetadata(repoPath string) {
+	prefix := repoPath + "\x00"
+	renditionMetadata.Lock()
+	for key := range renditionMetadata.revisions {
+		if strings.HasPrefix(key, prefix) {
+			delete(renditionMetadata.revisions, key)
+		}
+	}
+	renditionMetadata.Unlock()
 }
 
 func previewURLForImage(repoPath string, image store.Image) string {

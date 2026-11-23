@@ -31,6 +31,17 @@ func TestInvalidateRenditionsRemovesCachesOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = repo.Close()
+	if got := persistedImageRevision(repoPath, images[0].ID); got != images[0].SourceRevision {
+		t.Fatalf("cached revision = %d, want %d", got, images[0].SourceRevision)
+	}
+	repo, err = store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.DB.Exec(`UPDATE images SET source_revision = source_revision + 1 WHERE id = ?`, images[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	_ = repo.Close()
 	cacheDir := filepath.Join(repoPath, ".loom", "thumbs")
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -52,6 +63,16 @@ func TestInvalidateRenditionsRemovesCachesOnly(t *testing.T) {
 	}
 	if len(images) != 1 {
 		t.Fatalf("registered images = %d", len(images))
+	}
+	if got := persistedImageRevision(repoPath, images[0].ID); got != images[0].SourceRevision+1 {
+		t.Fatalf("revision metadata remained stale after invalidation: %d", got)
+	}
+	processor := &previewTestProcessor{}
+	request := httptest.NewRequest("GET", previewTestURL(t, repoPath, images[0].ID, 640), nil)
+	response := httptest.NewRecorder()
+	ServePreviewWithProcessor(response, request, processor)
+	if response.Code != 200 || processor.calls != 1 {
+		t.Fatalf("rendition after invalidation status=%d encode calls=%d", response.Code, processor.calls)
 	}
 }
 
