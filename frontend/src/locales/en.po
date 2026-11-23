@@ -30,7 +30,7 @@ msgstr "{0, plural, one {# asset selected} other {# assets selected}}"
 #. placeholder {0}: (group.memberIds ?? []).length
 #. placeholder {0}: sortedRows.length
 #: src/components/canvas/detail-panel.tsx:255
-#: src/components/canvas/library-panel.tsx:390
+#: src/components/canvas/library-panel.tsx:399
 msgid "{0, plural, one {# asset} other {# assets}}"
 msgstr "{0, plural, one {# asset} other {# assets}}"
 
@@ -45,7 +45,7 @@ msgid "{0, plural, one {# relationship} other {# relationships}}"
 msgstr "{0, plural, one {# relationship} other {# relationships}}"
 
 #. placeholder {0}: selected.length
-#: src/components/canvas/library-panel.tsx:394
+#: src/components/canvas/library-panel.tsx:403
 msgid "{0, plural, one {# selected} other {# selected}}"
 msgstr "{0, plural, one {# selected} other {# selected}}"
 
@@ -56,17 +56,17 @@ msgid "{0, plural, one {Apply to # asset} other {Apply to # assets}}"
 msgstr "{0, plural, one {Apply to # asset} other {Apply to # assets}}"
 
 #. placeholder {0}: trashIds?.length ?? 0
-#: src/components/canvas/canvas-overlays.tsx:210
+#: src/components/canvas/canvas-overlays.tsx:212
 msgid "{0, plural, one {Move # asset to trash?} other {Move # assets to trash?}}"
 msgstr "{0, plural, one {Move # asset to trash?} other {Move # assets to trash?}}"
 
 #. placeholder {0}: purgeIds.length
-#: src/components/canvas/canvas-overlays.tsx:206
+#: src/components/canvas/canvas-overlays.tsx:208
 msgid "{0, plural, one {Permanently delete # asset?} other {Permanently delete # assets?}}"
 msgstr "{0, plural, one {Permanently delete # asset?} other {Permanently delete # assets?}}"
 
 #. placeholder {0}: purgeIds ? ( <Trans> This removes the files and Loom metadata immediately. Trash retention does not apply, and this action cannot be undone. </Trans> ) : ( <Trans> The selected assets will move to repository trash. They are retained for 30 days, then permanently purged automatically. </Trans> )
-#: src/components/canvas/canvas-overlays.tsx:216
+#: src/components/canvas/canvas-overlays.tsx:218
 msgid "{0}"
 msgstr "{0}"
 
@@ -260,7 +260,7 @@ msgstr "all"
 msgid "All"
 msgstr "All"
 
-#: src/components/canvas/library-panel.tsx:343
+#: src/components/canvas/library-panel.tsx:352
 msgid "All Assets"
 msgstr "All Assets"
 
@@ -386,7 +386,7 @@ msgstr "Asset state"
 
 #: src/components/canvas/asset-list.tsx:64
 #: src/components/canvas/canvas-toolbar.tsx:81
-#: src/components/canvas/canvas-workspace-content.tsx:313
+#: src/components/canvas/canvas-workspace-content.tsx:317
 #: src/routes/canvas-actions-workspace.ts:72
 #: src/routes/canvas-actions-workspace.ts:83
 #: src/routes/canvas-actions-workspace.ts:244
@@ -524,7 +524,7 @@ msgstr "browse path"
 msgid "Cache invalidation failed: {detail}"
 msgstr "Cache invalidation failed: {detail}"
 
-#: src/components/canvas/canvas-overlays.tsx:232
+#: src/components/canvas/canvas-overlays.tsx:234
 #: src/components/canvas/detail-panel-dialogs.tsx:98
 #: src/components/canvas/detail-panel-dialogs.tsx:170
 #: src/components/canvas/library-context-menu.tsx:108
@@ -1022,7 +1022,7 @@ msgstr "Dimensions"
 msgid "directories"
 msgstr "directories"
 
-#: src/components/canvas/canvas-workspace-content.tsx:307
+#: src/components/canvas/canvas-workspace-content.tsx:311
 msgid "Dismiss"
 msgstr "Dismiss"
 
@@ -1196,7 +1196,7 @@ msgstr "Focused the window showing \"{targetName}\"."
 #~ msgid "Folder name…"
 #~ msgstr "Folder name…"
 
-#: src/components/canvas/library-panel.tsx:343
+#: src/components/canvas/library-panel.tsx:352
 msgid "Folders"
 msgstr "Folders"
 
@@ -1384,7 +1384,7 @@ msgid "Inspect"
 msgstr "Inspect"
 
 #: src/components/canvas/canvas-toolbar.tsx:103
-#: src/components/canvas/canvas-workspace-content.tsx:397
+#: src/components/canvas/canvas-workspace-content.tsx:402
 #: src/routes/canvas-actions-workspace.ts:127
 #: src/routes/canvas-actions-workspace.ts:138
 #: src/routes/landing.tsx:56
@@ -1650,7 +1650,7 @@ msgstr "Move selected Assets to the repository trash"
 msgid "Move selected Canvas assets to repository trash"
 msgstr "Move selected Canvas assets to repository trash"
 
-#: src/components/canvas/canvas-overlays.tsx:253
+#: src/components/canvas/canvas-overlays.tsx:255
 #: src/components/canvas/detail-panel-relations.tsx:91
 msgid "Move to trash"
 msgstr "Move to trash"
@@ -1934,7 +1934,7 @@ msgstr "Paste media"
 msgid "permanent delete"
 msgstr "permanent delete"
 
-#: src/components/canvas/canvas-overlays.tsx:251
+#: src/components/canvas/canvas-overlays.tsx:253
 msgid "Permanently delete"
 msgstr "Permanently delete"
 
@@ -2493,7 +2493,7 @@ msgstr "Select all"
 msgid "select all canvas items"
 msgstr "select all canvas items"
 
-#: src/components/canvas/library-panel.tsx:411
+#: src/components/canvas/library-panel.tsx:420
 msgid "Select all files in folder"
 msgstr "Select all files in folder"
 
@@ -2505,7 +2505,7 @@ msgstr "Select all in active surface"
 msgid "Select all on active surface"
 msgstr "Select all on active surface"
 
-#: src/components/canvas/library-panel.tsx:409
+#: src/components/canvas/library-panel.tsx:418
 msgid "Select all results"
 msgstr "Select all results"
 
@@ -2864,7 +2864,7 @@ msgstr "The selected assets are unavailable. Bulk edits are disabled."
 #~ msgid "The selected assets will move to repository trash."
 #~ msgstr "The selected assets will move to repository trash."
 
-#: src/components/canvas/canvas-overlays.tsx:223
+#: src/components/canvas/canvas-overlays.tsx:225
 msgid "The selected assets will move to repository trash. They are retained for 30 days, then permanently purged automatically."
 msgstr "The selected assets will move to repository trash. They are retained for 30 days, then permanently purged automatically."
 
@@ -2916,7 +2916,7 @@ msgstr "This deletes generated renditions only. It never deletes source files."
 msgid "This file cannot be moved in its current state."
 msgstr "This file cannot be moved in its current state."
 
-#: src/components/canvas/canvas-overlays.tsx:218
+#: src/components/canvas/canvas-overlays.tsx:220
 msgid "This removes the files and Loom metadata immediately. Trash retention does not apply, and this action cannot be undone."
 msgstr "This removes the files and Loom metadata immediately. Trash retention does not apply, and this action cannot be undone."
 

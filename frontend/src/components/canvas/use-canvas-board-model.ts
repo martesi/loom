@@ -4,6 +4,7 @@ import {
   type CanvasData,
   ImageService,
 } from '../../../bindings/loom/internal/service'
+import { renditionGenerationUrl } from '../../lib/preview-tier'
 import type { Selection } from '../../lib/selection'
 
 interface CanvasDropTarget {
@@ -22,6 +23,7 @@ interface Props {
   data: CanvasData
   expanded: number | null
   repoPath: string
+  renditionGeneration: number
   callbacks: { current: Callbacks }
   selection: Selection
   nodes: Node[]
@@ -36,6 +38,7 @@ export function useCanvasBoardModel({
   data,
   expanded,
   repoPath,
+  renditionGeneration,
   callbacks,
   selection,
   nodes,
@@ -107,8 +110,10 @@ export function useCanvasBoardModel({
         height: image.canvasH || 110,
         data: {
           fileName: image.fileName,
-          thumbUrl: image.thumbUrl,
-          previewUrl: image.previewUrl,
+          thumbUrl: renditionGenerationUrl(image.thumbUrl, renditionGeneration),
+          previewUrl: image.previewUrl
+            ? renditionGenerationUrl(image.previewUrl, renditionGeneration)
+            : undefined,
           missing: image.missing,
           showFileName: true,
           width: image.width,
@@ -137,7 +142,7 @@ export function useCanvasBoardModel({
         height: 128,
         data: {
           name: group.name || cover.fileName,
-          thumbUrl: cover.thumbUrl,
+          thumbUrl: renditionGenerationUrl(cover.thumbUrl, renditionGeneration),
           count: (group.memberIds ?? []).length,
         },
       }
@@ -171,7 +176,16 @@ export function useCanvasBoardModel({
               ]
         })
     )
-  }, [data, expanded, repoPath, callbacks, dropTargets, setEdges, setNodes])
+  }, [
+    data,
+    expanded,
+    repoPath,
+    renditionGeneration,
+    callbacks,
+    dropTargets,
+    setEdges,
+    setNodes,
+  ])
 
   const resolveSetDropTarget = useCallback(
     (node: Node) => {

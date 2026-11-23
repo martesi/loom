@@ -42,6 +42,8 @@ interface Props {
   flow: ReactFlowInstance
   host: MutableRefObject<HTMLDivElement | null>
   data: CanvasData
+  renditionGeneration: number
+  onRenditionsInvalidated: () => void
   nodes: Node[]
   setNodes: Dispatch<SetStateAction<Node[]>>
   edges: Edge[]
@@ -74,6 +76,8 @@ export function CanvasWorkspaceContent(props: Props) {
     flow,
     host,
     data,
+    renditionGeneration,
+    onRenditionsInvalidated,
     nodes,
     setNodes,
     edges,
@@ -325,6 +329,7 @@ export function CanvasWorkspaceContent(props: Props) {
             selection={selection}
             select={selectAssets}
             refresh={refresh}
+            renditionGeneration={renditionGeneration}
             onError={report}
             visible={markAssetsVisible}
             reveal={reveal}
@@ -470,6 +475,8 @@ export function CanvasWorkspaceContent(props: Props) {
         previewInfoOpen={previewInfoOpen}
         setPreviewInfoOpen={setPreviewInfoOpen}
         data={data}
+        renditionGeneration={renditionGeneration}
+        onRenditionsInvalidated={onRenditionsInvalidated}
         compressIds={compressIds}
         setCompressIds={setCompressIds}
         reload={reload}

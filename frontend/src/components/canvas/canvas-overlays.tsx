@@ -1,18 +1,14 @@
 import { Dialog } from '@base-ui-components/react/dialog'
 import { plural } from '@lingui/core/macro'
 import { Trans } from '@lingui/react/macro'
-import {
-  type Dispatch,
-  type MutableRefObject,
-  type SetStateAction,
-  useState,
-} from 'react'
+import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import type {
   CanvasData,
   ImageInfo,
 } from '../../../bindings/loom/internal/service'
 import { ImageService } from '../../../bindings/loom/internal/service'
 import type { CanvasAction } from '../../lib/action-catalog'
+import { renditionGenerationUrl } from '../../lib/preview-tier'
 import { CompressionDialog } from '../compression-dialog'
 import { SettingsDialog } from '../settings-dialog'
 import { Button } from '../ui/button'
@@ -50,6 +46,8 @@ interface Props {
   previewInfoOpen: boolean
   setPreviewInfoOpen: Dispatch<SetStateAction<boolean>>
   data: CanvasData
+  renditionGeneration: number
+  onRenditionsInvalidated: () => void
   compressIds: number[] | null
   setCompressIds: Dispatch<SetStateAction<number[] | null>>
   reload: () => Promise<void>
@@ -93,6 +91,8 @@ export function CanvasOverlays({
   previewInfoOpen,
   setPreviewInfoOpen,
   data,
+  renditionGeneration,
+  onRenditionsInvalidated,
   compressIds,
   setCompressIds,
   reload,
@@ -108,26 +108,6 @@ export function CanvasOverlays({
   finishTrash,
   report,
 }: Props) {
-  const [renditionGeneration, setRenditionGeneration] = useState(0)
-  function invalidateMountedImageUrls() {
-    const nextGeneration = renditionGeneration + 1
-    setRenditionGeneration(nextGeneration)
-    for (const image of document.images) {
-      const src = image.getAttribute('src')
-      if (!src) continue
-      const url = new URL(src, document.baseURI)
-      if (
-        !url.pathname.startsWith('/loom-asset/thumb/') &&
-        !url.pathname.startsWith('/loom-asset/preview/')
-      )
-        continue
-      // `v` carries the source revision for preview requests. Keep it intact;
-      // this extra query key is only for the browser's rendition cache.
-      url.searchParams.set('ui', String(nextGeneration))
-      image.setAttribute('src', `${url.pathname}${url.search}${url.hash}`)
-    }
-  }
-
   return (
     <>
       <CommandPalette
@@ -155,13 +135,19 @@ export function CanvasOverlays({
             ImageService.InvalidateRenditions(path)
           }
           refreshRepository={reload}
-          onRenditionsInvalidated={invalidateMountedImageUrls}
+          onRenditionsInvalidated={onRenditionsInvalidated}
           onClose={closeSettings}
         />
       )}
       {previewImageId !== null && previewIndex >= 0 && (
         <LightboxViewer
-          images={previewImages}
+          images={previewImages.map((image) => ({
+            ...image,
+            thumbUrl: renditionGenerationUrl(
+              image.thumbUrl,
+              renditionGeneration
+            ),
+          }))}
           index={previewIndex}
           onClose={closePreview}
           onIndexChange={(idx) => {
@@ -173,8 +159,24 @@ export function CanvasOverlays({
               ? 'Canvas'
               : 'Library'
           }
-          sourcesFor={(id) => relatedImages(id, 'sources')}
-          childrenFor={(id) => relatedImages(id, 'children')}
+          sourcesFor={(id) =>
+            relatedImages(id, 'sources').map((image) => ({
+              ...image,
+              thumbUrl: renditionGenerationUrl(
+                image.thumbUrl,
+                renditionGeneration
+              ),
+            }))
+          }
+          childrenFor={(id) =>
+            relatedImages(id, 'children').map((image) => ({
+              ...image,
+              thumbUrl: renditionGenerationUrl(
+                image.thumbUrl,
+                renditionGeneration
+              ),
+            }))
+          }
           onJumpTo={onPreviewJump}
           infoOpen={previewInfoOpen}
           onInfoOpenChange={setPreviewInfoOpen}

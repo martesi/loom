@@ -1,9 +1,11 @@
-import { afterEach, describe, expect, it } from 'bun:test'
+import { afterEach, describe, expect, it, spyOn } from 'bun:test'
 import {
   readShortcutOverrides,
   shortcutOverridesKey,
   writeShortcutOverrides,
 } from './shortcut-overrides'
+
+const restoreEventSpies: Array<() => void> = []
 
 function useBrowser(initial: Record<string, string> = {}) {
   const values = new Map(Object.entries(initial))
@@ -19,22 +21,23 @@ function useBrowser(initial: Record<string, string> = {}) {
       length: 0,
     },
   })
-  Object.defineProperty(globalThis, 'window', {
-    configurable: true,
-    value: {
-      dispatchEvent: (event: Event) => {
+  const eventSpy = spyOn(window, 'dispatchEvent').mockImplementation(
+    (event) => {
+      if (event.type === 'loom:shortcut-overrides-change')
         events.push(event.type)
-        return true
-      },
-    },
-  })
+      return true
+    }
+  )
+  restoreEventSpies.push(() => eventSpy.mockRestore())
   return { values, events }
 }
 
 describe('shortcut overrides', () => {
   afterEach(() => {
+    // Keep Happy DOM's real Window intact for component tests running beside
+    // this suite. Replacing or deleting it leaks across Bun's test files.
+    for (const restore of restoreEventSpies.splice(0)) restore()
     Reflect.deleteProperty(globalThis, 'localStorage')
-    Reflect.deleteProperty(globalThis, 'window')
   })
 
   it('returns no overrides when nothing is stored', () => {

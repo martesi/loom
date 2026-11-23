@@ -16,6 +16,7 @@ import {
   matchesAssetView,
   sortAssetRows,
 } from '../../lib/asset-views'
+import { renditionGenerationUrl } from '../../lib/preview-tier'
 import type { Selection } from '../../lib/selection'
 import { Button } from '../ui/button'
 import { AssetGallery } from './asset-gallery'
@@ -32,6 +33,7 @@ interface Props {
   selection: Selection
   select: (ids: number[]) => void
   refresh: number
+  renditionGeneration: number
   onError: (e: unknown) => void
   visible: (ids: number[]) => void
   reveal: { id: number; folder: string | null } | null
@@ -59,6 +61,7 @@ export const LibraryPanel = memo(function LibraryPanel({
   selection,
   select,
   refresh,
+  renditionGeneration,
   onError,
   visible,
   reveal,
@@ -119,7 +122,13 @@ export const LibraryPanel = memo(function LibraryPanel({
     sort,
     layout,
   }
-  const sortedRows = sortAssetRows(rows, sort)
+  const sortedRows = sortAssetRows(
+    rows.map((row) => ({
+      ...row,
+      thumbUrl: renditionGenerationUrl(row.thumbUrl, renditionGeneration),
+    })),
+    sort
+  )
   // biome-ignore lint/correctness/useExhaustiveDependencies: repository mutations invalidate the tag catalog.
   useEffect(() => {
     void TagService.ListTags(path)

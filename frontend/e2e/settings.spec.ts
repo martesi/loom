@@ -247,28 +247,11 @@ test.describe('Settings', () => {
     await dropAsset(page, 'preview-alpha.png', { x: 500, y: 300 })
     const node = imageNodes(page).first()
     await expect(node).toBeVisible()
-    const bounds = await node.boundingBox()
-    if (!bounds) throw new Error('Canvas image node has no bounds')
-    await page.mouse.move(
-      bounds.x + bounds.width / 2,
-      bounds.y + bounds.height / 2
-    )
-    await page.keyboard.down('Control')
-    await page.mouse.wheel(0, -900)
-    await page.keyboard.up('Control')
-    await expect(node.getByTestId('image-node-preview-loaded')).toBeVisible()
     const cachedFiles = () =>
       readdir(previewsPath)
         .then((files) => files.filter((file) => /\.(webp|avif)$/.test(file)))
         .catch(() => [])
     await expect.poll(cachedFiles).not.toHaveLength(0)
-    const previewImage = node.getByTestId('image-node-preview-loaded')
-    const beforeSrc = await previewImage.getAttribute('src')
-    if (!beforeSrc) throw new Error('Loaded preview has no source URL')
-    const beforeGeneration = new URL(beforeSrc, page.url()).searchParams.get(
-      'ui'
-    )
-    await page.getByTestId('toggle-assets-shelf').click()
     await page.keyboard.press('ControlOrMeta+,')
     const settings = page.getByRole('dialog', { name: 'Settings' })
     await settings
@@ -281,8 +264,64 @@ test.describe('Settings', () => {
     await expect(confirmation).toContainText('It never deletes source files.')
     await confirmation.getByRole('button', { name: 'Cancel' }).click()
     await expect.poll(cachedFiles).not.toHaveLength(0)
+    await page.keyboard.press('Escape')
 
-    await page.route('**/loom-asset/**', (route) => route.abort())
+    const bounds = await node.boundingBox()
+    if (!bounds) throw new Error('Canvas image node has no bounds')
+    let releaseStaleRequest: (() => void) | undefined
+    let releaseCurrentRequest: (() => void) | undefined
+    const staleRequestGate = new Promise<void>((resolve) => {
+      releaseStaleRequest = resolve
+    })
+    const currentRequestGate = new Promise<void>((resolve) => {
+      releaseCurrentRequest = resolve
+    })
+    let staleRequestStarted = () => {}
+    let currentRequestStarted = () => {}
+    const staleRequestPending = new Promise<void>((resolve) => {
+      staleRequestStarted = resolve
+    })
+    const currentRequestPending = new Promise<void>((resolve) => {
+      currentRequestStarted = resolve
+    })
+    let previewRequestCount = 0
+    let stalePreviewUrl = ''
+    let currentPreviewUrl = ''
+    await page.route('**/loom-asset/thumb/**', (route) => route.abort())
+    await page.route('**/loom-asset/preview/**', async (route) => {
+      previewRequestCount += 1
+      if (previewRequestCount === 1) {
+        stalePreviewUrl = route.request().url()
+        staleRequestStarted()
+        await staleRequestGate
+      } else if (previewRequestCount === 2) {
+        currentPreviewUrl = route.request().url()
+        currentRequestStarted()
+        await currentRequestGate
+      }
+      await route.continue()
+    })
+    await page.mouse.move(
+      bounds.x + bounds.width / 2,
+      bounds.y + bounds.height / 2
+    )
+    await page.keyboard.down('Control')
+    await page.mouse.wheel(0, -1600)
+    await page.keyboard.up('Control')
+    await staleRequestPending
+    await expect(node.getByTestId('image-node-preview')).toBeVisible()
+    const stalePendingSrc = await node
+      .getByTestId('image-node-preview')
+      .getAttribute('src')
+    if (!stalePendingSrc) throw new Error('Pending preview has no source URL')
+    expect(
+      new URL(stalePendingSrc, page.url()).searchParams.get('ui')
+    ).toBeNull()
+
+    await page.keyboard.press('ControlOrMeta+,')
+    await settings
+      .getByRole('button', { name: 'Repository', exact: true })
+      .click()
     await settings.getByRole('button', { name: 'Invalidate cache' }).click()
     await page
       .getByRole('dialog', { name: 'Invalidate generated renditions?' })
@@ -291,28 +330,47 @@ test.describe('Settings', () => {
     await expect(settings.getByRole('status')).toContainText(
       /\d+ generated renditions? removed\./
     )
+    await currentRequestPending
+    expect(new URL(currentPreviewUrl).searchParams.get('ui')).not.toBe(null)
+    expect(new URL(stalePreviewUrl).searchParams.get('ui')).toBeNull()
+    const currentPending = node.getByTestId('image-node-preview')
     await expect
       .poll(async () => {
-        const src = await previewImage.getAttribute('src')
-        return src ? new URL(src, page.url()).searchParams.get('ui') : null
+        const src = await currentPending.getAttribute('src')
+        return src ? new URL(src, page.url()).href : null
       })
-      .not.toBe(beforeGeneration)
-    const regeneratedUrl = await previewImage.getAttribute('src')
-    if (!regeneratedUrl)
-      throw new Error('Invalidated preview has no source URL')
-    const previewRevision = new URL(
-      regeneratedUrl,
-      page.url()
-    ).searchParams.get('v')
-    expect(previewRevision).toBeTruthy()
+      .toBe(currentPreviewUrl)
     await expect.poll(cachedFiles).toHaveLength(0)
     await access(sourcePath)
 
-    await page.unroute('**/loom-asset/**')
-    const response = await page.request.get(
-      new URL(regeneratedUrl, page.url()).href
+    if (!releaseStaleRequest || !releaseCurrentRequest)
+      throw new Error('Preview request gates were not initialized')
+    const staleResponse = page.waitForResponse(
+      (response) => response.url() === stalePreviewUrl
     )
-    expect(response.ok()).toBe(true)
+    releaseStaleRequest()
+    await staleResponse
+    await expect(node.getByTestId('image-node-preview')).toBeVisible()
+    await expect(node.getByTestId('image-node-preview-loaded')).toHaveCount(0)
+
+    const currentResponse = page.waitForResponse(
+      (response) => response.url() === currentPreviewUrl
+    )
+    releaseCurrentRequest()
+    await currentResponse
+    await expect(node.getByTestId('image-node-preview-loaded')).toBeVisible()
+    const recoveredSrc = await node
+      .getByTestId('image-node-preview-loaded')
+      .getAttribute('src')
+    if (!recoveredSrc) throw new Error('Recovered preview has no source URL')
+    const recoveredUrl = new URL(recoveredSrc, page.url())
+    expect(recoveredUrl.searchParams.get('ui')).toBe(
+      new URL(currentPreviewUrl).searchParams.get('ui')
+    )
+    expect(recoveredUrl.searchParams.get('v')).toBe(
+      new URL(currentPreviewUrl).searchParams.get('v')
+    )
+    await page.unroute('**/loom-asset/**')
     await expect.poll(cachedFiles).not.toHaveLength(0)
     await page.keyboard.press('Escape')
     await access(sourcePath)
