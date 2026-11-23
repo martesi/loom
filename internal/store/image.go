@@ -69,19 +69,125 @@ func IsVideoFile(path string) bool {
 // ScanAndRegisterImages walks the repo root (excluding .loom/) for media
 // files and inserts any not already known, keyed by file_path. Returns the
 // number of newly registered images.
-func (r *Repo) ScanAndRegisterImages() (int, error) {
-	found, err := r.mediaFiles()
+func (r *Repo) ScanAndRegisterImages(ctx context.Context) (int, error) {
+	return r.scanAndRegisterImages(ctx, true)
+}
+
+// RefreshFingerprints updates the baseline used by rendition publication
+// without changing source revisions. Manual rendition invalidation uses this
+// after it has stopped active encodes, so replacement sources can regenerate
+// at their current URL.
+func (r *Repo) RefreshFingerprints(ctx context.Context) (int, error) {
+	return r.scanAndRegisterImages(ctx, false)
+}
+
+// RegisterImages discovers files during normal canvas loading. It only hashes
+// new sources and sources whose stat marker changed. Same-stat edits are found
+// only by ScanAndRegisterImages, the explicit rescan operation.
+func (r *Repo) RegisterImages(ctx context.Context) (int, error) {
+	found, err := r.mediaFiles(ctx)
 	if err != nil {
 		return 0, err
 	}
+	changed := 0
+	for _, path := range found {
+		n, err := r.registerImage(ctx, path)
+		if err != nil {
+			return changed, err
+		}
+		changed += n
+	}
+	return changed, nil
+}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+func (r *Repo) registerImage(ctx context.Context, path string) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, err
+	}
+	marker := fmt.Sprintf("stat:%d:%d", info.Size(), info.ModTime().UnixNano())
+	var size sql.NullInt64
+	var oldMarker, oldFingerprint sql.NullString
+	err = r.DB.QueryRow(`SELECT file_size, content_hash, source_fingerprint FROM images WHERE file_path = ?`, path).Scan(&size, &oldMarker, &oldFingerprint)
+	if err == nil && size.Valid && size.Int64 == info.Size() && oldMarker.String == marker && oldFingerprint.Valid && oldFingerprint.String != "" {
+		return 0, nil
+	}
+	if err != nil && err != sql.ErrNoRows {
+		return 0, err
+	}
+	isNew := err == sql.ErrNoRows
+	fingerprint, stableInfo, err := fingerprintFile(ctx, path)
+	if err != nil {
+		return 0, fmt.Errorf("fingerprint %s: %w", path, err)
+	}
+	marker = fmt.Sprintf("stat:%d:%d", stableInfo.Size(), stableInfo.ModTime().UnixNano())
+	if isNew {
+		res, err := r.DB.Exec(`INSERT OR IGNORE INTO images (file_path, file_size, content_hash, source_fingerprint, source_revision) VALUES (?, ?, ?, ?, 1)`, path, stableInfo.Size(), marker, fingerprint)
+		if err != nil {
+			return 0, err
+		}
+		n, err := res.RowsAffected()
+		return int(n), err
+	}
+	res, err := r.DB.Exec(`UPDATE images SET file_size = ?, width = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN NULL ELSE width END, height = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN NULL ELSE height END, content_hash = ?, source_revision = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN source_revision + 1 WHEN source_revision = 0 THEN 1 ELSE source_revision END, source_fingerprint = ? WHERE file_path = ?`, stableInfo.Size(), fingerprint, fingerprint, marker, fingerprint, fingerprint, path)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
+}
+
+// EnsureSourceFingerprint establishes the baseline for legacy rows that were
+// created before source fingerprints existed. It does not detect replacements
+// for already-initialized rows and does not advance the source revision.
+func (r *Repo) EnsureSourceFingerprint(ctx context.Context, imageID int64) (Image, error) {
+	image, err := r.GetImageByID(imageID)
+	if err != nil || image.SourceFingerprint != "" {
+		return image, err
+	}
+	info, err := os.Stat(image.FilePath)
+	if err != nil {
+		return image, err
+	}
+	if !info.Mode().IsRegular() {
+		return image, fmt.Errorf("asset is not a regular file")
+	}
+	fingerprint, stableInfo, err := fingerprintFile(ctx, image.FilePath)
+	if err != nil {
+		return image, fmt.Errorf("fingerprint %s: %w", image.FilePath, err)
+	}
+	marker := fmt.Sprintf("stat:%d:%d", stableInfo.Size(), stableInfo.ModTime().UnixNano())
+	if _, err := r.DB.Exec(`UPDATE images SET file_size = ?, width = NULL, height = NULL, content_hash = ?, source_fingerprint = ?, source_revision = CASE WHEN source_revision = 0 THEN 1 ELSE source_revision END WHERE id = ? AND file_path = ? AND (source_fingerprint IS NULL OR source_fingerprint = '')`, stableInfo.Size(), marker, fingerprint, imageID, image.FilePath); err != nil {
+		return image, err
+	}
+	image, err = r.GetImageByID(imageID)
+	if err == nil && image.SourceFingerprint == "" {
+		err = fmt.Errorf("source fingerprint baseline was not stored")
+	}
+	return image, err
+}
+
+// scanAndRegisterImages is shared by explicit rescan and manual invalidation.
+// Both hash every source; only an explicit rescan advances changed revisions.
+func (r *Repo) scanAndRegisterImages(ctx context.Context, advanceRevision bool) (int, error) {
+	return r.scanAndRegisterImagesWithFingerprint(ctx, advanceRevision, fingerprintFile)
+}
+
+func (r *Repo) scanAndRegisterImagesWithFingerprint(ctx context.Context, advanceRevision bool, fingerprint func(context.Context, string) (string, os.FileInfo, error)) (int, error) {
+	found, err := r.mediaFiles(ctx)
+	if err != nil {
+		return 0, err
+	}
 	type result struct {
 		path, fingerprint string
 		info              os.FileInfo
 		err               error
 	}
+	workCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	jobs := make(chan string)
 	results := make(chan result, len(found))
 	const workers = 4
@@ -90,9 +196,9 @@ func (r *Repo) ScanAndRegisterImages() (int, error) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for p := range jobs {
-				fingerprint, info, hashErr := fingerprintFile(ctx, p)
-				results <- result{path: p, fingerprint: fingerprint, info: info, err: hashErr}
+			for path := range jobs {
+				contentFingerprint, info, hashErr := fingerprint(workCtx, path)
+				results <- result{path: path, fingerprint: contentFingerprint, info: info, err: hashErr}
 				if hashErr != nil {
 					cancel()
 				}
@@ -101,106 +207,63 @@ func (r *Repo) ScanAndRegisterImages() (int, error) {
 	}
 	go func() {
 		defer close(jobs)
-		for _, p := range found {
+		for _, path := range found {
 			select {
-			case jobs <- p:
-			case <-ctx.Done():
+			case jobs <- path:
+			case <-workCtx.Done():
 				return
 			}
 		}
 	}()
 	go func() { wg.Wait(); close(results) }()
-	inserted := 0
+	changed := 0
 	for item := range results {
+		if err := ctx.Err(); err != nil {
+			return changed, err
+		}
 		if item.err != nil {
-			return inserted, fmt.Errorf("fingerprint %s: %w", item.path, item.err)
+			return changed, fmt.Errorf("fingerprint %s: %w", item.path, item.err)
 		}
 		statMarker := fmt.Sprintf("stat:%d:%d", item.info.Size(), item.info.ModTime().UnixNano())
 		res, err := r.DB.Exec(`INSERT OR IGNORE INTO images (file_path, file_size, content_hash, source_fingerprint, source_revision) VALUES (?, ?, ?, ?, 1)`, item.path, item.info.Size(), statMarker, item.fingerprint)
 		if err != nil {
-			return inserted, err
+			return changed, err
 		}
-		n, err := res.RowsAffected()
+		rowsChanged, err := res.RowsAffected()
 		if err != nil {
-			return inserted, err
+			return changed, err
 		}
-		inserted += int(n)
-		if n != 0 {
+		changed += int(rowsChanged)
+		if rowsChanged != 0 {
 			continue
 		}
-		res, err = r.DB.Exec(`UPDATE images SET file_size = ?, width = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN NULL ELSE width END, height = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN NULL ELSE height END, content_hash = ?, source_revision = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN source_revision + 1 WHEN source_revision = 0 THEN 1 ELSE source_revision END, source_fingerprint = ? WHERE file_path = ? AND (file_size IS NOT ? OR COALESCE(content_hash, '') != ? OR source_fingerprint IS NOT ? OR source_revision = 0)`, item.info.Size(), item.fingerprint, item.fingerprint, statMarker, item.fingerprint, item.fingerprint, item.path, item.info.Size(), statMarker, item.fingerprint)
-		if err != nil {
-			return inserted, err
+		increment := 0
+		if advanceRevision {
+			increment = 1
 		}
-		changed, err := res.RowsAffected()
+		res, err = r.DB.Exec(`UPDATE images SET file_size = ?, width = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN NULL ELSE width END, height = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN NULL ELSE height END, content_hash = ?, source_revision = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN source_revision + ? WHEN source_revision = 0 THEN 1 ELSE source_revision END, source_fingerprint = ? WHERE file_path = ? AND (file_size IS NOT ? OR COALESCE(content_hash, '') != ? OR source_fingerprint IS NOT ? OR source_revision = 0)`, item.info.Size(), item.fingerprint, item.fingerprint, statMarker, item.fingerprint, increment, item.fingerprint, item.path, item.info.Size(), statMarker, item.fingerprint)
 		if err != nil {
-			return inserted, err
+			return changed, err
 		}
-		inserted += int(changed)
+		rowsChanged, err = res.RowsAffected()
+		if err != nil {
+			return changed, err
+		}
+		changed += int(rowsChanged)
 	}
-	return inserted, nil
-}
-
-// RegisterImages discovers files during normal canvas loading. It only hashes
-// new sources and sources whose stat marker changed. Same-stat edits are found
-// only by ScanAndRegisterImages, the explicit rescan operation.
-func (r *Repo) RegisterImages() (int, error) {
-	found, err := r.mediaFiles()
-	if err != nil {
-		return 0, err
-	}
-	changed := 0
-	ctx := context.Background()
-	for _, path := range found {
-		info, err := os.Stat(path)
-		if err != nil {
-			return changed, err
-		}
-		marker := fmt.Sprintf("stat:%d:%d", info.Size(), info.ModTime().UnixNano())
-		var size int64
-		var oldMarker sql.NullString
-		err = r.DB.QueryRow(`SELECT file_size, content_hash FROM images WHERE file_path = ?`, path).Scan(&size, &oldMarker)
-		if err == nil && size == info.Size() && oldMarker.String == marker {
-			continue
-		}
-		if err != nil && err != sql.ErrNoRows {
-			return changed, err
-		}
-		isNew := err == sql.ErrNoRows
-		fingerprint, stableInfo, err := fingerprintFile(ctx, path)
-		if err != nil {
-			return changed, fmt.Errorf("fingerprint %s: %w", path, err)
-		}
-		marker = fmt.Sprintf("stat:%d:%d", stableInfo.Size(), stableInfo.ModTime().UnixNano())
-		if isNew {
-			res, insertErr := r.DB.Exec(`INSERT OR IGNORE INTO images (file_path, file_size, content_hash, source_fingerprint, source_revision) VALUES (?, ?, ?, ?, 1)`, path, stableInfo.Size(), marker, fingerprint)
-			if insertErr != nil {
-				return changed, insertErr
-			}
-			n, rowsErr := res.RowsAffected()
-			if rowsErr != nil {
-				return changed, rowsErr
-			}
-			changed += int(n)
-			continue
-		}
-		res, err := r.DB.Exec(`UPDATE images SET file_size = ?, width = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN NULL ELSE width END, height = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN NULL ELSE height END, content_hash = ?, source_revision = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN source_revision + 1 WHEN source_revision = 0 THEN 1 ELSE source_revision END, source_fingerprint = ? WHERE file_path = ?`, stableInfo.Size(), fingerprint, fingerprint, marker, fingerprint, fingerprint, path)
-		if err != nil {
-			return changed, err
-		}
-		n, err := res.RowsAffected()
-		if err != nil {
-			return changed, err
-		}
-		changed += int(n)
+	if err := ctx.Err(); err != nil {
+		return changed, err
 	}
 	return changed, nil
 }
 
-func (r *Repo) mediaFiles() ([]string, error) {
+func (r *Repo) mediaFiles(ctx context.Context) ([]string, error) {
 	loomDir := filepath.Join(r.Path, loomDirName)
 	var found []string
 	err := filepath.WalkDir(r.Path, func(path string, d fs.DirEntry, err error) error {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		if err != nil {
 			return err
 		}
@@ -325,7 +388,7 @@ func (r *Repo) ListDirectory(relPath string) (DirListing, error) {
 	sort.Strings(dirs)
 
 	for _, p := range mediaPaths {
-		if _, err := r.DB.Exec(`INSERT OR IGNORE INTO images (file_path) VALUES (?)`, p); err != nil {
+		if _, err := r.registerImage(context.Background(), p); err != nil {
 			return DirListing{}, err
 		}
 	}

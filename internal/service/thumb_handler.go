@@ -24,6 +24,21 @@ var renditionMetadata = struct {
 	revisions map[string]int64
 }{revisions: make(map[string]int64)}
 
+// This lock coordinates persisted revision reads, DB updates, cache clears,
+// and cache publication. A single lock is deliberate: SQLite updates are
+// short, and stale revision publication is worse than brief cross-repo waits.
+var renditionRepositoryState sync.RWMutex
+
+func lockRenditionRepository(_ string) func() {
+	renditionRepositoryState.Lock()
+	return renditionRepositoryState.Unlock
+}
+
+func lockRenditionRepositoryRead(_ string) func() {
+	renditionRepositoryState.RLock()
+	return renditionRepositoryState.RUnlock
+}
+
 func thumbURL(repoPath string, imageID int64, filePath string) string {
 	enc := base64.RawURLEncoding.EncodeToString([]byte(repoPath))
 	info, _ := os.Stat(filePath)
@@ -55,28 +70,48 @@ func previewURL(repoPath string, imageID int64, filePath string) string {
 
 func persistedImageRevision(repoPath string, imageID int64) int64 {
 	key := repoPath + "\x00" + strconv.FormatInt(imageID, 10)
+	return cachedImageRevision(key, func() (int64, error) {
+		repo, err := store.Bootstrap(repoPath)
+		if err != nil {
+			return 0, err
+		}
+		defer repo.Close()
+		image, err := repo.GetImageByID(imageID)
+		if err != nil {
+			return 0, err
+		}
+		return image.SourceRevision, nil
+	})
+}
+
+func cachedImageRevision(key string, lookup func() (int64, error)) int64 {
+	renditionRepositoryState.RLock()
+	defer renditionRepositoryState.RUnlock()
 	renditionMetadata.RLock()
 	revision, ok := renditionMetadata.revisions[key]
 	renditionMetadata.RUnlock()
 	if ok {
 		return revision
 	}
-	repo, err := store.Bootstrap(repoPath)
+	loadedRevision, err := lookup()
 	if err != nil {
 		return 0
 	}
-	defer repo.Close()
-	image, err := repo.GetImageByID(imageID)
-	if err != nil {
-		return 0
-	}
+	revision = loadedRevision
 	renditionMetadata.Lock()
-	renditionMetadata.revisions[key] = image.SourceRevision
+	renditionMetadata.revisions[key] = revision
 	renditionMetadata.Unlock()
-	return image.SourceRevision
+	return revision
 }
 
 func clearRenditionMetadata(repoPath string) {
+	unlock := lockRenditionRepository(repoPath)
+	defer unlock()
+	clearRenditionMetadataLocked(repoPath)
+}
+
+// clearRenditionMetadataLocked requires the repository write lock.
+func clearRenditionMetadataLocked(repoPath string) {
 	prefix := repoPath + "\x00"
 	renditionMetadata.Lock()
 	for key := range renditionMetadata.revisions {

@@ -3,9 +3,11 @@ package service
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -13,7 +15,7 @@ import (
 	"loom/internal/store"
 )
 
-func TestInvalidateRenditionsRemovesCachesOnly(t *testing.T) {
+func TestInvalidateRenditionsRefreshesSourcesAndRemovesCaches(t *testing.T) {
 	repoPath := t.TempDir()
 	source := filepath.Join(repoPath, "source.png")
 	if err := os.WriteFile(source, []byte("source"), 0o600); err != nil {
@@ -23,7 +25,7 @@ func TestInvalidateRenditionsRemovesCachesOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.ScanAndRegisterImages(); err != nil {
+	if _, err := repo.ScanAndRegisterImages(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	images, err := repo.ListImages()
@@ -31,6 +33,16 @@ func TestInvalidateRenditionsRemovesCachesOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = repo.Close()
+	oldStat, err := os.Stat(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("replce"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(source, oldStat.ModTime(), oldStat.ModTime()); err != nil {
+		t.Fatal(err)
+	}
 	if got := persistedImageRevision(repoPath, images[0].ID); got != images[0].SourceRevision {
 		t.Fatalf("cached revision = %d, want %d", got, images[0].SourceRevision)
 	}
@@ -67,12 +79,120 @@ func TestInvalidateRenditionsRemovesCachesOnly(t *testing.T) {
 	if got := persistedImageRevision(repoPath, images[0].ID); got != images[0].SourceRevision+1 {
 		t.Fatalf("revision metadata remained stale after invalidation: %d", got)
 	}
+	repo, err = store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var refreshedFingerprint string
+	if err := repo.DB.QueryRow(`SELECT source_fingerprint FROM images WHERE id = ?`, images[0].ID).Scan(&refreshedFingerprint); err != nil {
+		t.Fatal(err)
+	}
+	_ = repo.Close()
+	if refreshedFingerprint == images[0].SourceFingerprint {
+		t.Fatal("invalidation did not refresh the same-stat source fingerprint")
+	}
 	processor := &previewTestProcessor{}
 	request := httptest.NewRequest("GET", previewTestURL(t, repoPath, images[0].ID, 640), nil)
 	response := httptest.NewRecorder()
 	ServePreviewWithProcessor(response, request, processor)
 	if response.Code != 200 || processor.calls != 1 {
 		t.Fatalf("rendition after invalidation status=%d encode calls=%d", response.Code, processor.calls)
+	}
+}
+
+func TestRevisionLookupCannotRepopulateAfterInvalidationClear(t *testing.T) {
+	repoPath := t.TempDir()
+	key := repoPath + "\x00" + "91"
+	clearRenditionMetadata(repoPath)
+	lookupStarted := make(chan struct{})
+	allowLookup := make(chan struct{})
+	lookupDone := make(chan int64, 1)
+	go func() {
+		lookupDone <- cachedImageRevision(key, func() (int64, error) {
+			close(lookupStarted)
+			<-allowLookup
+			return 1, nil
+		})
+	}()
+	<-lookupStarted
+	writerStarted := make(chan struct{})
+	writerDone := make(chan struct{})
+	go func() {
+		close(writerStarted)
+		unlock := lockRenditionRepository(repoPath)
+		clearRenditionMetadataLocked(repoPath)
+		unlock()
+		close(writerDone)
+	}()
+	<-writerStarted
+	close(allowLookup)
+	if got := <-lookupDone; got != 1 {
+		t.Fatalf("first revision = %d, want 1", got)
+	}
+	<-writerDone
+	if got := cachedImageRevision(key, func() (int64, error) { return 2, nil }); got != 2 {
+		t.Fatalf("revision after clear = %d, want fresh value 2", got)
+	}
+}
+
+func TestConcurrentRescanCannotRaceRenditionPublication(t *testing.T) {
+	repoPath, id, source := previewTestAsset(t)
+	info, err := os.Stat(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestURL := previewTestURL(t, repoPath, id, 640)
+	publicationEntered := make(chan struct{})
+	allowPublication := make(chan struct{})
+	previousHook := beforeRenditionPublication
+	beforeRenditionPublication = func() {
+		close(publicationEntered)
+		<-allowPublication
+	}
+	t.Cleanup(func() { beforeRenditionPublication = previousHook })
+	processor := &previewTestProcessor{onPreview: func(srcPath, destination string, _ int) error {
+		if err := os.WriteFile(srcPath, []byte("changed source bytes!"), 0o600); err != nil {
+			return err
+		}
+		if err := os.Chtimes(srcPath, info.ModTime(), info.ModTime()); err != nil {
+			return err
+		}
+		return os.WriteFile(destination, []byte("encoded fixture"), 0o600)
+	}}
+	response := httptest.NewRecorder()
+	requestDone := make(chan struct{})
+	go func() {
+		ServePreviewWithProcessor(response, httptest.NewRequest(http.MethodGet, requestURL, nil), processor)
+		close(requestDone)
+	}()
+	<-publicationEntered
+	rescanDone := make(chan error, 1)
+	go func() {
+		_, err := (&ImageService{}).RescanRepositoryContext(context.Background(), repoPath)
+		rescanDone <- err
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for renditionRepositoryState.TryRLock() {
+		renditionRepositoryState.RUnlock()
+		if time.Now().After(deadline) {
+			t.Fatal("rescan never queued behind publication lock")
+		}
+		runtime.Gosched()
+	}
+	close(allowPublication)
+	<-requestDone
+	if response.Code != http.StatusConflict {
+		t.Fatalf("publication response status=%d body=%q", response.Code, response.Body.String())
+	}
+	if err := <-rescanDone; err != nil {
+		t.Fatalf("rescan: %v", err)
+	}
+	entries, err := filepath.Glob(filepath.Join(repoPath, ".loom", "thumbs", fmt.Sprintf("%d-*.webp", id)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("stale rendition published during rescan: %v", entries)
 	}
 }
 

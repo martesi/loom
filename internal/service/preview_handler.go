@@ -29,6 +29,7 @@ var stillRenditionDeadline = 5 * time.Second
 var videoRenditionDeadline = 30 * time.Second
 var newRenditionRequestContext = context.WithTimeout
 var newRenditionWorkContext = context.WithTimeout
+var beforeRenditionPublication func()
 var previewSlots = make(chan struct{}, 2)
 var renditionAdmissions = make(chan struct{}, 8)
 var previewLocks = struct {
@@ -159,7 +160,14 @@ func serveRendition(w http.ResponseWriter, r *http.Request, processor media.Proc
 
 	cacheDir := filepath.Join(repo.Path, ".loom", "thumbs")
 	for range 1 {
-		image, source, err := getPreviewSource(repo, id)
+		unlockSourceRevision := lockRenditionRepositoryRead(repo.Path)
+		sourceRevisionLocked := true
+		defer func() {
+			if sourceRevisionLocked {
+				unlockSourceRevision()
+			}
+		}()
+		image, source, err := getPreviewSource(ctx, repo, id)
 		if err != nil {
 			writePreviewSourceError(w, r, err)
 			return
@@ -205,6 +213,8 @@ func serveRendition(w http.ResponseWriter, r *http.Request, processor media.Proc
 		if served {
 			return
 		}
+		unlockSourceRevision()
+		sourceRevisionLocked = false
 
 		workCtx, workCancel := newRenditionWorkContext(context.Background(), deadline)
 		finishWork := lease.Transfer(workCancel)
@@ -307,11 +317,16 @@ func generateRendition(ctx context.Context, repoPath string, id int64, tier int,
 	if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
 		return nil, http.StatusInternalServerError, fmt.Errorf("encoder produced no rendition")
 	}
+	unlockRenditionRepository := lockRenditionRepositoryRead(repoPath)
+	defer unlockRenditionRepository()
+	if beforeRenditionPublication != nil {
+		beforeRenditionPublication()
+	}
 	repo, err := store.Bootstrap(repoPath)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
-	_, current, sourceErr := getPreviewSource(repo, id)
+	_, current, sourceErr := getPreviewSource(ctx, repo, id)
 	_ = repo.Close()
 	if sourceErr != nil {
 		return nil, http.StatusNotFound, sourceErr
@@ -347,8 +362,8 @@ func renditionCachePath(dir string, id int64, tier int, source previewSource) st
 	return filepath.Join(dir, fmt.Sprintf("%d-%d-%s.webp", id, tier, previewRevision(source.path, source.size, source.modTime, source.revision)))
 }
 
-func getPreviewSource(repo *store.Repo, id int64) (store.Image, previewSource, error) {
-	image, err := repo.GetImageByID(id)
+func getPreviewSource(ctx context.Context, repo *store.Repo, id int64) (store.Image, previewSource, error) {
+	image, err := repo.EnsureSourceFingerprint(ctx, id)
 	if err != nil {
 		return image, previewSource{}, err
 	}

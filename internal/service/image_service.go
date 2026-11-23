@@ -71,7 +71,12 @@ func (s *ImageService) InvalidateRenditions(repoPath string) (int, error) {
 		}
 		releases = append(releases, release)
 	}
-	clearRenditionMetadata(repo.Path)
+	unlockRenditionRepository := lockRenditionRepository(repo.Path)
+	defer unlockRenditionRepository()
+	if _, err := repo.RefreshFingerprints(context.Background()); err != nil {
+		return count, err
+	}
+	clearRenditionMetadataLocked(repo.Path)
 	for _, dir := range []string{filepath.Join(repo.Path, ".loom", "thumbs"), filepath.Join(repo.Path, ".loom", "previews")} {
 		entries, readErr := os.ReadDir(dir)
 		if os.IsNotExist(readErr) {
@@ -96,14 +101,22 @@ func (s *ImageService) InvalidateRenditions(repoPath string) (int, error) {
 
 // RescanRepository discovers sources without generating renditions.
 func (s *ImageService) RescanRepository(repoPath string) (int, error) {
+	return s.RescanRepositoryContext(context.Background(), repoPath)
+}
+
+// RescanRepositoryContext permits callers that own a cancellation context to
+// stop the bounded source-fingerprinting pass.
+func (s *ImageService) RescanRepositoryContext(ctx context.Context, repoPath string) (int, error) {
 	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return 0, err
 	}
 	defer unlock()
 	defer repo.Close()
-	changed, err := repo.ScanAndRegisterImages()
-	clearRenditionMetadata(repo.Path)
+	unlockRenditionRepository := lockRenditionRepository(repo.Path)
+	changed, err := repo.ScanAndRegisterImages(ctx)
+	clearRenditionMetadataLocked(repo.Path)
+	unlockRenditionRepository()
 	if err != nil {
 		return changed, err
 	}
@@ -190,11 +203,16 @@ func (s *ImageService) LoadCanvas(repoPath string) (*CanvasData, error) {
 		return nil, err
 	}
 
-	if _, err := repo.RegisterImages(); err != nil {
-		clearRenditionMetadata(repo.Path)
-		return nil, err
+	unlockRenditionRepository := lockRenditionRepository(repo.Path)
+	registerErr := func() error {
+		defer unlockRenditionRepository()
+		_, err := repo.RegisterImages(context.Background())
+		clearRenditionMetadataLocked(repo.Path)
+		return err
+	}()
+	if registerErr != nil {
+		return nil, registerErr
 	}
-	clearRenditionMetadata(repo.Path)
 
 	allImages, err := repo.ListImages()
 	if err != nil {
