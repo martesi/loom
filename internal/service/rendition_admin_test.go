@@ -125,6 +125,17 @@ func TestRevisionLookupCannotRepopulateAfterInvalidationClear(t *testing.T) {
 		close(writerDone)
 	}()
 	<-writerStarted
+	// The lookup holds a read lock. TryRLock succeeds while it is the only
+	// holder, but returns false once the clearing writer is queued. Do not
+	// release the lookup until that state proves the writer has reached Lock.
+	deadline := time.Now().Add(2 * time.Second)
+	for renditionRepositoryState.TryRLock() {
+		renditionRepositoryState.RUnlock()
+		if time.Now().After(deadline) {
+			t.Fatal("metadata-clearing writer never queued behind the lookup")
+		}
+		runtime.Gosched()
+	}
 	close(allowLookup)
 	if got := <-lookupDone; got != 1 {
 		t.Fatalf("first revision = %d, want 1", got)
