@@ -11,8 +11,22 @@ the shell:
 - E2E / browser shell — Playwright, `test:e2e`, benchmarks, anything needing
   Chromium or a virtual display (supplies `CHROMIUM_BIN`, xvfb, xdotool):
   `nix develop .#e2e --command bash -lc '<cmd>'`
+- Preferred WSL GPU E2E shell when runtime device and mount checks pass:
+  ```sh
+  if [ -e /dev/dxg ] && find /dev/dri -maxdepth 1 -type c -name 'renderD*' -readable -writable -print -quit | grep -q . \
+    && [ -d /run/opengl-driver/lib ] \
+    && [ -d /run/opengl-driver/share/glvnd/egl_vendor.d ] \
+    && [ -d /usr/lib/wsl/lib ] \
+    && [ -d /usr/lib/wsl/drivers ]; then
+    nix develop .#e2e-wsl-gpu --command bash -lc '<cmd>'
+  else
+    nix develop .#e2e --command bash -lc '<cmd>'
+  fi
+  ```
+  Device presence does not prove acceleration. Verify the WebGL renderer; it
+  must name the GPU and D3D12. The fallback shell is `.#e2e`.
 
-`.envrc` (`use flake`) loads only the default shell, never `.#e2e`.
+`.envrc` (`use flake`) loads only the default shell, never either e2e shell.
 
 - Work in your own git worktree by default; do not edit the shared checkout.
 - Run tests for changed paths: frontend logic → `cd frontend && bun run test`

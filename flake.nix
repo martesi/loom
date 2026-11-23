@@ -15,7 +15,7 @@
         # flake.lock — keep that in lockstep with github.com/wailsapp/wails/v3
         # in go.mod: the CLI generates and consumes code that the library
         # must agree with.
-        commonHook = ''
+        baseHook = ''
           export GOBIN="$PWD/.bin"
           export PATH="$GOBIN:$PATH"
 
@@ -42,6 +42,11 @@
           # GIO actually searches, so do that here.
           export XDG_DATA_DIRS="$GSETTINGS_SCHEMAS_PATH''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
 
+          # No at-spi bus in a headless session.
+          export NO_AT_BRIDGE=1
+        '';
+
+        softwareHook = ''
           # WSLg may expose a DRM render node backed by a host driver that is
           # not usable by the NixOS WebKitGTK closure. Treat WSL as a
           # software-rendered environment even when that node exists; without
@@ -70,9 +75,30 @@
             export WEBKIT_DISABLE_COMPOSITING_MODE=1
             export WEBKIT_DISABLE_DMABUF_RENDERER=1
           fi
+        '';
 
-          # No at-spi bus in a headless session.
-          export NO_AT_BRIDGE=1
+        e2ePackages = [
+          pkgs.chromium
+          pkgs.xvfb
+          pkgs.xdpyinfo
+          pkgs.xdotool
+          # `import` for screenshots (see .agents/skills/e2e/references/).
+          pkgs.imagemagick
+        ];
+
+        wslGpuChromium = pkgs.writeShellScript "chromium-wsl-gpu" ''
+          exec ${pkgs.chromium}/bin/chromium --ozone-platform=x11 --use-gl=angle --use-angle=gl "$@"
+        '';
+
+        gpuHook = ''
+          unset LIBGL_ALWAYS_SOFTWARE LIBGL_DRIVERS_PATH __EGL_VENDOR_LIBRARY_FILENAMES
+          unset VK_ICD_FILENAMES VK_DRIVER_FILES GSK_RENDERER
+          unset WEBKIT_DISABLE_COMPOSITING_MODE WEBKIT_DISABLE_DMABUF_RENDERER WAYLAND_DISPLAY
+          export GALLIUM_DRIVER=d3d12
+          export LD_LIBRARY_PATH="/run/opengl-driver/lib:/usr/lib/wsl/lib:$LD_LIBRARY_PATH"
+          export __EGL_VENDOR_LIBRARY_DIRS=/run/opengl-driver/share/glvnd/egl_vendor.d
+          export DISPLAY="''${DISPLAY:-:99}"
+          export CHROMIUM_BIN="${wslGpuChromium}"
         '';
 
         commonBuildInputs = [
@@ -114,7 +140,7 @@
       {
         devShells.default = pkgs.mkShell {
           buildInputs = commonBuildInputs;
-          shellHook = commonHook;
+          shellHook = baseHook + softwareHook;
         };
 
         # GUI/test closure (Xvfb, xdotool, screenshots) split out from `default`
@@ -122,19 +148,16 @@
         # docs/panel-unification-plan.md's e2e verification steps, which are
         # the only thing that needs this shell.
         devShells.e2e = pkgs.mkShell {
-          buildInputs = commonBuildInputs ++ [
-            pkgs.chromium
-            pkgs.xvfb
-            pkgs.xdpyinfo
-            pkgs.xdotool
-            # `import` for screenshots (see .agents/skills/e2e/references/).
-            pkgs.imagemagick
-          ];
-          shellHook = ''
-            ${commonHook}
+          buildInputs = commonBuildInputs ++ e2ePackages;
+          shellHook = baseHook + softwareHook + ''
             export DISPLAY="''${DISPLAY:-:99}"
             export CHROMIUM_BIN="${pkgs.chromium}/bin/chromium"
           '';
+        };
+
+        devShells.e2e-wsl-gpu = pkgs.mkShell {
+          buildInputs = commonBuildInputs ++ e2ePackages;
+          shellHook = baseHook + gpuHook;
         };
 
       });
