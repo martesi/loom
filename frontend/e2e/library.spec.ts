@@ -85,6 +85,10 @@ test('library selection, search, placement filters, and folder navigation', asyn
   await expect(asset(page, 'folder-gamma.png')).toHaveCount(0)
 
   await page.getByRole('button', { name: 'Repository', exact: true }).click()
+  // Repository shows only root-level assets; the renamed file remains nested.
+  await expect(asset(page, 'renamed-gamma.png')).toHaveCount(0)
+  await page.getByRole('button', { name: /nested/ }).click()
+  await page.getByRole('button', { name: /deeper/ }).click()
   await expect(asset(page, 'renamed-gamma.png')).toBeVisible()
 })
 
