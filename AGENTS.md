@@ -18,7 +18,7 @@ the shell:
     if [ -c "$node" ] && [ -r "$node" ] && [ -w "$node" ]; then render_node=1; break; fi
   done
   if [ -e /dev/dxg ] && [ "$render_node" = 1 ] \
-    && find -L /run/opengl-driver/lib -type f -name '*.so*' -readable -print -quit | grep -q . \
+    && find -L /run/opengl-driver/lib -type f \( -name 'libEGL_mesa.so.*' -o -name 'libGLX_mesa.so.*' \) -readable -print -quit | grep -q . \
     && find /run/opengl-driver/share/glvnd/egl_vendor.d -maxdepth 1 -type f -name '*.json' -readable -print -quit | grep -q . \
     && [ -d /usr/lib/wsl/lib ] \
     && find /usr/lib/wsl/drivers -type f \( -name '*.so' -o -name '*.so.*' \) -readable -print -quit | grep -q .; then
