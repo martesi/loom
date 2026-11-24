@@ -13,6 +13,12 @@ test('an empty canvas keeps its assets available', async ({ page }) => {
     page.getByRole('heading', { name: 'Start with an asset' })
   ).toBeVisible()
   await expect(
+    page.getByText('Drag an asset from Assets onto the canvas.')
+  ).toBeVisible()
+  await expect(
+    page.getByText('Ctrl/Cmd-drag image → image to create a relationship.')
+  ).toBeVisible()
+  await expect(
     page.getByRole('option', { name: /canvas-alpha.png/ })
   ).toBeVisible()
 })

@@ -22,6 +22,11 @@ test.describe('Canvas command palette', () => {
     await expect(page.getByRole('option', { name: /Fit all/ })).toBeVisible()
     await expect(page.locator('[role=status]')).toContainText('results')
 
+    await search.fill('Select all')
+    await expect(
+      dialog.getByText('Selection', { exact: true }).first()
+    ).toBeVisible()
+
     await search.fill('Canvas view')
     await expect(
       page.getByRole('option', { name: /Fit selection/ })
