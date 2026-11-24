@@ -513,6 +513,8 @@ type UndoResult struct {
 	Applied bool   `json:"applied"`
 	Kind    string `json:"kind,omitempty"`
 	Error   string `json:"error,omitempty"`
+	// Geometry contains complete committed rectangles for geometry history only.
+	Geometry []GeometryUpdate `json:"geometry,omitempty"`
 }
 
 type UndoState struct {
@@ -559,11 +561,11 @@ func (s *UndoService) Undo(repoPath string) (*UndoResult, error) {
 	if err := json.Unmarshal([]byte(op.Inverse), &inv); err != nil {
 		return nil, err
 	}
-	if handled, err := replayAtomicHistory(repo, inv, op.Seq-1); handled {
+	if handled, geometry, err := replayAtomicHistory(repo, inv, op.Seq-1); handled {
 		if err != nil {
 			return &UndoResult{Applied: false, Kind: op.Kind, Error: err.Error()}, nil
 		}
-		return &UndoResult{Applied: true, Kind: op.Kind}, nil
+		return &UndoResult{Applied: true, Kind: op.Kind, Geometry: geometry}, nil
 	}
 	if err := applyStep(repo, inv); err != nil {
 		return &UndoResult{Applied: false, Kind: op.Kind, Error: err.Error()}, nil
@@ -594,11 +596,11 @@ func (s *UndoService) Redo(repoPath string) (*UndoResult, error) {
 	if err := json.Unmarshal([]byte(op.Forward), &fwd); err != nil {
 		return nil, err
 	}
-	if handled, err := replayAtomicHistory(repo, fwd, op.Seq); handled {
+	if handled, geometry, err := replayAtomicHistory(repo, fwd, op.Seq); handled {
 		if err != nil {
 			return &UndoResult{Applied: false, Kind: op.Kind, Error: err.Error()}, nil
 		}
-		return &UndoResult{Applied: true, Kind: op.Kind}, nil
+		return &UndoResult{Applied: true, Kind: op.Kind, Geometry: geometry}, nil
 	}
 	if err := applyStep(repo, fwd); err != nil {
 		return &UndoResult{Applied: false, Kind: op.Kind, Error: err.Error()}, nil
