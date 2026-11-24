@@ -1,6 +1,9 @@
 import { t } from '@lingui/core/macro'
 import type { Edge, Node, ReactFlowInstance } from '@xyflow/react'
-import type { CanvasData } from '../../../bindings/loom/internal/service'
+import type {
+  CanvasData,
+  GeometryUpdate,
+} from '../../../bindings/loom/internal/service'
 import { ImageService } from '../../../bindings/loom/internal/service'
 import { computeSubgraphLayout, placeCluster } from '../../lib/layout'
 
@@ -169,10 +172,32 @@ export async function arrangeCanvas(
         y: image.canvasY + dy,
       }))
   })
-  await ImageService.SetPositions(repoPath, [
+  const uniqueUpdates = [
     ...new Map(updates.map((update) => [update.imageId, update])).values(),
-  ])
+  ]
+  await ImageService.SetGeometry(
+    repoPath,
+    arrangeGeometryUpdates(uniqueUpdates, data)
+  )
   await reload()
+}
+
+export function arrangeGeometryUpdates(
+  updates: { imageId: number; x: number; y: number }[],
+  data: CanvasData
+): GeometryUpdate[] {
+  const images = new Map((data.images ?? []).map((image) => [image.id, image]))
+  return updates.map((update) => {
+    const image = images.get(update.imageId)
+    if (!image)
+      throw new Error(`Missing image ${update.imageId} during arrange`)
+    const hasSize = image.canvasW > 0 && image.canvasH > 0
+    return {
+      ...update,
+      w: hasSize ? image.canvasW : null,
+      h: hasSize ? image.canvasH : null,
+    }
+  })
 }
 
 export async function alignCanvas(

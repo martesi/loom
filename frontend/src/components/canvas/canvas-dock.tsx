@@ -124,14 +124,6 @@ export const CanvasDock = memo(function CanvasDock({
             icon={<RotateCcw className="h-3.5 w-3.5" />}
             onClick={() => onAction('reset-zoom')}
           />
-          <DockButton
-            testId="dock-auto-arrange"
-            label={t`Auto-arrange`}
-            shortcut={shortcuts.autoArrange}
-            icon={<Sparkles className="h-3.5 w-3.5" />}
-            disabled={!canAutoArrange}
-            onClick={() => onAction('auto-arrange-active')}
-          />
         </>
       )}
       {mode === 'single' && (
@@ -198,7 +190,6 @@ export const CanvasDock = memo(function CanvasDock({
           <DockButton
             testId="dock-arrange-selection"
             label={t`Arrange Subgraph`}
-            shortcut={shortcuts.autoArrange}
             icon={<Sparkles className="h-3.5 w-3.5" />}
             onClick={() => onAction('auto-arrange-selection')}
           />
@@ -212,6 +203,14 @@ export const CanvasDock = memo(function CanvasDock({
           />
         </>
       )}
+      <DockButton
+        testId="dock-auto-arrange"
+        label={t`Auto-arrange`}
+        shortcut={shortcuts.autoArrange}
+        icon={<Sparkles className="h-3.5 w-3.5" />}
+        disabled={!canAutoArrange}
+        onClick={() => onAction('auto-arrange-active')}
+      />
     </div>
   )
 }, areDockPropsEqual)

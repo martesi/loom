@@ -87,18 +87,15 @@ export function canvasViewActions(
     },
     {
       id: 'auto-arrange-active',
-      label: t`Auto-arrange Canvas or selection`,
-      description: t`Arrange the selected subgraph, or the full Canvas when fewer than two items are selected`,
+      label: t`Auto-arrange Canvas`,
+      description: t`Reposition all placed items using their relationships`,
       category: t`Canvas view`,
-      aliases: [t`layout`, t`tidy selection`, t`tidy all`],
+      aliases: [t`layout`, t`tidy all`],
       shortcut: 'Shift+A',
       context: t`Canvas`,
       enabled: displayNodes.length > 0,
       disabledReason: t`There are no placed items`,
-      execute: () =>
-        arrange(
-          selectedCanvasNodeIds.length >= 2 ? selectedCanvasNodeIds : undefined
-        ),
+      execute: () => arrange(),
     },
     {
       id: 'auto-arrange-selection',

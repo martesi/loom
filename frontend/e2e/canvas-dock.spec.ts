@@ -42,6 +42,7 @@ test.describe('contextual Canvas Dock', () => {
     await expect(page.getByTestId('dock-fit-all')).toHaveCount(0)
     await expect(page.getByTestId('dock-create-set')).toBeEnabled()
     await expect(page.getByTestId('dock-align-horizontal')).toBeVisible()
+    await expect(page.getByTestId('dock-auto-arrange')).toBeEnabled()
 
     const buttons = dock.getByRole('button')
     for (let index = 0; index < (await buttons.count()); index += 1) {
@@ -64,6 +65,7 @@ test.describe('contextual Canvas Dock', () => {
     await expect(page.getByTestId('dock-preview')).toBeVisible()
     await expect(page.getByTestId('dock-locate')).toBeVisible()
     await expect(page.getByTestId('dock-inspect')).toBeVisible()
+    await expect(page.getByTestId('dock-auto-arrange')).toBeEnabled()
     await expect(page.getByTestId('dock-create-set')).toHaveCount(0)
 
     await page.keyboard.press('ControlOrMeta+0')
@@ -219,5 +221,33 @@ test.describe('contextual Canvas Dock', () => {
     await selectImageNodes(page, [0])
     await page.keyboard.press('Shift+2')
     await page.keyboard.press('Shift+1')
+  })
+
+  test('Shift+A arranges the whole canvas and undo restores it in one step', async ({
+    page,
+  }, testInfo) => {
+    await openFixtureRepo(page, 'dock-arrange-fixtures', { drawers: 'closed' })
+    await placeAssets(page, [
+      'arrange-alpha.png',
+      'arrange-beta.png',
+      'arrange-gamma.png',
+    ])
+    const nodes = imageNodes(page)
+    await selectImageNodes(page, [0, 1])
+    const positions = async () =>
+      Promise.all([0, 1, 2].map((index) => nodePosition(nodes.nth(index))))
+    const before = await positions()
+    await page.getByRole('main', { name: 'Canvas' }).focus()
+    await page.keyboard.press('Shift+A')
+    await expect.poll(async () => (await positions())[2]).not.toEqual(before[2])
+    const after = await positions()
+    await testInfo.attach('arranged-canvas', {
+      body: await page.screenshot(),
+      contentType: 'image/png',
+    })
+    await page.keyboard.press('ControlOrMeta+z')
+    await expect.poll(positions).toEqual(before)
+    await page.keyboard.press('ControlOrMeta+Shift+z')
+    await expect.poll(positions).toEqual(after)
   })
 })

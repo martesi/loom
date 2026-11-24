@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'bun:test'
 import type { CanvasData } from '../../../bindings/loom/internal/service'
-import { validateRelationshipTarget } from './canvas-board-operations'
+import {
+  arrangeGeometryUpdates,
+  validateRelationshipTarget,
+} from './canvas-board-operations'
 
 const data = {
   images: [
@@ -31,5 +34,26 @@ describe('relationship target validation', () => {
     expect(validate(1, 1).valid).toBe(false)
     expect(validate(3, 1).valid).toBe(false)
     expect(validate(1, 3).valid).toBe(true)
+  })
+})
+
+describe('arrange geometry', () => {
+  it('retains stored sizes and leaves default sizes unset', () => {
+    const updates = arrangeGeometryUpdates(
+      [
+        { imageId: 1, x: 10, y: 20 },
+        { imageId: 2, x: 30, y: 40 },
+      ],
+      {
+        images: [
+          { id: 1, canvasW: 220, canvasH: 180 },
+          { id: 2, canvasW: 0, canvasH: 0 },
+        ],
+      } as CanvasData
+    )
+    expect(updates).toEqual([
+      { imageId: 1, x: 10, y: 20, w: 220, h: 180 },
+      { imageId: 2, x: 30, y: 40, w: null, h: null },
+    ])
   })
 })
