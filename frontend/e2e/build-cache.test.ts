@@ -58,19 +58,16 @@ test('build key ignores unit tests and generated output', async () => {
   }
 })
 
-test('build key tracks the unified entry point but not removed startup files', async () => {
+test('build key tracks the unified entry point but not removed startup files', async (t) => {
   const repoDir = await prepareRepo()
-  try {
-    await writeFile(path.join(repoDir, 'main.go'), 'package main\n')
-    const initial = await computeBuildKey(repoDir)
+  t.after(() => rm(repoDir, { recursive: true, force: true }))
+  await writeFile(path.join(repoDir, 'main.go'), 'package main\n')
+  const initial = await computeBuildKey(repoDir)
 
-    await writeFile(path.join(repoDir, 'app.go'), 'obsolete\n')
-    await writeFile(path.join(repoDir, 'main_server.go'), 'obsolete\n')
-    assert.equal(await computeBuildKey(repoDir), initial)
+  await writeFile(path.join(repoDir, 'app.go'), 'obsolete\n')
+  await writeFile(path.join(repoDir, 'main_server.go'), 'obsolete\n')
+  assert.equal(await computeBuildKey(repoDir), initial)
 
-    await writeFile(path.join(repoDir, 'main.go'), 'package main\n// changed\n')
-    assert.notEqual(await computeBuildKey(repoDir), initial)
-  } finally {
-    await rm(repoDir, { recursive: true, force: true })
-  }
+  await writeFile(path.join(repoDir, 'main.go'), 'package main\n// changed\n')
+  assert.notEqual(await computeBuildKey(repoDir), initial)
 })

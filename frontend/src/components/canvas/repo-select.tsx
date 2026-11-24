@@ -68,7 +68,7 @@ export function RepoSelect({ repo, openRequest = 0 }: RepoSelectProps) {
     if (path === repo.path) return
 
     // Server mode has no OS windows for SwitchTo to spawn (its
-    // Window.NewWithOptions call is a no-op headless — see main_server.go),
+    // Window.NewWithOptions call is a no-op headless — see main.go),
     // so a browser tab has to open itself. The new tab self-bootstraps via
     // the "openRepo" handling in index-route.tsx, the same way a
     // SwitchTo-spawned native window does, so no backend call is needed

@@ -4,8 +4,8 @@ import type { RepoInfo } from '../../bindings/loom/internal/service'
 import { RepoService } from '../../bindings/loom/internal/service'
 import { RepoPickerModal } from '../components/repo-picker-modal'
 import { useCapabilities } from '../lib/capabilities-store'
-import { setCurrentRepo } from '../lib/repo-store'
 import { enterRepo as applyEnterRepo } from '../lib/enter-repo'
+import { setCurrentRepo } from '../lib/repo-store'
 import { Landing } from './landing'
 import { rootRoute } from './root'
 
@@ -49,7 +49,7 @@ function IndexPage() {
   }
 
   // Server mode has no native folder dialog (Dialog.OpenFile isn't
-  // available when built headless — see main_server.go), so both entry
+  // available when built headless — see main.go), so both entry
   // points open the browser-side folder-tree picker instead; desktop mode
   // keeps calling the native dialogs unchanged.
   const handleOpenFolder = () => {
