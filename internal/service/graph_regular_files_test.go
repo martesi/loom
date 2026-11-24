@@ -129,7 +129,7 @@ func TestFanoutUnavailableFilesPreserveRedo(t *testing.T) {
 				}
 				before := snapshotGraph(t, repo)
 				replaceGraphFile(t, path, endpoint, replacement)
-				if err := s.LinkSourceToGroup(path, ids[0], groupID); err == nil || !strings.Contains(err.Error(), "endpoint is unavailable") {
+				if err := s.linkSourceToGroup(path, ids[0], groupID); err == nil || !strings.Contains(err.Error(), "endpoint is unavailable") {
 					t.Fatalf("expected unavailable endpoint, got %v", err)
 				}
 				if after := snapshotGraph(t, repo); !reflect.DeepEqual(before, after) {
@@ -175,7 +175,7 @@ func TestGraphSymlinkToRegularFile(t *testing.T) {
 					if _, e := repo.DB.Exec(`UPDATE images SET group_id = ? WHERE id IN (?, ?)`, groupID, ids[1], ids[2]); e != nil {
 						t.Fatal(e)
 					}
-					err = s.LinkSourceToGroup(path, ids[0], groupID)
+					err = s.linkSourceToGroup(path, ids[0], groupID)
 				}
 				if err != nil {
 					t.Fatal(err)
@@ -209,7 +209,7 @@ func TestFanoutSkipsExistingEdgeWithUnavailableFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	replaceGraphFile(t, path, 1, "directory")
-	if err := s.LinkSourceToGroup(path, ids[0], groupID); err != nil {
+	if err := s.linkSourceToGroup(path, ids[0], groupID); err != nil {
 		t.Fatalf("fan-out should skip existing edge: %v", err)
 	}
 	links, err := repo.ListRelationships()

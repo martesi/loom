@@ -21,8 +21,10 @@ func TestCanvasMigrationUsesMembership(t *testing.T) {
 		}
 	}
 	_, err = c.Exec(`INSERT INTO boards (id,name) VALUES (1,'A'),(2,'B');
- INSERT INTO images(id,file_path,canvas_x,canvas_y) VALUES (1,'a',12,34),(2,'b',NULL,NULL),(3,'c',99,88);
- INSERT INTO board_images VALUES (1,1),(2,1),(2,2);`)
+ INSERT INTO images(id,file_path,canvas_x,canvas_y) VALUES (1,'a',12,34),(2,'b',NULL,NULL),(3,'c',99,88),(4,'d',42,NULL);
+ INSERT INTO board_images VALUES (1,1),(2,1),(2,2),(1,4);
+ INSERT INTO operation_log(seq,kind,forward,inverse) VALUES (1,'group_existence','forward','inverse');
+ INSERT INTO settings(scope,key,value) VALUES ('repo','undo_cursor','1');`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +38,7 @@ func TestCanvasMigrationUsesMembership(t *testing.T) {
 	for _, want := range []struct {
 		id   int
 		x, y sql.NullFloat64
-	}{{1, sql.NullFloat64{Float64: 12, Valid: true}, sql.NullFloat64{Float64: 34, Valid: true}}, {2, sql.NullFloat64{Float64: 190, Valid: true}, sql.NullFloat64{Float64: 0, Valid: true}}, {3, sql.NullFloat64{}, sql.NullFloat64{}}} {
+	}{{1, sql.NullFloat64{Float64: 12, Valid: true}, sql.NullFloat64{Float64: 34, Valid: true}}, {2, sql.NullFloat64{Float64: 190, Valid: true}, sql.NullFloat64{Float64: 0, Valid: true}}, {3, sql.NullFloat64{Float64: 99, Valid: true}, sql.NullFloat64{Float64: 88, Valid: true}}, {4, sql.NullFloat64{Float64: 42, Valid: true}, sql.NullFloat64{Float64: 0, Valid: true}}} {
 		var x, y sql.NullFloat64
 		if err := c.QueryRow("SELECT canvas_x,canvas_y FROM images WHERE id = ?", want.id).Scan(&x, &y); err != nil {
 			t.Fatal(err)
@@ -48,6 +50,9 @@ func TestCanvasMigrationUsesMembership(t *testing.T) {
 	var n int
 	if err := c.QueryRow("SELECT count(*) FROM sqlite_master WHERE name IN ('boards','board_images')").Scan(&n); err != nil || n != 0 {
 		t.Fatalf("board tables remain: %d, %v", n, err)
+	}
+	if err := c.QueryRow("SELECT count(*) FROM operation_log WHERE seq=1 AND kind='group_existence'").Scan(&n); err != nil || n != 1 {
+		t.Fatalf("legacy history lost: %d, %v", n, err)
 	}
 }
 

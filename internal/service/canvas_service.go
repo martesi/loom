@@ -45,9 +45,12 @@ func (s *ImageService) SetViewport(repoPath string, v Viewport) error {
 	return r.SetSetting("canvas_viewport", string(raw))
 }
 
-// PlaceImages preserves existing placements and commits placement and optional
-// set membership together, including membership moves and empty-set cleanup.
+// PlaceImages preserves existing placements. The final argument remains for
+// existing clients, but Set membership is no longer supported.
 func (s *ImageService) PlaceImages(repoPath string, ids []int64, x, y float64, groupID int64) error {
+	if groupID != 0 {
+		return fmt.Errorf("sets are no longer supported")
+	}
 	if math.IsNaN(x) || math.IsInf(x, 0) || math.IsNaN(y) || math.IsInf(y, 0) {
 		return fmt.Errorf("invalid position")
 	}
@@ -62,12 +65,6 @@ func (s *ImageService) PlaceImages(repoPath string, ids []int64, x, y float64, g
 		return err
 	}
 	defer tx.Rollback()
-	if groupID != 0 {
-		var exists int
-		if err := tx.QueryRow("SELECT 1 FROM groups WHERE id = ?", groupID).Scan(&exists); err != nil {
-			return err
-		}
-	}
 	for i, id := range uniqueImageIDs(ids) {
 		result, err := tx.Exec(`UPDATE images SET canvas_x = COALESCE(canvas_x, ?), canvas_y = COALESCE(canvas_y, ?) WHERE id = ? AND trashed = 0`, x+float64(i%6)*190, y+float64(i/6)*160, id)
 		if err != nil {
@@ -79,19 +76,6 @@ func (s *ImageService) PlaceImages(repoPath string, ids []int64, x, y float64, g
 		}
 		if n != 1 {
 			return fmt.Errorf("asset %d is unavailable", id)
-		}
-		if groupID != 0 {
-			if _, err := tx.Exec("UPDATE images SET group_id = ? WHERE id = ?", groupID, id); err != nil {
-				return err
-			}
-		}
-	}
-	if groupID != 0 {
-		if _, err := tx.Exec(`DELETE FROM groups WHERE NOT EXISTS (SELECT 1 FROM images WHERE group_id = groups.id)`); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(`UPDATE groups SET cover_image_id = (SELECT MIN(id) FROM images WHERE group_id = groups.id) WHERE NOT EXISTS (SELECT 1 FROM images WHERE id = groups.cover_image_id AND group_id = groups.id)`); err != nil {
-			return err
 		}
 	}
 	return tx.Commit()

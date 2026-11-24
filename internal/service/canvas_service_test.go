@@ -64,7 +64,7 @@ func TestCanvasPlacementImportAndPurge(t *testing.T) {
 		t.Fatal("purged identity remains")
 	}
 }
-func TestSetDropIsAtomicAndMovesMembership(t *testing.T) {
+func TestSetDropIsRejected(t *testing.T) {
 	path := t.TempDir()
 	s := &ImageService{}
 	g := &GroupService{}
@@ -91,20 +91,20 @@ func TestSetDropIsAtomicAndMovesMembership(t *testing.T) {
 	if err != nil || image.Placed || image.GroupID != first.ID {
 		t.Fatalf("partial set drop committed: %+v %v", image, err)
 	}
-	if err := s.PlaceImages(path, ids[:2], 10, 20, second.ID); err != nil {
-		t.Fatal(err)
+	if err := s.PlaceImages(path, ids[:2], 10, 20, second.ID); err == nil {
+		t.Fatal("set drop accepted")
 	}
 	r, err := store.Bootstrap(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer r.Close()
-	if _, err := r.GetGroup(first.ID); err == nil {
-		t.Fatal("empty set retained")
+	if _, err := r.GetGroup(first.ID); err != nil {
+		t.Fatal("rejected drop changed the original set")
 	}
 	for _, id := range ids[:2] {
 		image, err := s.GetImage(path, id)
-		if err != nil || !image.Placed || image.GroupID != second.ID {
+		if err != nil || image.Placed || image.GroupID != first.ID {
 			t.Fatalf("placement/membership: %+v %v", image, err)
 		}
 	}

@@ -498,7 +498,7 @@ func (s *ImageService) LinkSource(repoPath string, sourceID, derivedID int64) er
 // collapsed group being dropped onto — a group can never itself be the
 // derived (or source) end of an edge, only its members can. See the
 // edge<->group interaction rules in the spec.
-func (s *ImageService) LinkSourceToGroup(repoPath string, sourceID, groupID int64) error {
+func (s *ImageService) linkSourceToGroup(repoPath string, sourceID, groupID int64) error {
 	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return err
