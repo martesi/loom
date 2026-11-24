@@ -1,11 +1,9 @@
 import { type Edge, MarkerType, type Node } from '@xyflow/react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import {
-  type CanvasData,
-  ImageService,
-} from '../../../bindings/loom/internal/service'
+import type { CanvasData } from '../../../bindings/loom/internal/service'
 import { renditionGenerationUrl } from '../../lib/preview-tier'
 import type { Selection } from '../../lib/selection'
+import type { CanvasBoardOwner, ResizeGesture } from './canvas-board-owner'
 import { canvasProjectionGraph } from './canvas-projection-model'
 
 interface CanvasDropTarget {
@@ -17,13 +15,13 @@ interface CanvasDropTarget {
 }
 
 interface Callbacks {
-  run: (action: () => Promise<unknown>) => void
+  report: (error: unknown) => void
 }
 
 interface Props {
   data: CanvasData
   expanded: number | null
-  repoPath: string
+  owner: CanvasBoardOwner
   renditionGeneration: number
   callbacks: { current: Callbacks }
   selection: Selection
@@ -39,7 +37,7 @@ interface Props {
 export function useCanvasBoardModel({
   data,
   expanded,
-  repoPath,
+  owner,
   renditionGeneration,
   callbacks,
   selection,
@@ -88,6 +86,9 @@ export function useCanvasBoardModel({
   )
 
   useEffect(() => {
+    const board = owner.getSnapshot()
+    const gestures = new Set<ResizeGesture>()
+    const activeGestures = new Map<number, ResizeGesture>()
     const placed = (data.images ?? []).filter(
       (image) => image.placed && !image.trashed
     )
@@ -106,10 +107,29 @@ export function useCanvasBoardModel({
     const graph = canvasProjectionGraph(
       { ...data, images: placed, relationships: [] },
       renditionGeneration,
-      (imageId, x, y, w, h) =>
-        callbacks.current.run(async () => {
-          await ImageService.SetGeometry(repoPath, [{ imageId, x, y, w, h }])
+      (imageId, x, y, w, h) => {
+        const previous = activeGestures.get(imageId)
+        if (previous) owner.cancelResize(previous)
+        const gesture = owner.beginResize(board?.data === data ? board : null, {
+          imageId,
+          x,
+          y,
+          w,
+          h,
         })
+        if (gesture) {
+          gestures.add(gesture)
+          activeGestures.set(imageId, gesture)
+        } else activeGestures.delete(imageId)
+      },
+      (imageId, x, y, w, h) => {
+        const gesture = activeGestures.get(imageId)
+        activeGestures.delete(imageId)
+        if (gesture)
+          void owner
+            .endResize(gesture, { imageId, x, y, w, h })
+            .catch(callbacks.current.report)
+      }
     )
     const placedIds = new Set(placed.map((image) => image.id))
     const imageNodes = graph.nodes.filter(
@@ -180,10 +200,13 @@ export function useCanvasBoardModel({
     )
       host.current.focus()
     setEdges(nextEdges)
+    return () => {
+      for (const gesture of gestures) owner.cancelResize(gesture)
+    }
   }, [
     data,
     expanded,
-    repoPath,
+    owner,
     renditionGeneration,
     callbacks,
     dropTargets,

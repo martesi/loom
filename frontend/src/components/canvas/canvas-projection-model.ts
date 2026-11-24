@@ -9,6 +9,13 @@ import { renditionGenerationUrl } from '../../lib/preview-tier'
 export function canvasProjectionGraph(
   data: CanvasData,
   renditionGeneration: number,
+  onResizeStart: (
+    id: number,
+    x: number,
+    y: number,
+    w: number,
+    h: number
+  ) => void,
   onResizeEnd: (id: number, x: number, y: number, w: number, h: number) => void
 ) {
   const images = (data.images ?? []).filter((image) => !image.trashed)
@@ -17,7 +24,7 @@ export function canvasProjectionGraph(
     (edge) => ids.has(edge.sourceImageId) && ids.has(edge.derivedImageId)
   )
   const nodes: Node[] = images.map((image) =>
-    imageNode(image, renditionGeneration, onResizeEnd)
+    imageNode(image, renditionGeneration, onResizeStart, onResizeEnd)
   )
   const edges: Edge[] = relationships.map((edge) => ({
     id: String(edge.id),
@@ -37,6 +44,13 @@ export function canvasProjectionGraph(
 function imageNode(
   image: ImageInfo,
   generation: number,
+  onResizeStart: (
+    id: number,
+    x: number,
+    y: number,
+    w: number,
+    h: number
+  ) => void,
   onResizeEnd: (id: number, x: number, y: number, w: number, h: number) => void
 ): Node {
   return {
@@ -55,6 +69,8 @@ function imageNode(
       showFileName: true,
       width: image.width,
       height: image.height,
+      onResizeStart: (x: number, y: number, w: number, h: number) =>
+        onResizeStart(image.id, x, y, w, h),
       onResizeEnd: (x: number, y: number, w: number, h: number) =>
         onResizeEnd(image.id, x, y, w, h),
     },

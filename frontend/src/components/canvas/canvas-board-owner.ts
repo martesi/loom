@@ -1,9 +1,19 @@
 import { useEffect, useRef } from 'react'
 import {
   type CanvasData,
+  type GeometryUpdate,
   ImageService,
   type LayoutSnapshot,
 } from '../../../bindings/loom/internal/service'
+import { buildDisplayGeometry } from './canvas-projection-geometry'
+
+export interface ResizeGesture {
+  cancelled: boolean
+  generation: number
+  revision: string
+  expected: GeometryUpdate
+  before: GeometryUpdate
+}
 
 export interface CanvasBoardExecutor {
   execute<T>(action: () => Promise<T>): Promise<T>
@@ -17,6 +27,12 @@ export interface AcceptedCanvasBoard {
 export interface CanvasBoardOwner extends CanvasBoardExecutor {
   refresh(): Promise<AcceptedCanvasBoard | null>
   getSnapshot(): AcceptedCanvasBoard | null
+  beginResize(
+    board: AcceptedCanvasBoard | null,
+    before: GeometryUpdate
+  ): ResizeGesture | null
+  endResize(gesture: ResizeGesture, after: GeometryUpdate): Promise<void>
+  cancelResize(gesture: ResizeGesture): void
   subscribe(listener: () => void): () => void
   dispose(): void
   activate(): void
@@ -40,8 +56,10 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
   let generation = 0
   let active = true
   let accepted: AcceptedCanvasBoard | null = null
+  let acceptedGeneration = -1
+  let gesture: ResizeGesture | null = null
   const listeners = new Set<() => void>()
-  return {
+  const owner: CanvasBoardOwner = {
     execute<T>(action: () => Promise<T>): Promise<T> {
       // Queue outer operations only: awaiting a nested execute would deadlock.
       const result = tail.then(action)
@@ -54,6 +72,7 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
     async refresh() {
       if (!active) return null
       const request = ++generation
+      gesture = null
       const isCurrent = () => active && request === generation
       const metadata = await ImageService.LoadCanvas(repoPath)
       if (!isCurrent()) return null
@@ -63,10 +82,64 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
       if (!snapshot) throw new Error('Canvas layout snapshot is unavailable')
       const data = joinSnapshot(metadata, snapshot)
       accepted = { snapshot, data }
+      acceptedGeneration = generation
       for (const listener of listeners) listener()
       return accepted
     },
     getSnapshot: () => accepted,
+    beginResize(board, before) {
+      if (
+        !active ||
+        !board ||
+        board !== accepted ||
+        acceptedGeneration !== generation
+      )
+        return null
+      const stored = board.snapshot.images?.find(
+        (item) => item.id === before.imageId
+      )?.geometry
+      if (!stored) return null
+      gesture = {
+        cancelled: false,
+        generation,
+        revision: board.snapshot.revision,
+        expected: { ...stored },
+        before: { ...before },
+      }
+      return gesture
+    },
+    endResize(current, after) {
+      if (gesture !== current) return Promise.resolve()
+      gesture = null
+      const batch = buildDisplayGeometry(
+        new Map([[current.expected.imageId, current.expected]]),
+        [current.before],
+        [after]
+      )
+      return owner.execute(async () => {
+        if (!active || current.cancelled || current.generation !== generation)
+          return
+        await ImageService.SetGeometryFromDisplayAtRevision(
+          repoPath,
+          current.revision,
+          batch.expected,
+          batch.before,
+          batch.after
+        ).catch(async (error: unknown) => {
+          await owner
+            .refresh()
+            .catch((reloadError: unknown) =>
+              console.error('canvas resize reload failed', reloadError)
+            )
+          throw error
+        })
+        await owner.refresh()
+      })
+    },
+    cancelResize(current) {
+      current.cancelled = true
+      if (gesture === current) gesture = null
+    },
     subscribe(listener) {
       listeners.add(listener)
       return () => {
@@ -76,12 +149,14 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
     dispose() {
       active = false
       generation++
+      gesture = null
       listeners.clear()
     },
     activate() {
       active = true
     },
   }
+  return owner
 }
 
 function joinSnapshot(

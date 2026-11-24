@@ -183,7 +183,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   const boardModel = useCanvasBoardModel({
     data,
     expanded,
-    repoPath: repo.path,
+    owner: boardOwner,
     renditionGeneration,
     callbacks,
     selection,

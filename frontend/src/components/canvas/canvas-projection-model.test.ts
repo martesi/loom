@@ -8,6 +8,7 @@ import type {
   ImageInfo,
 } from '../../../bindings/loom/internal/service'
 import { emptySelection } from '../../lib/selection'
+import { useCanvasBoardOwner } from './canvas-board-owner'
 import {
   createCanvasProjection,
   enterEdit,
@@ -59,7 +60,13 @@ const data: CanvasData = {
   ],
   groups: [],
 }
-const graph = (value: CanvasData) => canvasProjectionGraph(value, 0, () => {})
+const graph = (value: CanvasData) =>
+  canvasProjectionGraph(
+    value,
+    0,
+    () => {},
+    () => {}
+  )
 
 describe('board projection mapping', () => {
   it('keeps the live board placement filter and group mapping unchanged', async () => {
@@ -76,13 +83,14 @@ describe('board projection mapping', () => {
     const { result, unmount } = renderHook(() => {
       const [nodes, setNodes] = useState<Node[]>([])
       const [edges, setEdges] = useState<Edge[]>([])
-      const callbacks = useRef({ run: (_action: () => Promise<unknown>) => {} })
+      const callbacks = useRef({ report: (_error: unknown) => {} })
+      const owner = useCanvasBoardOwner('test')
       const dropTargets = useRef<Node[]>([])
       const host = useRef<HTMLDivElement | null>(null)
       useCanvasBoardModel({
         data: boardData,
         expanded: null,
-        repoPath: 'test',
+        owner,
         renditionGeneration: 0,
         callbacks,
         selection: emptySelection,

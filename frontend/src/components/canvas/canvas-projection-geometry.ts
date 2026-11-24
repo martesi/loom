@@ -19,6 +19,15 @@ export function prepareDisplayGeometry(
   after: readonly GeometryUpdate[]
 ): DisplayGeometryBatch {
   if (state.mode !== 'edit') throw new Error('geometry gestures require Edit')
+  return buildDisplayGeometry(state.expectedGeometry, before, after)
+}
+
+/** Build a batch from the exact stored baseline, independent of board mode. */
+export function buildDisplayGeometry(
+  expectedGeometry: ReadonlyMap<number, GeometryUpdate>,
+  before: readonly GeometryUpdate[],
+  after: readonly GeometryUpdate[]
+): DisplayGeometryBatch {
   if (before.length !== after.length)
     throw new Error('geometry batch length mismatch')
   const seen = new Set<number>()
@@ -26,7 +35,7 @@ export function prepareDisplayGeometry(
     if (seen.has(item.imageId) || after[index].imageId !== item.imageId)
       throw new Error(`duplicate or mismatched geometry: ${item.imageId}`)
     seen.add(item.imageId)
-    const stored = state.expectedGeometry.get(item.imageId)
+    const stored = expectedGeometry.get(item.imageId)
     if (!stored) throw new Error(`missing expected geometry: ${item.imageId}`)
     return { ...stored }
   })

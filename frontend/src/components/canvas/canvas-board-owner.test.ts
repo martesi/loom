@@ -106,14 +106,14 @@ function useBoard(repoPath: string) {
     setReady: noOp,
     setAssetSelectionRecords: noOp,
   })
-  const callbacks = useRef({ run: repository.run })
-  callbacks.current = { run: repository.run }
+  const callbacks = useRef({ report: repository.report })
+  callbacks.current = { report: repository.report }
   const dropTargets = useRef<Node[]>([])
   const host = useRef<HTMLDivElement | null>(null)
   useCanvasBoardModel({
     data: boardData,
     expanded: null,
-    repoPath,
+    owner,
     renditionGeneration: 0,
     callbacks,
     selection: emptySelection,
@@ -154,12 +154,28 @@ afterEach(() => {
 
 describe('canvas board owner', () => {
   it('waits for the real resize commit and its reload before undo, then waits for undo reload before redo', async () => {
+    spyOn(ImageService, 'GetLayoutSnapshot').mockImplementation(
+      () =>
+        Promise.resolve({
+          revision: '1',
+          images: [
+            {
+              id: 1,
+              width: 640,
+              height: 480,
+              geometry: { imageId: 1, x: 10, y: 20, w: null, h: null },
+            },
+          ],
+          relationships: [],
+        }) as never
+    )
     const resize = deferred<void>()
     const reload = deferred<CanvasData | null>()
     const undoReload = deferred<CanvasData | null>()
-    const geometry = spyOn(ImageService, 'SetGeometry').mockImplementation(
-      () => resize.promise as never
-    )
+    const geometry = spyOn(
+      ImageService,
+      'SetGeometryFromDisplayAtRevision'
+    ).mockImplementation(() => resize.promise as never)
     const load = spyOn(ImageService, 'LoadCanvas')
       .mockImplementationOnce(() => Promise.resolve(data) as never)
       .mockImplementationOnce(() => reload.promise as never)
@@ -175,8 +191,18 @@ describe('canvas board owner', () => {
       () => Promise.resolve({ applied: true, error: '' }) as never
     )
     const { result } = renderHook(() => useBoard('/repo'), { wrapper })
+    await waitFor(() =>
+      expect(result.current.owner.getSnapshot()).not.toBeNull()
+    )
     await waitFor(() => expect(result.current.nodes).toHaveLength(1))
     act(() => {
+      const onResizeStart = result.current.nodes[0].data.onResizeStart as (
+        x: number,
+        y: number,
+        w: number,
+        h: number
+      ) => void
+      onResizeStart(10, 20, 150, 110)
       const onResizeEnd = result.current.nodes[0].data.onResizeEnd as (
         x: number,
         y: number,
@@ -188,9 +214,13 @@ describe('canvas board owner', () => {
     const undoDone = result.current.undo.undo()
     const redoDone = result.current.undo.redo()
     await waitFor(() => expect(geometry).toHaveBeenCalledTimes(1))
-    expect(geometry).toHaveBeenCalledWith('/repo', [
-      { imageId: 1, x: 1, y: 2, w: 300, h: 200 },
-    ])
+    expect(geometry).toHaveBeenCalledWith(
+      '/repo',
+      '1',
+      [{ imageId: 1, x: 10, y: 20, w: null, h: null }],
+      [{ imageId: 1, x: 10, y: 20, w: 150, h: 110 }],
+      [{ imageId: 1, x: 1, y: 2, w: 300, h: 200 }]
+    )
     expect(undo).not.toHaveBeenCalled()
     resize.resolve()
     await waitFor(() => expect(load).toHaveBeenCalledTimes(2))
@@ -205,6 +235,122 @@ describe('canvas board owner', () => {
     })
     expect(redo).toHaveBeenCalledTimes(1)
     expect(load).toHaveBeenCalledTimes(4)
+  })
+
+  it('cancels a resize at refresh start and ignores its late end', async () => {
+    const pending = deferred<CanvasData | null>()
+    spyOn(ImageService, 'LoadCanvas')
+      .mockImplementationOnce(() => Promise.resolve(data) as never)
+      .mockImplementationOnce(() => pending.promise as never)
+    spyOn(ImageService, 'GetViewport').mockImplementation(
+      () => Promise.resolve(null) as never
+    )
+    const write = spyOn(
+      ImageService,
+      'SetGeometryFromDisplayAtRevision'
+    ).mockImplementation(() => Promise.resolve() as never)
+    const { result } = renderHook(() => useBoard('/repo'), { wrapper })
+    await waitFor(() =>
+      expect(result.current.owner.getSnapshot()).not.toBeNull()
+    )
+    const node = result.current.nodes[0]
+    const start = node.data.onResizeStart as (
+      x: number,
+      y: number,
+      w: number,
+      h: number
+    ) => void
+    const end = node.data.onResizeEnd as typeof start
+    act(() => start(10, 20, 150, 110))
+    const refreshing = result.current.repository.reload()
+    act(() => end(1, 2, 300, 200))
+    pending.resolve(data)
+    await act(async () => {
+      await refreshing
+    })
+    act(() => end(1, 2, 300, 200))
+    await act(async () => {
+      await result.current.owner.execute(async () => {})
+    })
+    expect(write).not.toHaveBeenCalled()
+  })
+
+  it('reloads and reports a stale resize without adding history', async () => {
+    spyOn(ImageService, 'LoadCanvas').mockImplementation(
+      () => Promise.resolve(data) as never
+    )
+    spyOn(ImageService, 'GetViewport').mockImplementation(
+      () => Promise.resolve(null) as never
+    )
+    const error = new Error('stale layout revision; reload canvas')
+    spyOn(console, 'error').mockImplementation(() => {})
+    const write = spyOn(
+      ImageService,
+      'SetGeometryFromDisplayAtRevision'
+    ).mockImplementation(() => Promise.reject(error) as never)
+    const { result } = renderHook(() => useBoard('/repo'), { wrapper })
+    await waitFor(() =>
+      expect(result.current.owner.getSnapshot()).not.toBeNull()
+    )
+    const node = result.current.nodes[0]
+    const start = node.data.onResizeStart as (
+      x: number,
+      y: number,
+      w: number,
+      h: number
+    ) => void
+    const end = node.data.onResizeEnd as typeof start
+    act(() => {
+      start(10, 20, 150, 110)
+      end(1, 2, 300, 200)
+    })
+    await waitFor(() => expect(result.current.error).toBe(error.message))
+    expect(write).toHaveBeenCalledTimes(1)
+    expect(ImageService.LoadCanvas).toHaveBeenCalledTimes(2)
+  })
+
+  it('submits an unchanged displayed rectangle before queued redo', async () => {
+    spyOn(ImageService, 'LoadCanvas').mockImplementation(
+      () => Promise.resolve(data) as never
+    )
+    spyOn(ImageService, 'GetViewport').mockImplementation(
+      () => Promise.resolve(null) as never
+    )
+    const write = spyOn(
+      ImageService,
+      'SetGeometryFromDisplayAtRevision'
+    ).mockImplementation(() => Promise.resolve() as never)
+    const redo = spyOn(UndoService, 'Redo').mockImplementation(
+      () => Promise.resolve({ applied: false, error: '' }) as never
+    )
+    const { result } = renderHook(() => useBoard('/repo'), { wrapper })
+    await waitFor(() =>
+      expect(result.current.owner.getSnapshot()).not.toBeNull()
+    )
+    const node = result.current.nodes[0]
+    const start = node.data.onResizeStart as (
+      x: number,
+      y: number,
+      w: number,
+      h: number
+    ) => void
+    const end = node.data.onResizeEnd as typeof start
+    act(() => {
+      start(10, 20, 150, 110)
+      end(10, 20, 150, 110)
+    })
+    await act(async () => {
+      await result.current.undo.redo()
+    })
+    const rectangle = [{ imageId: 1, x: 10, y: 20, w: 150, h: 110 }]
+    expect(write).toHaveBeenCalledWith(
+      '/repo',
+      '1',
+      rectangle,
+      rectangle,
+      rectangle
+    )
+    expect(redo).toHaveBeenCalledTimes(1)
   })
 
   it('preserves errors and continues after a rejected operation', async () => {

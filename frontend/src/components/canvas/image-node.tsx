@@ -19,6 +19,7 @@ export interface ImageNodeData {
   showFileName: boolean
   width?: number
   height?: number
+  onResizeStart?: (x: number, y: number, w: number, h: number) => void
   onResizeEnd?: (x: number, y: number, w: number, h: number) => void
   [key: string]: unknown
 }
@@ -31,6 +32,7 @@ export const ImageNode = memo(
       previewUrl,
       missing,
       showFileName,
+      onResizeStart,
       onResizeEnd,
     } = data as unknown as ImageNodeData
     const [failedThumbUrl, setFailedThumbUrl] = useState<string | null>(null)
@@ -172,6 +174,9 @@ export const ImageNode = memo(
           isVisible={selected}
           handleClassName="!h-2.5 !w-2.5 !rounded-sm !border !border-primary !bg-white"
           lineClassName="!border-primary"
+          onResizeStart={(_event, params) =>
+            onResizeStart?.(params.x, params.y, params.width, params.height)
+          }
           onResizeEnd={(_event, params) =>
             onResizeEnd?.(params.x, params.y, params.width, params.height)
           }

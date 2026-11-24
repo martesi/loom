@@ -216,7 +216,7 @@ test('edge Delete does not run from inputs, dialogs, or Assets', async ({
 
 test('top-left resize undo and redo restore position and size', async ({
   page,
-}) => {
+}, testInfo) => {
   await openFixtureRepo(page, 'resize-fixtures')
   await dropAsset(page, 'resize-alpha.png', { x: 500, y: 180 })
   const node = imageNodes(page).first()
@@ -240,6 +240,7 @@ test('top-left resize undo and redo restore position and size', async ({
   if (!after) throw new Error('missing resized node')
   expect(after.x).toBeLessThan(before.x - 20)
   expect(after.y).toBeLessThan(before.y - 20)
+  await page.screenshot({ path: testInfo.outputPath('top-left-resize.png') })
   const geometry = async () => {
     const box = await node.boundingBox()
     if (!box) throw new Error('missing node')
@@ -249,6 +250,7 @@ test('top-left resize undo and redo restore position and size', async ({
   await expect
     .poll(geometry)
     .toEqual([before.x, before.y, before.width, before.height].map(Math.round))
+  await node.locator('.react-flow__resize-control.handle.top.left').click()
   await page.keyboard.press('ControlOrMeta+Shift+z')
   await expect
     .poll(geometry)
