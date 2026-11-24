@@ -112,4 +112,40 @@ describe('display geometry history', () => {
       geometry
     )
   })
+
+  it('retains geometry restored by history across a metadata refresh', () => {
+    let state = enterEdit(createCanvasProjection(input))
+    const restored = rect(1, 70, 80, 300, 240)
+    state = applyProjectionUndo(
+      state,
+      { applied: true, kind: 'geometry', geometry: [restored] },
+      (nodes) =>
+        nodes.map((node) =>
+          node.id === '1'
+            ? {
+                ...node,
+                position: { x: 70, y: 80 },
+                width: 300,
+                height: 240,
+                measured: { width: 300, height: 240 },
+              }
+            : node
+        )
+    )
+    state = reconcileCanvasProjection(state, {
+      ...input,
+      nodes: input.nodes.map((node) => ({
+        ...node,
+        data: { label: 'updated' },
+      })),
+      geometry: [restored, input.geometry[1]],
+    })
+    expect(state.editNodes[0]).toMatchObject({
+      position: { x: 70, y: 80 },
+      width: 300,
+      height: 240,
+      measured: { width: 300, height: 240 },
+      data: { label: 'updated' },
+    })
+  })
 })

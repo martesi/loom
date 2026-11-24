@@ -88,7 +88,17 @@ export function reconcileCanvasProjection(
     const previous = new Map(state.editNodes.map((node) => [node.id, node]))
     const existing = input.nodes.flatMap((node) => {
       const old = previous.get(node.id)
-      return old ? [{ ...node, position: old.position }] : []
+      return old
+        ? [
+            {
+              ...node,
+              position: old.position,
+              width: old.width,
+              height: old.height,
+              measured: old.measured,
+            },
+          ]
+        : []
     })
     const added = input.nodes.filter((node) => !previous.has(node.id))
     const staged = stageNodes(

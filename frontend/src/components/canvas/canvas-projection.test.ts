@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import type { Edge, Node } from '@xyflow/react'
+import { applyNodeChanges, type Edge, type Node } from '@xyflow/react'
 import {
   createCanvasProjection,
   enterEdit,
@@ -177,6 +177,75 @@ describe('canvas projection', () => {
       const dy = Math.abs(added.position.y - obstacle.position.y)
       expect(dx >= 160 || dy >= 120).toBe(true)
     }
+  })
+
+  it('retains resized Edit geometry when metadata and nodes change', () => {
+    const original = { ...makeNode('1'), height: 80 }
+    let state = enterEdit(createCanvasProjection(input([original], [])))
+    state = setEditNodes(
+      state,
+      applyNodeChanges(
+        [
+          {
+            id: '1',
+            type: 'dimensions',
+            dimensions: { width: 300, height: 240 },
+            setAttributes: true,
+          },
+        ],
+        state.editNodes
+      )
+    )
+    const resized = state.editNodes[0]
+    expect(resized).toMatchObject({
+      width: 300,
+      height: 240,
+      measured: { width: 300, height: 240 },
+    })
+
+    state = reconcileCanvasProjection(
+      state,
+      input([{ ...original, data: { label: 'updated' } }, makeNode('2')], [])
+    )
+    const [existing, added] = state.editNodes
+    expect(existing.position).toEqual(resized.position)
+    expect(existing.width).toBe(300)
+    expect(existing.height).toBe(240)
+    expect(existing.measured).toEqual(resized.measured)
+    expect(existing.data.label).toBe('updated')
+    expect(
+      added.position.x >= existing.position.x + 300 ||
+        added.position.x + (added.width ?? 0) <= existing.position.x ||
+        added.position.y >= existing.position.y + 240 ||
+        added.position.y + (added.height ?? 0) <= existing.position.y
+    ).toBe(true)
+  })
+
+  it('retains measured-only Edit geometry instead of fresh model dimensions', () => {
+    const original = { ...makeNode('1'), width: undefined, height: undefined }
+    let state = enterEdit(createCanvasProjection(input([original], [])))
+    state = setEditNodes(
+      state,
+      applyNodeChanges(
+        [
+          {
+            id: '1',
+            type: 'dimensions',
+            dimensions: { width: 250, height: 180 },
+          },
+        ],
+        state.editNodes
+      )
+    )
+    state = reconcileCanvasProjection(
+      state,
+      input([{ ...makeNode('1'), measured: { width: 50, height: 40 } }], [])
+    )
+    expect(state.editNodes[0]).toMatchObject({
+      width: undefined,
+      height: undefined,
+      measured: { width: 250, height: 180 },
+    })
   })
 
   it('stages and reconciles a large repository as a batch', () => {
