@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises'
 import { expect, test } from './test-fixtures'
 import {
   enterFixtureAttemptFolder,
@@ -68,6 +69,35 @@ test('direct openRepo bootstraps a canvas and naked canvas route redirects', asy
     })
   ).toBeVisible()
   await context.close()
+})
+
+test('server serves fixture thumbnails, previews, and original images', async ({
+  page,
+  request,
+}) => {
+  const thumbnailResponse = page.waitForResponse((response) =>
+    response.url().includes('/loom-asset/thumb/')
+  )
+  await openFixtureRepo(page, 'direct-fixtures', { drawers: 'assets' })
+  const thumbnail = await thumbnailResponse
+  expect(thumbnail.status()).toBe(200)
+  expect(thumbnail.headers()['content-type']).toContain('image/webp')
+  expect((await thumbnail.body()).length).toBeGreaterThan(0)
+
+  const previewURL = new URL(thumbnail.url().replace('/thumb/', '/preview/'))
+  previewURL.searchParams.set('w', '640')
+  const preview = await request.get(previewURL.href)
+  expect(preview.status()).toBe(200)
+  expect(preview.headers()['content-type']).toContain('image/webp')
+  expect((await preview.body()).length).toBeGreaterThan(0)
+
+  const fullURL = thumbnail.url().replace('/thumb/', '/full/')
+  const full = await request.get(fullURL)
+  expect(full.status()).toBe(200)
+  expect(full.headers()['content-type']).toContain('image/png')
+  expect(await full.body()).toEqual(
+    await readFile(await fixturePath('direct-fixtures', 'direct-alpha.png'))
+  )
 })
 
 test('server repo switcher opens another recent repo in a new tab', async ({

@@ -6,9 +6,7 @@ import path from 'node:path'
 // embedded in it. Generated output (frontend/bindings, frontend/dist, the
 // binary) is deliberately absent: those are validated separately.
 const includedFiles = [
-  'app.go',
   'main.go',
-  'main_server.go',
   'go.mod',
   'go.sum',
   'bun.lock',
