@@ -7,6 +7,7 @@ import {
   ImageService,
 } from '../../../bindings/loom/internal/service'
 import type { Selection } from '../../lib/selection'
+import type { CanvasBoardExecutor } from './canvas-board-owner'
 
 interface AssetSelectionRecords {
   key: string
@@ -15,6 +16,7 @@ interface AssetSelectionRecords {
 
 interface Props {
   repoPath: string
+  executor: CanvasBoardExecutor
   flow: ReactFlowInstance
   updateZoomCompensation: (zoom: number) => void
   selection: Selection
@@ -28,6 +30,7 @@ interface Props {
 
 export function useCanvasRepository({
   repoPath,
+  executor,
   flow,
   updateZoomCompensation,
   selection,
@@ -82,11 +85,14 @@ export function useCanvasRepository({
   }, [assetSelectionKey, repoPath, report, setAssetSelectionRecords])
   const run = useCallback(
     (action: () => Promise<unknown>) => {
-      void action()
-        .then(() => reload())
+      void executor
+        .execute(async () => {
+          await action()
+          await reload()
+        })
         .catch(report)
     },
-    [reload, report]
+    [executor, reload, report]
   )
   useEffect(() => {
     void Promise.all([

@@ -13,6 +13,7 @@ import {
   type RepoInfo,
 } from '../../bindings/loom/internal/service'
 import { canvasCenter } from '../components/canvas/canvas-board-operations'
+import { useCanvasBoardOwner } from '../components/canvas/canvas-board-owner'
 import { CanvasWorkspaceContent } from '../components/canvas/canvas-workspace-content'
 import { useCanvasAssetOperations } from '../components/canvas/use-canvas-asset-operations'
 import { useCanvasBoardModel } from '../components/canvas/use-canvas-board-model'
@@ -33,6 +34,7 @@ export function CanvasWorkspace({ repo }: { repo: RepoInfo }) {
   )
 }
 function Canvas({ repo }: { repo: RepoInfo }) {
+  const boardOwner = useCanvasBoardOwner(repo.path)
   const flow = useReactFlow(),
     host = useRef<HTMLDivElement>(null)
   const inverseZoom = useRef(1)
@@ -146,6 +148,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   const { report, reload, reloadForData, run, assetSelectionKey } =
     useCanvasRepository({
       repoPath: repo.path,
+      executor: boardOwner,
       flow,
       updateZoomCompensation,
       selection,
@@ -208,7 +211,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       }),
     [selection.surface, selection.group, selection.ids, data.images]
   )
-  const undoActions = useUndoActions(repo.path, reload)
+  const undoActions = useUndoActions(repo.path, reload, boardOwner)
   useEffect(() => {
     const timer = window.setInterval(
       () => {
