@@ -53,7 +53,7 @@ export function createCanvasMenuItems({
   if (menu.kind === 'pane')
     return [
       menuAction('select-all-canvas'),
-      menuAction('auto-arrange-canvas', 'auto-arrange'),
+      menuAction('auto-arrange-active', 'auto-arrange'),
       showCommands,
     ]
   if (menu.kind === 'selection')

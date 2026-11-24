@@ -61,16 +61,17 @@ export function ShortcutKeys({
 function shortcutKeys(shortcut: string) {
   const isMac = isMacPlatform()
   return shortcut.split('+').map((part) => {
-    if (part === 'Mod') return isMac ? '⌘' : 'Ctrl'
-    if (part === 'Ctrl') return 'Ctrl'
-    if (part === 'Shift') return isMac ? '⇧' : 'Shift'
-    if (part === 'Alt') return isMac ? '⌥' : 'Alt'
-    if (part === 'ArrowLeft') return '←'
-    if (part === 'ArrowRight') return '→'
-    if (part === 'ArrowUp') return '↑'
-    if (part === 'ArrowDown') return '↓'
-    if (part === 'Escape') return 'Esc'
-    if (part === 'Enter') return '↵'
+    const key = part.toLowerCase()
+    if (key === 'mod') return isMac ? '⌘' : 'Ctrl'
+    if (key === 'ctrl') return 'Ctrl'
+    if (key === 'shift') return isMac ? '⇧' : 'Shift'
+    if (key === 'alt') return isMac ? '⌥' : 'Alt'
+    if (key === 'arrowleft') return '←'
+    if (key === 'arrowright') return '→'
+    if (key === 'arrowup') return '↑'
+    if (key === 'arrowdown') return '↓'
+    if (key === 'escape') return 'Esc'
+    if (key === 'enter') return '↵'
     return part.length === 1 ? part.toUpperCase() : part
   })
 }

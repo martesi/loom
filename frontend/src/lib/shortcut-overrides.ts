@@ -13,6 +13,12 @@ function sanitize(raw: unknown): Record<string, string> {
   for (const [id, shortcut] of Object.entries(parsed.data)) {
     if (id && shortcut) clean[id] = normalizeShortcut(shortcut)
   }
+  // Both IDs previously named the same whole-canvas action. Keep existing
+  // active overrides authoritative and migrate the context-menu alias.
+  if (clean['auto-arrange-canvas']) {
+    clean['auto-arrange-active'] ??= clean['auto-arrange-canvas']
+    delete clean['auto-arrange-canvas']
+  }
   return clean
 }
 

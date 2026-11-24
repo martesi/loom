@@ -58,6 +58,29 @@ describe('shortcut overrides', () => {
     })
   })
 
+  it('migrates the canvas action alias and prefers the active action override', () => {
+    useBrowser({
+      [shortcutOverridesKey]: JSON.stringify({
+        'auto-arrange-canvas': 'Alt+Shift+J',
+        'toggle-inspector': 'Mod+I',
+      }),
+    })
+    expect(readShortcutOverrides()).toEqual({
+      'auto-arrange-active': 'alt+shift+j',
+      'toggle-inspector': 'mod+i',
+    })
+    localStorage.setItem(
+      shortcutOverridesKey,
+      JSON.stringify({
+        'auto-arrange-active': 'Alt+Shift+K',
+        'auto-arrange-canvas': 'Alt+Shift+J',
+      })
+    )
+    expect(readShortcutOverrides()).toEqual({
+      'auto-arrange-active': 'alt+shift+k',
+    })
+  })
+
   it('ignores corrupt stored values', () => {
     useBrowser({ [shortcutOverridesKey]: '{not valid json' })
     expect(readShortcutOverrides()).toEqual({})

@@ -127,10 +127,11 @@ export function displayShortcut(shortcut: string, isMac: boolean) {
   return shortcut
     .split('+')
     .map((part) => {
-      if (part === 'Mod') return isMac ? '⌘' : 'Ctrl'
-      if (part === 'Ctrl') return 'Ctrl'
-      if (part === 'Shift') return isMac ? '⇧' : 'Shift'
-      if (part === 'Alt') return isMac ? '⌥' : 'Alt'
+      const key = part.toLowerCase()
+      if (key === 'mod') return isMac ? '⌘' : 'Ctrl'
+      if (key === 'ctrl') return 'Ctrl'
+      if (key === 'shift') return isMac ? '⇧' : 'Shift'
+      if (key === 'alt') return isMac ? '⌥' : 'Alt'
       return part.length === 1 ? part.toUpperCase() : part
     })
     .join(isMac ? '' : '+')
