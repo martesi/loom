@@ -560,6 +560,9 @@ func (s *ImageService) LinkSourceToGroup(repoPath string, sourceID, groupID int6
 		if exists != 0 {
 			continue
 		}
+		if err := validateRelationshipFiles(tx, sourceID, derivedID); err != nil {
+			return fmt.Errorf("validate grouped relationship: %w", err)
+		}
 		cyclic, err := relationshipReachable(tx, derivedID, sourceID)
 		if err != nil {
 			return fmt.Errorf("check relationship cycle: %w", err)

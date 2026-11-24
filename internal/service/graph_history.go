@@ -67,8 +67,12 @@ func validateRelationshipFiles(tx *sql.Tx, source, derived int64) error {
 		if err := tx.QueryRow(`SELECT file_path FROM images WHERE id = ?`, id).Scan(&path); err != nil {
 			return fmt.Errorf("relationship endpoint is unavailable: %w", err)
 		}
-		if _, err := os.Stat(path); err != nil {
+		info, err := os.Stat(path)
+		if err != nil {
 			return fmt.Errorf("relationship endpoint is unavailable: %w", err)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("relationship endpoint is unavailable: %q is not a regular file", path)
 		}
 	}
 	return nil

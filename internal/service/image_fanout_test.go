@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -18,6 +19,9 @@ func TestLinkSourceToGroupValidationAndDuplicates(t *testing.T) {
 
 	addImage := func(name string) int64 {
 		t.Helper()
+		if err := os.WriteFile(filepath.Join(repoPath, name), []byte("fixture"), 0600); err != nil {
+			t.Fatal(err)
+		}
 		res, err := repo.DB.Exec(`INSERT INTO images (file_path) VALUES (?)`, filepath.Join(repoPath, name))
 		if err != nil {
 			t.Fatal(err)
@@ -130,6 +134,9 @@ func TestLinkSourceToGroupRollsBackWhenOperationLogFails(t *testing.T) {
 	}
 	addImage := func(name string) int64 {
 		t.Helper()
+		if err := os.WriteFile(filepath.Join(repoPath, name), []byte("fixture"), 0600); err != nil {
+			t.Fatal(err)
+		}
 		res, err := repo.DB.Exec(`INSERT INTO images (file_path) VALUES (?)`, filepath.Join(repoPath, name))
 		if err != nil {
 			t.Fatal(err)
@@ -187,6 +194,9 @@ func TestBatchRelationshipReplayRollsBackOnPartialFailure(t *testing.T) {
 			}
 			addImage := func(name string) int64 {
 				t.Helper()
+				if err := os.WriteFile(filepath.Join(repoPath, name), []byte("fixture"), 0600); err != nil {
+					t.Fatal(err)
+				}
 				res, err := repo.DB.Exec(`INSERT INTO images (file_path) VALUES (?)`, filepath.Join(repoPath, name))
 				if err != nil {
 					t.Fatal(err)
