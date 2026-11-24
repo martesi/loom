@@ -7,7 +7,7 @@ import {
   ImageService,
 } from '../../../bindings/loom/internal/service'
 import type { Selection } from '../../lib/selection'
-import type { CanvasBoardExecutor } from './canvas-board-owner'
+import type { CanvasBoardOwner } from './canvas-board-owner'
 
 interface AssetSelectionRecords {
   key: string
@@ -16,12 +16,11 @@ interface AssetSelectionRecords {
 
 interface Props {
   repoPath: string
-  executor: CanvasBoardExecutor
+  executor: CanvasBoardOwner
   flow: ReactFlowInstance
   updateZoomCompensation: (zoom: number) => void
   selection: Selection
   refresh: number
-  setData: Dispatch<SetStateAction<CanvasData>>
   setRefresh: Dispatch<SetStateAction<number>>
   setError: Dispatch<SetStateAction<string>>
   setReady: Dispatch<SetStateAction<boolean>>
@@ -35,7 +34,6 @@ export function useCanvasRepository({
   updateZoomCompensation,
   selection,
   refresh,
-  setData,
   setRefresh,
   setError,
   setReady,
@@ -49,16 +47,16 @@ export function useCanvasRepository({
     [setError]
   )
   const reload = useCallback(async (): Promise<void> => {
-    const result = await ImageService.LoadCanvas(repoPath)
-    if (result) setData(result)
-    setRefresh((current) => current + 1)
-  }, [repoPath, setData, setRefresh])
+    await executor.refresh()
+  }, [executor])
   const reloadForData = useCallback(async (): Promise<CanvasData | null> => {
-    const result = await ImageService.LoadCanvas(repoPath)
-    if (result) setData(result)
-    setRefresh((current) => current + 1)
-    return result
-  }, [repoPath, setData, setRefresh])
+    const result = await executor.refresh()
+    return result?.data ?? null
+  }, [executor])
+  useEffect(
+    () => executor.subscribe(() => setRefresh((current) => current + 1)),
+    [executor, setRefresh]
+  )
   const assetSelectionKey =
     selection.surface === 'assets' && selection.ids.length
       ? `${refresh}:${selection.ids.join(',')}`
@@ -95,13 +93,11 @@ export function useCanvasRepository({
     [executor, reload, report]
   )
   useEffect(() => {
-    void Promise.all([
-      ImageService.LoadCanvas(repoPath),
-      ImageService.GetViewport(repoPath),
-    ])
-      .then(([data, viewport]) => {
-        if (data) setData(data)
-        setRefresh((current) => current + 1)
+    let cancelled = false
+    let fitTimer: ReturnType<typeof setTimeout> | undefined
+    void Promise.all([executor.refresh(), ImageService.GetViewport(repoPath)])
+      .then(([result, viewport]) => {
+        if (cancelled) return
         if (viewport) {
           updateZoomCompensation(viewport.zoom)
           void flow.setViewport(viewport)
@@ -109,19 +105,22 @@ export function useCanvasRepository({
         setReady(true)
         if (
           !viewport &&
-          (data?.images ?? []).some((image) => image.placed && !image.trashed)
+          (result?.data.images ?? []).some(
+            (image) => image.placed && !image.trashed
+          )
         )
-          setTimeout(() => void flow.fitView({ padding: 0.2, maxZoom: 1 }), 100)
+          fitTimer = setTimeout(
+            () => void flow.fitView({ padding: 0.2, maxZoom: 1 }),
+            100
+          )
       })
-      .catch(report)
-  }, [
-    repoPath,
-    flow,
-    updateZoomCompensation,
-    setData,
-    setRefresh,
-    setReady,
-    report,
-  ])
+      .catch((error) => {
+        if (!cancelled) report(error)
+      })
+    return () => {
+      cancelled = true
+      if (fitTimer) clearTimeout(fitTimer)
+    }
+  }, [executor, repoPath, flow, updateZoomCompensation, setReady, report])
   return { report, reload, reloadForData, run, assetSelectionKey }
 }

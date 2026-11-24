@@ -1,4 +1,12 @@
-import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test'
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  mock,
+  spyOn,
+} from 'bun:test'
 import { Toast } from '@base-ui-components/react/toast'
 import {
   act,
@@ -8,7 +16,7 @@ import {
   waitFor,
 } from '@testing-library/react'
 import type { Edge, Node, ReactFlowInstance } from '@xyflow/react'
-import { createElement, useRef, useState } from 'react'
+import { createElement, useRef, useState, useSyncExternalStore } from 'react'
 import {
   type CanvasData,
   ImageService,
@@ -80,7 +88,8 @@ const wrapper = ({ children }: { children: React.ReactNode }) =>
 
 function useBoard(repoPath: string) {
   const owner = useCanvasBoardOwner(repoPath)
-  const [boardData, setData] = useState(data)
+  const boardData =
+    useSyncExternalStore(owner.subscribe, owner.getSnapshot)?.data ?? data
   const [refresh, setRefresh] = useState(0)
   const [error, setError] = useState('')
   const [nodes, setNodes] = useState<Node[]>([])
@@ -92,7 +101,6 @@ function useBoard(repoPath: string) {
     updateZoomCompensation: noOp,
     selection: emptySelection,
     refresh,
-    setData,
     setRefresh,
     setError,
     setReady: noOp,
@@ -120,6 +128,24 @@ function useBoard(repoPath: string) {
   const undo = useUndoActions(repoPath, repository.reload, owner)
   return { owner, repository, nodes, undo, error }
 }
+
+beforeEach(() => {
+  spyOn(ImageService, 'GetLayoutSnapshot').mockImplementation(
+    () =>
+      Promise.resolve({
+        revision: '1',
+        images: [
+          {
+            id: 1,
+            width: 640,
+            height: 480,
+            geometry: { imageId: 1, x: 10, y: 20, w: 150, h: 110 },
+          },
+        ],
+        relationships: [],
+      }) as never
+  )
+})
 
 afterEach(() => {
   cleanup()

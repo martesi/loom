@@ -4,13 +4,19 @@ import {
   ReactFlowProvider,
   useReactFlow,
 } from '@xyflow/react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import '@xyflow/react/dist/style.css'
 import {
-  type CanvasData,
-  type ImageInfo,
-  ImageService,
-  type RepoInfo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
+import '@xyflow/react/dist/style.css'
+import type {
+  CanvasData,
+  ImageInfo,
+  RepoInfo,
 } from '../../bindings/loom/internal/service'
 import { canvasCenter } from '../components/canvas/canvas-board-operations'
 import { useCanvasBoardOwner } from '../components/canvas/canvas-board-owner'
@@ -22,6 +28,8 @@ import { useCanvasWorkspaceState } from '../components/canvas/use-canvas-workspa
 import { useInspectorFieldSubmission } from '../components/canvas/use-inspector-field-submission'
 import { emptySelection, type Selection } from '../lib/selection'
 import { useUndoActions } from '../lib/use-undo'
+
+const emptyData: CanvasData = { images: [], relationships: [], groups: [] }
 
 // Where a preview was opened from. Canvas opens keep the existing
 // relationship-component carousel; folder opens step through that folder's
@@ -72,11 +80,11 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       root.removeEventListener('focusin', syncActiveMetadata)
     }
   }, [])
-  const [data, setData] = useState<CanvasData>({
-    images: [],
-    relationships: [],
-    groups: [],
-  })
+  const accepted = useSyncExternalStore(
+    boardOwner.subscribe,
+    boardOwner.getSnapshot
+  )
+  const data = accepted?.data ?? emptyData
   const [renditionGeneration, setRenditionGeneration] = useState(0)
   const invalidateMountedRenditions = useCallback(() => {
     setRenditionGeneration((current) => current + 1)
@@ -153,7 +161,6 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       updateZoomCompensation,
       selection,
       refresh,
-      setData,
       setRefresh,
       setError,
       setReady,
@@ -215,17 +222,12 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   useEffect(() => {
     const timer = window.setInterval(
       () => {
-        void ImageService.LoadCanvas(repo.path)
-          .then((result) => {
-            if (result) setData(result)
-            setRefresh((current) => current + 1)
-          })
-          .catch((error) => callbacks.current.report(error))
+        void reload().catch((error) => callbacks.current.report(error))
       },
       60 * 60 * 1000
     )
     return () => window.clearInterval(timer)
-  }, [repo.path, setRefresh])
+  }, [reload])
   const assetOperations = useCanvasAssetOperations({
     repoPath: repo.path,
     flow,
