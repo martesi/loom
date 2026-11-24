@@ -5,8 +5,8 @@ import "fmt"
 // GetGeometry returns the exact stored rectangles, including null pairs, in
 // the requested order. Capture this baseline before deriving the displayed
 // layout and retain it until the gesture is committed or the canvas reloads.
-// It is not an atomic snapshot of the graph; clients must also invalidate an
-// in-flight layout or gesture when their graph data changes.
+// It is not an atomic snapshot of the graph. For graph-derived layouts use
+// GetLayoutSnapshot and SetGeometryFromDisplayAtRevision instead.
 func (s *ImageService) GetGeometry(path string, ids []int64) ([]GeometryUpdate, error) {
 	result := make([]GeometryUpdate, 0, len(ids))
 	if len(ids) == 0 {
@@ -59,13 +59,26 @@ func equalGeometry(a, b GeometryUpdate) bool {
 // Capture expected before deriving the display, update it after successful
 // edits or history replay, and reload on a stale error. The check protects
 // target geometry, not graph changes or ABA changes that return to the same
-// values. Clients must cancel stale gestures when graph or display data changes.
-// Mode changes alone must not call this method or write geometry.
+// values. This legacy method cannot reject a graph change that occurs after
+// dispatch. Mode changes alone must not call this method or write geometry.
 func (s *ImageService) SetGeometryFromDisplay(path string, expected, before, after []GeometryUpdate) error {
+	return s.setGeometryFromDisplay(path, nil, expected, before, after)
+}
+
+// SetGeometryFromDisplayAtRevision additionally rejects any layout input
+// change since GetLayoutSnapshot, including changes later undone. The caller
+// must derive its display from that snapshot, reload it after writes or history
+// replay, and serialize local mode changes. Changing modes cannot cancel a
+// write already dispatched to the backend. Revision belongs to the same repo.
+func (s *ImageService) SetGeometryFromDisplayAtRevision(path, revision string, expected, before, after []GeometryUpdate) error {
+	return s.setGeometryFromDisplay(path, &revision, expected, before, after)
+}
+
+func (s *ImageService) setGeometryFromDisplay(path string, revision *string, expected, before, after []GeometryUpdate) error {
 	if len(expected) != len(before) || len(before) != len(after) {
 		return fmt.Errorf("geometry snapshots must have equal lengths")
 	}
-	if len(after) == 0 {
+	if len(after) == 0 && revision == nil {
 		return nil
 	}
 	seen := make(map[int64]bool, len(after))
@@ -96,6 +109,20 @@ func (s *ImageService) SetGeometryFromDisplay(path string, expected, before, aft
 		return err
 	}
 	defer tx.Rollback()
+	if revision != nil {
+		// Acquire SQLite's writer lock before reading the revision. This also
+		// serializes other processes and legacy writers, not just RPCs here.
+		if _, err := tx.Exec(`UPDATE layout_revision SET revision = revision WHERE singleton = 1`); err != nil {
+			return err
+		}
+		current, err := layoutRevision(tx)
+		if err != nil {
+			return err
+		}
+		if current != *revision {
+			return fmt.Errorf("stale layout revision; reload canvas")
+		}
+	}
 	for _, want := range expected {
 		got, err := geometryTx(tx, want.ImageID)
 		if err != nil {
