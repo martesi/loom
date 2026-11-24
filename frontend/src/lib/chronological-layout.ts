@@ -348,27 +348,48 @@ function clearObstacles(
   direction: 'up' | 'down' | 'left' | 'right'
 ): Rect {
   const result = { ...rect }
-  // Every move crosses at least one obstacle boundary, so this terminates.
-  for (;;) {
-    const collisions = obstacles.filter(
-      (box) =>
-        result.x < box.x + box.width + GAP &&
-        result.x + result.width + GAP > box.x &&
-        result.y < box.y + box.height + GAP &&
-        result.y + result.height + GAP > box.y
+  const vertical = direction === 'up' || direction === 'down'
+  const forward = direction === 'down' || direction === 'right'
+  const axis = vertical ? 'y' : 'x'
+  const size = vertical ? 'height' : 'width'
+  const crossAxis = vertical ? 'x' : 'y'
+  const crossSize = vertical ? 'width' : 'height'
+  const relevant = obstacles.filter(
+    (box) =>
+      rect[crossAxis] < box[crossAxis] + box[crossSize] + GAP &&
+      rect[crossAxis] + rect[crossSize] + GAP > box[crossAxis]
+  )
+  // Sweeping in movement order visits each forbidden interval only once.
+  relevant.sort((a, b) =>
+    forward
+      ? a[axis] - b[axis]
+      : b[axis] + b[size] + GAP - (a[axis] + a[size] + GAP)
+  )
+  for (const box of relevant) {
+    if (
+      result[axis] >= box[axis] + box[size] + GAP ||
+      result[axis] + result[size] + GAP <= box[axis]
     )
-    if (!collisions.length) return result
-    if (direction === 'up')
-      result.y = Math.min(
-        ...collisions.map((box) => box.y - result.height - GAP)
-      )
-    if (direction === 'down')
-      result.y = Math.max(...collisions.map((box) => box.y + box.height + GAP))
-    if (direction === 'left')
-      result.x = Math.min(
-        ...collisions.map((box) => box.x - result.width - GAP)
-      )
-    if (direction === 'right')
-      result.x = Math.max(...collisions.map((box) => box.x + box.width + GAP))
+      continue
+    result[axis] = forward
+      ? box[axis] + box[size] + GAP
+      : precedingBoundary(box[axis], result[size])
+    if (!Number.isFinite(result[axis]))
+      throw new Error('staging position exceeds finite coordinates')
   }
+  return result
+}
+
+function precedingBoundary(boundary: number, size: number): number {
+  let position = boundary - size - GAP
+  let adjustment = Number.EPSILON * Math.max(1, Math.abs(boundary), size)
+  // Subtraction can round back inside the forbidden interval. Move outward
+  // until the same arithmetic used by the collision test confirms clearance.
+  while (position + size + GAP > boundary) {
+    position -= adjustment
+    adjustment *= 2
+    if (!Number.isFinite(position))
+      throw new Error('staging position exceeds finite coordinates')
+  }
+  return position
 }

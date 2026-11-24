@@ -271,6 +271,111 @@ describe('chronological graph layout', () => {
     )
   })
 
+  test('stages fractional dimensions with the full obstacle clearance', () => {
+    const nodes = [
+      node('a', 100, 60.1),
+      node('b', 100, 60.2),
+      node('c', 100.1, 60.1),
+    ]
+    for (const stagingCenter of [
+      { x: 50, y: 30 },
+      { x: 50, y: 100 },
+      { x: 180, y: 30 },
+      { x: 300, y: 30 },
+    ]) {
+      const result = layout(nodes, [edge('1', 'a', 'b', 1)], { stagingCenter })
+      const staged = result.staged[0]
+      for (const obstacle of result.components[0].boxes) {
+        expect(
+          staged.x >= obstacle.x + obstacle.width + 60 ||
+            staged.x + staged.width + 60 <= obstacle.x ||
+            staged.y >= obstacle.y + obstacle.height + 60 ||
+            staged.y + staged.height + 60 <= obstacle.y
+        ).toBe(true)
+      }
+    }
+  })
+
+  test('staging picks the nearest clear direction through stacked obstacles', () => {
+    const nodes = [node('orphan')]
+    const edges = []
+    for (let i = 0; i < 5; i++) {
+      nodes.push(node(`a${i}`), node(`b${i}`))
+      edges.push(edge(`e${i}`, `a${i}`, `b${i}`, i))
+    }
+    const obstacles = layout(nodes, edges).components.flatMap(
+      (item) => item.boxes
+    )
+    for (const center of [
+      { x: 50, y: 30 },
+      { x: 50, y: 270 },
+      { x: 220, y: 270 },
+      { x: 50, y: 510 },
+      { x: 500, y: 270 },
+    ]) {
+      const origin = { x: center.x - 50, y: center.y - 30 }
+      const choices = ['up', 'down', 'left', 'right'].map((direction) => {
+        const point = { ...origin }
+        for (let i = 0; i <= obstacles.length; i++) {
+          const collisions = obstacles.filter(
+            (box) =>
+              point.x < box.x + box.width + 60 &&
+              point.x + 160 > box.x &&
+              point.y < box.y + box.height + 60 &&
+              point.y + 120 > box.y
+          )
+          if (!collisions.length) return point
+          if (direction === 'up')
+            point.y = Math.min(...collisions.map((box) => box.y - 120))
+          if (direction === 'down')
+            point.y = Math.max(
+              ...collisions.map((box) => box.y + box.height + 60)
+            )
+          if (direction === 'left')
+            point.x = Math.min(...collisions.map((box) => box.x - 160))
+          if (direction === 'right')
+            point.x = Math.max(
+              ...collisions.map((box) => box.x + box.width + 60)
+            )
+        }
+        throw new Error('reference search did not terminate')
+      })
+      choices.sort(
+        (a, b) =>
+          (a.x - origin.x) ** 2 +
+          (a.y - origin.y) ** 2 -
+          (b.x - origin.x) ** 2 -
+          (b.y - origin.y) ** 2
+      )
+      const staged = layout(nodes, edges, { stagingCenter: center }).staged[0]
+      expect({ x: staged.x, y: staged.y }).toEqual(choices[0])
+    }
+  })
+
+  test('stages beside a tall stack without quadratic obstacle scans', () => {
+    const nodes = [node('orphan')]
+    const edges = []
+    for (let i = 0; i < 8000; i++) {
+      nodes.push(node(`a${i}`), node(`b${i}`))
+      edges.push(edge(`e${i}`, `a${i}`, `b${i}`, i))
+    }
+    const start = performance.now()
+    layout(nodes, edges)
+    const baseline = performance.now() - start
+    const stagedStart = performance.now()
+    const result = layout(nodes, edges, { stagingCenter: { x: 50, y: 30 } })
+    const stagedTime = performance.now() - stagedStart
+    console.log(
+      `stack baseline ${baseline.toFixed(1)}ms, staged ${stagedTime.toFixed(1)}ms`
+    )
+    expect(stagedTime).toBeLessThan(baseline * 1.35 + 100)
+    for (const component of result.components) {
+      for (const obstacle of component.boxes) {
+        expect(overlaps(result.staged[0], obstacle)).toBe(false)
+      }
+    }
+  })
+
   test('empty graph stages orphans around viewport center and last-edge removal makes orphans', () => {
     const nodes = [node('a'), node('b')]
     const prior = layout(nodes, [edge('1', 'a', 'b', 1)])
