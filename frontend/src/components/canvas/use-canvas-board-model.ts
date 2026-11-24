@@ -348,6 +348,7 @@ export function useCanvasBoardModel({
   ])
 
   return {
+    owner,
     selectedIdsList,
     isCanvasNodeSelected,
     displayNodes,

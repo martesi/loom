@@ -15,8 +15,18 @@ export interface ResizeGesture {
   before: GeometryUpdate
 }
 
+export interface DragGesture {
+  cancelled: boolean
+  generation: number
+  revision: string
+  expected: GeometryUpdate[]
+  before: GeometryUpdate[]
+  onCancel?: () => void
+}
+
 export interface CanvasBoardExecutor {
   execute<T>(action: () => Promise<T>): Promise<T>
+  cancelGesture?(): void
 }
 
 export interface AcceptedCanvasBoard {
@@ -33,6 +43,14 @@ export interface CanvasBoardOwner extends CanvasBoardExecutor {
   ): ResizeGesture | null
   endResize(gesture: ResizeGesture, after: GeometryUpdate): Promise<void>
   cancelResize(gesture: ResizeGesture): void
+  beginDrag(
+    board: AcceptedCanvasBoard | null,
+    before: GeometryUpdate[],
+    onCancel?: () => void
+  ): DragGesture | null
+  endDrag(gesture: DragGesture, after: GeometryUpdate[]): Promise<void>
+  cancelGesture(): void
+  isGestureActive(gesture: DragGesture): boolean
   subscribe(listener: () => void): () => void
   dispose(): void
   activate(): void
@@ -57,7 +75,7 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
   let active = true
   let accepted: AcceptedCanvasBoard | null = null
   let acceptedGeneration = -1
-  let gesture: ResizeGesture | null = null
+  let gesture: ResizeGesture | DragGesture | null = null
   const listeners = new Set<() => void>()
   const owner: CanvasBoardOwner = {
     execute<T>(action: () => Promise<T>): Promise<T> {
@@ -72,7 +90,7 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
     async refresh() {
       if (!active) return null
       const request = ++generation
-      gesture = null
+      owner.cancelGesture()
       const isCurrent = () => active && request === generation
       const metadata = await ImageService.LoadCanvas(repoPath)
       if (!isCurrent()) return null
@@ -99,6 +117,7 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
         (item) => item.id === before.imageId
       )?.geometry
       if (!stored) return null
+      owner.cancelGesture()
       gesture = {
         cancelled: false,
         generation,
@@ -140,6 +159,81 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
       current.cancelled = true
       if (gesture === current) gesture = null
     },
+    beginDrag(board, before, onCancel) {
+      if (
+        !active ||
+        !board ||
+        board !== accepted ||
+        acceptedGeneration !== generation ||
+        !before.length
+      )
+        return null
+      const stored = new Map(
+        (board.snapshot.images ?? []).map((item) => [item.id, item.geometry])
+      )
+      if (
+        new Set(before.map((item) => item.imageId)).size !== before.length ||
+        before.some((item) => !stored.has(item.imageId))
+      )
+        return null
+      const expected: GeometryUpdate[] = []
+      for (const item of before) {
+        const geometry = stored.get(item.imageId)
+        if (!geometry) return null
+        expected.push({ ...geometry })
+      }
+      const current: DragGesture = {
+        cancelled: false,
+        generation,
+        revision: board.snapshot.revision,
+        expected,
+        before: before.map((item) => ({ ...item })),
+        onCancel,
+      }
+      gesture = current
+      return current
+    },
+    endDrag(current, after) {
+      if (gesture !== current) return Promise.resolve()
+      gesture = null
+      const batch = buildDisplayGeometry(
+        new Map(current.expected.map((item) => [item.imageId, item])),
+        current.before,
+        after
+      )
+      return owner.execute(async () => {
+        if (!active || current.cancelled || current.generation !== generation)
+          return
+        await ImageService.SetGeometryFromDisplayAtRevision(
+          repoPath,
+          current.revision,
+          batch.expected,
+          batch.before,
+          batch.after
+        ).catch(async (error: unknown) => {
+          await owner
+            .refresh()
+            .catch((reloadError: unknown) =>
+              console.error('canvas drag reload failed', reloadError)
+            )
+          throw error
+        })
+        await owner.refresh()
+      })
+    },
+    cancelGesture() {
+      const current = gesture
+      gesture = null
+      if (current) {
+        current.cancelled = true
+        if ('onCancel' in current) current.onCancel?.()
+      }
+    },
+    isGestureActive: (current) =>
+      active &&
+      gesture === current &&
+      !current.cancelled &&
+      current.generation === generation,
     subscribe(listener) {
       listeners.add(listener)
       return () => {
@@ -149,7 +243,7 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
     dispose() {
       active = false
       generation++
-      gesture = null
+      owner.cancelGesture()
       listeners.clear()
     },
     activate() {

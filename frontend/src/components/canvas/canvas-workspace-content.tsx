@@ -343,6 +343,7 @@ export function CanvasWorkspaceContent(props: Props) {
         </ShelfPanel>
         <CanvasMainSurface
           repoPath={repo.path}
+          owner={boardModel.owner}
           flow={flow}
           data={data}
           setNodes={setNodes}

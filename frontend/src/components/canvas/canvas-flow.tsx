@@ -19,6 +19,8 @@ import type { CanvasData } from '../../../bindings/loom/internal/service'
 import { ImageService } from '../../../bindings/loom/internal/service'
 import { applyCanvasNodeSelection } from '../../lib/canvas-selection'
 import { emptySelection, type Selection } from '../../lib/selection'
+import type { CanvasBoardOwner } from './canvas-board-owner'
+import { useCanvasBoardDrag } from './use-canvas-board-drag'
 
 interface MenuState {
   kind: 'pane' | 'node' | 'selection' | 'edge'
@@ -46,6 +48,7 @@ interface DropTarget {
 
 interface Props {
   repoPath: string
+  owner: CanvasBoardOwner
   data: CanvasData
   selectionRef: MutableRefObject<Selection>
   displayNodes: Node[]
@@ -87,6 +90,7 @@ export function CanvasFlow(props: Props) {
   const keyboardContextMenu = useRef(false)
   const {
     repoPath,
+    owner,
     data,
     selectionRef,
     displayNodes,
@@ -123,6 +127,7 @@ export function CanvasFlow(props: Props) {
     selectedCanvasNodeIds,
     setMenu,
   } = props
+  const drag = useCanvasBoardDrag(owner, data, report, setNodes)
   return (
     <>
       {displayNodes.length === 0 && (
@@ -205,6 +210,7 @@ export function CanvasFlow(props: Props) {
         panActivationKeyCode={null}
         nodesDraggable={!space}
         onNodesChange={(changes) => {
+          changes = drag.filterChanges(changes)
           if (dropTargets.current.length) {
             const movedGroups = new Map(
               changes.flatMap((change) =>
@@ -300,10 +306,11 @@ export function CanvasFlow(props: Props) {
         }}
         onNodeMouseEnter={(_, node) => setHoveredNodeId(node.id)}
         onNodeMouseLeave={() => setHoveredNodeId(null)}
-        onNodeDragStart={() => {
+        onNodeDragStart={(_, node, moved) => {
           relation.current = null
           setRelationshipPreview(null)
           updateTarget(null)
+          drag.start(moved.length ? moved : [node])
         }}
         onNodeDrag={(_, node) => {
           if (node.type !== 'image') return
@@ -335,6 +342,26 @@ export function CanvasFlow(props: Props) {
           }
           pendingDragNode.current = null
           updateTarget(null)
+          if (node.type !== 'group') {
+            const gesture = drag.take()
+            if (!gesture) return
+            const target = resolveSetDropTarget(node)
+            if (target) {
+              drag.abandon()
+              run(() =>
+                ImageService.PlaceImages(
+                  repoPath,
+                  (moved.length ? moved : [node])
+                    .filter((item) => item.type === 'image')
+                    .map((item) => Number(item.id)),
+                  node.position.x,
+                  node.position.y,
+                  Number(target.id.slice(4))
+                )
+              )
+            } else drag.finish(gesture, moved.length ? moved : [node])
+            return
+          }
           run(async () => {
             if (node.type === 'group') {
               const group = (data.groups ?? []).find(
@@ -358,23 +385,6 @@ export function CanvasFlow(props: Props) {
               )
               return
             }
-            const target = resolveSetDropTarget(node)
-            if (target) {
-              await ImageService.PlaceImages(
-                repoPath,
-                moved.map((n) => Number(n.id)),
-                node.position.x,
-                node.position.y,
-                Number(target.id.slice(4))
-              )
-              return
-            }
-            await ImageService.SetPositions(
-              repoPath,
-              moved
-                .filter((n) => n.type === 'image')
-                .map((n) => ({ imageId: Number(n.id), ...n.position }))
-            )
           })
         }}
         onMoveEnd={(_, v) => {

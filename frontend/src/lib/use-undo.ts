@@ -27,8 +27,9 @@ export function useUndoActions(
     if (result.applied) await onChange()
   }
 
-  return {
-    undo: () => (executor ? executor.execute(() => run(false)) : run(false)),
-    redo: () => (executor ? executor.execute(() => run(true)) : run(true)),
+  function enqueue(redo: boolean) {
+    executor?.cancelGesture?.()
+    return executor ? executor.execute(() => run(redo)) : run(redo)
   }
+  return { undo: () => enqueue(false), redo: () => enqueue(true) }
 }

@@ -8,6 +8,7 @@ import { parseAssetDragPayload } from '../../lib/asset-drag-payload'
 import { filesToMedia, type readMedia } from '../../lib/clipboard'
 import type { Selection } from '../../lib/selection'
 import { type MenuAction, PositionedMenu } from '../menu'
+import type { CanvasBoardOwner } from './canvas-board-owner'
 import { CanvasDock } from './canvas-dock'
 import { CanvasFlow } from './canvas-flow'
 import { PerfHud } from './perf-hud'
@@ -38,6 +39,7 @@ interface DropTarget {
 
 interface Props {
   repoPath: string
+  owner: CanvasBoardOwner
   flow: ReactFlowInstance
   data: CanvasData
   setNodes: Dispatch<SetStateAction<Node[]>>
@@ -107,6 +109,7 @@ interface Props {
 export function CanvasMainSurface(props: Props) {
   const {
     repoPath,
+    owner,
     flow,
     data,
     setNodes,
@@ -355,6 +358,7 @@ export function CanvasMainSurface(props: Props) {
     >
       <CanvasFlow
         repoPath={repoPath}
+        owner={owner}
         data={data}
         selectionRef={selectionRef}
         displayNodes={displayNodes}

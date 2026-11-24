@@ -24,6 +24,56 @@ async function dragBy(page: Page, locator: Locator, dx: number, dy: number) {
   await page.mouse.up()
 }
 
+test('multi-image drag is one undoable geometry change', async ({
+  page,
+}, testInfo) => {
+  await openFixtureRepo(page, 'arrange-resize-fixtures')
+  await placeAssets(page, ['arrange-alpha.png', 'arrange-beta.png'])
+  await page.keyboard.press('ControlOrMeta+0')
+  const nodes = imageNodes(page)
+  await nodes.first().click()
+  const handle = page.locator('.react-flow__resize-control.handle').last()
+  await dragBy(page, handle, 70, 40)
+  await selectImageNodes(page, [0, 1])
+  const before = await Promise.all([
+    nodeBox(nodes.nth(0)),
+    nodeBox(nodes.nth(1)),
+  ])
+  await dragBy(page, nodes.first(), 75, 45)
+  await expect
+    .poll(async () => (await nodeBox(nodes.first())).x - before[0].x)
+    .toBeGreaterThan(50)
+  const after = await Promise.all([
+    nodeBox(nodes.nth(0)),
+    nodeBox(nodes.nth(1)),
+  ])
+  expect(after[1].x - before[1].x).toBeGreaterThan(50)
+  await testInfo.attach('multi-image-drag', {
+    body: await page.screenshot(),
+    contentType: 'image/png',
+  })
+
+  const expectBoxes = async (expected: typeof before) => {
+    await expect
+      .poll(async () => {
+        const actual = await Promise.all([
+          nodeBox(nodes.nth(0)),
+          nodeBox(nodes.nth(1)),
+        ])
+        return actual.every((box, index) =>
+          (['x', 'y', 'width', 'height'] as const).every(
+            (key) => Math.abs(box[key] - expected[index][key]) < 1
+          )
+        )
+      })
+      .toBe(true)
+  }
+  await page.keyboard.press('ControlOrMeta+z')
+  await expectBoxes(before)
+  await page.keyboard.press('ControlOrMeta+Shift+z')
+  await expectBoxes(after)
+})
+
 test('relationships reject cycles, support ctrl-click selection, and delete as edges', async ({
   page,
 }) => {
