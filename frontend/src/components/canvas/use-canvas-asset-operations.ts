@@ -1,9 +1,6 @@
 import type { ReactFlowInstance } from '@xyflow/react'
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
-import {
-  GroupService,
-  ImageService,
-} from '../../../bindings/loom/internal/service'
+import { ImageService } from '../../../bindings/loom/internal/service'
 import { readMedia } from '../../lib/clipboard'
 import type { Selection } from '../../lib/selection'
 import type { RevealRequest } from './use-canvas-workspace-state'
@@ -20,7 +17,6 @@ interface Props {
   selectAssets: (ids: number[]) => void
   setReveal: Dispatch<SetStateAction<RevealRequest | null>>
   center: () => { x: number; y: number }
-  canCreateSet: boolean
   purgeIds: number[] | null
   trashIds: number[] | null
   setPurgeIds: Dispatch<SetStateAction<number[] | null>>
@@ -44,7 +40,6 @@ export function useCanvasAssetOperations({
   selectAssets,
   setReveal,
   center,
-  canCreateSet,
   purgeIds,
   trashIds,
   setPurgeIds,
@@ -55,16 +50,6 @@ export function useCanvasAssetOperations({
   setRecentActionIds,
   setError,
 }: Props) {
-  async function createSet() {
-    if (!canCreateSet) return
-    const ids = selection.ids
-    const created = await GroupService.CreateGroup(repoPath, '', '', ids)
-    if (!created) return
-    await reload()
-    // Keep the new semantic set selected after its metadata reloads.
-    setSelection({ surface: 'canvas', ids, edges: [], group: created.id })
-  }
-
   async function go(id: number, folder = false) {
     const image = await ImageService.GetImage(repoPath, id)
     if (!image) return
@@ -83,7 +68,7 @@ export function useCanvasAssetOperations({
       })
       return
     }
-    setExpanded(image.groupId || null)
+    setExpanded(null)
     setSelection({ surface: 'canvas', ids: [id], edges: [], group: null })
     await flow.setCenter(image.canvasX + 75, image.canvasY + 55, {
       zoom: flow.getZoom(),
@@ -133,9 +118,7 @@ export function useCanvasAssetOperations({
     }
     if (selection.edges.length) {
       await ImageService.UnlinkSources(repoPath, selection.edges)
-    } else if (ids.length) {
-      await ImageService.UnplaceImages(repoPath, ids)
-    }
+    } else return
     setSelection({ ...selection, ids: [], edges: [], group: null })
     await reload()
   }
@@ -206,7 +189,6 @@ export function useCanvasAssetOperations({
   }
 
   return {
-    createSet,
     go,
     paste,
     importMedia,

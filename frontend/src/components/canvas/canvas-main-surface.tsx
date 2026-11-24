@@ -99,7 +99,6 @@ interface Props {
   setMenu: Dispatch<SetStateAction<MenuState | null>>
   setHoveredNodeId: Dispatch<SetStateAction<string | null>>
   handlePreview: (node: Node) => void
-  canCreateSet: boolean
   actionById: ReadonlyMap<string, CanvasAction>
   runDockAction: (id: string) => void
   perfHud: boolean
@@ -159,7 +158,6 @@ export function CanvasMainSurface(props: Props) {
     setMenu,
     setHoveredNodeId,
     handlePreview,
-    canCreateSet,
     actionById,
     runDockAction,
     perfHud,
@@ -183,7 +181,7 @@ export function CanvasMainSurface(props: Props) {
       }}
       onPointerDownCapture={(event) => {
         const id = targetAt(event.clientX, event.clientY)
-        if ((event.ctrlKey || event.metaKey) && id && !id.startsWith('set-')) {
+        if ((event.ctrlKey || event.metaKey) && id) {
           relation.current = {
             source: Number(id),
             x: event.clientX,
@@ -223,17 +221,7 @@ export function CanvasMainSurface(props: Props) {
                 id,
                 valid: result?.valid ?? false,
                 reason: result?.reason,
-                members: id.startsWith('set-')
-                  ? groupMembers(Number(id.slice(4))).filter(
-                      (memberId) =>
-                        !(data.relationships ?? []).some(
-                          (relationship) =>
-                            relationship.sourceImageId === drag.source &&
-                            relationship.derivedImageId === memberId
-                        )
-                    ).length
-                  : undefined,
-                kind: id.startsWith('set-') ? 'set' : 'relationship',
+                kind: 'relationship',
               }
             : null
         )
@@ -268,15 +256,7 @@ export function CanvasMainSurface(props: Props) {
           group: null,
         })
         if (id && validTarget(drag.source, id).valid)
-          run(() =>
-            id.startsWith('set-')
-              ? ImageService.LinkSourceToGroup(
-                  repoPath,
-                  drag.source,
-                  Number(id.slice(4))
-                )
-              : ImageService.LinkSource(repoPath, drag.source, Number(id))
-          )
+          run(() => ImageService.LinkSource(repoPath, drag.source, Number(id)))
         else if (id) {
           const result = validTarget(drag.source, id)
           setError(result.reason ?? t`Cannot create this relationship`)
@@ -305,8 +285,7 @@ export function CanvasMainSurface(props: Props) {
                 x: e.clientX,
                 y: e.clientY,
               }),
-              target = targetAt(e.clientX, e.clientY),
-              group = target?.startsWith('set-') ? Number(target.slice(4)) : 0
+              group = 0
             void (async () => {
               const images = await Promise.all(
                 uniqueIds.map((id) => ImageService.GetImage(repoPath, id))
@@ -461,13 +440,11 @@ export function CanvasMainSurface(props: Props) {
           canAutoArrange={
             displayNodes.length >= 2 || selectedCanvasNodeIds.length > 1
           }
-          canCreateSet={canCreateSet}
           shortcuts={{
             fitAll: actionById.get('fit-all')?.shortcut ?? '',
             fitSelection: actionById.get('fit-selection')?.shortcut ?? '',
             resetZoom: actionById.get('reset-zoom')?.shortcut ?? '',
             autoArrange: actionById.get('auto-arrange-active')?.shortcut ?? '',
-            createSet: actionById.get('create-set')?.shortcut ?? '',
             inspect: actionById.get('toggle-inspector')?.shortcut ?? '',
             unplace: actionById.get('unplace-selection')?.shortcut ?? '',
           }}

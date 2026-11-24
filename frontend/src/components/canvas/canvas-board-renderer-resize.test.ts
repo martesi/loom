@@ -126,9 +126,7 @@ for (const change of ['rendition', 'expansion'] as const) {
       generation: change === 'rendition' ? 1 : 0,
       expanded: change === 'expansion' ? null : 42,
     })
-    expect(result.current.nodes[0].id).toBe(
-      change === 'expansion' ? 'set-42' : '1'
-    )
+    expect(result.current.nodes[0].id).toBe('1')
     expect(write).not.toHaveBeenCalled()
     await act(async () => {
       release()

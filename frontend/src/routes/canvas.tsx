@@ -7,7 +7,6 @@ import {
 import {
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -206,18 +205,6 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     fieldSubmissionPending,
     submissionScopeRef,
   })
-  const canCreateSet = useMemo(
-    () =>
-      selection.surface === 'canvas' &&
-      selection.group === null &&
-      selection.ids.length >= 2 &&
-      new Set(selection.ids).size === selection.ids.length &&
-      selection.ids.every((id) => {
-        const image = (data.images ?? []).find((item) => item.id === id)
-        return image?.placed && !image.trashed && !image.groupId
-      }),
-    [selection.surface, selection.group, selection.ids, data.images]
-  )
   const undoActions = useUndoActions(repo.path, reload, boardOwner)
   useEffect(() => {
     const timer = window.setInterval(
@@ -240,7 +227,6 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     selectAssets,
     setReveal,
     center,
-    canCreateSet,
     purgeIds,
     trashIds,
     setPurgeIds,
@@ -278,7 +264,6 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       selectedIds={selectedIds}
       boardModel={boardModel}
       submitInspectorField={submitInspectorField}
-      canCreateSet={canCreateSet}
       undoActions={undoActions}
       assetSelectionRecords={assetSelectionRecords}
       updateZoomCompensation={updateZoomCompensation}

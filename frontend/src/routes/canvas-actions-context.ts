@@ -56,8 +56,6 @@ export interface CanvasActionsContext {
   selectAssets: (ids: number[]) => void
   setSelection: Dispatch<SetStateAction<Selection>>
   data: CanvasData
-  canCreateSet: boolean
-  createSet: () => Promise<void>
   alignHorizontal: () => Promise<void>
   alignVertical: () => Promise<void>
   selectedIds: () => number[]

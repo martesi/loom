@@ -69,15 +69,25 @@ const graph = (value: CanvasData) =>
   )
 
 describe('board projection mapping', () => {
-  it('keeps the live board placement filter and group mapping unchanged', async () => {
+  it('renders legacy set members and their original edges individually', async () => {
     const boardData = {
       ...data,
       images:
         data.images?.map((item) =>
-          item.id === 2 ? { ...item, placed: true } : item
+          item.id === 2 || item.id === 3 ? { ...item, placed: true } : item
         ) ?? null,
+      relationships: [
+        ...(data.relationships ?? []),
+        {
+          id: 14,
+          sourceImageId: 2,
+          derivedImageId: 3,
+          pairingOrder: 10,
+          createdAt: null,
+        },
+      ],
       groups: [
-        { id: 5, name: 'set', kind: '', coverImageId: 1, memberIds: [1] },
+        { id: 5, name: 'set', kind: '', coverImageId: 1, memberIds: [1, 2] },
       ],
     }
     const { result, unmount } = renderHook(() => {
@@ -106,12 +116,14 @@ describe('board projection mapping', () => {
     })
     await waitFor(() =>
       expect(result.current.nodes.map((node) => node.id)).toEqual([
+        '1',
         '2',
-        'set-5',
+        '3',
       ])
     )
     expect(result.current.edges).toMatchObject([
-      { id: '12', source: 'set-5', target: '2' },
+      { id: '12', source: '1', target: '2' },
+      { id: '14', source: '2', target: '3' },
     ])
     unmount()
   })

@@ -2,12 +2,10 @@ import { t } from '@lingui/core/macro'
 import {
   AlignCenterHorizontal,
   AlignCenterVertical,
-  Boxes,
   Eye,
   Focus,
   MapPin,
   Maximize2,
-  MinusCircle,
   PanelRight,
   RotateCcw,
   Sparkles,
@@ -24,13 +22,11 @@ export interface CanvasDockProps {
   canFitAll: boolean
   canFitSelection: boolean
   canAutoArrange: boolean
-  canCreateSet: boolean
   shortcuts: {
     fitAll: string
     fitSelection: string
     resetZoom: string
     autoArrange: string
-    createSet: string
     inspect: string
     unplace: string
   }
@@ -84,7 +80,6 @@ export const CanvasDock = memo(function CanvasDock({
   canFitAll,
   canFitSelection,
   canAutoArrange,
-  canCreateSet,
   shortcuts,
   onAction,
 }: CanvasDockProps) {
@@ -155,26 +150,10 @@ export const CanvasDock = memo(function CanvasDock({
             disabled={!canFitSelection}
             onClick={() => onAction('fit-selection')}
           />
-          <DockButton
-            testId="dock-unplace"
-            label={t`Unplace`}
-            shortcut={shortcuts.unplace}
-            danger
-            icon={<MinusCircle className="h-3.5 w-3.5" />}
-            onClick={() => onAction('unplace-selection')}
-          />
         </>
       )}
       {mode === 'multiple' && (
         <>
-          <DockButton
-            testId="dock-create-set"
-            label={t`Create Set (${selectionCount})`}
-            shortcut={shortcuts.createSet}
-            icon={<Boxes className="h-3.5 w-3.5" />}
-            disabled={!canCreateSet}
-            onClick={() => onAction('create-set')}
-          />
           <DockButton
             testId="dock-align-horizontal"
             label={t`Align Horizontally`}
@@ -192,14 +171,6 @@ export const CanvasDock = memo(function CanvasDock({
             label={t`Arrange Subgraph`}
             icon={<Sparkles className="h-3.5 w-3.5" />}
             onClick={() => onAction('auto-arrange-selection')}
-          />
-          <DockButton
-            testId="dock-unplace"
-            label={t`Unplace Selection`}
-            shortcut={shortcuts.unplace}
-            danger
-            icon={<MinusCircle className="h-3.5 w-3.5" />}
-            onClick={() => onAction('unplace-selection')}
           />
         </>
       )}
@@ -222,7 +193,6 @@ function areDockPropsEqual(previous: CanvasDockProps, next: CanvasDockProps) {
     previous.canFitAll === next.canFitAll &&
     previous.canFitSelection === next.canFitSelection &&
     previous.canAutoArrange === next.canAutoArrange &&
-    previous.canCreateSet === next.canCreateSet &&
     previous.onAction === next.onAction &&
     Object.keys(previous.shortcuts).every(
       (key) =>

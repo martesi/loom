@@ -102,23 +102,16 @@ export function CanvasFlow(props: Props) {
     inspectorPinned,
     host,
     modifiedMarquee,
-    dropTargets,
     setNodes,
     setEdges,
     setSelection,
     setExpanded,
     closeInspector,
-    groupMembers,
-    expanded,
     handlePreview,
     setHoveredNodeId,
     relation,
     setRelationshipPreview,
     updateTarget,
-    run,
-    resolveSetDropTarget,
-    dragTargetRaf,
-    pendingDragNode,
     report,
     updateZoomCompensation,
     zoomRaf,
@@ -146,12 +139,7 @@ export function CanvasFlow(props: Props) {
             <div className="mt-4 grid gap-2 text-xs text-ink-muted">
               <p>
                 <Trans>
-                  Ctrl/Cmd-drag image → image or set to create a relationship.
-                </Trans>
-              </p>
-              <p>
-                <Trans>
-                  Select 2+ images, then Create set or press Ctrl/Cmd+G.
+                  Ctrl/Cmd-drag image → image to create a relationship.
                 </Trans>
               </p>
             </div>
@@ -211,22 +199,6 @@ export function CanvasFlow(props: Props) {
         nodesDraggable={!space}
         onNodesChange={(changes) => {
           changes = drag.filterChanges(changes)
-          if (dropTargets.current.length) {
-            const movedGroups = new Map(
-              changes.flatMap((change) =>
-                change.type === 'position' &&
-                change.position &&
-                change.id.startsWith('set-')
-                  ? [[change.id, change.position] as const]
-                  : []
-              )
-            )
-            if (movedGroups.size)
-              dropTargets.current = dropTargets.current.map((group) => {
-                const position = movedGroups.get(group.id)
-                return position ? { ...group, position } : group
-              })
-          }
           setNodes((n) => applyNodeChanges(changes, n))
           const selected = changes.filter((c) => c.type === 'select')
           if (selected.length)
@@ -271,38 +243,15 @@ export function CanvasFlow(props: Props) {
         }}
         onNodeClick={(event, node) => {
           if (!(event.shiftKey || event.ctrlKey || event.metaKey))
-            setSelection(
-              node.type === 'group'
-                ? {
-                    surface: 'canvas',
-                    ids: groupMembers(Number(node.id.slice(4))),
-                    edges: [],
-                    group: Number(node.id.slice(4)),
-                  }
-                : {
-                    surface: 'canvas',
-                    ids: [Number(node.id)],
-                    edges: [],
-                    group: null,
-                  }
-            )
-          if (
-            node.type === 'image' &&
-            data.images?.find((i) => String(i.id) === node.id)?.groupId !==
-              expanded
-          )
-            setExpanded(null)
-        }}
-        onNodeDoubleClick={(_, node) => {
-          if (node.type === 'group') {
-            setExpanded(Number(node.id.slice(4)))
             setSelection({
               surface: 'canvas',
-              ids: groupMembers(Number(node.id.slice(4))),
+              ids: [Number(node.id)],
               edges: [],
               group: null,
             })
-          } else if (node.type === 'image') handlePreview(node)
+        }}
+        onNodeDoubleClick={(_, node) => {
+          if (node.type === 'image') handlePreview(node)
         }}
         onNodeMouseEnter={(_, node) => setHoveredNodeId(node.id)}
         onNodeMouseLeave={() => setHoveredNodeId(null)}
@@ -312,80 +261,10 @@ export function CanvasFlow(props: Props) {
           updateTarget(null)
           drag.start(moved.length ? moved : [node])
         }}
-        onNodeDrag={(_, node) => {
-          if (node.type !== 'image') return
-          // Coalesce pointermove bursts to one target resolution per frame.
-          pendingDragNode.current = node
-          if (dragTargetRaf.current) return
-          dragTargetRaf.current = requestAnimationFrame(() => {
-            dragTargetRaf.current = 0
-            const current = pendingDragNode.current
-            pendingDragNode.current = null
-            if (!current) return
-            const group = resolveSetDropTarget(current)
-            updateTarget(
-              group
-                ? {
-                    id: group.id,
-                    valid: true,
-                    kind: 'set',
-                    reason: 'Release to add or move into this set',
-                  }
-                : null
-            )
-          })
-        }}
         onNodeDragStop={(_, node, moved) => {
-          if (dragTargetRaf.current) {
-            cancelAnimationFrame(dragTargetRaf.current)
-            dragTargetRaf.current = 0
-          }
-          pendingDragNode.current = null
           updateTarget(null)
-          if (node.type !== 'group') {
-            const gesture = drag.take()
-            if (!gesture) return
-            const target = resolveSetDropTarget(node)
-            if (target) {
-              drag.abandon()
-              run(() =>
-                ImageService.PlaceImages(
-                  repoPath,
-                  (moved.length ? moved : [node])
-                    .filter((item) => item.type === 'image')
-                    .map((item) => Number(item.id)),
-                  node.position.x,
-                  node.position.y,
-                  Number(target.id.slice(4))
-                )
-              )
-            } else drag.finish(gesture, moved.length ? moved : [node])
-            return
-          }
-          run(async () => {
-            if (node.type === 'group') {
-              const group = (data.groups ?? []).find(
-                (g) => `set-${g.id}` === node.id
-              )
-              if (!group) return
-              const members = (data.images ?? []).filter(
-                (i) => (group.memberIds ?? []).includes(i.id) && i.placed
-              )
-              const dx =
-                  node.position.x - Math.min(...members.map((i) => i.canvasX)),
-                dy =
-                  node.position.y - Math.min(...members.map((i) => i.canvasY))
-              await ImageService.SetPositions(
-                repoPath,
-                members.map((i) => ({
-                  imageId: i.id,
-                  x: i.canvasX + dx,
-                  y: i.canvasY + dy,
-                }))
-              )
-              return
-            }
-          })
+          const gesture = drag.take()
+          if (gesture) drag.finish(gesture, moved.length ? moved : [node])
         }}
         onMoveEnd={(_, v) => {
           if (ready) void ImageService.SetViewport(repoPath, v).catch(report)
@@ -439,21 +318,12 @@ export function CanvasFlow(props: Props) {
             })
             return
           }
-          setSelection(
-            node.type === 'group'
-              ? {
-                  surface: 'canvas',
-                  ids: groupMembers(Number(node.id.slice(4))),
-                  edges: [],
-                  group: Number(node.id.slice(4)),
-                }
-              : {
-                  surface: 'canvas',
-                  ids: [Number(node.id)],
-                  edges: [],
-                  group: null,
-                }
-          )
+          setSelection({
+            surface: 'canvas',
+            ids: [Number(node.id)],
+            edges: [],
+            group: null,
+          })
           setMenu({
             kind: 'node',
             x: event.clientX,

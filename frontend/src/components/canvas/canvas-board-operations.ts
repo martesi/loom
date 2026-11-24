@@ -10,30 +10,11 @@ import { computeSubgraphLayout, placeCluster } from '../../lib/layout'
 const RELATION_DRAG_THRESHOLD = 5
 
 export function targetAt(x: number, y: number): string | null {
-  const group = [
-    ...document.querySelectorAll<HTMLElement>('.react-flow__node-group'),
-  ].find((node) => {
-    const bounds = node.getBoundingClientRect()
-    return (
-      x >= bounds.left &&
-      x <= bounds.right &&
-      y >= bounds.top &&
-      y <= bounds.bottom
-    )
-  })
-  if (group)
-    return (
-      group
-        .closest<HTMLElement>('.react-flow__node')
-        ?.getAttribute('data-id') ?? null
-    )
   const nodes = document
     .elementsFromPoint(x, y)
     .map((element) => element.closest<HTMLElement>('.react-flow__node'))
     .filter((node): node is HTMLElement => node !== null)
-  const target =
-    nodes.find((node) => node.classList.contains('react-flow__node-group')) ??
-    nodes[0]
+  const target = nodes[0]
   return target?.getAttribute('data-id') ?? null
 }
 
@@ -58,11 +39,9 @@ export function validateRelationshipTarget(
   source: number,
   id: string,
   data: CanvasData,
-  groupMembers: (id: number) => number[]
+  _groupMembers: (id: number) => number[]
 ) {
-  const targets = id.startsWith('set-')
-    ? groupMembers(Number(id.slice(4)))
-    : [Number(id)]
+  const targets = [Number(id)]
   const available = new Set(
     (data.images ?? [])
       .filter((image) => !image.trashed && !image.missing)
@@ -77,9 +56,7 @@ export function validateRelationshipTarget(
   if (targets.includes(source))
     return {
       valid: false,
-      reason: id.startsWith('set-')
-        ? t`A set cannot contain its source image`
-        : t`An image cannot be related to itself`,
+      reason: t`An image cannot be related to itself`,
     }
   if (
     targets.every((target) =>

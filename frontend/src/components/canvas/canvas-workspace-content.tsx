@@ -24,7 +24,6 @@ import { CanvasMainSurface } from './canvas-main-surface'
 import { CanvasOverlays } from './canvas-overlays'
 import { CanvasToolbar } from './canvas-toolbar'
 import { DetailPanel } from './detail-panel'
-import { GroupNode } from './group-node'
 import { ImageNode } from './image-node'
 import { LibraryPanel } from './library-panel'
 import { ShelfPanel } from './shelf-panel'
@@ -35,7 +34,7 @@ import { useCanvasWorkspaceCommands } from './use-canvas-workspace-commands'
 import type { useCanvasWorkspaceState } from './use-canvas-workspace-state'
 import type { useInspectorFieldSubmission } from './use-inspector-field-submission'
 
-const nodeTypes = { image: ImageNode, group: GroupNode }
+const nodeTypes = { image: ImageNode }
 
 interface Props {
   repo: RepoInfo
@@ -63,7 +62,6 @@ interface Props {
   selectedIds: () => number[]
   boardModel: ReturnType<typeof useCanvasBoardModel>
   submitInspectorField: ReturnType<typeof useInspectorFieldSubmission>
-  canCreateSet: boolean
   undoActions: ReturnType<typeof useUndoActions>
   assetSelectionRecords: { key: string; records: ImageInfo[] }
   updateZoomCompensation: (zoom: number) => void
@@ -97,7 +95,6 @@ export function CanvasWorkspaceContent(props: Props) {
     selectedIds,
     boardModel,
     submitInspectorField,
-    canCreateSet,
     undoActions,
     assetSelectionRecords,
     updateZoomCompensation,
@@ -267,7 +264,6 @@ export function CanvasWorkspaceContent(props: Props) {
       setExpanded,
       expanded,
       selectedIds,
-      canCreateSet,
       handlePreview,
       handleLocate,
       undoActions,
@@ -393,7 +389,6 @@ export function CanvasWorkspaceContent(props: Props) {
           setMenu={setMenu}
           setHoveredNodeId={setHoveredNodeId}
           handlePreview={handlePreview}
-          canCreateSet={canCreateSet}
           actionById={actionById}
           runDockAction={runDockAction}
           perfHud={perfHud}

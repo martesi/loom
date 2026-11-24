@@ -1,7 +1,6 @@
 import { type Edge, MarkerType, type Node } from '@xyflow/react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CanvasData } from '../../../bindings/loom/internal/service'
-import { renditionGenerationUrl } from '../../lib/preview-tier'
 import type { Selection } from '../../lib/selection'
 import type { CanvasBoardOwner, ResizeGesture } from './canvas-board-owner'
 import { canvasProjectionGraph } from './canvas-projection-model'
@@ -36,7 +35,6 @@ interface Props {
 
 export function useCanvasBoardModel({
   data,
-  expanded,
   owner,
   renditionGeneration,
   callbacks,
@@ -55,35 +53,7 @@ export function useCanvasBoardModel({
     () => new Set(selection.ids),
     [selection.ids]
   )
-  const placedImageIds = useMemo(
-    () =>
-      new Set(
-        (data.images ?? [])
-          .filter((image) => image.placed && !image.trashed)
-          .map((image) => image.id)
-      ),
-    [data.images]
-  )
-  const groupMemberMap = useMemo(
-    () =>
-      new Map(
-        (data.groups ?? []).map(
-          (group) => [group.id, new Set(group.memberIds ?? [])] as const
-        )
-      ),
-    [data.groups]
-  )
-  const selectedIdsList = useMemo(
-    () => [
-      ...new Set([
-        ...selection.ids,
-        ...(selection.group
-          ? [...(groupMemberMap.get(selection.group) ?? [])]
-          : []),
-      ]),
-    ],
-    [selection.ids, selection.group, groupMemberMap]
-  )
+  const selectedIdsList = selection.ids
 
   useEffect(() => {
     const board = owner.getSnapshot()
@@ -92,20 +62,8 @@ export function useCanvasBoardModel({
     const placed = (data.images ?? []).filter(
       (image) => image.placed && !image.trashed
     )
-    const collapsed = (data.groups ?? []).filter(
-      (group) =>
-        group.id !== expanded &&
-        (group.memberIds ?? []).some((id) =>
-          placed.some((image) => image.id === id)
-        )
-    )
-    const groupByImage = new Map(
-      collapsed.flatMap((group) =>
-        (group.memberIds ?? []).map((id) => [id, `set-${group.id}`] as const)
-      )
-    )
     const graph = canvasProjectionGraph(
-      { ...data, images: placed, relationships: [] },
+      { ...data, images: placed },
       renditionGeneration,
       (imageId, x, y, w, h) => {
         if (!rendererActive) return
@@ -132,66 +90,16 @@ export function useCanvasBoardModel({
             .catch(callbacks.current.report)
       }
     )
-    const placedIds = new Set(placed.map((image) => image.id))
-    const imageNodes = graph.nodes.filter(
-      (node) =>
-        placedIds.has(Number(node.id)) && !groupByImage.has(Number(node.id))
-    )
-    const groups: Node[] = collapsed.map((group) => {
-      const members = placed.filter((image) =>
-        (group.memberIds ?? []).includes(image.id)
-      )
-      const cover =
-        members.find((image) => image.id === group.coverImageId) ?? members[0]
-      return {
-        id: `set-${group.id}`,
-        type: 'group',
-        position: {
-          x: Math.min(...members.map((image) => image.canvasX)),
-          y: Math.min(...members.map((image) => image.canvasY)),
-        },
-        width: 160,
-        height: 128,
-        data: {
-          name: group.name || cover.fileName,
-          thumbUrl: renditionGenerationUrl(cover.thumbUrl, renditionGeneration),
-          count: (group.memberIds ?? []).length,
-        },
-      }
-    })
-    dropTargets.current = groups
+    dropTargets.current = []
     // React Flow needs the measurements to keep edges mounted across reloads.
     setNodes((previous) => {
       const measured = new Map(previous.map((node) => [node.id, node.measured]))
-      return [...imageNodes, ...groups].map((node) => ({
+      return graph.nodes.map((node) => ({
         ...node,
         measured: measured.get(node.id),
       }))
     })
-    const nextEdges = (data.relationships ?? [])
-      .filter(
-        (relationship) =>
-          placedIds.has(relationship.sourceImageId) &&
-          placedIds.has(relationship.derivedImageId)
-      )
-      .flatMap((relationship) => {
-        const source =
-            groupByImage.get(relationship.sourceImageId) ??
-            String(relationship.sourceImageId),
-          edgeTarget =
-            groupByImage.get(relationship.derivedImageId) ??
-            String(relationship.derivedImageId)
-        return source === edgeTarget
-          ? []
-          : [
-              {
-                id: String(relationship.id),
-                source,
-                target: edgeTarget,
-                reconnectable: false,
-              },
-            ]
-      })
+    const nextEdges = graph.edges
     const focused = document.activeElement
     if (
       focused instanceof SVGElement &&
@@ -208,7 +116,6 @@ export function useCanvasBoardModel({
     }
   }, [
     data,
-    expanded,
     owner,
     renditionGeneration,
     callbacks,
@@ -242,26 +149,9 @@ export function useCanvasBoardModel({
   const isCanvasNodeSelected = useCallback(
     (node: Node) => {
       if (selection.surface !== 'canvas') return false
-      if (node.type !== 'group') return selectedImageIds.has(Number(node.id))
-      const groupId = Number(node.id.slice(4))
-      if (selection.group === groupId) return true
-      const members = groupMemberMap.get(groupId)
-      if (!members) return false
-      let placedCount = 0
-      for (const id of members) {
-        if (!placedImageIds.has(id)) continue
-        placedCount += 1
-        if (!selectedImageIds.has(id)) return false
-      }
-      return placedCount > 0
+      return selectedImageIds.has(Number(node.id))
     },
-    [
-      selection.surface,
-      selection.group,
-      selectedImageIds,
-      placedImageIds,
-      groupMemberMap,
-    ]
+    [selection.surface, selectedImageIds]
   )
   const displayNodes = useMemo(() => {
     const mapped = nodes.map((node) => {
@@ -317,35 +207,8 @@ export function useCanvasBoardModel({
         .filter((image) => image.placed && !image.trashed)
         .map((image) => image.id)
     )
-    const collapsedGroups = (data.groups ?? []).filter(
-      (group) =>
-        group.id !== expanded &&
-        (group.memberIds ?? []).some((id) => placedIds.has(id))
-    )
-    const groupedImageIds = new Set(
-      collapsedGroups.flatMap((group) => group.memberIds ?? [])
-    )
-    const selected = selection.ids
-      .filter((id) => placedIds.has(id) && !groupedImageIds.has(id))
-      .map(String)
-    for (const group of collapsedGroups) {
-      const members = (group.memberIds ?? []).filter((id) => placedIds.has(id))
-      if (
-        selection.group === group.id ||
-        (members.length > 0 && members.every((id) => selectedImageIds.has(id)))
-      )
-        selected.push(`set-${group.id}`)
-    }
-    return selected
-  }, [
-    data.groups,
-    data.images,
-    expanded,
-    selectedImageIds,
-    selection.group,
-    selection.surface,
-    selection.ids,
-  ])
+    return selection.ids.filter((id) => placedIds.has(id)).map(String)
+  }, [data.images, selection.surface, selection.ids])
 
   return {
     owner,

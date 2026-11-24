@@ -46,7 +46,6 @@ interface Props {
     setExpanded: React.Dispatch<React.SetStateAction<number | null>>
     expanded: number | null
     selectedIds: () => number[]
-    canCreateSet: boolean
     handlePreview: (node: Node) => void
     handleLocate: (node: Node) => void
     undoActions: ReturnType<typeof useUndoActions>
