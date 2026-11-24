@@ -8,7 +8,7 @@ import type { LayoutBox, LayoutNode } from '../../lib/layout'
 import { clearObstacles } from '../../lib/staging-obstacles'
 
 export interface CanvasProjectionInput {
-  /** Display-ready React Flow nodes and edges, with group mapping already applied. */
+  /** Display-ready React Flow nodes and individual relationship edges. */
   nodes: readonly Node[]
   edges: readonly Edge[]
   /** Relationship ID to immutable pairing order, including collapsed edges. */

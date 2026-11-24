@@ -94,7 +94,6 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     active: false,
     anchor: [],
   })
-  const dropTargets = useRef<Node[]>([])
   const [storedSelection, setSelection] = useState<Selection>(emptySelection),
     [expanded, setExpanded] = useState<number | null>(null)
   const liveRelationshipIds = new Set(
@@ -181,7 +180,6 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   callbacks.current = { report, run, selectAssets }
   const boardModel = useCanvasBoardModel({
     data,
-    expanded,
     owner: boardOwner,
     renditionGeneration,
     callbacks,
@@ -191,7 +189,6 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     edges,
     setEdges,
     target,
-    dropTargets,
     host,
   })
   const { selectedIdsList } = boardModel
@@ -255,7 +252,6 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       expanded={expanded}
       setExpanded={setExpanded}
       modifiedMarquee={modifiedMarquee}
-      dropTargets={dropTargets}
       workspaceState={workspaceState}
       repository={{ report, reload, reloadForData, run, assetSelectionKey }}
       assetOperations={assetOperations}

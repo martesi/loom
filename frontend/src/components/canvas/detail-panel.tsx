@@ -251,8 +251,8 @@ export const DetailPanel = memo(function DetailPanel({
         </h3>
         <p className="max-w-[200px] text-[11px] leading-relaxed text-ink-subtle">
           <Trans>
-            Select an image, set, or relationship on the Canvas or in Assets to
-            view metadata and links.
+            Select an image or relationship on the Canvas or in Assets to view
+            metadata and links.
           </Trans>
         </p>
         <div className="mt-4 flex flex-col gap-1.5 text-[10px] text-ink-subtle">
@@ -323,7 +323,7 @@ export const DetailPanel = memo(function DetailPanel({
           {selection.surface === 'canvas' && (
             <p className="rounded-md bg-black/[0.035] px-2 py-1.5 text-ink-muted">
               <Trans>
-                Ctrl/Cmd-drag this image onto another image or set to create a
+                Ctrl/Cmd-drag this image onto another image to create a
                 relationship.
               </Trans>
             </p>

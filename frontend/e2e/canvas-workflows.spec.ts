@@ -11,7 +11,7 @@ async function nodePosition(node: ReturnType<typeof imageNodes>) {
   return { x: Number(match[1]), y: Number(match[2]) }
 }
 
-test('select, arrange, align, create and expand a set, then restore viewport', async ({
+test('select, arrange, align individual images, then restore viewport', async ({
   page,
 }) => {
   await openFixtureRepo(page, 'group-fixtures', { drawers: 'closed' })
@@ -58,28 +58,12 @@ test('select, arrange, align, create and expand a set, then restore viewport', a
     })
     .toBeLessThanOrEqual(1)
 
-  const beforeSet = await Promise.all(
+  const beforeReload = await Promise.all(
     [0, 1, 2].map((index) => nodePosition(nodes.nth(index)))
   )
-  const createSet = page.getByTestId('dock-create-set')
-  await expect(createSet).toBeEnabled()
-  await createSet.click()
-  const group = page.locator('.react-flow__node-group')
-  await expect(group).toHaveCount(1)
-  await expect(group).toContainText('3')
-  await expect(nodes).toHaveCount(0)
-  await expect(group).toHaveClass(/selected/)
-
-  await group.dblclick()
+  await expect(page.getByTestId('dock-create-set')).toHaveCount(0)
   await expect(nodes).toHaveCount(3)
   await expect(page.locator('.react-flow__node-group')).toHaveCount(0)
-  const afterExpand = await Promise.all(
-    [0, 1, 2].map((index) => nodePosition(nodes.nth(index)))
-  )
-  for (let index = 0; index < beforeSet.length; index += 1) {
-    expect(afterExpand[index].x).toBeCloseTo(beforeSet[index].x, 0)
-    expect(afterExpand[index].y).toBeCloseTo(beforeSet[index].y, 0)
-  }
 
   const viewport = page.locator('.react-flow__viewport')
   const waitForViewportSave = () =>
@@ -107,19 +91,15 @@ test('select, arrange, align, create and expand a set, then restore viewport', a
   await panSaved
   const transform = await viewport.getAttribute('style')
   await page.reload()
-  await expect(group).toHaveCount(1)
-  await expect(group).toContainText('3')
-  await expect(nodes).toHaveCount(0)
-  await expect(viewport).toHaveAttribute('style', transform ?? '')
-  await group.dblclick()
   await expect(nodes).toHaveCount(3)
-  await expect(group).toHaveCount(0)
+  await expect(page.locator('.react-flow__node-group')).toHaveCount(0)
+  await expect(viewport).toHaveAttribute('style', transform ?? '')
   const afterReload = await Promise.all(
     [0, 1, 2].map((index) => nodePosition(nodes.nth(index)))
   )
-  for (let index = 0; index < afterExpand.length; index += 1) {
-    expect(afterReload[index].x).toBeCloseTo(afterExpand[index].x, 0)
-    expect(afterReload[index].y).toBeCloseTo(afterExpand[index].y, 0)
+  for (let index = 0; index < beforeReload.length; index += 1) {
+    expect(afterReload[index].x).toBeCloseTo(beforeReload[index].x, 0)
+    expect(afterReload[index].y).toBeCloseTo(beforeReload[index].y, 0)
   }
   await expect
     .poll(async () => {

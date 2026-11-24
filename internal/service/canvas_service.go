@@ -86,11 +86,13 @@ func (s *ImageService) PlaceImages(repoPath string, ids []int64, x, y float64, g
 			}
 		}
 	}
-	if _, err := tx.Exec(`DELETE FROM groups WHERE NOT EXISTS (SELECT 1 FROM images WHERE group_id = groups.id)`); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`UPDATE groups SET cover_image_id = (SELECT MIN(id) FROM images WHERE group_id = groups.id) WHERE NOT EXISTS (SELECT 1 FROM images WHERE id = groups.cover_image_id AND group_id = groups.id)`); err != nil {
-		return err
+	if groupID != 0 {
+		if _, err := tx.Exec(`DELETE FROM groups WHERE NOT EXISTS (SELECT 1 FROM images WHERE group_id = groups.id)`); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE groups SET cover_image_id = (SELECT MIN(id) FROM images WHERE group_id = groups.id) WHERE NOT EXISTS (SELECT 1 FROM images WHERE id = groups.cover_image_id AND group_id = groups.id)`); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }

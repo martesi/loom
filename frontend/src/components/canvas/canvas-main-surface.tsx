@@ -32,9 +32,8 @@ interface RelationshipPreview {
 interface DropTarget {
   id: string
   valid: boolean
-  kind: 'relationship' | 'set'
+  kind: 'relationship'
   reason?: string
-  members?: number
 }
 
 interface Props {
@@ -47,7 +46,6 @@ interface Props {
   setSelection: Dispatch<SetStateAction<Selection>>
   selectionRef: MutableRefObject<Selection>
   setExpanded: Dispatch<SetStateAction<number | null>>
-  expanded: number | null
   space: boolean
   ready: boolean
   inspectorOpen: boolean
@@ -56,7 +54,6 @@ interface Props {
   closeInspector: (restoreFocus?: boolean) => void
   host: MutableRefObject<HTMLDivElement | null>
   modifiedMarquee: MutableRefObject<{ active: boolean; anchor: number[] }>
-  dropTargets: MutableRefObject<Node[]>
   nodeTypes: NodeTypes
   displayNodes: Node[]
   displayEdges: Edge[]
@@ -72,7 +69,6 @@ interface Props {
     source: number,
     id: string
   ) => { valid: boolean; reason?: string }
-  groupMembers: (id: number) => number[]
   relation: MutableRefObject<{ source: number; x: number; y: number } | null>
   relationshipPreview: RelationshipPreview | null
   setRelationshipPreview: Dispatch<SetStateAction<RelationshipPreview | null>>
@@ -83,7 +79,6 @@ interface Props {
     media?: Awaited<ReturnType<typeof readMedia>>,
     surface?: Selection['surface']
   ) => Promise<void>
-  resolveSetDropTarget: (node: Node) => Node | null
   dragTargetRaf: MutableRefObject<number>
   pendingDragNode: MutableRefObject<Node | null>
   reloadForData: () => Promise<CanvasData | null>
@@ -116,7 +111,6 @@ export function CanvasMainSurface(props: Props) {
     setSelection,
     selectionRef,
     setExpanded,
-    expanded,
     space,
     ready,
     inspectorOpen,
@@ -125,7 +119,6 @@ export function CanvasMainSurface(props: Props) {
     closeInspector,
     host,
     modifiedMarquee,
-    dropTargets,
     nodeTypes,
     displayNodes,
     displayEdges,
@@ -134,7 +127,6 @@ export function CanvasMainSurface(props: Props) {
     targetAt,
     isRelationshipDrag,
     validTarget,
-    groupMembers,
     relation,
     relationshipPreview,
     setRelationshipPreview,
@@ -142,7 +134,6 @@ export function CanvasMainSurface(props: Props) {
     target,
     run,
     paste,
-    resolveSetDropTarget,
     dragTargetRaf,
     pendingDragNode,
     reloadForData,
@@ -282,10 +273,9 @@ export function CanvasMainSurface(props: Props) {
           {
             const uniqueIds = [...new Set(payload.ids)]
             const p = flow.screenToFlowPosition({
-                x: e.clientX,
-                y: e.clientY,
-              }),
-              group = 0
+              x: e.clientX,
+              y: e.clientY,
+            })
             void (async () => {
               const images = await Promise.all(
                 uniqueIds.map((id) => ImageService.GetImage(repoPath, id))
@@ -296,36 +286,17 @@ export function CanvasMainSurface(props: Props) {
                 throw new Error(
                   'Missing or trashed assets cannot be placed. Refine the selection and try again.'
                 )
-              await ImageService.PlaceImages(
-                repoPath,
-                uniqueIds,
-                p.x,
-                p.y,
-                group
-              )
-              const refreshed = await reloadForData()
+              await ImageService.PlaceImages(repoPath, uniqueIds, p.x, p.y, 0)
+              await reloadForData()
               if (!assetsPinned) {
                 closeAssets(false)
                 requestAnimationFrame(() => host.current?.focus())
               }
-              const collapsedSets = group
-                ? []
-                : (refreshed?.groups ?? data.groups ?? []).filter(
-                    (candidate) =>
-                      candidate.id !== expanded &&
-                      (candidate.memberIds ?? []).some((id) =>
-                        uniqueIds.includes(id)
-                      )
-                  )
-              const collapsedSet = collapsedSets[0]
-              const hiddenIds = new Set(
-                collapsedSets.flatMap((candidate) => candidate.memberIds ?? [])
-              )
               setSelection({
                 surface: 'canvas',
-                ids: group ? [] : uniqueIds.filter((id) => !hiddenIds.has(id)),
+                ids: uniqueIds,
                 edges: [],
-                group: group || collapsedSet?.id || null,
+                group: null,
               })
             })().catch(report)
           }
@@ -349,21 +320,17 @@ export function CanvasMainSurface(props: Props) {
         inspectorPinned={inspectorPinned}
         host={host}
         modifiedMarquee={modifiedMarquee}
-        dropTargets={dropTargets}
         setNodes={setNodes}
         setEdges={setEdges}
         setSelection={setSelection}
         setExpanded={setExpanded}
         closeInspector={closeInspector}
-        groupMembers={groupMembers}
-        expanded={expanded}
         handlePreview={handlePreview}
         setHoveredNodeId={setHoveredNodeId}
         relation={relation}
         setRelationshipPreview={setRelationshipPreview}
         updateTarget={updateTarget}
         run={run}
-        resolveSetDropTarget={resolveSetDropTarget}
         dragTargetRaf={dragTargetRaf}
         pendingDragNode={pendingDragNode}
         report={report}
@@ -405,14 +372,9 @@ export function CanvasMainSurface(props: Props) {
           role="status"
           className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 rounded-md border border-black/10 bg-card/95 px-3 py-1.5 text-xs font-medium text-ink shadow-sm"
         >
-          {target.kind === 'set'
-            ? (target.reason ??
-              (target.members === 0
-                ? t`Already related`
-                : t`Release to create ${target.members ?? 0} one-time relationships`))
-            : target.valid
-              ? t`Release to create relationship`
-              : (target.reason ?? t`Cannot create this relationship`)}
+          {target.valid
+            ? t`Release to create relationship`
+            : (target.reason ?? t`Cannot create this relationship`)}
         </div>
       )}
       {menu && menuItems.length > 0 && (

@@ -131,24 +131,10 @@ export async function arrangeCanvas(
           { x: position.x + minX, y: position.y + minY },
         ])
       )
-  const updates = [...placed].flatMap(([id, position]) => {
-    const node = nodes.find((candidate) => candidate.id === id)
-    if (!node) return []
-    if (node.type !== 'group') return [{ imageId: Number(id), ...position }]
-    const group = (data.groups ?? []).find((item) => `set-${item.id}` === id)
-    if (!group) return []
-    const dx = position.x - node.position.x
-    const dy = position.y - node.position.y
-    return (data.images ?? [])
-      .filter(
-        (image) => (group.memberIds ?? []).includes(image.id) && image.placed
-      )
-      .map((image) => ({
-        imageId: image.id,
-        x: image.canvasX + dx,
-        y: image.canvasY + dy,
-      }))
-  })
+  const updates = [...placed].map(([id, position]) => ({
+    imageId: Number(id),
+    ...position,
+  }))
   const uniqueUpdates = [
     ...new Map(updates.map((update) => [update.imageId, update])).values(),
   ]
@@ -181,7 +167,7 @@ export async function alignCanvas(
   axis: 'horizontal' | 'vertical',
   repoPath: string,
   nodes: Node[],
-  data: CanvasData,
+  _data: CanvasData,
   reload: () => Promise<void>
 ) {
   const selected = nodes.filter((node) => node.selected)
@@ -191,29 +177,11 @@ export async function alignCanvas(
     selected.reduce((sum, node) => sum + node.position[coordinate], 0) /
       selected.length
   )
-  const updates = selected.flatMap((node) => {
-    if (node.type !== 'group')
-      return [
-        {
-          imageId: Number(node.id),
-          x: axis === 'vertical' ? average : node.position.x,
-          y: axis === 'horizontal' ? average : node.position.y,
-        },
-      ]
-    const group = (data.groups ?? []).find(
-      (item) => `set-${item.id}` === node.id
-    )
-    if (!group) return []
-    const members = (data.images ?? []).filter(
-      (image) => (group.memberIds ?? []).includes(image.id) && image.placed
-    )
-    const delta = average - node.position[coordinate]
-    return members.map((image) => ({
-      imageId: image.id,
-      x: axis === 'vertical' ? image.canvasX + delta : image.canvasX,
-      y: axis === 'horizontal' ? image.canvasY + delta : image.canvasY,
-    }))
-  })
+  const updates = selected.map((node) => ({
+    imageId: Number(node.id),
+    x: axis === 'vertical' ? average : node.position.x,
+    y: axis === 'horizontal' ? average : node.position.y,
+  }))
   await ImageService.SetPositions(repoPath, [
     ...new Map(updates.map((update) => [update.imageId, update])).values(),
   ])

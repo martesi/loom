@@ -95,11 +95,9 @@ describe('board projection mapping', () => {
       const [edges, setEdges] = useState<Edge[]>([])
       const callbacks = useRef({ report: (_error: unknown) => {} })
       const owner = useCanvasBoardOwner('test')
-      const dropTargets = useRef<Node[]>([])
       const host = useRef<HTMLDivElement | null>(null)
       useCanvasBoardModel({
         data: boardData,
-        expanded: null,
         owner,
         renditionGeneration: 0,
         callbacks,
@@ -109,7 +107,6 @@ describe('board projection mapping', () => {
         edges,
         setEdges,
         target: null,
-        dropTargets,
         host,
       })
       return { nodes, edges }
@@ -126,6 +123,39 @@ describe('board projection mapping', () => {
       { id: '14', source: '2', target: '3' },
     ])
     unmount()
+  })
+  it('keeps unplaced legacy members available to the Edit projection without adding them to View', () => {
+    const legacy = {
+      ...data,
+      images:
+        data.images?.map((item) =>
+          item.id === 1 || item.id === 2 || item.id === 5
+            ? { ...item, groupId: 5 }
+            : item
+        ) ?? null,
+      groups: [
+        {
+          id: 5,
+          name: 'legacy',
+          kind: 'pair',
+          coverImageId: 1,
+          memberIds: [1, 2, 5],
+        },
+      ],
+    }
+    const mapped = graph(legacy)
+    const state = createCanvasProjection({
+      ...mapped,
+      geometry: [],
+      viewport: { x: 0, y: 0, zoom: 1 },
+      viewportSize: { width: 800, height: 600 },
+    })
+    expect(state.viewNodes.map((node) => node.id)).not.toContain('5')
+    expect(enterEdit(state).editNodes.map((node) => node.id)).toContain('5')
+    expect(mapped.edges).toMatchObject([
+      { id: '12', source: '1', target: '2' },
+      { id: '13', source: '3', target: '4' },
+    ])
   })
   it('excludes trashed images and relationships with unavailable endpoints', () => {
     const result = graph({

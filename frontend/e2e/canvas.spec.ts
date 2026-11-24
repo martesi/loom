@@ -215,7 +215,7 @@ test('canvas context menus and auto-arrange preserve the canvas origin', async (
   ).toBeVisible()
 })
 
-test('explicit relationship gesture, navigation, and semantic sets', async ({
+test('explicit relationship gesture, navigation, and individual selection', async ({
   page,
 }) => {
   await open(page, 'menu-linux-fixtures')
@@ -286,12 +286,11 @@ test('explicit relationship gesture, navigation, and semantic sets', async ({
     .click()
   await expect(page.locator('.react-flow__edge')).toHaveCount(0)
   await page.keyboard.press('Control+a')
-  await page.getByTestId('dock-create-set').click()
-  await expect(page.locator('.react-flow__node-group')).toHaveCount(1)
-  await page.locator('.react-flow__node-group').dblclick()
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
+  await expect(page.getByTestId('dock-create-set')).toHaveCount(0)
   await expect(nodes).toHaveCount(2)
   await page.locator('.react-flow__pane').click({ position: { x: 10, y: 10 } })
-  await expect(page.locator('.react-flow__node-group')).toHaveCount(1)
+  await expect(page.locator('.react-flow__node-group')).toHaveCount(0)
   await page.locator('.react-flow__pane').click({
     button: 'right',
     position: { x: 10, y: 10 },
@@ -300,30 +299,19 @@ test('explicit relationship gesture, navigation, and semantic sets', async ({
     .getByRole('menu')
     .getByRole('menuitem', { name: 'Select all' })
     .click()
-  await expect(page.locator('.react-flow__node-group.selected')).toHaveCount(1)
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
 })
-test('Select all highlights a set with an unplaced member', async ({
+test('Select all excludes unplaced assets without hiding them from Assets', async ({
   page,
 }) => {
   await open(page, 'partial-set-fixtures')
   await drop(page, 'partial-alpha.png', 80, 100)
-  await drop(page, 'partial-beta.png', 280, 100)
-  await expect(canvasNodes(page)).toHaveCount(2)
+  await expect(canvasNodes(page)).toHaveCount(1)
   await canvasNodes(page).first().click()
   await page.keyboard.press('Control+a')
-  await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
-  await page.getByTestId('dock-create-set').click()
-
-  const group = page.locator('.react-flow__node-group')
-  await expect(group).toHaveCount(1)
-  await group.dblclick()
-  await expect(canvasNodes(page)).toHaveCount(2)
-  await canvasNodes(page).first().click()
   await expect(page.locator('.react-flow__node.selected')).toHaveCount(1)
-  await page.getByTestId('dock-unplace').click()
-  await expect(canvasNodes(page)).toHaveCount(1)
+  await expect(page.locator('.react-flow__node-group')).toHaveCount(0)
   await page.locator('.react-flow__pane').click({ position: { x: 10, y: 10 } })
-  await expect(group).toHaveCount(1)
 
   await page.locator('.react-flow__pane').click({
     button: 'right',
@@ -333,7 +321,11 @@ test('Select all highlights a set with an unplaced member', async ({
     .getByRole('menu')
     .getByRole('menuitem', { name: 'Select all' })
     .click()
-  await expect(group).toHaveClass(/selected/)
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(1)
+  await page.getByTestId('toggle-assets-shelf').click()
+  await expect(
+    assets(page).filter({ hasText: 'partial-beta.png' })
+  ).toBeVisible()
 })
 test('marquee selection replaces the Canvas selection', async ({ page }) => {
   await open(page, 'set-fixtures')

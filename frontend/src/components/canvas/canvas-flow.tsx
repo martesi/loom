@@ -41,9 +41,8 @@ interface RelationshipPreview {
 interface DropTarget {
   id: string
   valid: boolean
-  kind: 'relationship' | 'set'
+  kind: 'relationship'
   reason?: string
-  members?: number
 }
 
 interface Props {
@@ -60,21 +59,17 @@ interface Props {
   inspectorPinned: boolean
   host: MutableRefObject<HTMLDivElement | null>
   modifiedMarquee: MutableRefObject<{ active: boolean; anchor: number[] }>
-  dropTargets: MutableRefObject<Node[]>
   setNodes: Dispatch<SetStateAction<Node[]>>
   setEdges: Dispatch<SetStateAction<Edge[]>>
   setSelection: Dispatch<SetStateAction<Selection>>
   setExpanded: Dispatch<SetStateAction<number | null>>
   closeInspector: (restoreFocus?: boolean) => void
-  groupMembers: (id: number) => number[]
-  expanded: number | null
   handlePreview: (node: Node) => void
   setHoveredNodeId: Dispatch<SetStateAction<string | null>>
   relation: MutableRefObject<{ source: number; x: number; y: number } | null>
   setRelationshipPreview: Dispatch<SetStateAction<RelationshipPreview | null>>
   updateTarget: (target: DropTarget | null) => void
   run: (action: () => Promise<unknown>) => void
-  resolveSetDropTarget: (node: Node) => Node | null
   dragTargetRaf: MutableRefObject<number>
   pendingDragNode: MutableRefObject<Node | null>
   report: (error: unknown) => void

@@ -8,9 +8,8 @@ import { canvasProjectionGraph } from './canvas-projection-model'
 interface CanvasDropTarget {
   id: string
   valid: boolean
-  kind: 'relationship' | 'set'
+  kind: 'relationship'
   reason?: string
-  members?: number
 }
 
 interface Callbacks {
@@ -19,7 +18,6 @@ interface Callbacks {
 
 interface Props {
   data: CanvasData
-  expanded: number | null
   owner: CanvasBoardOwner
   renditionGeneration: number
   callbacks: { current: Callbacks }
@@ -29,7 +27,6 @@ interface Props {
   edges: Edge[]
   setEdges: (update: Edge[] | ((edges: Edge[]) => Edge[])) => void
   target: CanvasDropTarget | null
-  dropTargets: { current: Node[] }
   host: { current: HTMLDivElement | null }
 }
 
@@ -44,7 +41,6 @@ export function useCanvasBoardModel({
   edges,
   setEdges,
   target,
-  dropTargets,
   host,
 }: Props) {
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null)
@@ -90,7 +86,6 @@ export function useCanvasBoardModel({
             .catch(callbacks.current.report)
       }
     )
-    dropTargets.current = []
     // React Flow needs the measurements to keep edges mounted across reloads.
     setNodes((previous) => {
       const measured = new Map(previous.map((node) => [node.id, node.measured]))
@@ -114,37 +109,7 @@ export function useCanvasBoardModel({
       for (const gesture of activeGestures.values()) owner.cancelResize(gesture)
       activeGestures.clear()
     }
-  }, [
-    data,
-    owner,
-    renditionGeneration,
-    callbacks,
-    dropTargets,
-    host,
-    setEdges,
-    setNodes,
-  ])
-
-  const resolveSetDropTarget = useCallback(
-    (node: Node) => {
-      const nodeWidth = node.measured?.width ?? node.width ?? 150
-      const nodeHeight = node.measured?.height ?? node.height ?? 110
-      return (
-        dropTargets.current.find((candidate) => {
-          const groupWidth = candidate.measured?.width ?? candidate.width ?? 160
-          const groupHeight =
-            candidate.measured?.height ?? candidate.height ?? 128
-          return (
-            node.position.x < candidate.position.x + groupWidth &&
-            node.position.x + nodeWidth > candidate.position.x &&
-            node.position.y < candidate.position.y + groupHeight &&
-            node.position.y + nodeHeight > candidate.position.y
-          )
-        }) ?? null
-      )
-    },
-    [dropTargets]
-  )
+  }, [data, owner, renditionGeneration, callbacks, host, setEdges, setNodes])
 
   const isCanvasNodeSelected = useCallback(
     (node: Node) => {
@@ -217,7 +182,6 @@ export function useCanvasBoardModel({
     displayNodes,
     displayEdges,
     selectedCanvasNodeIds,
-    resolveSetDropTarget,
     setHoveredNodeId,
   }
 }

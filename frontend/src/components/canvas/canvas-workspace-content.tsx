@@ -53,7 +53,6 @@ interface Props {
   expanded: number | null
   setExpanded: Dispatch<SetStateAction<number | null>>
   modifiedMarquee: MutableRefObject<{ active: boolean; anchor: number[] }>
-  dropTargets: MutableRefObject<Node[]>
   workspaceState: ReturnType<typeof useCanvasWorkspaceState>
   repository: ReturnType<typeof useCanvasRepository>
   assetOperations: ReturnType<typeof useCanvasAssetOperations>
@@ -86,7 +85,6 @@ export function CanvasWorkspaceContent(props: Props) {
     expanded,
     setExpanded,
     modifiedMarquee,
-    dropTargets,
     workspaceState,
     repository,
     assetOperations,
@@ -172,7 +170,6 @@ export function CanvasWorkspaceContent(props: Props) {
     displayNodes,
     displayEdges,
     selectedCanvasNodeIds,
-    resolveSetDropTarget,
     setHoveredNodeId,
   } = boardModel
   const { paste, importMedia, finishTrash, confirmPurge } = assetOperations
@@ -188,16 +185,9 @@ export function CanvasWorkspaceContent(props: Props) {
   function handleLocate(node: Node) {
     setMenu(null)
     openAssets()
-    if (node.type === 'group') {
-      const groupId = Number(node.id.slice(4))
-      const members = groupMembers(groupId)
-      selectAssets(members)
-      if (members.length) setReveal({ id: members[0], folder: null })
-    } else {
-      const imageId = Number(node.id)
-      selectAssets([imageId])
-      setReveal({ id: imageId, folder: null })
-    }
+    const imageId = Number(node.id)
+    selectAssets([imageId])
+    setReveal({ id: imageId, folder: null })
     void flow
       .setCenter(
         node.position.x + (node.measured?.width ?? node.width ?? 150) / 2,
@@ -209,14 +199,7 @@ export function CanvasWorkspaceContent(props: Props) {
   function handlePreview(node: Node) {
     workspaceState.setPreviewOrigin({ surface: 'canvas' })
     workspaceState.setPreviewFolderOrder(null)
-    if (node.type === 'group') {
-      const groupId = Number(node.id.slice(4))
-      const group = (data.groups ?? []).find((g) => g.id === groupId)
-      const firstId = group?.coverImageId ?? group?.memberIds?.[0]
-      if (firstId) setPreviewImageId(firstId)
-    } else {
-      setPreviewImageId(Number(node.id))
-    }
+    setPreviewImageId(Number(node.id))
   }
   function handleFolderPreview(
     imageId: number,
@@ -347,7 +330,6 @@ export function CanvasWorkspaceContent(props: Props) {
           setSelection={setSelection}
           selectionRef={selectionRef}
           setExpanded={setExpanded}
-          expanded={expanded}
           space={space}
           ready={ready}
           inspectorOpen={inspectorOpen}
@@ -356,7 +338,6 @@ export function CanvasWorkspaceContent(props: Props) {
           closeInspector={closeInspector}
           host={host}
           modifiedMarquee={modifiedMarquee}
-          dropTargets={dropTargets}
           nodeTypes={nodeTypes}
           displayNodes={displayNodes}
           displayEdges={displayEdges}
@@ -365,7 +346,6 @@ export function CanvasWorkspaceContent(props: Props) {
           targetAt={targetAt}
           isRelationshipDrag={isRelationshipDrag}
           validTarget={validTarget}
-          groupMembers={groupMembers}
           relation={relation}
           relationshipPreview={relationshipPreview}
           setRelationshipPreview={setRelationshipPreview}
@@ -373,7 +353,6 @@ export function CanvasWorkspaceContent(props: Props) {
           target={target}
           run={run}
           paste={paste}
-          resolveSetDropTarget={resolveSetDropTarget}
           dragTargetRaf={dragTargetRaf}
           pendingDragNode={pendingDragNode}
           reloadForData={reloadForData}

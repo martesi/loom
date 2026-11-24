@@ -42,9 +42,8 @@ interface RelationshipPreview {
 interface DropTarget {
   id: string
   valid: boolean
-  kind: 'relationship' | 'set'
+  kind: 'relationship'
   reason?: string
-  members?: number
 }
 
 export function useCanvasWorkspaceState(selection: Selection) {
@@ -241,8 +240,7 @@ export function useCanvasWorkspaceState(selection: Selection) {
       current?.id === next?.id &&
       current?.valid === next?.valid &&
       current?.kind === next?.kind &&
-      current?.reason === next?.reason &&
-      current?.members === next?.members
+      current?.reason === next?.reason
     )
       return
     targetRef.current = next

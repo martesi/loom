@@ -6,6 +6,17 @@ import {
   selectImageNodes,
 } from './test-helpers'
 
+test('an empty canvas keeps its assets available', async ({ page }) => {
+  await openFixtureRepo(page, 'canvas-fixtures')
+  await expect(imageNodes(page)).toHaveCount(0)
+  await expect(
+    page.getByRole('heading', { name: 'Start with an asset' })
+  ).toBeVisible()
+  await expect(
+    page.getByRole('option', { name: /canvas-alpha.png/ })
+  ).toBeVisible()
+})
+
 test('Canvas selection does not create sets or delete images', async ({
   page,
 }, testInfo) => {

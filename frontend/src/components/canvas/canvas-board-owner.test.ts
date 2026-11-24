@@ -108,11 +108,9 @@ function useBoard(repoPath: string) {
   })
   const callbacks = useRef({ report: repository.report })
   callbacks.current = { report: repository.report }
-  const dropTargets = useRef<Node[]>([])
   const host = useRef<HTMLDivElement | null>(null)
   useCanvasBoardModel({
     data: boardData,
-    expanded: null,
     owner,
     renditionGeneration: 0,
     callbacks,
@@ -122,7 +120,6 @@ function useBoard(repoPath: string) {
     edges,
     setEdges,
     target: null,
-    dropTargets,
     host,
   })
   const undo = useUndoActions(repoPath, repository.reload, owner)

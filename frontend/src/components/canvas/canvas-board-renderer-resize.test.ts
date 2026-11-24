@@ -40,17 +40,15 @@ const data: CanvasData = {
   groups: [],
 }
 
-function useBoard(generation: number, expanded: number | null) {
+function useBoard(generation: number) {
   const owner = useCanvasBoardOwner('/repo')
   const board = useSyncExternalStore(owner.subscribe, owner.getSnapshot)
   const [nodes, setNodes] = useState<Node[]>([])
   const [edges, setEdges] = useState<Edge[]>([])
   const callbacks = useRef({ report: mock() })
-  const dropTargets = useRef<Node[]>([])
   const host = useRef<HTMLDivElement | null>(null)
   useCanvasBoardModel({
     data: board?.data ?? data,
-    expanded,
     owner,
     renditionGeneration: generation,
     callbacks,
@@ -60,7 +58,6 @@ function useBoard(generation: number, expanded: number | null) {
     edges,
     setEdges,
     target: null,
-    dropTargets,
     host,
   })
   return { owner, nodes, callbacks }
@@ -97,8 +94,8 @@ afterEach(() => {
   mock.restore()
 })
 
-for (const change of ['rendition', 'expansion'] as const) {
-  it(`keeps a submitted resize queued across ${change} changes`, async () => {
+{
+  it('keeps a submitted resize queued across rendition changes', async () => {
     const write = setupServices({
       ...data,
       groups: [
@@ -106,8 +103,8 @@ for (const change of ['rendition', 'expansion'] as const) {
       ],
     })
     const { result, rerender } = renderHook(
-      ({ generation, expanded }) => useBoard(generation, expanded),
-      { initialProps: { generation: 0, expanded: 42 as number | null } }
+      ({ generation }) => useBoard(generation),
+      { initialProps: { generation: 0 } }
     )
     await act(async () => {
       await result.current.owner.refresh()
@@ -122,10 +119,7 @@ for (const change of ['rendition', 'expansion'] as const) {
       start(10, 20, 150, 110)
       end(1, 2, 300, 200)
     })
-    rerender({
-      generation: change === 'rendition' ? 1 : 0,
-      expanded: change === 'expansion' ? null : 42,
-    })
+    rerender({ generation: 1 })
     expect(result.current.nodes[0].id).toBe('1')
     expect(write).not.toHaveBeenCalled()
     await act(async () => {
