@@ -17,8 +17,8 @@ func (r *Repo) ListRelationshipsAmong(imageIDs []int64) ([]Relationship, error) 
 	}
 	set := "(" + strings.Join(placeholders, ",") + ")"
 	rows, err := r.DB.Query(`
-		SELECT id, source_image_id, derived_image_id FROM relationships
-		WHERE source_image_id IN `+set+` AND derived_image_id IN `+set,
+		SELECT id, source_image_id, derived_image_id, pairing_order, created_at FROM relationships
+		WHERE source_image_id IN `+set+` AND derived_image_id IN `+set+` ORDER BY pairing_order, id`,
 		append(append([]any{}, args...), args...)...)
 	if err != nil {
 		return nil, err
@@ -28,7 +28,7 @@ func (r *Repo) ListRelationshipsAmong(imageIDs []int64) ([]Relationship, error) 
 	var rels []Relationship
 	for rows.Next() {
 		var rel Relationship
-		if err := rows.Scan(&rel.ID, &rel.SourceImageID, &rel.DerivedImageID); err != nil {
+		if err := rows.Scan(&rel.ID, &rel.SourceImageID, &rel.DerivedImageID, &rel.PairingOrder, &rel.CreatedAt); err != nil {
 			return nil, err
 		}
 		rels = append(rels, rel)

@@ -186,6 +186,10 @@ func purgedErr(imageID int64) error {
 // directions are symmetric since both are just "apply this step".
 func applyStep(repo *store.Repo, s OpStep) error {
 	switch s.Kind {
+	case stepGeometry:
+		return replayGeometry(repo, s.Payload)
+	case stepGraphInsert, stepGraphDelete, stepGraphReverse:
+		return replayGraph(repo, s.Kind, s.Payload)
 	case stepLink:
 		var p linkStepPayload
 		if err := json.Unmarshal(s.Payload, &p); err != nil {
@@ -555,6 +559,12 @@ func (s *UndoService) Undo(repoPath string) (*UndoResult, error) {
 	if err := json.Unmarshal([]byte(op.Inverse), &inv); err != nil {
 		return nil, err
 	}
+	if handled, err := replayAtomicHistory(repo, inv, op.Seq-1); handled {
+		if err != nil {
+			return &UndoResult{Applied: false, Kind: op.Kind, Error: err.Error()}, nil
+		}
+		return &UndoResult{Applied: true, Kind: op.Kind}, nil
+	}
 	if err := applyStep(repo, inv); err != nil {
 		return &UndoResult{Applied: false, Kind: op.Kind, Error: err.Error()}, nil
 	}
@@ -583,6 +593,12 @@ func (s *UndoService) Redo(repoPath string) (*UndoResult, error) {
 	var fwd OpStep
 	if err := json.Unmarshal([]byte(op.Forward), &fwd); err != nil {
 		return nil, err
+	}
+	if handled, err := replayAtomicHistory(repo, fwd, op.Seq); handled {
+		if err != nil {
+			return &UndoResult{Applied: false, Kind: op.Kind, Error: err.Error()}, nil
+		}
+		return &UndoResult{Applied: true, Kind: op.Kind}, nil
 	}
 	if err := applyStep(repo, fwd); err != nil {
 		return &UndoResult{Applied: false, Kind: op.Kind, Error: err.Error()}, nil

@@ -73,6 +73,10 @@ func (r *Repo) RecordOperationInTx(tx *sql.Tx, kind, forward, inverse string) er
 		return err
 	}
 	capUndoSessionBoundaryValue(r.Path, cursor)
+	// A new branch discards any archived redo tail before reusing its seqs.
+	if _, err := tx.Exec(`UPDATE settings SET value = ? WHERE scope = 'repo' AND key = 'undo_history_floor' AND CAST(value AS INTEGER) > ?`, strconv.FormatInt(cursor, 10), cursor); err != nil {
+		return err
+	}
 	newSeq := cursor + 1
 
 	if _, err := tx.Exec(`DELETE FROM operation_log WHERE seq > ?`, cursor); err != nil {
@@ -143,6 +147,11 @@ func (r *Repo) PeekUndo() (*Operation, error) {
 	if err != nil {
 		return nil, err
 	}
+	if floor, err := r.undoHistoryFloor(); err != nil {
+		return nil, err
+	} else if floor > boundary {
+		boundary = floor
+	}
 	if cursor <= boundary {
 		return nil, nil
 	}
@@ -161,11 +170,28 @@ func (r *Repo) PeekRedo() (*Operation, error) {
 	if err != nil {
 		return nil, err
 	}
+	if floor, err := r.undoHistoryFloor(); err != nil {
+		return nil, err
+	} else if floor > boundary {
+		boundary = floor
+	}
 	redoSeq := cursor + 1
 	if redoSeq <= boundary {
 		return nil, nil
 	}
 	return r.getOperation(redoSeq)
+}
+
+func (r *Repo) undoHistoryFloor() (int64, error) {
+	var value string
+	err := r.DB.QueryRow(`SELECT value FROM settings WHERE scope = 'repo' AND key = 'undo_history_floor'`).Scan(&value)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseInt(value, 10, 64)
 }
 
 // MarkUndone moves the cursor back before seq, after seq's inverse has been

@@ -130,7 +130,7 @@ func (s *ImageService) RelationshipsForImage(repoPath string, imageID int64) ([]
 		return nil, err
 	}
 	defer r.Close()
-	rows, err := r.DB.Query("SELECT id,source_image_id,derived_image_id FROM relationships WHERE source_image_id = ? OR derived_image_id = ?", imageID, imageID)
+	rows, err := r.DB.Query("SELECT id,source_image_id,derived_image_id,pairing_order,created_at FROM relationships WHERE source_image_id = ? OR derived_image_id = ? ORDER BY pairing_order, id", imageID, imageID)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +138,7 @@ func (s *ImageService) RelationshipsForImage(repoPath string, imageID int64) ([]
 	out := []RelationshipInfo{}
 	for rows.Next() {
 		var rel RelationshipInfo
-		if err := rows.Scan(&rel.ID, &rel.SourceImageID, &rel.DerivedImageID); err != nil {
+		if err := rows.Scan(&rel.ID, &rel.SourceImageID, &rel.DerivedImageID, &rel.PairingOrder, &rel.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, rel)

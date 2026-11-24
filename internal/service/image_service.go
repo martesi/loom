@@ -171,9 +171,11 @@ type ImageInfo struct {
 }
 
 type RelationshipInfo struct {
-	ID             int64 `json:"id"`
-	SourceImageID  int64 `json:"sourceImageId"`
-	DerivedImageID int64 `json:"derivedImageId"`
+	ID             int64   `json:"id"`
+	SourceImageID  int64   `json:"sourceImageId"`
+	DerivedImageID int64   `json:"derivedImageId"`
+	PairingOrder   int64   `json:"pairingOrder"`
+	CreatedAt      *string `json:"createdAt"`
 }
 
 type GroupInfo struct {
@@ -317,6 +319,8 @@ func (s *ImageService) LoadCanvas(repoPath string) (*CanvasData, error) {
 			ID:             rel.ID,
 			SourceImageID:  rel.SourceImageID,
 			DerivedImageID: rel.DerivedImageID,
+			PairingOrder:   rel.PairingOrder,
+			CreatedAt:      rel.CreatedAt,
 		}
 	}
 	return data, nil
@@ -487,24 +491,7 @@ func (s *ImageService) SetSize(repoPath string, imageID int64, w, h float64) err
 }
 
 func (s *ImageService) LinkSource(repoPath string, sourceID, derivedID int64) error {
-	repo, unlock, err := openOperationRepo(repoPath)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	defer repo.Close()
-
-	inserted, err := repo.LinkSource(sourceID, derivedID)
-	if err != nil {
-		return err
-	}
-	// An already-existing edge is a no-op — don't log an undo step whose
-	// inverse would delete an edge this call didn't create.
-	if !inserted {
-		return nil
-	}
-	p := linkStepPayload{SourceID: sourceID, DerivedID: derivedID}
-	return recordOp(repo, stepLink, step(stepLink, p), step(stepUnlink, p))
+	return s.createRelationship(repoPath, sourceID, derivedID)
 }
 
 // LinkSourceToGroup fans out a source->member edge to every member of a
@@ -554,13 +541,13 @@ func (s *ImageService) LinkSourceToGroup(repoPath string, sourceID, groupID int6
 	// Validate every target against the same transaction snapshot before
 	// inserting anything. Existing edges are valid no-ops and are excluded
 	// from the write set.
-	var newLinks []linkStepPayload
+	var newLinks []store.Relationship
 	for _, derivedID := range memberIDs {
 		var sourceExists, targetExists int
-		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images WHERE id = ?)`, sourceID).Scan(&sourceExists); err != nil {
+		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images WHERE id = ? AND trashed = 0)`, sourceID).Scan(&sourceExists); err != nil {
 			return fmt.Errorf("check relationship source: %w", err)
 		}
-		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images WHERE id = ?)`, derivedID).Scan(&targetExists); err != nil {
+		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images WHERE id = ? AND trashed = 0)`, derivedID).Scan(&targetExists); err != nil {
 			return fmt.Errorf("check group member: %w", err)
 		}
 		if sourceExists == 0 || targetExists == 0 {
@@ -589,15 +576,23 @@ func (s *ImageService) LinkSourceToGroup(repoPath string, sourceID, groupID int6
 		if inserted, err := result.RowsAffected(); err != nil {
 			return fmt.Errorf("count inserted relationships: %w", err)
 		} else if inserted != 0 {
-			newLinks = append(newLinks, linkStepPayload{SourceID: sourceID, DerivedID: derivedID})
+			id, err := result.LastInsertId()
+			if err != nil {
+				return err
+			}
+			rel, err := relationshipTx(tx, id)
+			if err != nil {
+				return err
+			}
+			newLinks = append(newLinks, rel)
 		}
 	}
 	if len(newLinks) > 0 {
-		fwd, err := json.Marshal(step(stepLinks, linksStepPayload{Links: newLinks}))
+		fwd, err := json.Marshal(step(stepGraphInsert, graphPayload{Relationships: newLinks}))
 		if err != nil {
 			return fmt.Errorf("encode grouped relationship history: %w", err)
 		}
-		inv, err := json.Marshal(step(stepUnlinks, linksStepPayload{Links: newLinks}))
+		inv, err := json.Marshal(step(stepGraphDelete, graphPayload{Relationships: newLinks}))
 		if err != nil {
 			return fmt.Errorf("encode grouped relationship inverse: %w", err)
 		}
@@ -644,22 +639,7 @@ func relationshipReachable(tx *sql.Tx, from, to int64) (bool, error) {
 }
 
 func (s *ImageService) UnlinkSource(repoPath string, relationshipID int64) error {
-	repo, unlock, err := openOperationRepo(repoPath)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	defer repo.Close()
-
-	rel, err := repo.GetRelationship(relationshipID)
-	if err != nil {
-		return err
-	}
-	if err := repo.UnlinkSource(relationshipID); err != nil {
-		return err
-	}
-	p := linkStepPayload{SourceID: rel.SourceImageID, DerivedID: rel.DerivedImageID}
-	return recordOp(repo, stepUnlink, step(stepUnlink, p), step(stepLink, p))
+	return s.UnlinkSources(repoPath, []int64{relationshipID})
 }
 
 func (s *ImageService) SetArchived(repoPath string, imageID int64, archived bool) error {

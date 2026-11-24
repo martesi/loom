@@ -94,6 +94,10 @@ func TestLinkSourceToGroupValidationAndDuplicates(t *testing.T) {
 	if err := svc.LinkSourceToGroup(repoPath, source, groupID); err != nil {
 		t.Fatal(err)
 	}
+	before, err := repo.ListRelationships()
+	if err != nil {
+		t.Fatal(err)
+	}
 	undo := &UndoService{}
 	if result, err := undo.Undo(repoPath); err != nil || result == nil || !result.Applied {
 		t.Fatalf("undo fan-out: result=%+v err=%v", result, err)
@@ -106,6 +110,15 @@ func TestLinkSourceToGroupValidationAndDuplicates(t *testing.T) {
 	}
 	if got := count(); got != 2 {
 		t.Fatalf("redo restored %d fan-out edges, want 2", got)
+	}
+	after, err := repo.ListRelationships()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range before {
+		if before[i].ID != after[i].ID || before[i].PairingOrder != after[i].PairingOrder {
+			t.Fatalf("fan-out identity changed: %v -> %v", before, after)
+		}
 	}
 }
 
