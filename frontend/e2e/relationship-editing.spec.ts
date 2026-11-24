@@ -1,4 +1,5 @@
 import type { Page } from '@playwright/test'
+import { reverseRelationshipMethodID } from './bindings'
 import { expect, test } from './test-fixtures'
 import {
   autoArrangeCanvas,
@@ -96,15 +97,22 @@ test('edge menu supports keyboard navigation and focus restoration', async ({
   await expect(edge).toBeFocused()
   await page.keyboard.press('Shift+F10')
   const originalLabel = await edge.getAttribute('aria-label')
+  const relationshipId = await edge.getAttribute('data-id')
+  expect(relationshipId).toBeTruthy()
   await page.keyboard.press('Enter')
   await expect(menu).toHaveCount(0)
   await expect(edge).not.toHaveAttribute('aria-label', originalLabel ?? '')
-  await edge.focus()
+  await expect(edge).toHaveAttribute('data-id', relationshipId ?? '')
+  await expect(edge).toBeFocused()
   await page.keyboard.press('Shift+F10')
   await expect(reverse).toBeFocused()
   await page.keyboard.press('ArrowDown')
   await page.keyboard.press('Enter')
   await expect(page.locator('.react-flow__edge')).toHaveCount(1)
+  await expect(
+    page.locator(`.react-flow__edge[data-id="${relationshipId}"]`)
+  ).toHaveCount(0)
+  await expect(page.locator('[data-canvas-surface]')).toBeFocused()
 })
 
 test('edge menu dismisses on outside click and Tab', async ({ page }) => {
@@ -114,13 +122,69 @@ test('edge menu dismisses on outside click and Tab', async ({ page }) => {
   await page.keyboard.press('Shift+F10')
   await page.keyboard.press('Tab')
   await expect(page.getByRole('menu')).toHaveCount(0)
+  await expect(edge).not.toBeFocused()
   await edge.focus()
   await page.keyboard.press('Shift+F10')
   await page
     .locator('.react-flow__pane')
     .click({ position: { x: 900, y: 600 } })
   await expect(page.getByRole('menu')).toHaveCount(0)
+  await expect(edge).not.toBeFocused()
 })
+
+test('reverse does not reclaim focus moved while the request is pending', async ({
+  page,
+}) => {
+  await createChain(page)
+  const edge = page.locator('.react-flow__edge').first()
+  const originalLabel = await edge.getAttribute('aria-label')
+  let releaseReverse: () => void = () => {}
+  const reverseGate = new Promise<void>((resolve) => {
+    releaseReverse = resolve
+  })
+  let reverseStarted: () => void = () => {}
+  const started = new Promise<void>((resolve) => {
+    reverseStarted = resolve
+  })
+  await page.route('**/wails/runtime', async (route) => {
+    if (route.request().postData()?.includes(reverseRelationshipMethodID)) {
+      reverseStarted()
+      await reverseGate
+    }
+    await route.continue()
+  })
+
+  await edge.focus()
+  await page.keyboard.press('Shift+F10')
+  await page.keyboard.press('Enter')
+  await started
+  const inspector = page.getByTestId('toggle-inspector-shelf')
+  await inspector.click()
+  const pin = page
+    .locator('aside[aria-label="Inspector"]')
+    .getByTestId('pin-shelf-right')
+  await expect(pin).toBeFocused()
+  releaseReverse()
+  await expect(edge).not.toHaveAttribute('aria-label', originalLabel ?? '')
+  await expect(pin).toBeFocused()
+})
+
+for (const activation of ['pointer', 'keyboard'] as const) {
+  test(`pointer-opened menu does not restore focus after ${activation} reverse`, async ({
+    page,
+  }) => {
+    await createChain(page)
+    const edge = page.locator('.react-flow__edge').first()
+    const originalLabel = await edge.getAttribute('aria-label')
+    await edge.focus()
+    await clickEdge(page, 'right')
+    if (activation === 'pointer')
+      await page.getByRole('menuitem', { name: 'Reverse relationship' }).click()
+    else await page.keyboard.press('Enter')
+    await expect(edge).not.toHaveAttribute('aria-label', originalLabel ?? '')
+    await expect(edge).not.toBeFocused()
+  })
+}
 
 test('edge Delete does not run from inputs, dialogs, or Assets', async ({
   page,

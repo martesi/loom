@@ -9,7 +9,12 @@ import {
   ReactFlow,
   SelectionMode,
 } from '@xyflow/react'
-import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
+import {
+  type Dispatch,
+  type MutableRefObject,
+  type SetStateAction,
+  useRef,
+} from 'react'
 import type { CanvasData } from '../../../bindings/loom/internal/service'
 import { ImageService } from '../../../bindings/loom/internal/service'
 import { applyCanvasNodeSelection } from '../../lib/canvas-selection'
@@ -20,6 +25,7 @@ interface MenuState {
   x: number
   y: number
   nodeId?: string
+  keyboard?: boolean
 }
 
 interface RelationshipPreview {
@@ -78,6 +84,7 @@ interface Props {
 }
 
 export function CanvasFlow(props: Props) {
+  const keyboardContextMenu = useRef(false)
   const {
     repoPath,
     data,
@@ -147,6 +154,16 @@ export function CanvasFlow(props: Props) {
         </div>
       )}
       <ReactFlow
+        onKeyDownCapture={(event) => {
+          keyboardContextMenu.current =
+            event.target instanceof SVGElement &&
+            event.target.matches('.react-flow__edge') &&
+            (event.key === 'ContextMenu' ||
+              (event.shiftKey && event.key === 'F10'))
+        }}
+        onPointerDownCapture={() => {
+          keyboardContextMenu.current = false
+        }}
         data-total-image-nodes={
           (data.images ?? []).filter((image) => image.placed && !image.trashed)
             .length
@@ -393,7 +410,13 @@ export function CanvasFlow(props: Props) {
                 ? current.edges
                 : [edgeId],
           }))
-          setMenu({ kind: 'edge', x: event.clientX, y: event.clientY })
+          setMenu({
+            kind: 'edge',
+            x: event.clientX,
+            y: event.clientY,
+            keyboard: keyboardContextMenu.current,
+          })
+          keyboardContextMenu.current = false
         }}
         onNodeContextMenu={(event, node) => {
           event.preventDefault()

@@ -17,6 +17,7 @@ interface MenuState {
   x: number
   y: number
   nodeId?: string
+  keyboard?: boolean
 }
 
 interface RelationshipPreview {
@@ -436,6 +437,8 @@ export function CanvasMainSurface(props: Props) {
           x={menu.x}
           y={menu.y}
           items={menuItems}
+          restoreFocusOnSelect={menu.kind !== 'edge' || !!menu.keyboard}
+          restoreFocusOnPointerSelect={menu.kind !== 'edge'}
           onClose={() => setMenu(null)}
         />
       )}

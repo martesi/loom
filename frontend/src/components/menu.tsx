@@ -16,6 +16,8 @@ interface PositionedMenuProps {
   items: MenuAction[]
   onClose: () => void
   width?: number
+  restoreFocusOnSelect?: boolean
+  restoreFocusOnPointerSelect?: boolean
 }
 
 // Canvas context menus open at a viewport point rather than at an anchor.
@@ -25,8 +27,11 @@ export function PositionedMenu({
   items,
   onClose,
   width = 224,
+  restoreFocusOnSelect = true,
+  restoreFocusOnPointerSelect = true,
 }: PositionedMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
+  const restoreFocusRef = useRef(true)
   const closeRef = useRef(onClose)
   closeRef.current = onClose
   // Deliberately no window 'contextmenu' listener here: right-clicking
@@ -42,20 +47,20 @@ export function PositionedMenu({
       document.activeElement instanceof SVGElement
         ? document.activeElement
         : null
-    let restoreFocus = true
+    restoreFocusRef.current = true
     menu
       ?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')
       ?.focus()
     const onPointerDown = (event: PointerEvent) => {
       if (!menu?.contains(event.target as Node)) {
-        restoreFocus = false
+        restoreFocusRef.current = false
         closeRef.current()
       }
     }
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') closeRef.current()
       if (e.key === 'Tab' && menu?.contains(document.activeElement)) {
-        restoreFocus = false
+        restoreFocusRef.current = false
         closeRef.current()
       }
     }
@@ -65,7 +70,7 @@ export function PositionedMenu({
       window.removeEventListener('pointerdown', onPointerDown)
       window.removeEventListener('keydown', onKey)
       if (
-        restoreFocus &&
+        restoreFocusRef.current &&
         previousFocus?.isConnected &&
         (menu?.contains(document.activeElement) ||
           document.activeElement === document.body)
@@ -123,8 +128,13 @@ export function PositionedMenu({
             role="menuitem"
             tabIndex={-1}
             disabled={item.disabled}
-            onClick={() => {
+            onClick={(event) => {
               if (item.disabled) return
+              if (
+                !restoreFocusOnSelect ||
+                (event.detail > 0 && !restoreFocusOnPointerSelect)
+              )
+                restoreFocusRef.current = false
               item.onSelect()
               onClose()
             }}

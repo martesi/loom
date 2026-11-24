@@ -23,6 +23,7 @@ export interface CanvasMenuState {
   x: number
   y: number
   nodeId?: string
+  keyboard?: boolean
 }
 
 export interface RevealRequest {

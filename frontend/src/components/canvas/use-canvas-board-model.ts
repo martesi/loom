@@ -32,6 +32,7 @@ interface Props {
   setEdges: (update: Edge[] | ((edges: Edge[]) => Edge[])) => void
   target: CanvasDropTarget | null
   dropTargets: { current: Node[] }
+  host: { current: HTMLDivElement | null }
 }
 
 export function useCanvasBoardModel({
@@ -47,6 +48,7 @@ export function useCanvasBoardModel({
   setEdges,
   target,
   dropTargets,
+  host,
 }: Props) {
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null)
   const previousDisplayNodes = useRef(new Map<string, Node>())
@@ -149,34 +151,48 @@ export function useCanvasBoardModel({
       }
     })
     dropTargets.current = groups
-    setNodes([...imageNodes, ...groups])
+    // React Flow needs the measurements to keep edges mounted across reloads.
+    setNodes((previous) => {
+      const measured = new Map(previous.map((node) => [node.id, node.measured]))
+      return [...imageNodes, ...groups].map((node) => ({
+        ...node,
+        measured: measured.get(node.id),
+      }))
+    })
     const placedIds = new Set(placed.map((image) => image.id))
-    setEdges(
-      (data.relationships ?? [])
-        .filter(
-          (relationship) =>
-            placedIds.has(relationship.sourceImageId) &&
-            placedIds.has(relationship.derivedImageId)
-        )
-        .flatMap((relationship) => {
-          const source =
-              groupByImage.get(relationship.sourceImageId) ??
-              String(relationship.sourceImageId),
-            edgeTarget =
-              groupByImage.get(relationship.derivedImageId) ??
-              String(relationship.derivedImageId)
-          return source === edgeTarget
-            ? []
-            : [
-                {
-                  id: String(relationship.id),
-                  source,
-                  target: edgeTarget,
-                  reconnectable: false,
-                },
-              ]
-        })
+    const nextEdges = (data.relationships ?? [])
+      .filter(
+        (relationship) =>
+          placedIds.has(relationship.sourceImageId) &&
+          placedIds.has(relationship.derivedImageId)
+      )
+      .flatMap((relationship) => {
+        const source =
+            groupByImage.get(relationship.sourceImageId) ??
+            String(relationship.sourceImageId),
+          edgeTarget =
+            groupByImage.get(relationship.derivedImageId) ??
+            String(relationship.derivedImageId)
+        return source === edgeTarget
+          ? []
+          : [
+              {
+                id: String(relationship.id),
+                source,
+                target: edgeTarget,
+                reconnectable: false,
+              },
+            ]
+      })
+    const focused = document.activeElement
+    if (
+      focused instanceof SVGElement &&
+      focused.matches('.react-flow__edge') &&
+      host.current?.contains(focused) &&
+      !nextEdges.some((edge) => edge.id === focused.getAttribute('data-id'))
     )
+      host.current.focus()
+    setEdges(nextEdges)
   }, [
     data,
     expanded,
@@ -184,6 +200,7 @@ export function useCanvasBoardModel({
     renditionGeneration,
     callbacks,
     dropTargets,
+    host,
     setEdges,
     setNodes,
   ])
