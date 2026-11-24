@@ -3,6 +3,8 @@ package service
 import (
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"loom/internal/store"
@@ -18,7 +20,11 @@ func graphFixture(t *testing.T) (string, *store.Repo, []int64) {
 	t.Cleanup(func() { repo.Close() })
 	var ids []int64
 	for i := 0; i < 4; i++ {
-		result, err := repo.DB.Exec(`INSERT INTO images (file_path) VALUES (?)`, fmt.Sprintf("%s/%d.png", path, i))
+		file := filepath.Join(path, fmt.Sprintf("%d.png", i))
+		if err := os.WriteFile(file, []byte("fixture"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		result, err := repo.DB.Exec(`INSERT INTO images (file_path) VALUES (?)`, file)
 		if err != nil {
 			t.Fatal(err)
 		}

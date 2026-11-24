@@ -22,7 +22,8 @@ func TestRelationshipOrderMigrationPreservesLegacyData(t *testing.T) {
 	}
 	_, err = c.Exec(`INSERT INTO groups (id, name) VALUES (1, 'legacy');
 		INSERT INTO images (id, file_path, group_id, canvas_x, canvas_y) VALUES (1, 'a', 1, 2, 3), (2, 'b', 1, NULL, NULL), (3, 'c', NULL, NULL, NULL);
-		INSERT INTO relationships (id, source_image_id, derived_image_id) VALUES (9, 1, 2), (4, 1, 3);
+		INSERT INTO relationships (id, source_image_id, derived_image_id) VALUES (9, 1, 2), (4, 1, 3), (100, 2, 3);
+		DELETE FROM relationships WHERE id = 100;
 		INSERT INTO operation_log (seq, kind, forward, inverse) VALUES (1, 'group_existence', '{}', '{}');`)
 	if err != nil {
 		t.Fatal(err)
@@ -66,7 +67,7 @@ func TestRelationshipOrderMigrationPreservesLegacyData(t *testing.T) {
 	if err := c.QueryRow(`SELECT id, pairing_order, created_at FROM relationships WHERE source_image_id = 2`).Scan(&id, &order, &created); err != nil {
 		t.Fatal(err)
 	}
-	if id <= 9 || order != id || !created.Valid {
+	if id <= 100 || order != id || !created.Valid {
 		t.Fatalf("new edge id=%d order=%d created=%v", id, order, created)
 	}
 }

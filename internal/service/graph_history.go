@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 
 	"loom/internal/store"
 )
@@ -58,6 +59,21 @@ func validateRelationship(tx *sql.Tx, source, derived, excluded int64) error {
 	return nil
 }
 
+// File availability is checked for new edits, not history replay. A replay
+// restores an existing snapshot even if its media is temporarily absent.
+func validateRelationshipFiles(tx *sql.Tx, source, derived int64) error {
+	for _, id := range []int64{source, derived} {
+		var path string
+		if err := tx.QueryRow(`SELECT file_path FROM images WHERE id = ?`, id).Scan(&path); err != nil {
+			return fmt.Errorf("relationship endpoint is unavailable: %w", err)
+		}
+		if _, err := os.Stat(path); err != nil {
+			return fmt.Errorf("relationship endpoint is unavailable: %w", err)
+		}
+	}
+	return nil
+}
+
 func relationshipTx(tx *sql.Tx, id int64) (store.Relationship, error) {
 	var r store.Relationship
 	err := tx.QueryRow(`SELECT id, source_image_id, derived_image_id, pairing_order, created_at FROM relationships WHERE id = ?`, id).Scan(&r.ID, &r.SourceImageID, &r.DerivedImageID, &r.PairingOrder, &r.CreatedAt)
@@ -80,6 +96,9 @@ func (s *ImageService) createRelationship(path string, source, derived int64) er
 	}
 	defer tx.Rollback()
 	if err := validateRelationship(tx, source, derived, 0); err != nil {
+		return err
+	}
+	if err := validateRelationshipFiles(tx, source, derived); err != nil {
 		return err
 	}
 	result, err := tx.Exec(`INSERT INTO relationships (source_image_id, derived_image_id) VALUES (?, ?)`, source, derived)
@@ -155,6 +174,9 @@ func (s *ImageService) ReverseRelationship(path string, id int64) error {
 	defer tx.Rollback()
 	r, err := relationshipTx(tx, id)
 	if err != nil {
+		return err
+	}
+	if err := validateRelationshipFiles(tx, r.SourceImageID, r.DerivedImageID); err != nil {
 		return err
 	}
 	p := graphPayload{Relationships: []store.Relationship{r}}
