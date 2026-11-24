@@ -16,7 +16,7 @@ import { applyCanvasNodeSelection } from '../../lib/canvas-selection'
 import { emptySelection, type Selection } from '../../lib/selection'
 
 interface MenuState {
-  kind: 'pane' | 'node' | 'selection'
+  kind: 'pane' | 'node' | 'selection' | 'edge'
   x: number
   y: number
   nodeId?: string
@@ -376,6 +376,20 @@ export function CanvasFlow(props: Props) {
         onPaneContextMenu={(event) => {
           event.preventDefault()
           setMenu({ kind: 'pane', x: event.clientX, y: event.clientY })
+        }}
+        onEdgeContextMenu={(event, edge) => {
+          event.preventDefault()
+          const edgeId = Number(edge.id)
+          setSelection((current) => ({
+            surface: 'canvas',
+            ids: [],
+            group: null,
+            edges:
+              current.surface === 'canvas' && current.edges.includes(edgeId)
+                ? current.edges
+                : [edgeId],
+          }))
+          setMenu({ kind: 'edge', x: event.clientX, y: event.clientY })
         }}
         onNodeContextMenu={(event, node) => {
           event.preventDefault()

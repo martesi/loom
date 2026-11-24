@@ -13,7 +13,7 @@ import { CanvasFlow } from './canvas-flow'
 import { PerfHud } from './perf-hud'
 
 interface MenuState {
-  kind: 'pane' | 'node' | 'selection'
+  kind: 'pane' | 'node' | 'selection' | 'edge'
   x: number
   y: number
   nodeId?: string

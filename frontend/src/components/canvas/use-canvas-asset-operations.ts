@@ -131,9 +131,11 @@ export function useCanvasAssetOperations({
       confirmTrash(ids)
       return
     }
-    await ImageService.UnplaceImages(repoPath, ids)
-    for (const id of selection.edges)
-      await ImageService.UnlinkSource(repoPath, id)
+    if (selection.edges.length) {
+      await ImageService.UnlinkSources(repoPath, selection.edges)
+    } else if (ids.length) {
+      await ImageService.UnplaceImages(repoPath, ids)
+    }
     setSelection({ ...selection, ids: [], edges: [], group: null })
     await reload()
   }

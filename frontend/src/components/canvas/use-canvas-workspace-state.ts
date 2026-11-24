@@ -19,7 +19,7 @@ interface InspectorCommandRequest {
 }
 
 export interface CanvasMenuState {
-  kind: 'pane' | 'node' | 'selection'
+  kind: 'pane' | 'node' | 'selection' | 'edge'
   x: number
   y: number
   nodeId?: string

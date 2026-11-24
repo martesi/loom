@@ -4,7 +4,7 @@ import type { CanvasAction } from '../../lib/action-catalog'
 import type { MenuAction } from '../menu'
 
 export interface CanvasMenuState {
-  kind: 'pane' | 'node' | 'selection'
+  kind: 'pane' | 'node' | 'selection' | 'edge'
   x: number
   y: number
   nodeId?: string
@@ -44,6 +44,12 @@ export function createCanvasMenuItems({
 
   if (!menu) return []
   const showCommands = menuAction('show-commands')
+  if (menu.kind === 'edge')
+    return [
+      menuAction('reverse-relationship'),
+      menuAction('remove-selected-relationships'),
+      showCommands,
+    ]
   if (menu.kind === 'pane')
     return [
       menuAction('select-all-canvas'),

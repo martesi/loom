@@ -59,6 +59,17 @@ export function validateRelationshipTarget(
   const targets = id.startsWith('set-')
     ? groupMembers(Number(id.slice(4)))
     : [Number(id)]
+  const available = new Set(
+    (data.images ?? [])
+      .filter((image) => !image.trashed && !image.missing)
+      .map((image) => image.id)
+  )
+  if (
+    !available.has(source) ||
+    !targets.length ||
+    targets.some((target) => !available.has(target))
+  )
+    return { valid: false, reason: 'An image is unavailable' }
   if (targets.includes(source))
     return {
       valid: false,
@@ -66,6 +77,16 @@ export function validateRelationshipTarget(
         ? 'A set cannot contain its source image'
         : 'An image cannot be related to itself',
     }
+  if (
+    targets.every((target) =>
+      (data.relationships ?? []).some(
+        (relationship) =>
+          relationship.sourceImageId === source &&
+          relationship.derivedImageId === target
+      )
+    )
+  )
+    return { valid: false, reason: 'This relationship already exists' }
   const cyclic = targets.some((target) => {
     const seen = new Set<number>()
     const stack = [target]

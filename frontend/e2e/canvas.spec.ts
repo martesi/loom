@@ -68,8 +68,8 @@ test('Assets selection, placement, unplace, trash and viewport persistence', asy
     /scale\(1\)/
   )
   await autoArrangeCanvas(page)
-  await page.keyboard.press('Delete')
-  // Canvas Delete is reversible unplace, not Assets trash.
+  // Unplacement remains an explicit action; Delete no longer unplaces images.
+  await page.getByTestId('dock-unplace').click()
   await expect(page.locator('.react-flow__node')).toHaveCount(0)
   await expect(rows).toHaveCount(2)
   await rows.first().click()
@@ -318,7 +318,7 @@ test('Select all highlights a set with an unplaced member', async ({
   await expect(canvasNodes(page)).toHaveCount(2)
   await canvasNodes(page).first().click()
   await expect(page.locator('.react-flow__node.selected')).toHaveCount(1)
-  await page.keyboard.press('Delete')
+  await page.getByTestId('dock-unplace').click()
   await expect(canvasNodes(page)).toHaveCount(1)
   await page.locator('.react-flow__pane').click({ position: { x: 10, y: 10 } })
   await expect(group).toHaveCount(1)

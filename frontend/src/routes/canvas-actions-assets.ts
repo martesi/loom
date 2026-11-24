@@ -216,6 +216,34 @@ export function canvasAssetActions(
       },
     },
     {
+      id: 'remove-selected-relationships',
+      label: t`Remove selected relationships`,
+      description: t`Unlink the selected Canvas relationships`,
+      category: t`Relationships`,
+      aliases: [t`unlink`],
+      shortcut: 'Delete',
+      shortcuts: ['Delete', 'Backspace'],
+      context: t`Canvas relationships`,
+      enabled: selection.surface === 'canvas' && selection.edges.length > 0,
+      disabledReason: t`Select Canvas relationships`,
+      dangerous: true,
+      execute: () => remove(false),
+    },
+    {
+      id: 'reverse-relationship',
+      label: t`Reverse relationship`,
+      description: t`Reverse the selected relationship`,
+      category: t`Relationships`,
+      aliases: [t`reverse edge`],
+      context: t`One Canvas relationship`,
+      enabled: selection.surface === 'canvas' && selection.edges.length === 1,
+      disabledReason: t`Select one Canvas relationship`,
+      execute: () =>
+        ImageService.ReverseRelationship(repoPath, selection.edges[0]).then(
+          () => reload()
+        ),
+    },
+    {
       id: 'remove-relationship',
       label: t`Remove relationship`,
       description: t`Unlink the selected relationship`,

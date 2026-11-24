@@ -120,8 +120,9 @@ export function useCanvasBoardModel({
           height: image.height,
           onResizeEnd: (x: number, y: number, width: number, height: number) =>
             callbacks.current.run(async () => {
-              await ImageService.SetPosition(repoPath, image.id, x, y)
-              await ImageService.SetSize(repoPath, image.id, width, height)
+              await ImageService.SetGeometry(repoPath, [
+                { imageId: image.id, x, y, w: width, h: height },
+              ])
             }),
         },
       }))

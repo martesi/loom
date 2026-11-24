@@ -157,12 +157,8 @@ export function canvasSelectionActions(
       description: t`Remove selected nodes while keeping their assets`,
       category: t`Clipboard and lifecycle`,
       aliases: [t`remove from canvas`],
-      shortcut: 'Delete',
-      shortcuts: ['Delete', 'Backspace'],
       context: t`Canvas selection`,
-      enabled:
-        selection.surface === 'canvas' &&
-        (selectedIds().length > 0 || selection.edges.length > 0),
+      enabled: selection.surface === 'canvas' && selectedIds().length > 0,
       disabledReason: t`Select Canvas items`,
       execute: () =>
         selection.surface === 'assets'
