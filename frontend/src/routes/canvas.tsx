@@ -86,8 +86,27 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     anchor: [],
   })
   const dropTargets = useRef<Node[]>([])
-  const [selection, setSelection] = useState<Selection>(emptySelection),
+  const [storedSelection, setSelection] = useState<Selection>(emptySelection),
     [expanded, setExpanded] = useState<number | null>(null)
+  const liveRelationshipIds = new Set(
+    (data.relationships ?? []).map((item) => item.id)
+  )
+  const liveEdges = storedSelection.edges.filter((id) =>
+    liveRelationshipIds.has(id)
+  )
+  const selection =
+    liveEdges.length === storedSelection.edges.length
+      ? storedSelection
+      : { ...storedSelection, edges: liveEdges }
+  useEffect(() => {
+    setSelection((current) => {
+      const liveIds = new Set((data.relationships ?? []).map((item) => item.id))
+      const edges = current.edges.filter((id) => liveIds.has(id))
+      return edges.length === current.edges.length
+        ? current
+        : { ...current, edges }
+    })
+  }, [data.relationships])
   const selectionRef = useRef(selection)
   selectionRef.current = selection
   const submissionScope = `${repo.path}\u0000${selection.surface}\u0000${selection.ids

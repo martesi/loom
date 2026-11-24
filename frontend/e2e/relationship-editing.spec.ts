@@ -22,6 +22,175 @@ async function clickEdge(page: Page, button: 'left' | 'right', index = 0) {
   await page.mouse.click(point.x, point.y, { button })
 }
 
+async function createChain(page: Page) {
+  await openFixtureRepo(page, 'group-fixtures')
+  for (const [index, name] of [
+    'group-alpha.png',
+    'group-beta.png',
+    'group-gamma.png',
+  ].entries())
+    await dropAsset(page, name, { x: 450 + index * 200, y: 200 })
+  await page
+    .locator('.react-flow__pane')
+    .click({ position: { x: 900, y: 600 } })
+  await autoArrangeCanvas(page)
+  const nodes = imageNodes(page)
+  for (const index of [0, 1]) {
+    const source = await nodes.nth(index).boundingBox()
+    const target = await nodes.nth(index + 1).boundingBox()
+    if (!source || !target) throw new Error('missing canvas nodes')
+    await page.keyboard.down('Control')
+    await page.mouse.move(source.x + 40, source.y + 40)
+    await page.mouse.down()
+    await page.mouse.move(target.x + 40, target.y + 40, { steps: 10 })
+    await page.mouse.up()
+    await page.keyboard.up('Control')
+    await expect(page.locator('.react-flow__edge')).toHaveCount(index + 1)
+  }
+}
+
+test('undo reconciles edge selection before additive selection and delete', async ({
+  page,
+}) => {
+  await createChain(page)
+  await clickEdge(page, 'left', 1)
+  await page.keyboard.press('ControlOrMeta+z')
+  await expect(page.locator('.react-flow__edge')).toHaveCount(1)
+  await page.keyboard.press('ControlOrMeta+k')
+  await page
+    .getByRole('combobox', { name: 'Search commands' })
+    .fill('Reverse relationship')
+  await expect(
+    page.getByRole('option', { name: /Reverse relationship/ })
+  ).toHaveCount(0)
+  await page.keyboard.press('Escape')
+  await page.keyboard.down('Shift')
+  await clickEdge(page, 'left', 0)
+  await page.keyboard.up('Shift')
+  await expect(page.locator('.react-flow__edge.selected')).toHaveCount(1)
+  await page.keyboard.press('Delete')
+  await expect(page.locator('.react-flow__edge')).toHaveCount(0)
+})
+
+test('edge menu supports keyboard navigation and focus restoration', async ({
+  page,
+}, testInfo) => {
+  await createChain(page)
+  const edge = page.locator('.react-flow__edge').first()
+  await edge.focus()
+  await page.keyboard.press('Shift+F10')
+  const menu = page.getByRole('menu')
+  const reverse = menu.getByRole('menuitem', { name: 'Reverse relationship' })
+  const remove = menu.getByRole('menuitem', {
+    name: 'Remove selected relationships',
+  })
+  await expect(reverse).toBeFocused()
+  await page.screenshot({ path: testInfo.outputPath('keyboard-edge-menu.png') })
+  await page.keyboard.press('End')
+  await page.keyboard.press('Home')
+  await expect(reverse).toBeFocused()
+  await page.keyboard.press('ArrowDown')
+  await expect(remove).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(menu).toHaveCount(0)
+  await expect(edge).toBeFocused()
+  await page.keyboard.press('Shift+F10')
+  const originalLabel = await edge.getAttribute('aria-label')
+  await page.keyboard.press('Enter')
+  await expect(menu).toHaveCount(0)
+  await expect(edge).not.toHaveAttribute('aria-label', originalLabel ?? '')
+  await edge.focus()
+  await page.keyboard.press('Shift+F10')
+  await expect(reverse).toBeFocused()
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('Enter')
+  await expect(page.locator('.react-flow__edge')).toHaveCount(1)
+})
+
+test('edge menu dismisses on outside click and Tab', async ({ page }) => {
+  await createChain(page)
+  const edge = page.locator('.react-flow__edge').first()
+  await edge.focus()
+  await page.keyboard.press('Shift+F10')
+  await page.keyboard.press('Tab')
+  await expect(page.getByRole('menu')).toHaveCount(0)
+  await edge.focus()
+  await page.keyboard.press('Shift+F10')
+  await page
+    .locator('.react-flow__pane')
+    .click({ position: { x: 900, y: 600 } })
+  await expect(page.getByRole('menu')).toHaveCount(0)
+})
+
+test('edge Delete does not run from inputs, dialogs, or Assets', async ({
+  page,
+}) => {
+  await createChain(page)
+  await clickEdge(page, 'left', 0)
+  await page.getByTestId('toggle-assets-shelf').click()
+  const search = page.locator('aside[aria-label="Assets"] input').first()
+  await search.fill('abc')
+  await search.press('Backspace')
+  await expect(search).toHaveValue('ab')
+  await expect(page.locator('.react-flow__edge')).toHaveCount(2)
+  await search.clear()
+  await page
+    .getByRole('listbox', { name: 'Assets' })
+    .getByRole('option')
+    .first()
+    .focus()
+  await page.keyboard.press('Delete')
+  await expect(page.locator('.react-flow__edge')).toHaveCount(2)
+  await page.keyboard.press('ControlOrMeta+k')
+  await expect(
+    page.getByRole('dialog', { name: 'Command palette' })
+  ).toBeVisible()
+  await page.getByRole('dialog', { name: 'Command palette' }).focus()
+  await page.keyboard.press('Delete')
+  await expect(page.locator('.react-flow__edge')).toHaveCount(2)
+})
+
+test('top-left resize undo and redo restore position and size', async ({
+  page,
+}) => {
+  await openFixtureRepo(page, 'resize-fixtures')
+  await dropAsset(page, 'resize-alpha.png', { x: 500, y: 180 })
+  const node = imageNodes(page).first()
+  await node.click()
+  const before = await node.boundingBox()
+  const handle = await node
+    .locator('.react-flow__resize-control.handle.top.left')
+    .boundingBox()
+  if (!before || !handle) throw new Error('missing resize target')
+  await page.mouse.move(
+    handle.x + handle.width / 2,
+    handle.y + handle.height / 2
+  )
+  await page.mouse.down()
+  await page.mouse.move(handle.x - 80, handle.y - 60, { steps: 5 })
+  await page.mouse.up()
+  await expect
+    .poll(async () => (await node.boundingBox())?.width ?? 0)
+    .toBeGreaterThan(before.width + 30)
+  const after = await node.boundingBox()
+  if (!after) throw new Error('missing resized node')
+  expect(after.x).toBeLessThan(before.x - 20)
+  expect(after.y).toBeLessThan(before.y - 20)
+  const geometry = async () => {
+    const box = await node.boundingBox()
+    if (!box) throw new Error('missing node')
+    return [box.x, box.y, box.width, box.height].map(Math.round)
+  }
+  await page.keyboard.press('ControlOrMeta+z')
+  await expect
+    .poll(geometry)
+    .toEqual([before.x, before.y, before.width, before.height].map(Math.round))
+  await page.keyboard.press('ControlOrMeta+Shift+z')
+  await expect
+    .poll(geometry)
+    .toEqual([after.x, after.y, after.width, after.height].map(Math.round))
+})
+
 test('edge menu reverses and deletes with undo while image Delete does nothing', async ({
   page,
 }, testInfo) => {
@@ -57,10 +226,10 @@ test('edge menu reverses and deletes with undo while image Delete does nothing',
   await clickEdge(page, 'right')
   const menu = page.getByRole('menu')
   await expect(
-    menu.getByRole('button', { name: 'Reverse relationship' })
+    menu.getByRole('menuitem', { name: 'Reverse relationship' })
   ).toBeEnabled()
   await page.screenshot({ path: testInfo.outputPath('edge-menu.png') })
-  await menu.getByRole('button', { name: 'Reverse relationship' }).click()
+  await menu.getByRole('menuitem', { name: 'Reverse relationship' }).click()
   await expect(edge.locator('.react-flow__edge-path')).not.toHaveAttribute(
     'd',
     originalPath ?? ''

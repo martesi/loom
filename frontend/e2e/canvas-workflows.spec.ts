@@ -29,7 +29,7 @@ test('select, arrange, align, create and expand a set, then restore viewport', a
   })
   await page
     .getByRole('menu')
-    .getByRole('button', { name: 'Select all' })
+    .getByRole('menuitem', { name: 'Select all' })
     .click()
   await expect(page.locator('.react-flow__node.selected')).toHaveCount(3)
   await expect(page.getByTestId('dock-arrange-selection')).toBeVisible()

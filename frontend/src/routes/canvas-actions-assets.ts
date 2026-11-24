@@ -27,7 +27,11 @@ export function canvasAssetActions(
     paste,
     undoActions,
     repoPath,
+    data,
   } = context
+  const selectedRelationships = (data.relationships ?? []).filter(
+    (relationship) => selection.edges.includes(relationship.id)
+  )
   return [
     {
       id: 'find-in-assets',
@@ -224,7 +228,8 @@ export function canvasAssetActions(
       shortcut: 'Delete',
       shortcuts: ['Delete', 'Backspace'],
       context: t`Canvas relationships`,
-      enabled: selection.surface === 'canvas' && selection.edges.length > 0,
+      enabled:
+        selection.surface === 'canvas' && selectedRelationships.length > 0,
       disabledReason: t`Select Canvas relationships`,
       dangerous: true,
       execute: () => remove(false),
@@ -236,12 +241,16 @@ export function canvasAssetActions(
       category: t`Relationships`,
       aliases: [t`reverse edge`],
       context: t`One Canvas relationship`,
-      enabled: selection.surface === 'canvas' && selection.edges.length === 1,
+      enabled:
+        selection.surface === 'canvas' && selectedRelationships.length === 1,
       disabledReason: t`Select one Canvas relationship`,
-      execute: () =>
-        ImageService.ReverseRelationship(repoPath, selection.edges[0]).then(
+      execute: () => {
+        const relationship = selectedRelationships[0]
+        if (selectedRelationships.length !== 1 || !relationship) return
+        return ImageService.ReverseRelationship(repoPath, relationship.id).then(
           () => reload()
-        ),
+        )
+      },
     },
     {
       id: 'remove-relationship',

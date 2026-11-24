@@ -113,6 +113,7 @@ test('relationships reject cycles, support ctrl-click selection, and delete as e
   await expect(
     page.getByRole('heading', { name: '1 relationship', exact: true })
   ).toBeVisible()
+  await edge.focus()
   await page.keyboard.press('Delete')
   await expect(page.locator('.react-flow__edge')).toHaveCount(0)
 })
@@ -255,7 +256,7 @@ test('auto-arrange respects resized node bounds', async ({ page }) => {
   await nodes.nth(1).click({ button: 'right' })
   await page
     .getByRole('menu')
-    .getByRole('button', { name: 'Auto-arrange selection' })
+    .getByRole('menuitem', { name: 'Auto-arrange selection' })
     .click()
   await expect
     .poll(async () => {

@@ -164,6 +164,7 @@ export function CanvasMainSurface(props: Props) {
   return (
     <main
       ref={host}
+      data-canvas-surface
       aria-label={t`Canvas`}
       tabIndex={-1}
       className="absolute inset-0 min-w-0 outline-none"
@@ -274,7 +275,7 @@ export function CanvasMainSurface(props: Props) {
           )
         else if (id) {
           const result = validTarget(drag.source, id)
-          setError(result.reason ?? 'Cannot create this relationship')
+          setError(result.reason ?? t`Cannot create this relationship`)
         }
       }}
       onDragOver={(e) => {
@@ -423,11 +424,11 @@ export function CanvasMainSurface(props: Props) {
           {target.kind === 'set'
             ? (target.reason ??
               (target.members === 0
-                ? 'Already related'
-                : `Release to create ${target.members ?? 0} one-time relationships`))
+                ? t`Already related`
+                : t`Release to create ${target.members ?? 0} one-time relationships`))
             : target.valid
-              ? 'Release to create relationship'
-              : (target.reason ?? 'Cannot create this relationship')}
+              ? t`Release to create relationship`
+              : (target.reason ?? t`Cannot create this relationship`)}
         </div>
       )}
       {menu && menuItems.length > 0 && (

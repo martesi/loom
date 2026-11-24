@@ -1,3 +1,4 @@
+import { t } from '@lingui/core/macro'
 import type { Edge, Node, ReactFlowInstance } from '@xyflow/react'
 import type { CanvasData } from '../../../bindings/loom/internal/service'
 import { ImageService } from '../../../bindings/loom/internal/service'
@@ -69,13 +70,13 @@ export function validateRelationshipTarget(
     !targets.length ||
     targets.some((target) => !available.has(target))
   )
-    return { valid: false, reason: 'An image is unavailable' }
+    return { valid: false, reason: t`An image is unavailable` }
   if (targets.includes(source))
     return {
       valid: false,
       reason: id.startsWith('set-')
-        ? 'A set cannot contain its source image'
-        : 'An image cannot be related to itself',
+        ? t`A set cannot contain its source image`
+        : t`An image cannot be related to itself`,
     }
   if (
     targets.every((target) =>
@@ -86,7 +87,7 @@ export function validateRelationshipTarget(
       )
     )
   )
-    return { valid: false, reason: 'This relationship already exists' }
+    return { valid: false, reason: t`This relationship already exists` }
   const cyclic = targets.some((target) => {
     const seen = new Set<number>()
     const stack = [target]
@@ -105,7 +106,7 @@ export function validateRelationshipTarget(
     return false
   })
   return cyclic
-    ? { valid: false, reason: 'This relationship would create a cycle' }
+    ? { valid: false, reason: t`This relationship would create a cycle` }
     : { valid: true, reason: undefined }
 }
 

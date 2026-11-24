@@ -373,6 +373,10 @@ export function CanvasFlow(props: Props) {
             updateZoomCompensation(pendingZoom.current)
           })
         }}
+        onEdgeClick={(event) => {
+          if (event.currentTarget instanceof SVGElement)
+            event.currentTarget.focus()
+        }}
         onPaneContextMenu={(event) => {
           event.preventDefault()
           setMenu({ kind: 'pane', x: event.clientX, y: event.clientY })

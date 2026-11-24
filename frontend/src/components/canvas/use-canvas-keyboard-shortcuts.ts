@@ -128,6 +128,14 @@ export function useCanvasKeyboardShortcuts(props: Props) {
         return
       }
       if (!action) return
+      if (
+        action.id === 'remove-selected-relationships' &&
+        (!targetElement?.closest(
+          '[data-canvas-surface] .react-flow, [data-canvas-surface]:focus'
+        ) ||
+          isInteractiveTarget)
+      )
+        return
       event.preventDefault()
       if (action.id === 'show-commands') current.openPalette(false)
       else void current.executeAction(action)

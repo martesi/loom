@@ -157,19 +157,19 @@ test('canvas context menus and auto-arrange preserve the canvas origin', async (
   const paneMenu = page.getByRole('menu')
   await expect(paneMenu).toBeVisible()
   await expect(
-    paneMenu.getByRole('button', { name: 'Select all', exact: true })
+    paneMenu.getByRole('menuitem', { name: 'Select all', exact: true })
   ).toBeVisible()
   await expect(
-    paneMenu.getByRole('button', { name: 'Auto-arrange Canvas', exact: true })
+    paneMenu.getByRole('menuitem', { name: 'Auto-arrange Canvas', exact: true })
   ).toBeVisible()
   await paneMenu
-    .getByRole('button', { name: 'Select all', exact: true })
+    .getByRole('menuitem', { name: 'Select all', exact: true })
     .click()
   await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
   await nodes.first().click({ button: 'right' })
   const selectionMenu = page.getByRole('menu')
   await expect(
-    selectionMenu.getByRole('button', {
+    selectionMenu.getByRole('menuitem', {
       name: 'Auto-arrange selection',
       exact: true,
     })
@@ -183,13 +183,13 @@ test('canvas context menus and auto-arrange preserve the canvas origin', async (
   const nodeMenu = page.getByRole('menu')
   await expect(nodeMenu).toBeVisible()
   await expect(
-    nodeMenu.getByRole('button', { name: 'Find in Assets', exact: true })
+    nodeMenu.getByRole('menuitem', { name: 'Find in Assets', exact: true })
   ).toBeVisible()
   await expect(
-    nodeMenu.getByRole('button', { name: 'Remove from canvas', exact: true })
+    nodeMenu.getByRole('menuitem', { name: 'Remove from canvas', exact: true })
   ).toBeVisible()
   await nodeMenu
-    .getByRole('button', { name: 'Remove from canvas', exact: true })
+    .getByRole('menuitem', { name: 'Remove from canvas', exact: true })
     .click()
   await expect(nodes).toHaveCount(1)
   await page.getByTestId('toggle-inspector-shelf').click()
@@ -201,7 +201,7 @@ test('canvas context menus and auto-arrange preserve the canvas origin', async (
   await expect(assets(page)).toHaveCount(2)
 
   await nodes.first().click({ button: 'right' })
-  await page.getByRole('menu').getByRole('button', { name: 'Trash' }).click()
+  await page.getByRole('menu').getByRole('menuitem', { name: 'Trash' }).click()
   const trashDialog = page.getByRole('dialog', {
     name: 'Move 1 asset to trash?',
   })
@@ -296,7 +296,7 @@ test('explicit relationship gesture, navigation, and semantic sets', async ({
   })
   await page
     .getByRole('menu')
-    .getByRole('button', { name: 'Select all' })
+    .getByRole('menuitem', { name: 'Select all' })
     .click()
   await expect(page.locator('.react-flow__node-group.selected')).toHaveCount(1)
 })
@@ -329,7 +329,7 @@ test('Select all highlights a set with an unplaced member', async ({
   })
   await page
     .getByRole('menu')
-    .getByRole('button', { name: 'Select all' })
+    .getByRole('menuitem', { name: 'Select all' })
     .click()
   await expect(group).toHaveClass(/selected/)
 })
