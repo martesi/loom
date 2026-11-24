@@ -14,6 +14,23 @@ Loom is a local-first desktop workspace for image collections and derivation gra
 
 Trash, restore, rename, move, import, clipboard operations, placement, sets, relationships, viewport state, and core metadata are persisted per repository. Trash is retained for 30 days, then permanently purged automatically.
 
+### Undo and concurrent writers
+
+Graph and geometry replay selects history, changes the database, and moves the
+cursor in one SQLite writer transaction. Database-only legacy link, archive,
+tag, prompt, position, and size replay uses the same boundary. A failed replay
+leaves those database changes and the cursor unchanged. Undo history remains
+limited to the current process session and the repository's history floor.
+
+Legacy file moves, trash/restore, representation swaps, and group replay still
+use separate store operations. Their replay is not atomic with history selection
+or cursor movement across processes. A cursor check rejects many stale replays,
+but cannot reverse side effects already applied, and identical replacement
+entries can be indistinguishable. Filesystem changes are not SQLite
+transactions; errors or concurrent writers can leave a file change without a
+matching cursor update. Some legacy forward mutations also write data and
+history separately. Avoid concurrent app processes editing one repository.
+
 ## Development
 
 The project uses Go + Wails v3 for the desktop/backend layer and React + TypeScript + Vite for the frontend. Nix provides the development toolchain.

@@ -542,41 +542,14 @@ func (s *UndoService) State(repoPath string) (*UndoState, error) {
 }
 
 func (s *UndoService) Undo(repoPath string) (*UndoResult, error) {
-	repo, unlock, err := openOperationRepo(repoPath)
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	defer repo.Close()
-
-	op, err := repo.PeekUndo()
-	if err != nil {
-		return nil, err
-	}
-	if op == nil {
-		return &UndoResult{Applied: false}, nil
-	}
-
-	var inv OpStep
-	if err := json.Unmarshal([]byte(op.Inverse), &inv); err != nil {
-		return nil, err
-	}
-	if handled, geometry, err := replayAtomicHistory(repo, inv, op.Seq-1); handled {
-		if err != nil {
-			return &UndoResult{Applied: false, Kind: op.Kind, Error: err.Error()}, nil
-		}
-		return &UndoResult{Applied: true, Kind: op.Kind, Geometry: geometry}, nil
-	}
-	if err := applyStep(repo, inv); err != nil {
-		return &UndoResult{Applied: false, Kind: op.Kind, Error: err.Error()}, nil
-	}
-	if err := repo.MarkUndone(op.Seq); err != nil {
-		return nil, err
-	}
-	return &UndoResult{Applied: true, Kind: op.Kind}, nil
+	return s.replay(repoPath, false)
 }
 
 func (s *UndoService) Redo(repoPath string) (*UndoResult, error) {
+	return s.replay(repoPath, true)
+}
+
+func (s *UndoService) replay(repoPath string, redo bool) (*UndoResult, error) {
 	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return nil, err
@@ -584,28 +557,34 @@ func (s *UndoService) Redo(repoPath string) (*UndoResult, error) {
 	defer unlock()
 	defer repo.Close()
 
-	op, err := repo.PeekRedo()
+	handled, op, geometry, err := replayAtomicHistory(repo, redo)
 	if err != nil {
-		return nil, err
+		if op == nil {
+			return nil, err
+		}
+		return &UndoResult{Applied: false, Kind: op.Kind, Error: err.Error()}, nil
 	}
 	if op == nil {
 		return &UndoResult{Applied: false}, nil
 	}
-
-	var fwd OpStep
-	if err := json.Unmarshal([]byte(op.Forward), &fwd); err != nil {
-		return nil, err
-	}
-	if handled, geometry, err := replayAtomicHistory(repo, fwd, op.Seq); handled {
-		if err != nil {
-			return &UndoResult{Applied: false, Kind: op.Kind, Error: err.Error()}, nil
-		}
+	if handled {
 		return &UndoResult{Applied: true, Kind: op.Kind, Geometry: geometry}, nil
 	}
-	if err := applyStep(repo, fwd); err != nil {
+	// The remaining legacy steps perform filesystem work or own nested store
+	// transactions. Their selection, replay and cursor are not cross-process
+	// atomic; the process-local coordinator cannot exclude other processes.
+	raw := op.Inverse
+	if redo {
+		raw = op.Forward
+	}
+	var replay OpStep
+	if err := json.Unmarshal([]byte(raw), &replay); err != nil {
+		return nil, err
+	}
+	if err := applyStep(repo, replay); err != nil {
 		return &UndoResult{Applied: false, Kind: op.Kind, Error: err.Error()}, nil
 	}
-	if err := repo.MarkRedone(op.Seq); err != nil {
+	if err := repo.MarkHistoryIfCurrent(op, redo); err != nil {
 		return nil, err
 	}
 	return &UndoResult{Applied: true, Kind: op.Kind}, nil
