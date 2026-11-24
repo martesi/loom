@@ -3,6 +3,7 @@ import {
   type LayoutBox,
   type LayoutNode,
 } from './layout'
+import { clearObstacles, GAP } from './staging-obstacles'
 
 /** Immutable relationship identity and pairing order; reversal keeps both. */
 export interface ChronologicalEdge {
@@ -35,7 +36,8 @@ export interface ChronologicalLayoutInput {
   stagingCenter?: { x: number; y: number }
 }
 
-const GAP = 60
+// Keep arithmetic well below the precision at which a 60-unit gap vanishes.
+const MAX_LAYOUT_COORDINATE = 1e12
 const compareId = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
 const compareEdge = (a: ChronologicalEdge, b: ChronologicalEdge) =>
   a.pairingOrder - b.pairingOrder || compareId(a.id, b.id)
@@ -48,8 +50,11 @@ const compareEdge = (a: ChronologicalEdge, b: ChronologicalEdge) =>
  * earlier component needs their space. Empty space after shrinkage is retained.
  * Pass the returned projection as `previous` on the next call, or omit it for
  * a fresh deterministic arrangement. Staging is separate from the graph cache.
- * IDs must be unique, dimensions positive and finite, endpoints present, and
- * relationships acyclic. Invalid input throws instead of dropping graph data.
+ * IDs must be unique, dimensions positive, endpoints present, and relationships
+ * acyclic. Coordinates and the total of all dimensions plus gaps must not exceed
+ * 1e12 in magnitude. Unrepresentable output throws. Grid clearance is 60 units
+ * within 16 * Number.EPSILON times the largest relevant coordinate or dimension.
+ * Invalid input throws instead of dropping graph data.
  */
 export function layoutChronologicalGraph(
   input: ChronologicalLayoutInput
@@ -117,11 +122,13 @@ export function layoutChronologicalGraph(
   const staged = input.stagingCenter
     ? stageOrphans(orphans, obstacles, input.stagingCenter)
     : []
+  for (const box of [...obstacles, ...staged]) validateBoxRange(box)
   return { components, staged }
 }
 
 function validate(input: ChronologicalLayoutInput): Map<string, LayoutNode> {
   const nodes = new Map<string, LayoutNode>()
+  let sizeBudget = 0
   for (const node of input.nodes) {
     if (nodes.has(node.id)) throw new Error(`duplicate node id: ${node.id}`)
     if (
@@ -132,7 +139,13 @@ function validate(input: ChronologicalLayoutInput): Map<string, LayoutNode> {
     ) {
       throw new Error(`invalid size for node: ${node.id}`)
     }
+    sizeBudget += node.width + node.height + 2 * GAP
+    if (sizeBudget > MAX_LAYOUT_COORDINATE)
+      throw new Error('node dimensions exceed supported layout range')
     nodes.set(node.id, node)
+  }
+  for (const component of input.previous?.components ?? []) {
+    for (const box of component.boxes) validateBoxRange(box)
   }
   const edgeIds = new Set<string>()
   const outgoing = new Map<string, string[]>()
@@ -168,7 +181,33 @@ function validate(input: ChronologicalLayoutInput): Map<string, LayoutNode> {
   ) {
     throw new Error('invalid staging center')
   }
+  if (
+    input.stagingCenter &&
+    (Math.abs(input.stagingCenter.x) > MAX_LAYOUT_COORDINATE ||
+      Math.abs(input.stagingCenter.y) > MAX_LAYOUT_COORDINATE)
+  ) {
+    throw new Error('staging center exceeds supported layout range')
+  }
   return nodes
+}
+
+function validateBoxRange(box: LayoutBox): void {
+  if (
+    !Number.isFinite(box.x) ||
+    !Number.isFinite(box.y) ||
+    !Number.isFinite(box.width) ||
+    !Number.isFinite(box.height) ||
+    box.width <= 0 ||
+    box.height <= 0 ||
+    Math.abs(box.x) > MAX_LAYOUT_COORDINATE ||
+    Math.abs(box.y) > MAX_LAYOUT_COORDINATE ||
+    Math.abs(box.x + box.width) > MAX_LAYOUT_COORDINATE ||
+    Math.abs(box.y + box.height) > MAX_LAYOUT_COORDINATE ||
+    box.x + box.width <= box.x ||
+    box.y + box.height <= box.y
+  ) {
+    throw new Error(`box exceeds supported layout range: ${box.id}`)
+  }
 }
 
 interface ComponentInput {
@@ -325,10 +364,8 @@ function stageOrphans(
   )
   choices.sort(
     (a, b) =>
-      (a.x - origin.x) ** 2 +
-      (a.y - origin.y) ** 2 -
-      (b.x - origin.x) ** 2 -
-      (b.y - origin.y) ** 2
+      Math.hypot(a.x - origin.x, a.y - origin.y) -
+      Math.hypot(b.x - origin.x, b.y - origin.y)
   )
   const selected = choices[0]
   return nodes.map((node, i) => ({
@@ -338,58 +375,4 @@ function stageOrphans(
     x: selected.x + xs[i % columns],
     y: selected.y + ys[Math.floor(i / columns)],
   }))
-}
-
-type Rect = { x: number; y: number; width: number; height: number }
-
-function clearObstacles(
-  rect: Rect,
-  obstacles: LayoutBox[],
-  direction: 'up' | 'down' | 'left' | 'right'
-): Rect {
-  const result = { ...rect }
-  const vertical = direction === 'up' || direction === 'down'
-  const forward = direction === 'down' || direction === 'right'
-  const axis = vertical ? 'y' : 'x'
-  const size = vertical ? 'height' : 'width'
-  const crossAxis = vertical ? 'x' : 'y'
-  const crossSize = vertical ? 'width' : 'height'
-  const relevant = obstacles.filter(
-    (box) =>
-      rect[crossAxis] < box[crossAxis] + box[crossSize] + GAP &&
-      rect[crossAxis] + rect[crossSize] + GAP > box[crossAxis]
-  )
-  // Sweeping in movement order visits each forbidden interval only once.
-  relevant.sort((a, b) =>
-    forward
-      ? a[axis] - b[axis]
-      : b[axis] + b[size] + GAP - (a[axis] + a[size] + GAP)
-  )
-  for (const box of relevant) {
-    if (
-      result[axis] >= box[axis] + box[size] + GAP ||
-      result[axis] + result[size] + GAP <= box[axis]
-    )
-      continue
-    result[axis] = forward
-      ? box[axis] + box[size] + GAP
-      : precedingBoundary(box[axis], result[size])
-    if (!Number.isFinite(result[axis]))
-      throw new Error('staging position exceeds finite coordinates')
-  }
-  return result
-}
-
-function precedingBoundary(boundary: number, size: number): number {
-  let position = boundary - size - GAP
-  let adjustment = Number.EPSILON * Math.max(1, Math.abs(boundary), size)
-  // Subtraction can round back inside the forbidden interval. Move outward
-  // until the same arithmetic used by the collision test confirms clearance.
-  while (position + size + GAP > boundary) {
-    position -= adjustment
-    adjustment *= 2
-    if (!Number.isFinite(position))
-      throw new Error('staging position exceeds finite coordinates')
-  }
-  return position
 }
