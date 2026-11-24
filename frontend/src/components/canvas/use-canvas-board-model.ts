@@ -87,8 +87,8 @@ export function useCanvasBoardModel({
 
   useEffect(() => {
     const board = owner.getSnapshot()
-    const gestures = new Set<ResizeGesture>()
     const activeGestures = new Map<number, ResizeGesture>()
+    let rendererActive = true
     const placed = (data.images ?? []).filter(
       (image) => image.placed && !image.trashed
     )
@@ -108,6 +108,7 @@ export function useCanvasBoardModel({
       { ...data, images: placed, relationships: [] },
       renditionGeneration,
       (imageId, x, y, w, h) => {
+        if (!rendererActive) return
         const previous = activeGestures.get(imageId)
         if (previous) owner.cancelResize(previous)
         const gesture = owner.beginResize(board?.data === data ? board : null, {
@@ -118,12 +119,12 @@ export function useCanvasBoardModel({
           h,
         })
         if (gesture) {
-          gestures.add(gesture)
           activeGestures.set(imageId, gesture)
         } else activeGestures.delete(imageId)
       },
       (imageId, x, y, w, h) => {
         const gesture = activeGestures.get(imageId)
+        // Once submitted, the owner controls cancellation even if this renderer is rebuilt.
         activeGestures.delete(imageId)
         if (gesture)
           void owner
@@ -201,7 +202,9 @@ export function useCanvasBoardModel({
       host.current.focus()
     setEdges(nextEdges)
     return () => {
-      for (const gesture of gestures) owner.cancelResize(gesture)
+      rendererActive = false
+      for (const gesture of activeGestures.values()) owner.cancelResize(gesture)
+      activeGestures.clear()
     }
   }, [
     data,
