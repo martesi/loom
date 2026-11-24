@@ -1,12 +1,6 @@
 import { getImageMethodID } from './bindings'
 import { expect, test } from './test-fixtures'
-import {
-  asset,
-  autoArrangeCanvas,
-  openFixtureRepo,
-  placeAssets,
-  selectImageNodes,
-} from './test-helpers'
+import { asset, openFixtureRepo } from './test-helpers'
 
 test.describe('Inspector commands from the Canvas command palette', () => {
   test('field commands focus Inspector editors and only explicit submit changes data', async ({
@@ -196,38 +190,6 @@ test.describe('Inspector commands from the Canvas command palette', () => {
     ).toBeVisible()
     await inspector.getByTestId('collapse-shelf-right').click()
     await page.getByTestId('toggle-inspector-shelf').click()
-    await expect(inspector.getByTestId('pin-shelf-right')).toBeFocused()
-  })
-
-  test('restores normal Inspector focus after a field command on a selected set', async ({
-    page,
-  }) => {
-    await openFixtureRepo(page, 'group-fixtures')
-    await placeAssets(page, ['group-alpha.png', 'group-beta.png'])
-    await autoArrangeCanvas(page)
-    await page.keyboard.press('ControlOrMeta+0')
-    await selectImageNodes(page, [0, 1])
-    await page.getByTestId('dock-create-set').click()
-
-    const inspector = page.locator('aside[aria-label="Inspector"]')
-    const group = page.locator('.react-flow__node-group')
-    await group.click()
-    await page.getByTestId('toggle-inspector-shelf').click()
-    await expect(group).toHaveClass(/selected/)
-    await expect(inspector.getByLabel('Set name')).toBeVisible()
-
-    const paletteTrigger = page.getByTestId('open-command-palette')
-    await paletteTrigger.click()
-    const search = page.getByRole('combobox', { name: 'Search commands' })
-    await search.fill('Add tag')
-    await page.getByRole('option', { name: /Add tag/ }).click()
-
-    await expect(page.getByRole('dialog')).toHaveCount(0)
-    await expect(paletteTrigger).toBeFocused()
-    await inspector.getByTestId('collapse-shelf-right').click()
-    await expect(inspector).toHaveAttribute('data-state', 'closed')
-    await page.getByTestId('toggle-inspector-shelf').click()
-    await expect(inspector).toHaveAttribute('data-state', 'open')
     await expect(inspector.getByTestId('pin-shelf-right')).toBeFocused()
   })
 

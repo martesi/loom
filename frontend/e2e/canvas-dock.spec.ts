@@ -40,7 +40,7 @@ test.describe('contextual Canvas Dock', () => {
     await expect(dock).toHaveAttribute('data-mode', 'multiple')
     await expect(dock).toHaveAttribute('data-selection-count', '2')
     await expect(page.getByTestId('dock-fit-all')).toHaveCount(0)
-    await expect(page.getByTestId('dock-create-set')).toBeEnabled()
+    await expect(page.getByTestId('dock-create-set')).toHaveCount(0)
     await expect(page.getByTestId('dock-align-horizontal')).toBeVisible()
     await expect(page.getByTestId('dock-auto-arrange')).toBeEnabled()
 
@@ -156,17 +156,16 @@ test.describe('contextual Canvas Dock', () => {
       .toBeLessThanOrEqual(1)
   })
 
-  test('Create Set and Unplace actions work properly', async ({ page }) => {
+  test('multiple selection has no grouping or unplace actions', async ({
+    page,
+  }) => {
     await openFixtureRepo(page, 'dock-group-fixtures', { drawers: 'closed' })
     await placeAssets(page, ['group-alpha.png', 'group-beta.png'])
     await selectImageNodes(page, [0, 1])
-    await page.getByTestId('dock-create-set').click()
-
-    await expect(page.locator('.react-flow__node-group')).toHaveCount(1)
-    await page.locator('.react-flow__node-group').click()
-    await expect(page.getByTestId('dock-unplace')).toBeVisible()
-    await page.getByTestId('dock-unplace').click()
+    await expect(page.getByTestId('dock-create-set')).toHaveCount(0)
+    await expect(page.getByTestId('dock-unplace')).toHaveCount(0)
     await expect(page.locator('.react-flow__node-group')).toHaveCount(0)
+    await expect(imageNodes(page)).toHaveCount(2)
   })
 
   test('keeps selection actions in the dock instead of attaching a toolbar to moving nodes', async ({

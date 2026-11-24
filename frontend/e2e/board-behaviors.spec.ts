@@ -1,12 +1,15 @@
 import type { Locator, Page } from '@playwright/test'
+import { legacyServiceCall } from './legacy-service'
 import { expect, test } from './test-fixtures'
 import {
   asset,
   autoArrangeCanvas,
   ctrlDrag,
   dropAsset,
+  fixturePath,
   imageNodes,
   nodeBox,
+  openAssetsShelf,
   openFixtureRepo,
   placeAssets,
   selectImageNodes,
@@ -88,8 +91,12 @@ test('relationships reject cycles, support ctrl-click selection, and delete as e
 
   const nodes = imageNodes(page)
   await nodes.nth(0).click()
-  await page.getByTestId('toggle-inspector-shelf').click()
-  await expect(page.getByText(/Ctrl\/Cmd-drag this image/)).toBeVisible()
+  if (
+    (await page
+      .locator('aside[aria-label="Inspector"]')
+      .getAttribute('data-state')) !== 'open'
+  )
+    await page.getByTestId('toggle-inspector-shelf').click()
 
   const first = await nodeBox(nodes.nth(0))
   const second = await nodeBox(nodes.nth(1))
@@ -159,7 +166,12 @@ test('relationships reject cycles, support ctrl-click selection, and delete as e
   await edge.focus()
   await page.keyboard.press('Enter')
   await expect(page.locator('.react-flow__edge.selected')).toHaveCount(1)
-  await page.getByTestId('toggle-inspector-shelf').click()
+  if (
+    (await page
+      .locator('aside[aria-label="Inspector"]')
+      .getAttribute('data-state')) !== 'open'
+  )
+    await page.getByTestId('toggle-inspector-shelf').click()
   await expect(
     page.getByRole('heading', { name: '1 relationship', exact: true })
   ).toBeVisible()
@@ -191,45 +203,6 @@ test('relationship gestures reject self-links', async ({ page }) => {
   await expect(page.locator('.react-flow__edge')).toHaveCount(0)
 })
 
-test('collapsed sets cannot be relationship sources', async ({ page }) => {
-  await openFixtureRepo(page, 'set-source-fixtures')
-  await placeAssets(page, [
-    'group-alpha.png',
-    'group-beta.png',
-    'group-gamma.png',
-  ])
-  await page.keyboard.press('ControlOrMeta+0')
-  await selectImageNodes(page, [0, 1])
-  await page.getByTestId('dock-create-set').click()
-
-  const group = page.locator('.react-flow__node-group')
-  await expect(group).toHaveCount(1)
-  const groupBox = await nodeBox(group)
-  const targetBox = await nodeBox(imageNodes(page).first())
-  await page.keyboard.down('Control')
-  await page.mouse.move(
-    groupBox.x + groupBox.width / 2,
-    groupBox.y + groupBox.height / 2
-  )
-  await page.mouse.down()
-  await page.mouse.move(
-    groupBox.x + groupBox.width / 2 + 12,
-    groupBox.y + groupBox.height / 2 + 8,
-    { steps: 2 }
-  )
-  await expect(page.getByTestId('relationship-preview')).toHaveCount(0)
-  await page.mouse.move(
-    targetBox.x + targetBox.width / 2,
-    targetBox.y + targetBox.height / 2,
-    { steps: 8 }
-  )
-  await expect(page.getByTestId('relationship-preview')).toHaveCount(0)
-  await page.mouse.up()
-  await page.keyboard.up('Control')
-
-  await expect(page.locator('.react-flow__edge')).toHaveCount(0)
-})
-
 test('Sources navigation reveals and selects an unplaced asset', async ({
   page,
 }) => {
@@ -239,10 +212,23 @@ test('Sources navigation reveals and selects an unplaced asset', async ({
   await ctrlDrag(page, imageNodes(page).nth(0), imageNodes(page).nth(1))
   await expect(page.locator('.react-flow__edge')).toHaveCount(1)
 
-  await imageNodes(page).nth(0).click()
-  await page.getByTestId('dock-unplace').click()
+  await openAssetsShelf(page)
+  const sourceID = Number(
+    await asset(page, 'relation-alpha.png').getAttribute('data-asset-id')
+  )
+  await legacyServiceCall(page, 'imageservice.ts', 'UnplaceImages', [
+    await fixturePath('sources-nav-fixtures'),
+    [sourceID],
+  ])
+  await page.reload()
   await expect(imageNodes(page)).toHaveCount(1)
   await imageNodes(page).first().click()
+  if (
+    (await page
+      .locator('aside[aria-label="Inspector"]')
+      .getAttribute('data-state')) !== 'open'
+  )
+    await page.getByTestId('toggle-inspector-shelf').click()
 
   const sources = page
     .locator('.loom-detail-panel section')

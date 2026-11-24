@@ -3,14 +3,11 @@ import { expect, test } from './test-fixtures'
 import {
   asset,
   autoArrangeCanvas,
-  ctrlDrag,
-  dropAsset,
   imageNodes,
   nodeBox,
   openAssetsShelf,
   openFixtureRepo,
   placeAssets,
-  selectImageNodes,
 } from './test-helpers'
 
 async function dragBy(page: Page, locator: Locator, dx: number, dy: number) {
@@ -24,136 +21,6 @@ async function dragBy(page: Page, locator: Locator, dx: number, dy: number) {
   )
   await page.mouse.up()
 }
-
-test('sets persist metadata and movement, accept source links, expand, and dissolve', async ({
-  page,
-}) => {
-  await openFixtureRepo(page, 'group-fixtures')
-  await placeAssets(page, [
-    'group-alpha.png',
-    'group-beta.png',
-    'group-gamma.png',
-  ])
-  await autoArrangeCanvas(page)
-  await page.keyboard.press('ControlOrMeta+0')
-  await selectImageNodes(page, [0, 1])
-  await page.getByTestId('dock-create-set').click()
-
-  let group = page.locator('.react-flow__node-group')
-  await expect(group).toHaveCount(1)
-  await expect(imageNodes(page)).toHaveCount(1)
-
-  await group.click()
-  await page.getByTestId('toggle-inspector-shelf').click()
-  const name = page.getByLabel('Set name')
-  await name.fill('Pair')
-  await name.blur()
-  const kind = page.getByLabel('Kind')
-  await kind.fill('variant')
-  await kind.blur()
-  await expect(group).toContainText('Pair · 2')
-
-  await page.getByRole('button', { name: 'Compare', exact: true }).click()
-  const comparison = page.getByRole('dialog', { name: 'Compare Pair' })
-  await expect(comparison).toBeVisible()
-  await expect(comparison.getByRole('article')).toHaveCount(2)
-  await comparison.getByRole('button', { name: 'Zoom in' }).click()
-  await expect(comparison.getByText('125%')).toBeVisible()
-  const alphaImage = comparison.getByRole('img', { name: 'group-alpha.png' })
-  const betaImage = comparison.getByRole('img', { name: 'group-beta.png' })
-  await expect(alphaImage).toHaveAttribute('style', /scale\(1\.25\)/)
-  const alphaBox = await alphaImage.boundingBox()
-  if (!alphaBox) throw new Error('comparison image has no bounding box')
-  await page.mouse.move(
-    alphaBox.x + alphaBox.width / 2,
-    alphaBox.y + alphaBox.height / 2
-  )
-  await page.mouse.down()
-  await page.mouse.move(
-    alphaBox.x + alphaBox.width / 2 + 30,
-    alphaBox.y + alphaBox.height / 2 + 20
-  )
-  await page.mouse.up()
-  await expect(alphaImage).toHaveAttribute('style', /translate\(30px, 20px\)/)
-  await expect(betaImage).toHaveAttribute('style', /translate\(30px, 20px\)/)
-  const beta = comparison.getByRole('article', { name: 'group-beta.png' })
-  await beta.getByRole('button', { name: 'Use as cover' }).click()
-  await expect(beta.getByText('Cover', { exact: true })).toBeVisible()
-  await comparison.getByRole('button', { name: 'Close comparison' }).click()
-  await expect(comparison).toHaveCount(0)
-  await page.getByRole('button', { name: 'Compare', exact: true }).click()
-  await expect(comparison.getByText('100%')).toBeVisible()
-  await expect(
-    comparison.getByRole('img', { name: 'group-alpha.png' })
-  ).toHaveAttribute('style', /translate\(0px, 0px\) scale\(1\)/)
-  await comparison.getByRole('button', { name: 'Close comparison' }).click()
-
-  await ctrlDrag(page, imageNodes(page).first(), group)
-  await expect(page.locator('.react-flow__edge')).toHaveCount(2)
-
-  const loose = await nodeBox(imageNodes(page).first())
-  const setBox = await nodeBox(group)
-  await page.mouse.move(loose.x + 30, loose.y + 30)
-  await page.mouse.down()
-  await page.mouse.move(setBox.x + 40, setBox.y + 40, { steps: 8 })
-  await expect(page.getByRole('status')).toHaveText(
-    'Release to add or move into this set'
-  )
-  await expect(group).toHaveClass(/ring-green-500/)
-  await page.mouse.up()
-  await expect(imageNodes(page)).toHaveCount(0)
-  await expect(group).toContainText('Pair · 3')
-
-  const before = await nodeBox(group)
-  await dragBy(page, group, 120, 70)
-  await expect
-    .poll(async () => (await nodeBox(group)).x)
-    .toBeGreaterThan(before.x + 60)
-  const moved = await nodeBox(group)
-
-  await page.reload()
-  group = page.locator('.react-flow__node-group')
-  await expect(group).toHaveCount(1)
-  const persisted = await nodeBox(group)
-  expect(Math.abs(persisted.x - moved.x)).toBeLessThan(15)
-  expect(Math.abs(persisted.y - moved.y)).toBeLessThan(15)
-
-  await group.dblclick()
-  await expect(imageNodes(page)).toHaveCount(3)
-  await page.locator('.react-flow__pane').click({ position: { x: 10, y: 10 } })
-  await expect(page.locator('.react-flow__node-group')).toHaveCount(1)
-
-  group = page.locator('.react-flow__node-group')
-  await group.click()
-  await page.getByTestId('toggle-inspector-shelf').click()
-  await page.getByRole('button', { name: 'Dissolve set' }).click()
-  await expect(page.locator('.react-flow__node-group')).toHaveCount(0)
-  await expect(imageNodes(page)).toHaveCount(3)
-  await expect(page.locator('.react-flow__edge')).toHaveCount(2)
-})
-
-test('dragging an unplaced Assets item onto a set places it and adds membership', async ({
-  page,
-}) => {
-  await openFixtureRepo(page, 'group-drop-fixtures')
-  await placeAssets(page, ['group-alpha.png', 'group-beta.png'])
-  await autoArrangeCanvas(page)
-  await page.keyboard.press('ControlOrMeta+0')
-  await selectImageNodes(page, [0, 1])
-  await page.getByTestId('dock-create-set').click()
-
-  const group = page.locator('.react-flow__node-group')
-  await expect(group).toHaveCount(1)
-  await expect(imageNodes(page)).toHaveCount(0)
-
-  await openAssetsShelf(page)
-  await asset(page, 'group-gamma.png').dragTo(group)
-  await expect(group).toContainText('3')
-  await expect(imageNodes(page)).toHaveCount(0)
-
-  await group.dblclick()
-  await expect(imageNodes(page)).toHaveCount(3)
-})
 
 test('node resize and movement persist while Space drag pans instead of moving nodes', async ({
   page,
@@ -200,43 +67,24 @@ test('node resize and movement persist while Space drag pans instead of moving n
   await expect(viewport).not.toHaveAttribute('style', viewportTransform ?? '')
 })
 
-test('set shortcut and undo/redo work without stealing text-input undo', async ({
-  page,
-}) => {
+test('text-input undo does not undo canvas changes', async ({ page }) => {
   await openFixtureRepo(page, 'shortcut-fixtures')
-  await placeAssets(page, ['shortcut-alpha.png'])
-  await imageNodes(page).first().click()
-  await page.getByTestId('open-command-palette').click()
-  const paletteSearch = page.getByRole('combobox', { name: 'Search commands' })
-  await paletteSearch.fill('Create set')
-  await expect(
-    page.getByRole('option', { name: /Select at least two ungrouped/ })
-  ).toHaveCount(0)
-  await page.keyboard.press('Escape')
-
-  await dropAsset(page, 'shortcut-beta.png', { x: 360, y: 180 })
-  await expect(imageNodes(page)).toHaveCount(2)
+  await placeAssets(page, ['shortcut-alpha.png', 'shortcut-beta.png'])
   await autoArrangeCanvas(page)
-  await page.keyboard.press('ControlOrMeta+0')
-  await selectImageNodes(page, [0, 1])
-  await expect(page.getByTestId('dock-create-set')).toBeEnabled()
-
-  await page.keyboard.press('Control+g')
-  await expect(page.locator('.react-flow__node-group')).toHaveCount(1)
-  await expect(imageNodes(page)).toHaveCount(0)
-
-  await page.keyboard.press('Control+z')
-  await expect(page.locator('.react-flow__node-group')).toHaveCount(0)
-  await expect(imageNodes(page)).toHaveCount(2)
-
-  await page.keyboard.press('Control+y')
-  await expect(page.locator('.react-flow__node-group')).toHaveCount(1)
-
+  const positions = () =>
+    imageNodes(page).evaluateAll((nodes) =>
+      nodes.map((node) => (node as HTMLElement).style.transform)
+    )
+  const arranged = await positions()
   await openAssetsShelf(page)
   const search = page.getByRole('textbox', { name: 'Search assets' })
-  await search.fill('shortcut')
-  await search.press('Control+z')
-  await expect(page.locator('.react-flow__node-group')).toHaveCount(1)
+  await search.pressSequentially('shortcut')
+  await search.press('ControlOrMeta+z')
+  await expect(search).not.toHaveValue('shortcut')
+  await expect(imageNodes(page)).toHaveCount(2)
+  expect(await positions()).toEqual(arranged)
+  await page.reload()
+  await expect(imageNodes(page)).toHaveCount(2)
 })
 
 test('file drop and canvas clipboard paste create placed assets and errors are dismissible', async ({

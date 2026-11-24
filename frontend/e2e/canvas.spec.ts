@@ -6,7 +6,6 @@ import {
   autoArrangeCanvas,
   imageNodes as canvasNodes,
   dropAsset,
-  dropAssetRow,
   openFixtureRepo as open,
   openAssetsShelf,
 } from './test-helpers'
@@ -22,7 +21,7 @@ async function nodePosition(node: ReturnType<Page['locator']>) {
   if (!match) throw new Error(`missing node transform: ${transform}`)
   return { x: Number(match[1]), y: Number(match[2]) }
 }
-test('Assets selection, placement, unplace, trash and viewport persistence', async ({
+test('Assets selection, placement, trash and viewport persistence', async ({
   page,
 }) => {
   await open(page, 'canvas-fixtures')
@@ -68,9 +67,10 @@ test('Assets selection, placement, unplace, trash and viewport persistence', asy
     /scale\(1\)/
   )
   await autoArrangeCanvas(page)
-  // Unplacement remains an explicit action; Delete no longer unplaces images.
-  await page.getByTestId('dock-unplace').click()
-  await expect(page.locator('.react-flow__node')).toHaveCount(0)
+  await expect(page.getByTestId('dock-unplace')).toHaveCount(0)
+  await page.keyboard.press('Delete')
+  await expect(page.locator('.react-flow__node')).toHaveCount(2)
+  await openAssetsShelf(page)
   await expect(rows).toHaveCount(2)
   await rows.first().click()
   await page.keyboard.press('Delete')
@@ -80,7 +80,6 @@ test('Assets selection, placement, unplace, trash and viewport persistence', asy
   await expect(assetTrashDialog).toBeVisible()
   await assetTrashDialog.getByRole('button', { name: 'Move to trash' }).click()
   await expect(rows).toHaveCount(1)
-  await dropAssetRow(page, rows.first(), { x: 90, y: 90 })
   await expect(page.locator('.react-flow__node')).toHaveCount(1)
   const viewport = page.locator('.react-flow__viewport')
   const viewportSaved = page.waitForResponse(
@@ -187,32 +186,13 @@ test('canvas context menus and auto-arrange preserve the canvas origin', async (
   ).toBeVisible()
   await expect(
     nodeMenu.getByRole('menuitem', { name: 'Remove from canvas', exact: true })
-  ).toBeVisible()
-  await nodeMenu
-    .getByRole('menuitem', { name: 'Remove from canvas', exact: true })
-    .click()
-  await expect(nodes).toHaveCount(1)
-  await page.getByTestId('toggle-inspector-shelf').click()
+  ).toHaveCount(0)
   await expect(
-    page.getByRole('heading', { name: 'No Selection', exact: true })
+    nodeMenu.getByRole('menuitem', { name: 'Archive' })
   ).toBeVisible()
-  await page.getByTestId('toggle-inspector-shelf').click()
+  await page.keyboard.press('Escape')
   await openAssetsShelf(page)
   await expect(assets(page)).toHaveCount(2)
-
-  await nodes.first().click({ button: 'right' })
-  await page.getByRole('menu').getByRole('menuitem', { name: 'Trash' }).click()
-  const trashDialog = page.getByRole('dialog', {
-    name: 'Move 1 asset to trash?',
-  })
-  await expect(trashDialog).toBeVisible()
-  await trashDialog.getByRole('button', { name: 'Move to trash' }).click()
-  await expect(nodes).toHaveCount(0)
-  await expect(assets(page)).toHaveCount(1)
-  await page.getByTestId('toggle-inspector-shelf').click()
-  await expect(
-    page.getByRole('heading', { name: 'No Selection', exact: true })
-  ).toBeVisible()
 })
 
 test('explicit relationship gesture, navigation, and individual selection', async ({

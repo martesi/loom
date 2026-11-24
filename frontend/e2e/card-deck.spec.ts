@@ -5,7 +5,6 @@ import {
   nodeBox,
   openFixtureRepo,
   placeAssets,
-  selectImageNodes,
 } from './test-helpers'
 
 function parseRgb(color: string): [number, number, number] {
@@ -65,7 +64,7 @@ function expectColorToken(actual: string, token: string) {
   )
 }
 
-test.describe('Physical Card & Set Stack Metaphors, Studio Palette', () => {
+test.describe('Physical Cards and Studio Palette', () => {
   test('ImageNode renders with rounded-lg, multi-tier ambient shadow, hairline border, and selection ring', async ({
     page,
   }) => {
@@ -219,92 +218,6 @@ test.describe('Physical Card & Set Stack Metaphors, Studio Palette', () => {
     }
   })
 
-  test('GroupNode renders physical tactile deck offset cards and frosted count pill badge', async ({
-    page,
-  }) => {
-    await openFixtureRepo(page, 'deck-group-fixtures')
-    await placeAssets(page, [
-      'group-alpha.png',
-      'group-beta.png',
-      'group-gamma.png',
-    ])
-    await autoArrangeCanvas(page)
-    await page.keyboard.press('ControlOrMeta+0')
-
-    await selectImageNodes(page, [0, 1])
-    await page.getByTestId('dock-create-set').click()
-
-    const group = page.locator('.react-flow__node-group')
-    await expect(group).toHaveCount(1)
-
-    // Tactile bottom card layer
-    const bottom = group.getByTestId('group-deck-bottom')
-    await expect(bottom).toBeVisible()
-    await expect(bottom).toHaveClass(/-rotate-2/)
-    await expect(bottom).toHaveClass(/-translate-x-1/)
-    await expect(bottom).toHaveClass(/translate-y-1/)
-    await expect(bottom).toHaveClass(/bg-card\/60/)
-    await expect(bottom).toHaveClass(/rounded-lg/)
-
-    // Tactile middle card layer
-    const middle = group.getByTestId('group-deck-middle')
-    await expect(middle).toBeVisible()
-    await expect(middle).toHaveClass(/rotate-2/)
-    await expect(middle).toHaveClass(/translate-x-1/)
-    await expect(middle).toHaveClass(/translate-y-0\.5/)
-    await expect(middle).toHaveClass(/bg-card\/80/)
-    await expect(middle).toHaveClass(/rounded-lg/)
-
-    // Top cover card layer
-    const top = group.getByTestId('group-deck-top')
-    await expect(top).toBeVisible()
-    await expect(top).toHaveClass(/rounded-lg/)
-    await expect(top).toHaveClass(/bg-card/)
-    await expect(top).toHaveClass(/shadow-md/)
-
-    // Frosted glass count pill badge
-    const badge = group.getByTestId('group-count-badge')
-    await expect(badge).toBeVisible()
-    await expect(badge).toHaveText('Set · 2 assets')
-    await expect(badge).toHaveClass(/backdrop-blur-md/)
-    await expect(badge).toHaveClass(/text-white/)
-
-    // Ensure legacy hardcoded shadow was removed
-    await expect(group).not.toHaveClass(/shadow-\[5px_5px/)
-    await expect(top).not.toHaveClass(/shadow-\[5px_5px/)
-  })
-
-  test('double-clicking set stack expands member nodes and clicking pane collapses back to stack', async ({
-    page,
-  }) => {
-    await openFixtureRepo(page, 'deck-drop-fixtures')
-    await placeAssets(page, [
-      'group-alpha.png',
-      'group-beta.png',
-      'group-gamma.png',
-    ])
-    await autoArrangeCanvas(page)
-    await page.keyboard.press('ControlOrMeta+0')
-
-    await selectImageNodes(page, [0, 1])
-    await page.getByTestId('dock-create-set').click()
-
-    const group = page.locator('.react-flow__node-group')
-    await expect(group).toHaveCount(1)
-    await expect(imageNodes(page)).toHaveCount(1)
-
-    // Double-click set stack to expand member nodes
-    await group.dblclick()
-    await expect(imageNodes(page)).toHaveCount(3)
-
-    // Click canvas pane to collapse member nodes back to set stack
-    await page
-      .locator('.react-flow__pane')
-      .click({ position: { x: 10, y: 10 } })
-    await expect(page.locator('.react-flow__node-group')).toHaveCount(1)
-    await expect(imageNodes(page)).toHaveCount(1)
-  })
-
   test('WCAG 2.1 AA and AAA contrast compliance across Studio Obsidian and Editorial Stone themes', async ({
     page,
   }) => {
@@ -323,8 +236,12 @@ test.describe('Physical Card & Set Stack Metaphors, Studio Palette', () => {
     const source = imageNodes(page).nth(0)
     const derived = imageNodes(page).nth(1)
     await source.click()
-    await page.getByTestId('toggle-inspector-shelf').click()
-    await expect(page.getByText(/Ctrl\/Cmd-drag this image/)).toBeVisible()
+    if (
+      (await page
+        .locator('aside[aria-label="Inspector"]')
+        .getAttribute('data-state')) !== 'open'
+    )
+      await page.getByTestId('toggle-inspector-shelf').click()
     const sourceBox = await nodeBox(source)
     const derivedBox = await nodeBox(derived)
     await page.keyboard.down('Control')
