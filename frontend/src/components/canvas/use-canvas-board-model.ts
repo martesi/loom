@@ -6,6 +6,7 @@ import {
 } from '../../../bindings/loom/internal/service'
 import { renditionGenerationUrl } from '../../lib/preview-tier'
 import type { Selection } from '../../lib/selection'
+import { canvasProjectionGraph } from './canvas-projection-model'
 
 interface CanvasDropTarget {
   id: string
@@ -102,32 +103,19 @@ export function useCanvasBoardModel({
         (group.memberIds ?? []).map((id) => [id, `set-${group.id}`] as const)
       )
     )
-    const imageNodes: Node[] = placed
-      .filter((image) => !groupByImage.has(image.id))
-      .map((image) => ({
-        id: String(image.id),
-        type: 'image',
-        position: { x: image.canvasX, y: image.canvasY },
-        width: image.canvasW || 150,
-        height: image.canvasH || 110,
-        data: {
-          fileName: image.fileName,
-          thumbUrl: renditionGenerationUrl(image.thumbUrl, renditionGeneration),
-          previewUrl: image.previewUrl
-            ? renditionGenerationUrl(image.previewUrl, renditionGeneration)
-            : undefined,
-          missing: image.missing,
-          showFileName: true,
-          width: image.width,
-          height: image.height,
-          onResizeEnd: (x: number, y: number, width: number, height: number) =>
-            callbacks.current.run(async () => {
-              await ImageService.SetGeometry(repoPath, [
-                { imageId: image.id, x, y, w: width, h: height },
-              ])
-            }),
-        },
-      }))
+    const graph = canvasProjectionGraph(
+      { ...data, images: placed, relationships: [] },
+      renditionGeneration,
+      (imageId, x, y, w, h) =>
+        callbacks.current.run(async () => {
+          await ImageService.SetGeometry(repoPath, [{ imageId, x, y, w, h }])
+        })
+    )
+    const placedIds = new Set(placed.map((image) => image.id))
+    const imageNodes = graph.nodes.filter(
+      (node) =>
+        placedIds.has(Number(node.id)) && !groupByImage.has(Number(node.id))
+    )
     const groups: Node[] = collapsed.map((group) => {
       const members = placed.filter((image) =>
         (group.memberIds ?? []).includes(image.id)
@@ -159,7 +147,6 @@ export function useCanvasBoardModel({
         measured: measured.get(node.id),
       }))
     })
-    const placedIds = new Set(placed.map((image) => image.id))
     const nextEdges = (data.relationships ?? [])
       .filter(
         (relationship) =>
