@@ -87,10 +87,7 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
   let refreshChanged = new Promise<void>((resolve) => {
     signalRefresh = resolve
   })
-  let signalDisposal = () => {}
-  let disposed = new Promise<null>((resolve) => {
-    signalDisposal = () => resolve(null)
-  })
+  let lifetime = new AbortController()
   const listeners = new Set<() => void>()
   function refresh() {
     const request = loadBoard()
@@ -146,24 +143,31 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
     async applyHistory(result) {
       if (!active || !result.applied) return
       pendingHistory.push(result)
-      const lifetime = disposed
-      refresh()
+      const signal = lifetime.signal
+      // Disposal can stop reconciliation before it observes this request.
+      void refresh().catch(() => {})
       const reconcile = async () => {
-        while (active && pendingHistory.includes(result)) {
+        while (active && !signal.aborted && pendingHistory.includes(result)) {
           const request = latestRefresh
           if (!request) return
+          let notifyDisposal = () => {}
+          const disposed = new Promise<void>((resolve) => {
+            notifyDisposal = resolve
+            signal.addEventListener('abort', notifyDisposal, { once: true })
+          })
           const outcome = await Promise.race([
             request.then(
               () => ({ kind: 'settled' as const }),
               (error: unknown) => ({ kind: 'failed' as const, error })
             ),
             refreshChanged.then(() => ({ kind: 'superseded' as const })),
-            lifetime.then(() => ({ kind: 'disposed' as const })),
-          ])
+            disposed.then(() => ({ kind: 'disposed' as const })),
+          ]).finally(() => signal.removeEventListener('abort', notifyDisposal))
+          if (outcome.kind === 'disposed' || signal.aborted) return
           if (!active || !pendingHistory.includes(result)) return
           if (request !== latestRefresh) continue
           if (outcome.kind === 'failed') throw outcome.error
-          if (outcome.kind === 'settled' || outcome.kind === 'disposed') return
+          if (outcome.kind === 'settled') return
         }
       }
       await reconcile().catch((error: unknown) => {
@@ -315,7 +319,7 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
     },
     dispose() {
       active = false
-      signalDisposal()
+      lifetime.abort()
       generation++
       pendingHistory = []
       readyHistory = []
@@ -324,9 +328,7 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
     },
     activate() {
       if (!active) {
-        disposed = new Promise<null>((resolve) => {
-          signalDisposal = () => resolve(null)
-        })
+        lifetime = new AbortController()
       }
       active = true
     },
