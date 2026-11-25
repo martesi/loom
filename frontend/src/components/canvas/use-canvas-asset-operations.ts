@@ -55,6 +55,7 @@ export function useCanvasAssetOperations({
   setError,
 }: Props) {
   const purgeOrigin = useRef<Selection['surface'] | null>(null)
+  const navigationActive = useRef(true)
   const navigation = useRef({ generation: 0, owner, repoPath, selection })
   const previous = navigation.current
   if (
@@ -70,26 +71,35 @@ export function useCanvasAssetOperations({
     }
   }
   useEffect(() => {
+    navigationActive.current = true
     return () => {
+      navigationActive.current = false
       navigation.current.generation++
     }
   }, [])
   async function go(id: number, folder = false) {
+    const isOwnerCurrent = () =>
+      navigationActive.current &&
+      navigation.current.owner === owner &&
+      navigation.current.repoPath === repoPath &&
+      owner.isActive?.() !== false
+    if (!isOwnerCurrent()) return
     const request = ++navigation.current.generation
     const modeRevision = owner.getModeRevision()
     const isCurrent = () =>
       navigation.current.generation === request &&
-      navigation.current.owner === owner &&
-      navigation.current.repoPath === repoPath &&
-      owner.isActive?.() !== false &&
+      isOwnerCurrent() &&
       owner.getModeRevision() === modeRevision
     const image = await ImageService.GetImage(repoPath, id)
     if (!isCurrent() || !image) return
     const mode = owner.getMode()
     const node = mode === 'legacy' ? undefined : flow.getNode(String(id))
+    if (!isCurrent()) return
     if (folder || (mode === 'legacy' ? !image.placed : !node)) {
       openAssets()
+      if (!isCurrent()) return
       selectAssets([id])
+      if (!isCurrent()) return
       setReveal({
         id,
         folder: folder
@@ -103,7 +113,11 @@ export function useCanvasAssetOperations({
       return
     }
     setExpanded(null)
+    if (!isCurrent()) return
     setSelection({ surface: 'canvas', ids: [id], edges: [], group: null })
+    if (!isCurrent()) return
+    const zoom = flow.getZoom()
+    if (!isCurrent()) return
     await flow.setCenter(
       node
         ? node.position.x + (node.measured?.width ?? node.width ?? 150) / 2
@@ -112,7 +126,7 @@ export function useCanvasAssetOperations({
         ? node.position.y + (node.measured?.height ?? node.height ?? 110) / 2
         : image.canvasY + 55,
       {
-        zoom: flow.getZoom(),
+        zoom,
       }
     )
   }

@@ -3,7 +3,10 @@ import { act, cleanup, renderHook } from '@testing-library/react'
 import { useState } from 'react'
 import { ImageService } from '../../../bindings/loom/internal/service'
 import { emptySelection } from '../../lib/selection'
-import { useCanvasBoardOwner } from './canvas-board-owner'
+import {
+  createCanvasBoardOwner,
+  useCanvasBoardOwner,
+} from './canvas-board-owner'
 import { useCanvasAssetOperations } from './use-canvas-asset-operations'
 
 afterEach(() => {
@@ -51,6 +54,150 @@ it('does not let an older navigation replace a newer selection or viewport', asy
   expect(setCenter).toHaveBeenCalledTimes(1)
   expect(setCenter).toHaveBeenCalledWith(275, 55, { zoom: 1 })
 })
+
+it('ignores a retained repository callback without interrupting current navigation', async () => {
+  let resolveImage: (value: never) => void = () => {}
+  const getImage = spyOn(ImageService, 'GetImage').mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        resolveImage = resolve
+      })
+  )
+  const setCenter = mock(async () => true)
+  const hook = renderHook(
+    ({ path }) => {
+      const owner = useCanvasBoardOwner(path)
+      const [selection, setSelection] = useState(emptySelection)
+      const operations = useCanvasAssetOperations({
+        owner,
+        repoPath: path,
+        selection,
+        setSelection,
+        flow: { getNode: () => undefined, getZoom: () => 1, setCenter },
+        setExpanded: mock(),
+        openAssets: mock(),
+        selectAssets: mock(),
+        setReveal: mock(),
+      } as unknown as Parameters<typeof useCanvasAssetOperations>[0])
+      return { operations, selection }
+    },
+    { initialProps: { path: '/a' } }
+  )
+  const retainedGo = hook.result.current.operations.go
+  hook.rerender({ path: '/b' })
+  const currentRequest = hook.result.current.operations.go(2)
+  // The palette schedules its captured callback for a later animation frame.
+  const staleRequest = retainedGo(1)
+  expect(getImage).toHaveBeenCalledTimes(1)
+  expect(getImage).toHaveBeenCalledWith('/b', 2)
+  await staleRequest
+  await act(async () => {
+    resolveImage({ id: 2, placed: true, canvasX: 200, canvasY: 0 } as never)
+    await currentRequest
+  })
+  expect(hook.result.current.selection.ids).toEqual([2])
+  expect(setCenter).toHaveBeenCalledWith(275, 55, { zoom: 1 })
+})
+
+it('does not start navigation from a retained callback after unmount', async () => {
+  const getImage = spyOn(ImageService, 'GetImage').mockResolvedValue(
+    null as never
+  )
+  const hook = renderHook(() => {
+    const owner = useCanvasBoardOwner('/repo')
+    return useCanvasAssetOperations({
+      owner,
+      repoPath: '/repo',
+      selection: emptySelection,
+    } as unknown as Parameters<typeof useCanvasAssetOperations>[0])
+  })
+  const retainedGo = hook.result.current.go
+  hook.unmount()
+  await retainedGo(1)
+  expect(getImage).not.toHaveBeenCalled()
+})
+
+it('rejects a replaced or inactive owner even when the repository path is unchanged', async () => {
+  let resolveImage: (value: never) => void = () => {}
+  const getImage = spyOn(ImageService, 'GetImage').mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        resolveImage = resolve
+      })
+  )
+  const first = createCanvasBoardOwner('/repo')
+  const second = createCanvasBoardOwner('/repo')
+  const setCenter = mock(async () => true)
+  const hook = renderHook(
+    ({ owner }) => {
+      const [selection, setSelection] = useState(emptySelection)
+      const operations = useCanvasAssetOperations({
+        owner,
+        repoPath: '/repo',
+        selection,
+        setSelection,
+        flow: { getNode: () => undefined, getZoom: () => 1, setCenter },
+        setExpanded: mock(),
+        openAssets: mock(),
+        selectAssets: mock(),
+        setReveal: mock(),
+      } as unknown as Parameters<typeof useCanvasAssetOperations>[0])
+      return { operations, selection }
+    },
+    { initialProps: { owner: first } }
+  )
+  const retainedGo = hook.result.current.operations.go
+  hook.rerender({ owner: second })
+  const currentRequest = hook.result.current.operations.go(2)
+  await retainedGo(1)
+  expect(getImage).toHaveBeenCalledTimes(1)
+  await act(async () => {
+    resolveImage({ id: 2, placed: true, canvasX: 200, canvasY: 0 } as never)
+    await currentRequest
+  })
+  expect(hook.result.current.selection.ids).toEqual([2])
+  expect(setCenter).toHaveBeenCalledWith(275, 55, { zoom: 1 })
+  second.dispose()
+  await hook.result.current.operations.go(3)
+  expect(getImage).toHaveBeenCalledTimes(1)
+})
+
+for (const target of ['canvas', 'assets'] as const) {
+  it(`stops ${target} navigation when a side effect changes the mode`, async () => {
+    spyOn(ImageService, 'GetImage').mockResolvedValue({
+      id: 1,
+      placed: target === 'canvas',
+      canvasX: 10,
+      canvasY: 20,
+      filePath: '/repo/1.png',
+    } as never)
+    const setCenter = mock(async () => true)
+    const selectAssets = mock()
+    const setReveal = mock()
+    const hook = renderHook(() => {
+      const owner = useCanvasBoardOwner('/repo')
+      const [selection, setSelection] = useState(emptySelection)
+      const changeMode = () => owner.setMode('view')
+      const operations = useCanvasAssetOperations({
+        owner,
+        repoPath: '/repo',
+        selection,
+        setSelection,
+        flow: { getNode: () => undefined, getZoom: () => 1, setCenter },
+        setExpanded: changeMode,
+        openAssets: changeMode,
+        selectAssets,
+        setReveal,
+      } as unknown as Parameters<typeof useCanvasAssetOperations>[0])
+      return { operations, selection }
+    })
+    await act(async () => hook.result.current.operations.go(1))
+    expect(hook.result.current.selection.ids).toEqual([])
+    expect(setCenter).not.toHaveBeenCalled()
+    expect(selectAssets).not.toHaveBeenCalled()
+    expect(setReveal).not.toHaveBeenCalled()
+  })
+}
 
 for (const interruption of [
   'selection',
