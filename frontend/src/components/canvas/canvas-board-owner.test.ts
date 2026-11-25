@@ -122,7 +122,7 @@ function useBoard(repoPath: string) {
     target: null,
     host,
   })
-  const undo = useUndoActions(repoPath, repository.reload, owner)
+  const undo = useUndoActions(repoPath, owner.applyHistory, owner)
   return { owner, repository, nodes, undo, error }
 }
 

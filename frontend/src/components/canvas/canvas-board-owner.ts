@@ -4,6 +4,7 @@ import {
   type GeometryUpdate,
   ImageService,
   type LayoutSnapshot,
+  type UndoResult,
 } from '../../../bindings/loom/internal/service'
 import { buildDisplayGeometry } from './canvas-projection-geometry'
 
@@ -27,6 +28,7 @@ export interface DragGesture {
 export interface CanvasBoardExecutor {
   execute<T>(action: () => Promise<T>): Promise<T>
   cancelGesture?(): void
+  isActive?(): boolean
 }
 
 export interface AcceptedCanvasBoard {
@@ -36,6 +38,8 @@ export interface AcceptedCanvasBoard {
 
 export interface CanvasBoardOwner extends CanvasBoardExecutor {
   refresh(): Promise<AcceptedCanvasBoard | null>
+  applyHistory(result: UndoResult): Promise<void>
+  takeHistory(): UndoResult[]
   getSnapshot(): AcceptedCanvasBoard | null
   beginResize(
     board: AcceptedCanvasBoard | null,
@@ -76,7 +80,28 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
   let accepted: AcceptedCanvasBoard | null = null
   let acceptedGeneration = -1
   let gesture: ResizeGesture | DragGesture | null = null
+  let pendingHistory: UndoResult[] = []
+  let readyHistory: UndoResult[] = []
   const listeners = new Set<() => void>()
+  async function refresh() {
+    if (!active) return null
+    const request = ++generation
+    owner.cancelGesture()
+    const isCurrent = () => active && request === generation
+    const metadata = await ImageService.LoadCanvas(repoPath)
+    if (!isCurrent()) return null
+    if (!metadata) throw new Error('Canvas metadata is unavailable')
+    const snapshot = await ImageService.GetLayoutSnapshot(repoPath)
+    if (!isCurrent()) return null
+    if (!snapshot) throw new Error('Canvas layout snapshot is unavailable')
+    const data = joinSnapshot(metadata, snapshot)
+    readyHistory.push(...pendingHistory)
+    pendingHistory = []
+    accepted = { snapshot, data }
+    acceptedGeneration = generation
+    for (const listener of listeners) listener()
+    return accepted
+  }
   const owner: CanvasBoardOwner = {
     execute<T>(action: () => Promise<T>): Promise<T> {
       // Queue outer operations only: awaiting a nested execute would deadlock.
@@ -87,23 +112,18 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
       )
       return result
     },
-    async refresh() {
-      if (!active) return null
-      const request = ++generation
-      owner.cancelGesture()
-      const isCurrent = () => active && request === generation
-      const metadata = await ImageService.LoadCanvas(repoPath)
-      if (!isCurrent()) return null
-      if (!metadata) throw new Error('Canvas metadata is unavailable')
-      const snapshot = await ImageService.GetLayoutSnapshot(repoPath)
-      if (!isCurrent()) return null
-      if (!snapshot) throw new Error('Canvas layout snapshot is unavailable')
-      const data = joinSnapshot(metadata, snapshot)
-      accepted = { snapshot, data }
-      acceptedGeneration = generation
-      for (const listener of listeners) listener()
-      return accepted
+    refresh,
+    async applyHistory(result) {
+      if (!active || !result.applied) return
+      pendingHistory.push(result)
+      await refresh()
     },
+    takeHistory() {
+      const ready = readyHistory
+      readyHistory = []
+      return ready
+    },
+    isActive: () => active,
     getSnapshot: () => accepted,
     beginResize(board, before) {
       if (
@@ -243,6 +263,8 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
     dispose() {
       active = false
       generation++
+      pendingHistory = []
+      readyHistory = []
       owner.cancelGesture()
       listeners.clear()
     },

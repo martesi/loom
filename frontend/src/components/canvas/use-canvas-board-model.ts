@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CanvasData } from '../../../bindings/loom/internal/service'
 import type { Selection } from '../../lib/selection'
 import type { CanvasBoardOwner, ResizeGesture } from './canvas-board-owner'
+import { applyHistoryToNodes } from './canvas-projection-geometry'
 import { canvasProjectionGraph } from './canvas-projection-model'
 
 interface CanvasDropTarget {
@@ -53,6 +54,7 @@ export function useCanvasBoardModel({
 
   useEffect(() => {
     const board = owner.getSnapshot()
+    if (board && board.data !== data) return
     const activeGestures = new Map<number, ResizeGesture>()
     let rendererActive = true
     const placed = (data.images ?? []).filter(
@@ -86,13 +88,52 @@ export function useCanvasBoardModel({
             .catch(callbacks.current.report)
       }
     )
+    const history = owner.takeHistory()
     // React Flow needs the measurements to keep edges mounted across reloads.
     setNodes((previous) => {
-      const measured = new Map(previous.map((node) => [node.id, node.measured]))
-      return graph.nodes.map((node) => ({
-        ...node,
-        measured: measured.get(node.id),
-      }))
+      const old = new Map(previous.map((node) => [node.id, node]))
+      const initial: Node[] = graph.nodes.map((node) => {
+        const prior = old.get(node.id)
+        return history.length && prior
+          ? {
+              ...node,
+              position: prior.position,
+              width: prior.width,
+              height: prior.height,
+              measured: prior.measured,
+            }
+          : { ...node, measured: prior?.measured }
+      })
+      return history.reduce<Node[]>(
+        (current, result) =>
+          applyHistoryToNodes(current, result, (items, geometry) => {
+            const byId = new Map(
+              geometry.map((item) => [String(item.imageId), item])
+            )
+            const defaults = new Map(graph.nodes.map((node) => [node.id, node]))
+            return items.map((node) => {
+              const item = byId.get(node.id)
+              const fallback = defaults.get(node.id)
+              if (!item || !fallback) return node
+              const width = item.w ?? fallback.width
+              const height = item.h ?? fallback.height
+              return {
+                ...node,
+                position:
+                  item.x === null || item.y === null
+                    ? fallback.position
+                    : { x: item.x, y: item.y },
+                width,
+                height,
+                measured:
+                  width === undefined || height === undefined
+                    ? undefined
+                    : { width, height },
+              }
+            })
+          }),
+        initial
+      )
     })
     const nextEdges = graph.edges
     const focused = document.activeElement

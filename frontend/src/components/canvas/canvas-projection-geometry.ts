@@ -80,9 +80,23 @@ export function applyProjectionUndo(
     expectedGeometry: replaceGeometry(state.expectedGeometry, geometry),
     editNodes:
       state.mode === 'edit'
-        ? resolve(state.editNodes, geometry)
+        ? applyHistoryToNodes(state.editNodes, result, resolve)
         : state.editNodes,
   }
+}
+
+/** Apply the complete replay batch, never a diff against current display nodes. */
+export function applyHistoryToNodes(
+  nodes: readonly Node[],
+  result: UndoResult,
+  resolve: (
+    nodes: readonly Node[],
+    geometry: readonly GeometryUpdate[]
+  ) => Node[]
+): Node[] {
+  return result.applied && result.geometry?.length
+    ? resolve(nodes, result.geometry)
+    : [...nodes]
 }
 
 function replaceGeometry(

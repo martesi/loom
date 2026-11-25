@@ -1,21 +1,25 @@
 import { t } from '@lingui/core/macro'
-import { UndoService } from '../../bindings/loom/internal/service'
+import {
+  type UndoResult,
+  UndoService,
+} from '../../bindings/loom/internal/service'
 import type { CanvasBoardExecutor } from '../components/canvas/canvas-board-owner'
 import { useToast } from '../components/ui/toast'
 
 // Failed inverses of hard-purge operations surface their reason through the app toast.
 export function useUndoActions(
   repoPath: string,
-  onChange: () => void | Promise<void>,
+  onChange: (result: UndoResult) => void | Promise<void>,
   executor?: CanvasBoardExecutor
 ) {
   const toast = useToast()
 
   async function run(redo: boolean) {
+    if (executor?.isActive && !executor.isActive()) return
     const result = redo
       ? await UndoService.Redo(repoPath)
       : await UndoService.Undo(repoPath)
-    if (!result) return
+    if (!result || (executor?.isActive && !executor.isActive())) return
     if (result.error) {
       toast.add({
         title: redo ? t`Couldn't redo` : t`Couldn't undo`,
@@ -24,7 +28,7 @@ export function useUndoActions(
       })
       return
     }
-    if (result.applied) await onChange()
+    if (result.applied) await onChange(result)
   }
 
   function enqueue(redo: boolean) {
