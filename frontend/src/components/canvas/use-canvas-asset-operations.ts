@@ -3,7 +3,7 @@ import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import { useEffect, useRef } from 'react'
 import { ImageService } from '../../../bindings/loom/internal/service'
 import { readMedia } from '../../lib/clipboard'
-import type { Selection } from '../../lib/selection'
+import { type Selection, sameSelection } from '../../lib/selection'
 import type { CanvasBoardOwner } from './canvas-board-owner'
 import type { RevealRequest } from './use-canvas-workspace-state'
 
@@ -269,17 +269,4 @@ export function useCanvasAssetOperations({
     finishTrash,
     confirmPurge,
   }
-}
-
-function sameSelection(a: Selection, b: Selection) {
-  if (a === b) return true
-  if (!a || !b) return false
-  return (
-    a.surface === b.surface &&
-    a.group === b.group &&
-    a.ids.length === b.ids.length &&
-    a.edges.length === b.edges.length &&
-    a.ids.every((id, index) => id === b.ids[index]) &&
-    a.edges.every((id, index) => id === b.edges[index])
-  )
 }

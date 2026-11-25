@@ -3,6 +3,7 @@ import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { LibraryService } from '../../../bindings/loom/internal/service'
 import type { CanvasAction } from '../../lib/action-catalog'
+import { sameSelection } from '../../lib/selection'
 import {
   readShortcutOverrides,
   shortcutOverridesEvent,
@@ -52,6 +53,11 @@ export function useCanvasActionSystem({
   const [shortcutOverrides, setShortcutOverrides] = useState(
     readShortcutOverrides
   )
+  const paletteIntent = useRef({ selection: context.selection, revision: 0 })
+  if (!sameSelection(paletteIntent.current.selection, context.selection)) {
+    paletteIntent.current.selection = context.selection
+    paletteIntent.current.revision++
+  }
   useEffect(() => {
     const sync = () => setShortcutOverrides(readShortcutOverrides())
     window.addEventListener(shortcutOverridesEvent, sync)
@@ -221,8 +227,12 @@ export function useCanvasActionSystem({
   }
 
   function choosePaletteAsset(asset: PaletteAsset) {
+    const revision = ++paletteIntent.current.revision
     setPaletteOpen(false)
-    requestAnimationFrame(() => void context.go(asset.id).catch(report))
+    requestAnimationFrame(() => {
+      if (paletteIntent.current.revision !== revision) return
+      void context.go(asset.id).catch(report)
+    })
   }
 
   // Retry changes this request token to rerun the repository asset query.
