@@ -1,6 +1,12 @@
 import { afterEach, expect, it, mock } from 'bun:test'
-import { act, cleanup, renderHook } from '@testing-library/react'
-import { useRef, useState } from 'react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  renderHook,
+} from '@testing-library/react'
+import { createElement, useRef, useState } from 'react'
 import type { CanvasActionsContext } from '../../routes/canvas-actions-context'
 import { createCanvasBoardOwner } from './canvas-board-owner'
 import {
@@ -21,6 +27,7 @@ mock.module('@lingui/core/macro', () => ({
     ),
 }))
 const { useCanvasActionSystem } = await import('./use-canvas-action-system')
+const { CanvasDock } = await import('./canvas-dock')
 
 const expectedCapabilities: Record<
   Exclude<CanvasCapability, 'canvas-drop'>,
@@ -104,8 +111,9 @@ it('rechecks the current mode when a previously enabled action reaches the queue
   const context = {
     owner,
     repoPath: '/repo',
-    displayNodes: [{ id: '1' }],
-    selectedCanvasNodeIds: [],
+    displayNodes: [{ id: '1' }, { id: '2' }, { id: '3' }],
+    selectedCanvasNodeIds: ['1', '2'],
+    canArrangeSelection: true,
     selectedIds: () => [],
     selectedImageRecords: [],
     relationshipActions: [],
@@ -138,6 +146,40 @@ it('rechecks the current mode when a previously enabled action reaches the queue
     })
   })
   const action = result.current.actionById.get('auto-arrange-active')
+  const selectionAction = result.current.actionById.get(
+    'auto-arrange-selection'
+  )
+  if (!selectionAction) throw new Error('missing selection action')
+  expect(selectionAction.enabled).toBe(false)
+  const dock = render(
+    createElement(CanvasDock, {
+      mode: 'multiple',
+      selectionCount: 2,
+      canFitAll: true,
+      canFitSelection: true,
+      canAutoArrange: true,
+      canArrangeSelection: selectionAction.enabled,
+      shortcuts: {
+        fitAll: '',
+        fitSelection: '',
+        resetZoom: '',
+        autoArrange: '',
+        inspect: '',
+        unplace: '',
+      },
+      onAction: result.current.runDockAction,
+    })
+  )
+  const selectionButton = dock.getByTestId(
+    'dock-arrange-selection'
+  ) as HTMLButtonElement
+  expect(selectionButton.disabled).toBe(true)
+  await act(async () => {
+    fireEvent.click(selectionButton)
+    await result.current.executeAction(selectionAction)
+    result.current.runDockAction('auto-arrange-selection')
+  })
+  expect(arrange).not.toHaveBeenCalled()
   const expected = new Map(
     Object.entries(expectedCapabilities).flatMap(([capability, ids]) =>
       ids.map((id) => [id, capability] as const)
@@ -151,8 +193,9 @@ it('rechecks the current mode when a previously enabled action reaches the queue
     expect(canvasActionCapability(id)).toBe(capability)
     for (const mode of ['legacy', 'view', 'edit'] as const)
       expect(allowsCanvasAction(mode, id)).toBe(
-        mode !== 'view' ||
-          (capability !== 'geometry' && capability !== 'relationship')
+        !(mode === 'edit' && id === 'auto-arrange-selection') &&
+          (mode !== 'view' ||
+            (capability !== 'geometry' && capability !== 'relationship'))
       )
   }
   if (!action) throw new Error('missing arrange action')

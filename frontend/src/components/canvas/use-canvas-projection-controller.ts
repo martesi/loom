@@ -98,6 +98,7 @@ export function useCanvasProjectionController(props: Props) {
     if (owner.getMode() !== 'edit') return
     const input = source.current
     const previous = state.current
+    const active = lifetime.current
     if (!input || !previous || owner.getSnapshot() !== input.board)
       throw new Error('Canvas snapshot is not ready for arrangement')
     const before = capture(previous)
@@ -113,7 +114,29 @@ export function useCanvasProjectionController(props: Props) {
       input.board,
       geometry(before.editNodes),
       geometry(next.editNodes),
-      () => publish(next)
+      () => {
+        const latest = state.current
+        if (
+          !active ||
+          lifetime.current !== active ||
+          !latest ||
+          latest.mode !== 'edit'
+        )
+          return
+        const positions = new Map(
+          next.editNodes.map((node) => [node.id, node.position])
+        )
+        const currentEdit = capture(latest)
+        publish(
+          setEditNodes(
+            currentEdit,
+            currentEdit.editNodes.map((node) => {
+              const position = positions.get(node.id)
+              return position ? { ...node, position } : node
+            })
+          )
+        )
+      }
     )
   }
   async function transitionMode(target: 'view' | 'edit') {

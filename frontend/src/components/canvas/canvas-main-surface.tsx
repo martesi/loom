@@ -432,6 +432,9 @@ export function CanvasMainSurface(props: Props) {
               : displayNodes.length >= 2 || selectedCanvasNodeIds.length > 1)
           }
           canMutateGeometry={mode !== 'view'}
+          canArrangeSelection={
+            actionById.get('auto-arrange-selection')?.enabled ?? false
+          }
           shortcuts={{
             fitAll: actionById.get('fit-all')?.shortcut ?? '',
             fitSelection: actionById.get('fit-selection')?.shortcut ?? '',

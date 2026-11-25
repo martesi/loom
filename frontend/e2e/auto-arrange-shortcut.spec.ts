@@ -13,6 +13,31 @@ async function positions(nodes: Locator) {
   )
 }
 
+test('dock subgraph arrangement leaves unselected items in place', async ({
+  page,
+}, testInfo) => {
+  await openFixtureRepo(page, 'dock-arrange-fixtures', { drawers: 'closed' })
+  await placeAssets(page, [
+    'arrange-alpha.png',
+    'arrange-beta.png',
+    'arrange-gamma.png',
+  ])
+  await selectImageNodes(page, [0, 1])
+  const nodes = imageNodes(page)
+  const before = await positions(nodes)
+  const button = page.getByTestId('dock-arrange-selection')
+  await expect(button).toBeEnabled()
+  await testInfo.attach('arrange-selection-dock', {
+    body: await page.screenshot(),
+    contentType: 'image/png',
+  })
+  await button.click()
+  await expect
+    .poll(async () => (await positions(nodes)).slice(0, 2))
+    .not.toEqual(before.slice(0, 2))
+  expect((await positions(nodes))[2]).toBe(before[2])
+})
+
 test('auto-arrange can be rebound, executed, persisted, and reset', async ({
   page,
 }, testInfo) => {

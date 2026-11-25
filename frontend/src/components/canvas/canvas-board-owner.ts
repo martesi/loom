@@ -344,7 +344,6 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
         after
       )
       if (!batch.changed) return
-      const revisionGeneration = generation
       owner.cancelGesture()
       await ImageService.SetGeometryFromDisplayAtRevision(
         repoPath,
@@ -360,8 +359,7 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
           )
         throw error
       })
-      if (active && mode === 'edit' && generation === revisionGeneration)
-        accept()
+      if (active && mode === 'edit') accept()
       if (active) await owner.refresh()
     },
     cancelGesture() {

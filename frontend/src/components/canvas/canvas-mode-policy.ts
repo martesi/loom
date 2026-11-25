@@ -88,6 +88,7 @@ const actionCapabilities: Readonly<Record<string, CanvasCapability>> = {
 }
 
 export function allowsCanvasAction(mode: CanvasInternalMode, id: string) {
+  if (mode === 'edit' && id === 'auto-arrange-selection') return false
   const capability = canvasActionCapability(id)
   return capability
     ? allowsCanvasCapability(mode, capability)

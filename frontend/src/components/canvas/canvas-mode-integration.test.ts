@@ -9,40 +9,9 @@ import {
 } from '../../../bindings/loom/internal/service'
 import { emptySelection } from '../../lib/selection'
 import { useCanvasBoardOwner } from './canvas-board-owner'
+import { data, empty, images, relationships } from './canvas-mode-test-fixtures'
 import { useCanvasBoardModel } from './use-canvas-board-model'
 
-const images = [1, 2, 3].map((id) => ({
-  id,
-  fileName: `${id}.png`,
-  filePath: '',
-  thumbUrl: '',
-  previewUrl: '',
-  fullUrl: '',
-  width: 640,
-  height: 480,
-  archived: false,
-  trashed: false,
-  missing: false,
-  placed: true,
-  canvasX: id * 10,
-  canvasY: 20,
-  canvasW: 150,
-  canvasH: 110,
-  promptText: '',
-  groupId: 0,
-  createdAt: '',
-}))
-const data: CanvasData = { images, relationships: [], groups: [] }
-const empty: CanvasData = { images: [], relationships: [], groups: [] }
-const relationships = [
-  {
-    id: 7,
-    sourceImageId: 1,
-    derivedImageId: 2,
-    pairingOrder: 1,
-    createdAt: null,
-  },
-]
 let viewport: Viewport = { x: 0, y: 0, zoom: 1 }
 afterEach(() => {
   cleanup()
@@ -59,6 +28,14 @@ it('arranges the displayed Edit graph as one guarded batch, not stored coordinat
     w: 150,
     h: 110,
   }))
+  let releaseWrite = () => {}
+  let writeStarted = () => {}
+  const started = new Promise<void>((resolve) => {
+    writeStarted = resolve
+  })
+  const gate = new Promise<void>((resolve) => {
+    releaseWrite = resolve
+  })
   spyOn(ImageService, 'GetLayoutSnapshot').mockImplementation(
     () =>
       Promise.resolve({
@@ -75,9 +52,11 @@ it('arranges the displayed Edit graph as one guarded batch, not stored coordinat
   const write = spyOn(
     ImageService,
     'SetGeometryFromDisplayAtRevision'
-  ).mockImplementation((_path, _revision, _expected, _before, after) => {
+  ).mockImplementation(async (_path, _revision, _expected, _before, after) => {
+    writeStarted()
+    await gate
     geometry = after
-    return Promise.resolve() as never
+    return undefined as never
   })
   const { result } = renderHook(() => {
     const owner = useCanvasBoardOwner('/repo')
@@ -130,8 +109,17 @@ it('arranges the displayed Edit graph as one guarded batch, not stored coordinat
     w: node.width ?? 150,
     h: node.height ?? 110,
   }))
+  let arranging: Promise<void> = Promise.resolve()
   await act(async () => {
-    await result.current.owner.execute(() => result.current.model.arrangeEdit())
+    arranging = result.current.owner.execute(() =>
+      result.current.model.arrangeEdit()
+    )
+    await started
+    await result.current.owner.refresh()
+  })
+  await act(async () => {
+    releaseWrite()
+    await arranging
   })
   expect(write).toHaveBeenCalledTimes(1)
   expect(write.mock.calls[0][2][0]).toEqual({
@@ -145,6 +133,7 @@ it('arranges the displayed Edit graph as one guarded batch, not stored coordinat
   expect(write.mock.calls[0][4]).toHaveLength(3)
   expect(result.current.nodes[0].position).not.toEqual({ x: 900, y: 800 })
   const arranged = result.current.nodes.map((node) => node.position)
+  expect(arranged).toEqual(geometry.map(({ x, y }) => ({ x, y })))
   expect(arranged[1].x).toBeLessThan(arranged[0].x)
   await act(async () => {
     await result.current.owner.execute(() => result.current.model.arrangeEdit())

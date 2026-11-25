@@ -178,7 +178,9 @@ export function CanvasWorkspaceContent(props: Props) {
     validateRelationshipTarget(source, id, data, groupMembers)
   const arrange = (nodeIds?: string[]) =>
     boardModel.owner.getMode() === 'edit'
-      ? boardModel.arrangeEdit()
+      ? nodeIds
+        ? Promise.resolve()
+        : boardModel.arrangeEdit()
       : boardModel.owner.getMode() === 'legacy'
         ? arrangeCanvas(repo.path, nodes, edges, data, reload, nodeIds)
         : Promise.resolve()

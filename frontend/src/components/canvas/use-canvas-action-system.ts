@@ -71,7 +71,9 @@ export function useCanvasActionSystem({
       enabled: action.enabled && allowed,
       disabledReason: allowed
         ? action.disabledReason
-        : t`Available in Edit mode`,
+        : context.owner.getMode() === 'edit'
+          ? t`Not available in Edit mode`
+          : t`Available in Edit mode`,
       execute: () => {
         const capability = canvasActionCapability(action.id)
         if (!allowsCanvasAction(context.owner.getMode(), action.id)) return
