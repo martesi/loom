@@ -184,6 +184,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     renditionGeneration,
     callbacks,
     selection,
+    setSelection,
     nodes,
     setNodes,
     edges,

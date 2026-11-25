@@ -1,6 +1,6 @@
 import type { ReactFlowInstance } from '@xyflow/react'
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { ImageService } from '../../../bindings/loom/internal/service'
 import { readMedia } from '../../lib/clipboard'
 import type { Selection } from '../../lib/selection'
@@ -55,9 +55,36 @@ export function useCanvasAssetOperations({
   setError,
 }: Props) {
   const purgeOrigin = useRef<Selection['surface'] | null>(null)
+  const navigation = useRef({ generation: 0, owner, repoPath, selection })
+  const previous = navigation.current
+  if (
+    previous.owner !== owner ||
+    previous.repoPath !== repoPath ||
+    !sameSelection(previous.selection, selection)
+  ) {
+    navigation.current = {
+      generation: previous.generation + 1,
+      owner,
+      repoPath,
+      selection,
+    }
+  }
+  useEffect(() => {
+    return () => {
+      navigation.current.generation++
+    }
+  }, [])
   async function go(id: number, folder = false) {
+    const request = ++navigation.current.generation
+    const modeRevision = owner.getModeRevision()
+    const isCurrent = () =>
+      navigation.current.generation === request &&
+      navigation.current.owner === owner &&
+      navigation.current.repoPath === repoPath &&
+      owner.isActive?.() !== false &&
+      owner.getModeRevision() === modeRevision
     const image = await ImageService.GetImage(repoPath, id)
-    if (!image) return
+    if (!isCurrent() || !image) return
     const mode = owner.getMode()
     const node = mode === 'legacy' ? undefined : flow.getNode(String(id))
     if (folder || (mode === 'legacy' ? !image.placed : !node)) {
@@ -228,4 +255,17 @@ export function useCanvasAssetOperations({
     finishTrash,
     confirmPurge,
   }
+}
+
+function sameSelection(a: Selection, b: Selection) {
+  if (a === b) return true
+  if (!a || !b) return false
+  return (
+    a.surface === b.surface &&
+    a.group === b.group &&
+    a.ids.length === b.ids.length &&
+    a.edges.length === b.edges.length &&
+    a.ids.every((id, index) => id === b.ids[index]) &&
+    a.edges.every((id, index) => id === b.edges[index])
+  )
 }

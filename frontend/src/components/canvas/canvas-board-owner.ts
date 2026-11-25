@@ -43,6 +43,8 @@ export interface AcceptedCanvasBoard {
 
 export interface CanvasBoardOwner extends CanvasBoardExecutor {
   getMode(): CanvasInternalMode
+  getModeRevision(): number
+  beginModeTransition(): void
   setMode(mode: CanvasInternalMode): void
   allows(capability: CanvasCapability): boolean
   refresh(): Promise<AcceptedCanvasBoard | null>
@@ -93,6 +95,7 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
   let generation = 0
   let active = true
   let mode: CanvasInternalMode = 'legacy'
+  let modeRevision = 0
   let accepted: AcceptedCanvasBoard | null = null
   let acceptedGeneration = -1
   let gesture: ResizeGesture | DragGesture | null = null
@@ -147,8 +150,13 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
   }
   const owner: CanvasBoardOwner = {
     getMode: () => mode,
+    getModeRevision: () => modeRevision,
+    beginModeTransition: () => {
+      modeRevision++
+    },
     setMode(next) {
       owner.cancelGesture()
+      if (mode !== next) modeRevision++
       mode = next
     },
     allows: (capability) => allowsCanvasCapability(mode, capability),

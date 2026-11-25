@@ -39,6 +39,7 @@ interface Props {
   flow?: CanvasProjectionViewport
   report: (error: unknown) => void
   cancelPointerGesture?: () => void
+  reconcileSelection: (nodes: readonly Node[], edges: readonly Edge[]) => void
 }
 
 /** Internal only: legacy remains active until the full mode mutation policy exists. */
@@ -72,9 +73,9 @@ export function useCanvasProjectionController(props: Props) {
   function publish(next: CanvasProjectionState) {
     state.current = next
     nodesBeforePublication.current = current.current.nodes
-    current.current.setNodes(
-      next.mode === 'view' ? next.viewNodes : next.editNodes
-    )
+    const nodes = next.mode === 'view' ? next.viewNodes : next.editNodes
+    current.current.reconcileSelection(nodes, next.edges)
+    current.current.setNodes(nodes)
     current.current.setEdges([...next.edges])
     setMode(next.mode)
   }
@@ -141,6 +142,7 @@ export function useCanvasProjectionController(props: Props) {
   }
   async function transitionMode(target: 'view' | 'edit') {
     const { owner } = current.current
+    owner.beginModeTransition()
     const active = lifetime.current
     const isCurrent = () =>
       active !== null &&

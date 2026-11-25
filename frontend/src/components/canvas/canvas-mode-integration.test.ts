@@ -12,6 +12,7 @@ import { useCanvasBoardOwner } from './canvas-board-owner'
 import { data, empty, images, relationships } from './canvas-mode-test-fixtures'
 import { useCanvasBoardModel } from './use-canvas-board-model'
 
+const ignoreSelection = () => {}
 let viewport: Viewport = { x: 0, y: 0, zoom: 1 }
 afterEach(() => {
   cleanup()
@@ -227,6 +228,7 @@ it('uses accepted snapshots for internal View and Edit while preserving Edit geo
       renditionGeneration: 0,
       callbacks,
       selection: emptySelection,
+      setSelection: ignoreSelection,
       nodes,
       setNodes,
       edges,
@@ -393,6 +395,7 @@ it('replays snapshot geometry in Edit and compensates the View anchor while keep
       renditionGeneration: 0,
       callbacks,
       selection: emptySelection,
+      setSelection: ignoreSelection,
       nodes,
       setNodes,
       edges,

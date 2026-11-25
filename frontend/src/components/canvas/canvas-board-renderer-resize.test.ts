@@ -10,6 +10,7 @@ import { emptySelection } from '../../lib/selection'
 import { useCanvasBoardOwner } from './canvas-board-owner'
 import { useCanvasBoardModel } from './use-canvas-board-model'
 
+const ignoreSelection = () => {}
 const rectangle = { imageId: 1, x: 10, y: 20, w: 150, h: 110 }
 const resized = { imageId: 1, x: 1, y: 2, w: 300, h: 200 }
 const data: CanvasData = {
@@ -53,6 +54,7 @@ function useBoard(generation: number) {
     renditionGeneration: generation,
     callbacks,
     selection: emptySelection,
+    setSelection: ignoreSelection,
     nodes,
     setNodes,
     edges,

@@ -39,6 +39,7 @@ mock.module('@lingui/core/macro', () => ({
     (count === 1 ? messages.one : messages.other).replace('#', String(count)),
 }))
 const { useUndoActions } = await import('../../lib/use-undo')
+const ignoreSelection = () => {}
 
 const data: CanvasData = {
   images: [
@@ -115,6 +116,7 @@ function useBoard(repoPath: string) {
     renditionGeneration: 0,
     callbacks,
     selection: emptySelection,
+    setSelection: ignoreSelection,
     nodes,
     setNodes,
     edges,

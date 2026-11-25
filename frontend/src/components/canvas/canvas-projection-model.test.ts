@@ -19,6 +19,7 @@ import {
 import { canvasProjectionGraph } from './canvas-projection-model'
 import { useCanvasBoardModel } from './use-canvas-board-model'
 
+const ignoreSelection = () => {}
 const image = (id: number, placed = false): ImageInfo => ({
   id,
   fileName: `${id}.png`,
@@ -102,6 +103,7 @@ describe('board projection mapping', () => {
         renditionGeneration: 0,
         callbacks,
         selection: emptySelection,
+        setSelection: ignoreSelection,
         nodes,
         setNodes,
         edges,

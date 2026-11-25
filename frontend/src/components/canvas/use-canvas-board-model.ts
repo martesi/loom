@@ -1,5 +1,13 @@
 import { type Edge, MarkerType, type Node } from '@xyflow/react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  type Dispatch,
+  type SetStateAction,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import type { CanvasData } from '../../../bindings/loom/internal/service'
 import type { Selection } from '../../lib/selection'
 import type { CanvasBoardOwner, ResizeGesture } from './canvas-board-owner'
@@ -27,6 +35,7 @@ interface Props {
   renditionGeneration: number
   callbacks: { current: Callbacks }
   selection: Selection
+  setSelection: Dispatch<SetStateAction<Selection>>
   nodes: Node[]
   setNodes: (update: Node[] | ((nodes: Node[]) => Node[])) => void
   edges: Edge[]
@@ -43,6 +52,7 @@ export function useCanvasBoardModel({
   renditionGeneration,
   callbacks,
   selection,
+  setSelection,
   nodes,
   setNodes,
   edges,
@@ -60,6 +70,34 @@ export function useCanvasBoardModel({
     [selection.ids]
   )
   const selectedIdsList = selection.ids
+  const reconcileSelection = useCallback(
+    (visibleNodes: readonly Node[], visibleEdges: readonly Edge[]) => {
+      const ids = new Set(visibleNodes.map((node) => Number(node.id)))
+      const nodeKeys = new Set(visibleNodes.map((node) => node.id))
+      const edgeIds = new Set(visibleEdges.map((edge) => Number(edge.id)))
+      const focused = document.activeElement
+      const focusedNode =
+        focused instanceof Element ? focused.closest('.react-flow__node') : null
+      if (
+        focusedNode &&
+        host.current?.contains(focusedNode) &&
+        !nodeKeys.has(focusedNode.getAttribute('data-id') ?? '')
+      )
+        host.current.focus()
+      setSelection((current) => {
+        if (current.surface !== 'canvas') return current
+        const nextIds = current.ids.filter((id) => ids.has(id))
+        const nextEdges = current.edges.filter((id) => edgeIds.has(id))
+        if (
+          nextIds.length === current.ids.length &&
+          nextEdges.length === current.edges.length
+        )
+          return current
+        return { ...current, ids: nextIds, edges: nextEdges }
+      })
+    },
+    [host, setSelection]
+  )
   const projection = useCanvasProjectionController({
     owner,
     nodes,
@@ -69,6 +107,7 @@ export function useCanvasBoardModel({
     flow,
     report: callbacks.current.report,
     cancelPointerGesture,
+    reconcileSelection,
   })
   const projectionRef = useRef(projection)
   projectionRef.current = projection
@@ -125,6 +164,7 @@ export function useCanvasBoardModel({
     const legacyEdges = graph.edges.filter(
       (edge) => placedIds.has(edge.source) && placedIds.has(edge.target)
     )
+    if (board) reconcileSelection(legacyNodes, legacyEdges)
     // React Flow needs the measurements to keep edges mounted across reloads.
     setNodes((previous) => {
       const old = new Map(previous.map((node) => [node.id, node]))
@@ -179,7 +219,16 @@ export function useCanvasBoardModel({
       for (const gesture of activeGestures.values()) owner.cancelResize(gesture)
       activeGestures.clear()
     }
-  }, [data, owner, renditionGeneration, callbacks, host, setEdges, setNodes])
+  }, [
+    data,
+    owner,
+    renditionGeneration,
+    callbacks,
+    host,
+    setEdges,
+    setNodes,
+    reconcileSelection,
+  ])
 
   const isCanvasNodeSelected = useCallback(
     (node: Node) => {

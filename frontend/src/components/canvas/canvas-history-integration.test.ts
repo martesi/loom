@@ -20,6 +20,7 @@ mock.module('@lingui/core/macro', () => ({
   t: (parts: TemplateStringsArray) => parts.join(''),
 }))
 const { useUndoActions } = await import('../../lib/use-undo')
+const ignoreSelection = () => {}
 
 afterEach(() => {
   cleanup()
@@ -103,6 +104,7 @@ function useBoard(path: string) {
     renditionGeneration: 0,
     callbacks,
     selection: emptySelection,
+    setSelection: ignoreSelection,
     nodes,
     setNodes,
     edges,

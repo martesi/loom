@@ -69,6 +69,7 @@ for (const explicit of [false, true])
         host: { current: null },
         flow,
         report: mock(),
+        reconcileSelection: mock(),
       })
       return { controller, display }
     })
@@ -132,6 +133,7 @@ for (const ending of ['unmount', 'owner change'] as const) {
             host: { current: null },
             flow,
             report: mock(),
+            reconcileSelection: mock(),
           }),
         {
           initialProps: { currentOwner: owner },
@@ -207,6 +209,7 @@ it('invalidates the first StrictMode effect lifetime without cancelling the seco
         host: { current: null },
         flow,
         report: mock(),
+        reconcileSelection: mock(),
       })
       // biome-ignore lint/correctness/useExhaustiveDependencies: exercise the two StrictMode mount lifetimes only.
       useEffect(() => {
