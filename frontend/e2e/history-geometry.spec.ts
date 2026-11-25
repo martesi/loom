@@ -5,6 +5,8 @@ import {
   dropAsset,
   imageNodes,
   openFixtureRepo,
+  placeAssets,
+  selectImageNodes,
 } from './test-helpers'
 
 test('resize and link replay in order without moving unrelated nodes', async ({
@@ -194,4 +196,150 @@ test('pointer cancel, lost capture, and blur cancel resize without history', asy
     .toBeGreaterThan(resized[2])
   await page.keyboard.press('ControlOrMeta+z')
   await expect.poll(geometry).toEqual(resized)
+})
+
+test('selection change cancels a held resize and resize activation preserves multi-selection', async ({
+  page,
+}) => {
+  await openFixtureRepo(page, 'group-fixtures')
+  await placeAssets(
+    page,
+    ['group-alpha.png', 'group-beta.png', 'group-gamma.png'],
+    {
+      x: 100,
+      y: 100,
+    }
+  )
+  const nodes = imageNodes(page)
+  await expect(nodes).toHaveCount(3)
+  await selectImageNodes(page, [0, 1])
+  const first = nodes.nth(0)
+  const second = nodes.nth(2)
+  const rect = async () =>
+    first.evaluate((element) => {
+      const box = element.getBoundingClientRect()
+      return [box.x, box.y, box.width, box.height].map(Math.round)
+    })
+  const before = await rect()
+  const handle = first.getByTestId('resize-handle-nw')
+  const handleBox = await handle.boundingBox()
+  if (!handleBox) throw new Error('top-left resize handle is not visible')
+  const x = handleBox.x + handleBox.width / 2
+  const y = handleBox.y + handleBox.height / 2
+  await page.mouse.move(x, y)
+  await page.mouse.down()
+  await page.mouse.move(x - 40, y - 30, { steps: 4 })
+  await expect.poll(async () => (await rect())[2]).toBeGreaterThan(before[2])
+
+  await second.focus()
+  await page.keyboard.press('Enter')
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(1)
+  await expect(first.getByTestId('resize-handle-nw')).toHaveCount(0)
+  await expect.poll(rect).toEqual(before)
+  await page.mouse.move(1200, 740, { steps: 2 })
+  await page.mouse.up()
+  await expect.poll(rect).toEqual(before)
+
+  await page.keyboard.press('Shift+2')
+  await page.keyboard.press('Shift+1')
+  await expect(first).toBeVisible()
+  await selectImageNodes(page, [0, 1])
+  const selectedHandle = first.getByTestId('resize-handle-se')
+  const baselineWidth = await first.evaluate((element) =>
+    Math.round(element.getBoundingClientRect().width)
+  )
+  await selectedHandle.focus()
+  await page.keyboard.press('Enter')
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
+  await page.keyboard.press('ArrowRight')
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
+  await expect
+    .poll(async () =>
+      first.evaluate((element) =>
+        Math.round(element.getBoundingClientRect().width)
+      )
+    )
+    .toBeGreaterThan(baselineWidth)
+  await page.keyboard.press('ControlOrMeta+z')
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
+  await expect
+    .poll(async () =>
+      first.evaluate((element) =>
+        Math.round(element.getBoundingClientRect().width)
+      )
+    )
+    .toBe(baselineWidth)
+  await selectedHandle.focus()
+  const pointerHandle = first.getByTestId('resize-handle-se')
+  const pointerBounds = await pointerHandle.boundingBox()
+  if (!pointerBounds)
+    throw new Error('bottom-right resize handle is not visible')
+  await page.mouse.move(
+    pointerBounds.x + pointerBounds.width / 2,
+    pointerBounds.y + pointerBounds.height / 2
+  )
+  await page.mouse.down()
+  await page.mouse.move(
+    pointerBounds.x + pointerBounds.width / 2 + 25,
+    pointerBounds.y + pointerBounds.height / 2 + 15,
+    { steps: 4 }
+  )
+  await page.mouse.up()
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
+  await expect
+    .poll(async () =>
+      first.evaluate((element) =>
+        Math.round(element.getBoundingClientRect().width)
+      )
+    )
+    .toBeGreaterThan(baselineWidth + 10)
+  await page.keyboard.press('ControlOrMeta+z')
+  await expect
+    .poll(async () =>
+      first.evaluate((element) =>
+        Math.round(element.getBoundingClientRect().width)
+      )
+    )
+    .toBe(baselineWidth)
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
+})
+
+test('viewport culling cancels an active pointer resize without a late write', async ({
+  page,
+}) => {
+  await openFixtureRepo(page, 'group-fixtures')
+  await placeAssets(
+    page,
+    ['group-alpha.png', 'group-beta.png', 'group-gamma.png'],
+    { x: 100, y: 100 }
+  )
+  await page.keyboard.press('Shift+1')
+  const first = imageNodes(page).first()
+  await first.click()
+  const geometry = async () =>
+    first.evaluate((element) => {
+      const box = element.getBoundingClientRect()
+      return [box.x, box.y, box.width, box.height].map(Math.round)
+    })
+  const before = await geometry()
+  const handle = first.getByTestId('resize-handle-se')
+  const box = await handle.boundingBox()
+  if (!box) throw new Error('bottom-right resize handle is not visible')
+  const x = box.x + box.width / 2
+  const y = box.y + box.height / 2
+  await page.mouse.move(x, y)
+  await page.mouse.down()
+  await page.mouse.move(x + 20, y + 15, { steps: 3 })
+  await expect
+    .poll(async () => (await geometry())[2])
+    .toBeGreaterThan(before[2])
+
+  await page.mouse.wheel(10000, 0)
+  await expect(first).toHaveCount(0)
+  await page.mouse.move(1200, 740, { steps: 2 })
+  await page.mouse.up()
+  await page.keyboard.press('Shift+1')
+  await expect(first).toBeVisible()
+  await expect.poll(geometry).toEqual(before)
+  await expect(page.locator('.react-flow__edge')).toHaveCount(0)
 })

@@ -1,6 +1,6 @@
 import { t } from '@lingui/core/macro'
 import { useReactFlow } from '@xyflow/react'
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import type { GeometryUpdate } from '../../../bindings/loom/internal/service'
 import {
   type ResizeDirection,
@@ -68,6 +68,20 @@ export function ImageNodeResizeHandles({
 }) {
   const { getNode, screenToFlowPosition } = useReactFlow()
   const active = useRef<ActiveResize | null>(null)
+  const cancelResize = useRef(callbacks.onResizeCancel)
+  cancelResize.current = callbacks.onResizeCancel
+
+  useEffect(
+    () => () => {
+      const current = active.current
+      if (!current) return
+      active.current = null
+      cancelResize.current?.(current.token, current.pointerId)
+      if (current.element?.hasPointerCapture(current.pointerId))
+        current.element.releasePointerCapture(current.pointerId)
+    },
+    []
+  )
 
   function clear(token?: number) {
     const current = active.current
@@ -209,7 +223,17 @@ export function ImageNodeResizeHandles({
           onPointerUp={finish}
           onPointerCancel={cancel}
           onLostPointerCapture={cancel}
-          onKeyDown={(event) => resizeWithKeyboard(event, direction)}
+          onClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.stopPropagation()
+              return
+            }
+            resizeWithKeyboard(event, direction)
+          }}
         />
       ))}
     </div>
