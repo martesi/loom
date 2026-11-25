@@ -27,6 +27,7 @@ interface Props {
   data: CanvasData
   go: (id: number, folder?: boolean) => void
   setRemoveRelationshipId: Dispatch<SetStateAction<number | null>>
+  canMutateRelationships: () => boolean
 }
 
 export function DetailPanelRelations({
@@ -41,6 +42,7 @@ export function DetailPanelRelations({
   data,
   go,
   setRemoveRelationshipId,
+  canMutateRelationships,
 }: Props) {
   return (
     <>
@@ -145,6 +147,7 @@ export function DetailPanelRelations({
                     variant="danger"
                     size="sm"
                     aria-label={t`Remove relationship with ${endpointName}`}
+                    disabled={!canMutateRelationships()}
                     onClick={() => setRemoveRelationshipId(relationship.id)}
                   >
                     <Trans>Remove relationship</Trans>

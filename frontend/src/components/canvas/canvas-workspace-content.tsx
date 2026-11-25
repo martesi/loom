@@ -324,6 +324,7 @@ export function CanvasWorkspaceContent(props: Props) {
           updateProjectionViewport={boardModel.updateProjectionViewport}
           repoPath={repo.path}
           owner={boardModel.owner}
+          mode={boardModel.mode}
           flow={flow}
           data={data}
           setNodes={setNodes}
@@ -400,6 +401,9 @@ export function CanvasWorkspaceContent(props: Props) {
             selectionRevision={submissionScopeRef.current.revision}
             restoreEnabled={
               actionById.get('restore-from-trash')?.enabled ?? false
+            }
+            canMutateRelationships={() =>
+              boardModel.owner.allows('relationship')
             }
           />
         </ShelfPanel>

@@ -5,6 +5,7 @@ import type {
   AcceptedCanvasBoard,
   CanvasBoardOwner,
 } from './canvas-board-owner'
+import type { CanvasInternalMode } from './canvas-mode-policy'
 import {
   type CanvasProjectionState,
   createCanvasProjection,
@@ -22,8 +23,6 @@ export interface CanvasProjectionViewport {
   setViewport(viewport: Viewport): Promise<boolean>
 }
 
-export type CanvasInternalMode = 'legacy' | 'view' | 'edit'
-
 interface Graph {
   nodes: Node[]
   edges: Edge[]
@@ -38,6 +37,7 @@ interface Props {
   host: { current: HTMLDivElement | null }
   flow?: CanvasProjectionViewport
   report: (error: unknown) => void
+  cancelPointerGesture?: () => void
 }
 
 /** Internal only: legacy remains active until the full mode mutation policy exists. */
@@ -57,6 +57,7 @@ export function useCanvasProjectionController(props: Props) {
     state.current = null
     source.current = null
     nodesBeforePublication.current = null
+    props.owner.setMode('legacy')
     setMode('legacy')
     return () => {
       if (lifetime.current === active) lifetime.current = null
@@ -104,6 +105,7 @@ export function useCanvasProjectionController(props: Props) {
       if (!input || owner.getSnapshot() !== input.board)
         throw new Error('Canvas snapshot is not ready for a mode transition')
       owner.cancelGesture()
+      current.current.cancelPointerGesture?.()
       let next = state.current
       if (!next) {
         const viewport = current.current.flow?.getViewport() ?? {
@@ -122,6 +124,7 @@ export function useCanvasProjectionController(props: Props) {
       } else next = capture(next)
       next = target === 'edit' ? enterEdit(next) : enterView(next)
       if (!isCurrent()) return
+      owner.setMode(target)
       publish(next)
       const viewport = target === 'edit' ? next.editViewport : next.viewViewport
       if (!isCurrent()) return

@@ -17,6 +17,7 @@ import { type MenuAction, PositionedMenu } from '../menu'
 import type { CanvasBoardOwner } from './canvas-board-owner'
 import { CanvasDock } from './canvas-dock'
 import { CanvasFlow } from './canvas-flow'
+import type { CanvasInternalMode } from './canvas-mode-policy'
 import { PerfHud } from './perf-hud'
 
 interface MenuState {
@@ -45,6 +46,7 @@ interface DropTarget {
 interface Props {
   repoPath: string
   owner: CanvasBoardOwner
+  mode: CanvasInternalMode
   flow: ReactFlowInstance
   data: CanvasData
   setNodes: Dispatch<SetStateAction<Node[]>>
@@ -111,6 +113,7 @@ export function CanvasMainSurface(props: Props) {
   const {
     repoPath,
     owner,
+    mode,
     flow,
     data,
     setNodes,
@@ -171,6 +174,7 @@ export function CanvasMainSurface(props: Props) {
       className="absolute inset-0 min-w-0 outline-none"
       onClickCapture={(event) => {
         if (
+          owner.allows('relationship') &&
           (event.ctrlKey || event.metaKey) &&
           targetAt(event.clientX, event.clientY)
         ) {
@@ -179,6 +183,7 @@ export function CanvasMainSurface(props: Props) {
         }
       }}
       onPointerDownCapture={(event) => {
+        if (!owner.allows('relationship')) return
         const id = targetAt(event.clientX, event.clientY)
         if ((event.ctrlKey || event.metaKey) && id) {
           relation.current = {
@@ -233,6 +238,7 @@ export function CanvasMainSurface(props: Props) {
         relation.current = null
         setRelationshipPreview(null)
         updateTarget(null)
+        if (!owner.allows('relationship')) return
         const id = targetAt(event.clientX, event.clientY)
         if (!isRelationshipDrag(drag, event.clientX, event.clientY)) {
           setSelection((current) => ({
@@ -255,7 +261,11 @@ export function CanvasMainSurface(props: Props) {
           group: null,
         })
         if (id && validTarget(drag.source, id).valid)
-          run(() => ImageService.LinkSource(repoPath, drag.source, Number(id)))
+          run(() =>
+            owner.allows('relationship')
+              ? ImageService.LinkSource(repoPath, drag.source, Number(id))
+              : Promise.resolve()
+          )
         else if (id) {
           const result = validTarget(drag.source, id)
           setError(result.reason ?? t`Cannot create this relationship`)
@@ -269,6 +279,7 @@ export function CanvasMainSurface(props: Props) {
         e.preventDefault()
         const raw = e.dataTransfer.getData('application/x-loom-assets')
         if (raw) {
+          if (!owner.allows('canvas-drop')) return
           const payload = parseAssetDragPayload(raw)
           if (!payload) {
             report(new Error('Invalid asset drag'))
@@ -294,8 +305,13 @@ export function CanvasMainSurface(props: Props) {
                 throw new Error(
                   'Missing or trashed assets cannot be placed. Refine the selection and try again.'
                 )
-              await ImageService.PlaceImages(repoPath, uniqueIds, p.x, p.y, 0)
-              await reloadForData()
+              const placed = await owner.execute(async () => {
+                if (!owner.allows('canvas-drop')) return false
+                await ImageService.PlaceImages(repoPath, uniqueIds, p.x, p.y, 0)
+                await reloadForData()
+                return true
+              })
+              if (!placed) return
               if (!assetsPinned) {
                 closeAssets(false)
                 requestAnimationFrame(() => host.current?.focus())
@@ -315,6 +331,7 @@ export function CanvasMainSurface(props: Props) {
       }}
     >
       <CanvasFlow
+        mode={mode}
         updateProjectionViewport={updateProjectionViewport}
         repoPath={repoPath}
         owner={owner}
@@ -409,8 +426,10 @@ export function CanvasMainSurface(props: Props) {
           canFitAll={displayNodes.length > 0}
           canFitSelection={selectedCanvasNodeIds.length > 0}
           canAutoArrange={
-            displayNodes.length >= 2 || selectedCanvasNodeIds.length > 1
+            mode !== 'view' &&
+            (displayNodes.length >= 2 || selectedCanvasNodeIds.length > 1)
           }
+          canMutateGeometry={mode !== 'view'}
           shortcuts={{
             fitAll: actionById.get('fit-all')?.shortcut ?? '',
             fitSelection: actionById.get('fit-selection')?.shortcut ?? '',

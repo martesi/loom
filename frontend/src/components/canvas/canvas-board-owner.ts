@@ -6,6 +6,11 @@ import {
   type LayoutSnapshot,
   type UndoResult,
 } from '../../../bindings/loom/internal/service'
+import {
+  allowsCanvasCapability,
+  type CanvasCapability,
+  type CanvasInternalMode,
+} from './canvas-mode-policy'
 import { buildDisplayGeometry } from './canvas-projection-geometry'
 
 export interface ResizeGesture {
@@ -37,6 +42,9 @@ export interface AcceptedCanvasBoard {
 }
 
 export interface CanvasBoardOwner extends CanvasBoardExecutor {
+  getMode(): CanvasInternalMode
+  setMode(mode: CanvasInternalMode): void
+  allows(capability: CanvasCapability): boolean
   refresh(): Promise<AcceptedCanvasBoard | null>
   applyHistory(result: UndoResult): Promise<void>
   takeHistory(): UndoResult[]
@@ -77,6 +85,7 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
   let tail: Promise<void> = Promise.resolve()
   let generation = 0
   let active = true
+  let mode: CanvasInternalMode = 'legacy'
   let accepted: AcceptedCanvasBoard | null = null
   let acceptedGeneration = -1
   let gesture: ResizeGesture | DragGesture | null = null
@@ -130,6 +139,12 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
     return accepted
   }
   const owner: CanvasBoardOwner = {
+    getMode: () => mode,
+    setMode(next) {
+      owner.cancelGesture()
+      mode = next
+    },
+    allows: (capability) => allowsCanvasCapability(mode, capability),
     execute<T>(action: () => Promise<T>): Promise<T> {
       // Queue outer operations only: awaiting a nested execute would deadlock.
       const result = tail.then(action)
@@ -184,6 +199,7 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
     getSnapshot: () => accepted,
     beginResize(board, before) {
       if (
+        !owner.allows('geometry') ||
         !active ||
         !board ||
         board !== accepted ||
@@ -213,7 +229,12 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
         [after]
       )
       return owner.execute(async () => {
-        if (!active || current.cancelled || current.generation !== generation)
+        if (
+          !owner.allows('geometry') ||
+          !active ||
+          current.cancelled ||
+          current.generation !== generation
+        )
           return
         await ImageService.SetGeometryFromDisplayAtRevision(
           repoPath,
@@ -238,6 +259,7 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
     },
     beginDrag(board, before, onCancel) {
       if (
+        !owner.allows('geometry') ||
         !active ||
         !board ||
         board !== accepted ||
@@ -279,7 +301,12 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
         after
       )
       return owner.execute(async () => {
-        if (!active || current.cancelled || current.generation !== generation)
+        if (
+          !owner.allows('geometry') ||
+          !active ||
+          current.cancelled ||
+          current.generation !== generation
+        )
           return
         await ImageService.SetGeometryFromDisplayAtRevision(
           repoPath,

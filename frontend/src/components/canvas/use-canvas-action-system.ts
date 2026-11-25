@@ -1,3 +1,4 @@
+import { t } from '@lingui/core/macro'
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { LibraryService } from '../../../bindings/loom/internal/service'
@@ -11,6 +12,10 @@ import type { CanvasActionsContext } from '../../routes/canvas-actions-context'
 import { canvasSelectionActions } from '../../routes/canvas-actions-selection'
 import { canvasViewActions } from '../../routes/canvas-actions-view'
 import { canvasWorkspaceActions } from '../../routes/canvas-actions-workspace'
+import {
+  allowsCanvasAction,
+  canvasActionCapability,
+} from './canvas-mode-policy'
 import type { PaletteAsset } from './command-palette'
 
 interface Props {
@@ -58,11 +63,24 @@ export function useCanvasActionSystem({
     ...canvasSelectionActions(context),
     ...canvasAssetActions(context),
   ]
-  const actionCatalog: CanvasAction[] = baseActionCatalog.map((action) =>
-    shortcutOverrides[action.id]
-      ? { ...action, shortcut: shortcutOverrides[action.id] }
-      : action
-  )
+  const actionCatalog: CanvasAction[] = baseActionCatalog.map((action) => {
+    const allowed = allowsCanvasAction(context.owner.getMode(), action.id)
+    return {
+      ...action,
+      shortcut: shortcutOverrides[action.id] ?? action.shortcut,
+      enabled: action.enabled && allowed,
+      disabledReason: allowed
+        ? action.disabledReason
+        : t`Available in Edit mode`,
+      execute: () => {
+        const capability = canvasActionCapability(action.id)
+        if (!capability) return action.execute()
+        return context.owner.execute(async () => {
+          if (context.owner.allows(capability)) await action.execute()
+        })
+      },
+    }
+  })
   const defaultShortcuts = Object.fromEntries(
     baseActionCatalog.flatMap((action) =>
       action.shortcut ? [[action.id, action.shortcut] as const] : []
@@ -73,8 +91,15 @@ export function useCanvasActionSystem({
   actionRef.current = actionCatalog
 
   function executeAction(action: CanvasAction) {
-    if (!action.enabled) return Promise.resolve()
-    return Promise.resolve(action.execute()).catch(report)
+    const currentAction = actionRef.current.find(
+      (item) => item.id === action.id
+    )
+    if (
+      !currentAction?.enabled ||
+      !allowsCanvasAction(context.owner.getMode(), action.id)
+    )
+      return Promise.resolve()
+    return Promise.resolve(currentAction.execute()).catch(report)
   }
   function executeActionById(id: string) {
     const action = actionById.get(id)
@@ -136,7 +161,7 @@ export function useCanvasActionSystem({
       currentAction.id === 'open-appearance-settings' ||
       currentAction.id === 'show-shortcuts'
     ) {
-      requestAnimationFrame(() => void currentAction.execute())
+      requestAnimationFrame(() => void executeAction(currentAction))
       return
     }
     const isLifecycleAction =
@@ -145,7 +170,7 @@ export function useCanvasActionSystem({
       currentAction.id === 'purge-selection'
     if (isLifecycleAction) pendingRecentAction.current = currentAction.id
     requestAnimationFrame(() => {
-      void Promise.resolve(currentAction.execute()).then(() => {
+      void executeAction(currentAction).then(() => {
         if (!isLifecycleAction)
           setRecentActionIds((ids) =>
             [

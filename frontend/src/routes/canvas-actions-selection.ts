@@ -41,9 +41,12 @@ export function canvasSelectionActions(
         else
           setSelection({
             surface: 'canvas',
-            ids: (data.images ?? [])
-              .filter((image) => image.placed && !image.trashed)
-              .map((image) => image.id),
+            ids:
+              context.owner.getMode() === 'legacy'
+                ? (data.images ?? [])
+                    .filter((image) => image.placed && !image.trashed)
+                    .map((image) => image.id)
+                : displayNodes.map((node) => Number(node.id)),
             edges: [],
             group: null,
           })
@@ -61,9 +64,12 @@ export function canvasSelectionActions(
       execute: () =>
         setSelection({
           surface: 'canvas',
-          ids: (data.images ?? [])
-            .filter((image) => image.placed && !image.trashed)
-            .map((image) => image.id),
+          ids:
+            context.owner.getMode() === 'legacy'
+              ? (data.images ?? [])
+                  .filter((image) => image.placed && !image.trashed)
+                  .map((image) => image.id)
+              : displayNodes.map((node) => Number(node.id)),
           edges: [],
           group: null,
         }),

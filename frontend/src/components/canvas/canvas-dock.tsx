@@ -22,6 +22,7 @@ export interface CanvasDockProps {
   canFitAll: boolean
   canFitSelection: boolean
   canAutoArrange: boolean
+  canMutateGeometry?: boolean
   shortcuts: {
     fitAll: string
     fitSelection: string
@@ -80,6 +81,7 @@ export const CanvasDock = memo(function CanvasDock({
   canFitAll,
   canFitSelection,
   canAutoArrange,
+  canMutateGeometry = true,
   shortcuts,
   onAction,
 }: CanvasDockProps) {
@@ -158,18 +160,21 @@ export const CanvasDock = memo(function CanvasDock({
             testId="dock-align-horizontal"
             label={t`Align Horizontally`}
             icon={<AlignCenterHorizontal className="h-3.5 w-3.5" />}
+            disabled={!canMutateGeometry}
             onClick={() => onAction('align-horizontal')}
           />
           <DockButton
             testId="dock-align-vertical"
             label={t`Align Vertically`}
             icon={<AlignCenterVertical className="h-3.5 w-3.5" />}
+            disabled={!canMutateGeometry}
             onClick={() => onAction('align-vertical')}
           />
           <DockButton
             testId="dock-arrange-selection"
             label={t`Arrange Subgraph`}
             icon={<Sparkles className="h-3.5 w-3.5" />}
+            disabled={!canMutateGeometry}
             onClick={() => onAction('auto-arrange-selection')}
           />
         </>
@@ -193,6 +198,7 @@ function areDockPropsEqual(previous: CanvasDockProps, next: CanvasDockProps) {
     previous.canFitAll === next.canFitAll &&
     previous.canFitSelection === next.canFitSelection &&
     previous.canAutoArrange === next.canAutoArrange &&
+    previous.canMutateGeometry === next.canMutateGeometry &&
     previous.onAction === next.onAction &&
     Object.keys(previous.shortcuts).every(
       (key) =>

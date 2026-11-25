@@ -5,6 +5,7 @@ import type {
   ImageInfo,
   RelationshipInfo,
 } from '../../bindings/loom/internal/service'
+import type { CanvasBoardOwner } from '../components/canvas/canvas-board-owner'
 import type { AssetLayout } from '../lib/asset-views'
 import type { Selection } from '../lib/selection'
 
@@ -21,6 +22,7 @@ export interface RevealRequest {
 }
 
 export interface CanvasActionsContext {
+  owner: CanvasBoardOwner
   repoPath: string
   importInput: { current: HTMLInputElement | null }
   assetsOpen: boolean

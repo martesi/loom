@@ -171,7 +171,7 @@ export const ImageNode = memo(
         <NodeResizer
           minWidth={100}
           minHeight={80}
-          isVisible={selected}
+          isVisible={selected && data.canResize !== false}
           handleClassName="!h-2.5 !w-2.5 !rounded-sm !border !border-primary !bg-white"
           lineClassName="!border-primary"
           onResizeStart={(_event, params) =>

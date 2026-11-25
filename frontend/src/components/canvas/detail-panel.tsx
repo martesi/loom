@@ -40,6 +40,7 @@ interface Props {
   ) => Promise<void>
   selectionRevision: number
   restoreEnabled: boolean
+  canMutateRelationships?: () => boolean
 }
 // Memoized for the same reason as LibraryPanel: stable props across
 // node-drag frames skip the Inspector subtree while dragging.
@@ -57,6 +58,7 @@ export const DetailPanel = memo(function DetailPanel({
   onSubmitField,
   restoreEnabled,
   selectionRevision,
+  canMutateRelationships = () => true,
 }: Props) {
   const [imageResult, setImageResult] = useState<{
       path: string
@@ -228,6 +230,7 @@ export const DetailPanel = memo(function DetailPanel({
               <Button
                 variant="danger"
                 size="sm"
+                disabled={!canMutateRelationships()}
                 onClick={() => setRemoveRelationshipId(r.id)}
               >
                 <Trans>Remove relationship</Trans>
@@ -375,6 +378,7 @@ export const DetailPanel = memo(function DetailPanel({
         setRemoveRelationshipId={setRemoveRelationshipId}
         run={run}
         path={path}
+        canMutateRelationships={canMutateRelationships}
       />{' '}
       <DetailPanelRelations
         images={images}
@@ -388,6 +392,7 @@ export const DetailPanel = memo(function DetailPanel({
         data={data}
         go={go}
         setRemoveRelationshipId={setRemoveRelationshipId}
+        canMutateRelationships={canMutateRelationships}
       />
     </div>
   )

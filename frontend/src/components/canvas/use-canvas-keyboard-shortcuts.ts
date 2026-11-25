@@ -76,6 +76,7 @@ export function useCanvasKeyboardShortcuts(props: Props) {
       if (event.key === 'Escape') {
         // Settings owns the first Escape during the popup exit transition.
         if (current.settingsSection) return
+        if (document.querySelector('[role="dialog"]')) return
         if (current.menu) {
           current.setMenu(null)
           event.preventDefault()

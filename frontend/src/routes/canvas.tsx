@@ -191,6 +191,12 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     target,
     host,
     flow,
+    cancelPointerGesture: () => {
+      workspaceState.relation.current = null
+      workspaceState.setRelationshipPreview(null)
+      workspaceState.updateTarget(null)
+      modifiedMarquee.current.active = false
+    },
   })
   const { selectedIdsList } = boardModel
   const submitInspectorField = useInspectorFieldSubmission({
@@ -219,6 +225,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   }, [reload])
   const assetOperations = useCanvasAssetOperations({
     repoPath: repo.path,
+    owner: boardOwner,
     flow,
     selection,
     setSelection,

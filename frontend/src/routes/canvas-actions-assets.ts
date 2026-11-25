@@ -212,7 +212,10 @@ export function canvasAssetActions(
       shortcut: 'Shift+Delete',
       shortcuts: ['Shift+Delete', 'Shift+Backspace'],
       context: t`Active selection`,
-      enabled: selectedIds().length > 0,
+      enabled:
+        selectedIds().length > 0 &&
+        (context.owner.getMode() === 'legacy' ||
+          selection.surface === 'assets'),
       disabledReason: t`Select assets to purge`,
       dangerous: true,
       execute: () => remove(true),

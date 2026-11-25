@@ -34,6 +34,7 @@ interface Props {
   target: CanvasDropTarget | null
   host: { current: HTMLDivElement | null }
   flow?: CanvasProjectionViewport
+  cancelPointerGesture?: () => void
 }
 
 export function useCanvasBoardModel({
@@ -49,9 +50,11 @@ export function useCanvasBoardModel({
   target,
   host,
   flow,
+  cancelPointerGesture,
 }: Props) {
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null)
   const previousDisplayNodes = useRef(new Map<string, Node>())
+  const previousSourceNodes = useRef(new Map<string, Node>())
   const selectedImageIds = useMemo(
     () => new Set(selection.ids),
     [selection.ids]
@@ -65,6 +68,7 @@ export function useCanvasBoardModel({
     host,
     flow,
     report: callbacks.current.report,
+    cancelPointerGesture,
   })
   const projectionRef = useRef(projection)
   projectionRef.current = projection
@@ -195,9 +199,11 @@ export function useCanvasBoardModel({
           : ''
       const zIndex = node.id === hoveredNodeId ? 1001 : node.zIndex
       const previous = previousDisplayNodes.current.get(node.id)
+      const previousSource = previousSourceNodes.current.get(node.id)
       if (
         previous &&
-        previous.data === node.data &&
+        previousSource?.data === node.data &&
+        (previous.data.canResize !== false) === (projection.mode !== 'view') &&
         previous.position === node.position &&
         previous.measured === node.measured &&
         previous.width === node.width &&
@@ -208,13 +214,18 @@ export function useCanvasBoardModel({
         previous.zIndex === zIndex
       )
         return previous
-      return { ...node, selected, className, zIndex }
+      const data =
+        projection.mode === 'view'
+          ? { ...node.data, canResize: false }
+          : node.data
+      return { ...node, data, selected, className, zIndex }
     })
     previousDisplayNodes.current = new Map(
       mapped.map((node) => [node.id, node])
     )
+    previousSourceNodes.current = new Map(nodes.map((node) => [node.id, node]))
     return mapped
-  }, [nodes, isCanvasNodeSelected, target, hoveredNodeId])
+  }, [nodes, isCanvasNodeSelected, target, hoveredNodeId, projection.mode])
   const displayEdges: Edge[] = useMemo(
     () =>
       edges.map((edge) => {

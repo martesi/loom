@@ -21,6 +21,7 @@ import { ImageService } from '../../../bindings/loom/internal/service'
 import { applyCanvasNodeSelection } from '../../lib/canvas-selection'
 import { emptySelection, type Selection } from '../../lib/selection'
 import type { CanvasBoardOwner } from './canvas-board-owner'
+import type { CanvasInternalMode } from './canvas-mode-policy'
 import { useCanvasBoardDrag } from './use-canvas-board-drag'
 
 interface MenuState {
@@ -49,6 +50,7 @@ interface DropTarget {
 interface Props {
   repoPath: string
   owner: CanvasBoardOwner
+  mode: CanvasInternalMode
   data: CanvasData
   selectionRef: MutableRefObject<Selection>
   displayNodes: Node[]
@@ -88,6 +90,7 @@ export function CanvasFlow(props: Props) {
   const {
     repoPath,
     owner,
+    mode,
     data,
     selectionRef,
     displayNodes,
@@ -194,8 +197,17 @@ export function CanvasFlow(props: Props) {
         }}
         panOnDrag={space ? [0, 1, 2] : [1, 2]}
         panActivationKeyCode={null}
-        nodesDraggable={!space}
+        nodesDraggable={!space && mode !== 'view'}
         onNodesChange={(changes) => {
+          if (!owner.allows('geometry'))
+            changes = changes.filter(
+              (change) =>
+                change.type !== 'position' &&
+                !(
+                  change.type === 'dimensions' &&
+                  (change.resizing || change.setAttributes)
+                )
+            )
           changes = drag.filterChanges(changes)
           setNodes((n) => applyNodeChanges(changes, n))
           const selected = changes.filter((c) => c.type === 'select')

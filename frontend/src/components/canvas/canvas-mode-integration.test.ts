@@ -111,6 +111,20 @@ it('uses accepted snapshots for internal View and Edit while preserving Edit geo
   await waitFor(() =>
     expect(result.current.nodes.map((node) => node.id)).toEqual(['1', '2'])
   )
+  expect(
+    result.current.owner.beginDrag(result.current.owner.getSnapshot(), [
+      { imageId: 1, x: 0, y: 0, w: 150, h: 110 },
+    ])
+  ).toBeNull()
+  expect(
+    result.current.owner.beginResize(result.current.owner.getSnapshot(), {
+      imageId: 1,
+      x: 0,
+      y: 0,
+      w: 150,
+      h: 110,
+    })
+  ).toBeNull()
   const view = result.current.nodes.map((node) => node.position)
   await act(async () => {
     await result.current.model.transitionMode('edit')
@@ -120,6 +134,21 @@ it('uses accepted snapshots for internal View and Edit while preserving Edit geo
     view
   )
   expect(writeGeometry).not.toHaveBeenCalled()
+  const pending = result.current.owner.beginDrag(
+    result.current.owner.getSnapshot(),
+    [{ imageId: 1, x: view[0].x, y: view[0].y, w: 150, h: 110 }]
+  )
+  if (!pending) throw new Error('expected Edit drag')
+  await act(async () => {
+    await result.current.model.transitionMode('view')
+    await result.current.owner.endDrag(pending, [
+      { imageId: 1, x: 900, y: 800, w: 150, h: 110 },
+    ])
+  })
+  expect(writeGeometry).not.toHaveBeenCalled()
+  await act(async () => {
+    await result.current.model.transitionMode('edit')
+  })
   const boxes = result.current.nodes.map((node) => ({
     ...node.position,
     w: node.width ?? 150,
