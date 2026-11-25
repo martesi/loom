@@ -225,8 +225,13 @@ export function useCanvasProjectionController(props: Props) {
         .catch(current.current.report)
     return true
   }
+  const graphOrder =
+    state.current?.projection.components.flatMap((component) =>
+      component.boxes.map((box) => Number(box.id))
+    ) ?? []
   return {
     mode,
+    graphOrder,
     transitionMode,
     updateViewport,
     setAnchor,

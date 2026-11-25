@@ -2,6 +2,7 @@ import type {
   CanvasData,
   ImageInfo,
 } from '../../../bindings/loom/internal/service'
+import type { CanvasInternalMode } from './canvas-mode-policy'
 
 export type PreviewOrigin =
   | { surface: 'canvas' }
@@ -9,6 +10,8 @@ export type PreviewOrigin =
 
 interface Props {
   data: CanvasData
+  mode: CanvasInternalMode
+  graphOrder: number[]
   repoPath: string
   previewOrigin: PreviewOrigin | null
   previewFolderOrder: number[] | null
@@ -20,6 +23,8 @@ interface Props {
 
 export function useCanvasPreview({
   data,
+  mode,
+  graphOrder,
   repoPath,
   previewOrigin,
   previewFolderOrder,
@@ -80,25 +85,50 @@ export function useCanvasPreview({
         queue.push(next)
       }
     }
-    return all.filter((image) => seen.has(image.id))
+    const component = all.filter((image) => seen.has(image.id))
+    if (mode === 'legacy') return component
+    const rank = new Map(graphOrder.map((id, index) => [id, index]))
+    return component.sort(
+      (a, b) =>
+        (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER) -
+          (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER) || a.id - b.id
+    )
   })()
   const index = images.findIndex((image) => image.id === previewImageId)
   const relatedImages = (id: number, direction: 'sources' | 'children') =>
-    (data.relationships ?? []).flatMap((relationship) => {
-      const matches =
-        direction === 'sources'
-          ? relationship.derivedImageId === id
-          : relationship.sourceImageId === id
-      if (!matches) return []
-      const targetId =
-        direction === 'sources'
-          ? relationship.sourceImageId
-          : relationship.derivedImageId
-      const image = images.find((candidate) => candidate.id === targetId)
-      return image
-        ? [{ id: image.id, fileName: image.fileName, thumbUrl: image.thumbUrl }]
-        : []
-    })
+    (data.relationships ?? [])
+      .flatMap((relationship) => {
+        const matches =
+          direction === 'sources'
+            ? relationship.derivedImageId === id
+            : relationship.sourceImageId === id
+        if (!matches) return []
+        const targetId =
+          direction === 'sources'
+            ? relationship.sourceImageId
+            : relationship.derivedImageId
+        const image = (mode === 'legacy' ? images : (data.images ?? [])).find(
+          (candidate) => candidate.id === targetId && !candidate.trashed
+        )
+        return image
+          ? [
+              {
+                id: image.id,
+                fileName: image.fileName,
+                thumbUrl: image.thumbUrl,
+              },
+            ]
+          : []
+      })
+      .sort((a, b) => {
+        if (mode === 'legacy') return 0
+        const left = graphOrder.indexOf(a.id)
+        const right = graphOrder.indexOf(b.id)
+        return (
+          (left < 0 ? Infinity : left) - (right < 0 ? Infinity : right) ||
+          a.id - b.id
+        )
+      })
 
   function jumpTo(imageId: number) {
     if (images.some((image) => image.id === imageId)) {

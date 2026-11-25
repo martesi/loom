@@ -9,7 +9,10 @@ import {
   within,
 } from '@testing-library/react'
 import { createElement } from 'react'
-import { ImageService } from '../../../bindings/loom/internal/service'
+import {
+  ImageService,
+  TagService,
+} from '../../../bindings/loom/internal/service'
 import { createCanvasBoardOwner } from './canvas-board-owner'
 
 mock.module('@lingui/core/macro', () => ({
@@ -112,4 +115,52 @@ it('rechecks the current hidden mode at confirmation', async () => {
   owner.setMode('view')
   fireEvent.click(confirm)
   expect(unlink).not.toHaveBeenCalled()
+})
+
+it('lists and navigates related images in projected graph order', async () => {
+  const image = (id: number) => ({
+    id,
+    fileName: `${id}.png`,
+    filePath: `/repo/${id}.png`,
+    fullUrl: `/repo/${id}.png`,
+    width: 100,
+    height: 100,
+    promptText: '',
+    placed: false,
+    trashed: false,
+  })
+  spyOn(TagService, 'GetImageTags').mockResolvedValue([] as never)
+  const go = mock()
+  const props = {
+    open: true,
+    path: '/repo',
+    data: {
+      images: [image(1), image(2), image(3)],
+      relationships: [
+        { id: 2, sourceImageId: 1, derivedImageId: 3 },
+        { id: 1, sourceImageId: 1, derivedImageId: 2 },
+      ],
+    },
+    selection: { surface: 'canvas', ids: [1], edges: [], group: null },
+    graphOrder: [1, 2, 3],
+    go,
+    change: mock(),
+    onError: mock(),
+    commandRequest: null,
+    onCommandRequestHandled: mock(),
+    onAction: mock(),
+    onSubmitField: mock(),
+    selectionRevision: 0,
+    restoreEnabled: false,
+  } as unknown as Parameters<typeof DetailPanel>[0]
+  render(createElement(DetailPanel, props))
+  const buttons = await screen.findAllByRole('button', {
+    name: /Go to derived asset/,
+  })
+  expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual([
+    'Go to derived asset 2.png',
+    'Go to derived asset 3.png',
+  ])
+  fireEvent.click(buttons[0])
+  expect(go).toHaveBeenCalledWith(2)
 })

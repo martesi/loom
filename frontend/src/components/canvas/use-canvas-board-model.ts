@@ -264,6 +264,7 @@ export function useCanvasBoardModel({
     selectedCanvasNodeIds,
     setHoveredNodeId,
     mode: projection.mode,
+    graphOrder: projection.graphOrder,
     transitionMode: projection.transitionMode,
     arrangeEdit: projection.arrangeEdit,
     updateProjectionViewport: projection.updateViewport,

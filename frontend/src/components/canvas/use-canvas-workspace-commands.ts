@@ -138,6 +138,8 @@ export function useCanvasWorkspaceCommands(props: Props) {
   })
   const preview = useCanvasPreview({
     data,
+    mode: boardModel.mode,
+    graphOrder: boardModel.graphOrder,
     repoPath: repo.path,
     previewOrigin: workspaceState.previewOrigin,
     previewFolderOrder: workspaceState.previewFolderOrder,

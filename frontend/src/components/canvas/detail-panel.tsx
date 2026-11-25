@@ -41,6 +41,7 @@ interface Props {
   selectionRevision: number
   restoreEnabled: boolean
   canMutateRelationships?: () => boolean
+  graphOrder?: number[]
 }
 // Memoized for the same reason as LibraryPanel: stable props across
 // node-drag frames skip the Inspector subtree while dragging.
@@ -59,6 +60,7 @@ export const DetailPanel = memo(function DetailPanel({
   restoreEnabled,
   selectionRevision,
   canMutateRelationships = () => true,
+  graphOrder,
 }: Props) {
   const [imageResult, setImageResult] = useState<{
       path: string
@@ -314,6 +316,14 @@ export const DetailPanel = memo(function DetailPanel({
   const outgoing = image
     ? (data.relationships ?? []).filter((r) => r.sourceImageId === image.id)
     : []
+  if (graphOrder) {
+    const rank = new Map(graphOrder.map((id, index) => [id, index]))
+    const compare = (a: number, b: number) =>
+      (rank.get(a) ?? Number.MAX_SAFE_INTEGER) -
+        (rank.get(b) ?? Number.MAX_SAFE_INTEGER) || a - b
+    incoming.sort((a, b) => compare(a.sourceImageId, b.sourceImageId))
+    outgoing.sort((a, b) => compare(a.derivedImageId, b.derivedImageId))
+  }
   const relationshipSections = [
     { kind: 'sources', title: t`Sources`, relationships: incoming },
     { kind: 'derived', title: t`Derived`, relationships: outgoing },

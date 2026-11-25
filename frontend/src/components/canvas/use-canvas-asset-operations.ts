@@ -58,7 +58,9 @@ export function useCanvasAssetOperations({
   async function go(id: number, folder = false) {
     const image = await ImageService.GetImage(repoPath, id)
     if (!image) return
-    if (folder || !image.placed) {
+    const mode = owner.getMode()
+    const node = mode === 'legacy' ? undefined : flow.getNode(String(id))
+    if (folder || (mode === 'legacy' ? !image.placed : !node)) {
       openAssets()
       selectAssets([id])
       setReveal({
@@ -75,9 +77,17 @@ export function useCanvasAssetOperations({
     }
     setExpanded(null)
     setSelection({ surface: 'canvas', ids: [id], edges: [], group: null })
-    await flow.setCenter(image.canvasX + 75, image.canvasY + 55, {
-      zoom: flow.getZoom(),
-    })
+    await flow.setCenter(
+      node
+        ? node.position.x + (node.measured?.width ?? node.width ?? 150) / 2
+        : image.canvasX + 75,
+      node
+        ? node.position.y + (node.measured?.height ?? node.height ?? 110) / 2
+        : image.canvasY + 55,
+      {
+        zoom: flow.getZoom(),
+      }
+    )
   }
 
   async function paste(

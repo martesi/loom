@@ -194,10 +194,12 @@ export function CanvasWorkspaceContent(props: Props) {
     const imageId = Number(node.id)
     selectAssets([imageId])
     setReveal({ id: imageId, folder: null })
+    const live = boardModel.mode === 'legacy' ? node : flow.getNode(node.id)
+    if (!live) return
     void flow
       .setCenter(
-        node.position.x + (node.measured?.width ?? node.width ?? 150) / 2,
-        node.position.y + (node.measured?.height ?? node.height ?? 110) / 2,
+        live.position.x + (live.measured?.width ?? live.width ?? 150) / 2,
+        live.position.y + (live.measured?.height ?? live.height ?? 110) / 2,
         { zoom: flow.getZoom() }
       )
       .catch(report)
@@ -216,11 +218,19 @@ export function CanvasWorkspaceContent(props: Props) {
     workspaceState.setPreviewFolderOrder(orderedIds)
     setPreviewImageId(imageId)
   }
-  const fitAll = () => fitCanvas(flow, repo.path)
+  const persistViewport = boardModel.mode === 'legacy'
+  const fitAll = () => fitCanvas(flow, repo.path, undefined, persistViewport)
   const fitSelection = () =>
-    fitCanvas(flow, repo.path, nodes.filter(isCanvasNodeSelected))
-  const resetZoom = () => resetCanvasZoom(flow, host, repo.path)
-  const zoomBy = (factor: number) => zoomCanvas(flow, repo.path, factor)
+    fitCanvas(
+      flow,
+      repo.path,
+      nodes.filter(isCanvasNodeSelected),
+      persistViewport
+    )
+  const resetZoom = () =>
+    resetCanvasZoom(flow, host, repo.path, persistViewport)
+  const zoomBy = (factor: number) =>
+    zoomCanvas(flow, repo.path, factor, persistViewport)
   function toggleFocusMode() {
     setFocusCanvas((focused) => !focused)
     requestAnimationFrame(() => host.current?.focus())
@@ -396,6 +406,9 @@ export function CanvasWorkspaceContent(props: Props) {
             open={inspectorOpen}
             path={repo.path}
             data={data}
+            graphOrder={
+              boardModel.mode === 'legacy' ? undefined : boardModel.graphOrder
+            }
             selection={selection}
             change={reload}
             go={goDetail}
@@ -461,6 +474,11 @@ export function CanvasWorkspaceContent(props: Props) {
         previewInfoOpen={previewInfoOpen}
         setPreviewInfoOpen={setPreviewInfoOpen}
         data={data}
+        canvasImageIds={
+          boardModel.mode === 'legacy'
+            ? undefined
+            : displayNodes.map((node) => Number(node.id))
+        }
         renditionGeneration={renditionGeneration}
         onRenditionsInvalidated={onRenditionsInvalidated}
         compressIds={compressIds}

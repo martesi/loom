@@ -278,7 +278,8 @@ export function CanvasFlow(props: Props) {
         }}
         onMoveEnd={(_, v) => {
           updateProjectionViewport(v)
-          if (ready) void ImageService.SetViewport(repoPath, v).catch(report)
+          if (ready && mode === 'legacy')
+            void ImageService.SetViewport(repoPath, v).catch(report)
         }}
         onMove={(_, viewport) => {
           // Zoom badges read this once per frame at most; onMove fires

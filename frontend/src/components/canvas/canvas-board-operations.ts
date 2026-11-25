@@ -202,30 +202,33 @@ export function canvasCenter(
 export async function fitCanvas(
   flow: ReactFlowInstance,
   repoPath: string,
-  nodes?: Node[]
+  nodes?: Node[],
+  persist = true
 ) {
   await flow.fitView(nodes ? { nodes, padding: 0.2 } : { padding: 0.2 })
-  await ImageService.SetViewport(repoPath, flow.getViewport())
+  if (persist) await ImageService.SetViewport(repoPath, flow.getViewport())
 }
 
 export async function resetCanvasZoom(
   flow: ReactFlowInstance,
   host: { current: HTMLDivElement | null },
-  repoPath: string
+  repoPath: string,
+  persist = true
 ) {
   const center = canvasCenter(flow, host)
   await flow.setCenter(center.x, center.y, { zoom: 1 })
-  await ImageService.SetViewport(repoPath, flow.getViewport())
+  if (persist) await ImageService.SetViewport(repoPath, flow.getViewport())
 }
 
 export async function zoomCanvas(
   flow: ReactFlowInstance,
   repoPath: string,
-  factor: number
+  factor: number,
+  persist = true
 ) {
   await flow.setViewport({
     ...flow.getViewport(),
     zoom: Math.max(0.05, Math.min(4, flow.getZoom() * factor)),
   })
-  await ImageService.SetViewport(repoPath, flow.getViewport())
+  if (persist) await ImageService.SetViewport(repoPath, flow.getViewport())
 }
