@@ -12,7 +12,7 @@ type LibraryQuery struct {
 
 // ListImagesFiltered backs the Assets view with metadata, placement, and status filters.
 func (r *Repo) ListImagesFiltered(q LibraryQuery) ([]Image, error) {
-	var conditions []string
+	conditions := []string{"NOT EXISTS (SELECT 1 FROM import_recovery ir WHERE ir.image_id = images.id AND ir.retained = 1)"}
 	var args []any
 
 	switch q.Status {

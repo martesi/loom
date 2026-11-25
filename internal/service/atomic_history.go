@@ -52,6 +52,8 @@ func replayAtomicHistory(repo *store.Repo, redo bool) (bool, *store.Operation, [
 		if err = json.Unmarshal(s.Payload, &p); err == nil {
 			err = applyGraphTx(tx, s.Kind, p)
 		}
+	case stepImportMedia:
+		err = applyImportHistoryTx(tx, s)
 	default:
 		var handled bool
 		handled, err = applyLegacyHistoryTx(tx, s)

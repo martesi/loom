@@ -30,6 +30,7 @@ const (
 	stepSizes          = "set_sizes"
 	stepMoveFile       = "move_file"
 	stepRepresentation = "swap_representation"
+	stepImportMedia    = "import_media"
 
 	// stepGroupExistence covers both CreateGroup and Ungroup — mirroring the
 	// boolean-toggle idiom of stepSetArchived/stepSetTrashed, but for a
@@ -190,6 +191,8 @@ func applyStep(repo *store.Repo, s OpStep) error {
 		return replayGeometry(repo, s.Payload)
 	case stepGraphInsert, stepGraphDelete, stepGraphReverse:
 		return replayGraph(repo, s.Kind, s.Payload)
+	case stepImportMedia:
+		return fmt.Errorf("import history replay requires an atomic history transaction")
 	case stepLink:
 		var p linkStepPayload
 		if err := json.Unmarshal(s.Payload, &p); err != nil {

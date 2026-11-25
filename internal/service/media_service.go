@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"encoding/base64"
 	"fmt"
@@ -128,6 +129,9 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 	}
 	defer unlock()
 	defer r.Close()
+	if err := r.PrepareOperationLog(); err != nil {
+		return nil, err
+	}
 	tx, err := r.DB.Begin()
 	if err != nil {
 		return nil, err
@@ -149,6 +153,7 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 		}
 	}()
 	ids := make([]int64, 0, len(media))
+	history := make([]importHistoryEntry, 0, len(media))
 	for i, item := range media {
 		name := filepath.Base(strings.ReplaceAll(item.Name, "\\", "/"))
 		data, err := base64.StdEncoding.DecodeString(item.Data)
@@ -189,12 +194,19 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 		if closeErr != nil {
 			return nil, closeErr
 		}
-		var cx, cy any
-		if place {
-			cx = x + float64(i%6)*190
-			cy = y + float64(i/6)*160
+		fingerprint, fileInfo, err := store.FingerprintFile(context.Background(), dest)
+		if err != nil {
+			return nil, fmt.Errorf("verify newly imported file %s: %w", dest, err)
 		}
-		result, err := tx.Exec("INSERT INTO images(file_path,canvas_x,canvas_y) VALUES (?,?,?)", dest, cx, cy)
+		var cx, cy any
+		entry := importHistoryEntry{Path: dest, Fingerprint: fingerprint}
+		if place {
+			px, py := x+float64(i%6)*190, y+float64(i/6)*160
+			cx, cy = px, py
+			entry.X, entry.Y = &px, &py
+		}
+		marker := fmt.Sprintf("stat:%d:%d", fileInfo.Size(), fileInfo.ModTime().UnixNano())
+		result, err := tx.Exec(`INSERT INTO images(file_path,canvas_x,canvas_y,file_size,content_hash,source_fingerprint,source_revision) VALUES (?,?,?,?,?,?,1)`, dest, cx, cy, fileInfo.Size(), marker, fingerprint)
 		if err != nil {
 			return nil, err
 		}
@@ -202,7 +214,15 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 		if err != nil {
 			return nil, err
 		}
+		entry.ID = id
 		ids = append(ids, id)
+		history = append(history, entry)
+		if _, err := tx.Exec(`INSERT INTO import_recovery(image_id,file_path,fingerprint) VALUES (?,?,?)`, id, dest, fingerprint); err != nil {
+			return nil, fmt.Errorf("record import recovery for %s: %w", dest, err)
+		}
+	}
+	if err := recordImportHistory(r, tx, history); err != nil {
+		return nil, fmt.Errorf("record import history: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err

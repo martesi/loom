@@ -106,6 +106,14 @@ func (r *Repo) registerImage(ctx context.Context, path string) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
+	var retained bool
+	err := r.DB.QueryRowContext(ctx, `SELECT retained FROM import_recovery WHERE file_path = ?`, path).Scan(&retained)
+	if err == nil && retained {
+		return 0, nil
+	}
+	if err != nil && err != sql.ErrNoRows {
+		return 0, err
+	}
 	info, err := os.Stat(path)
 	if err != nil {
 		return 0, err
@@ -260,9 +268,29 @@ func (r *Repo) scanAndRegisterImagesWithFingerprint(ctx context.Context, advance
 }
 
 func (r *Repo) mediaFiles(ctx context.Context) ([]string, error) {
+	rows, err := r.DB.QueryContext(ctx, `SELECT file_path FROM import_recovery WHERE retained = 1`)
+	if err != nil {
+		return nil, err
+	}
+	retained := make(map[string]bool)
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		retained[path] = true
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
 	loomDir := filepath.Join(r.Path, loomDirName)
 	var found []string
-	err := filepath.WalkDir(r.Path, func(path string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(r.Path, func(path string, d fs.DirEntry, err error) error {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
@@ -275,7 +303,7 @@ func (r *Repo) mediaFiles(ctx context.Context) ([]string, error) {
 			}
 			return nil
 		}
-		if IsMediaFile(path) {
+		if IsMediaFile(path) && !retained[path] {
 			found = append(found, path)
 		}
 		return nil
@@ -434,7 +462,7 @@ func (r *Repo) imagesByFilePaths(paths []string) ([]Image, error) {
 		placeholders[i] = "?"
 		args[i] = p
 	}
-	query := `SELECT ` + imageSelectCols + ` FROM images WHERE file_path IN (` +
+	query := `SELECT ` + imageSelectCols + ` FROM images WHERE NOT EXISTS (SELECT 1 FROM import_recovery ir WHERE ir.image_id = images.id AND ir.retained = 1) AND file_path IN (` +
 		strings.Join(placeholders, ",") + `)`
 	rows, err := r.DB.Query(query, args...)
 	if err != nil {
@@ -481,7 +509,7 @@ func scanImage(scanner interface {
 
 // ListImages returns all non-trashed images.
 func (r *Repo) ListImages() ([]Image, error) {
-	rows, err := r.DB.Query(`SELECT ` + imageSelectCols + ` FROM images WHERE trashed = 0 ORDER BY id`)
+	rows, err := r.DB.Query(`SELECT ` + imageSelectCols + ` FROM images WHERE trashed = 0 AND NOT EXISTS (SELECT 1 FROM import_recovery ir WHERE ir.image_id = images.id AND ir.retained = 1) ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -502,7 +530,7 @@ func (r *Repo) ListImages() ([]Image, error) {
 // this so a trashed row can still be inspected and restored.
 func (r *Repo) GetImageByID(imageID int64) (Image, error) {
 	return scanImage(r.DB.QueryRow(
-		`SELECT `+imageSelectCols+` FROM images WHERE id = ?`,
+		`SELECT `+imageSelectCols+` FROM images WHERE id = ? AND NOT EXISTS (SELECT 1 FROM import_recovery ir WHERE ir.image_id = images.id AND ir.retained = 1)`,
 		imageID,
 	))
 }
@@ -514,7 +542,10 @@ func (r *Repo) ListRelationships() ([]Relationship, error) {
 		FROM relationships rel
 		JOIN images s ON s.id = rel.source_image_id
 		JOIN images d ON d.id = rel.derived_image_id
-		WHERE s.trashed = 0 AND d.trashed = 0 ORDER BY rel.pairing_order, rel.id`)
+		WHERE s.trashed = 0 AND d.trashed = 0
+		AND NOT EXISTS (SELECT 1 FROM import_recovery ir WHERE ir.image_id = s.id AND ir.retained = 1)
+		AND NOT EXISTS (SELECT 1 FROM import_recovery ir WHERE ir.image_id = d.id AND ir.retained = 1)
+		ORDER BY rel.pairing_order, rel.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -905,7 +936,7 @@ func (r *Repo) GetCanvasSize(imageID int64) (w, h float64, ok bool, err error) {
 // than its thumbnail.
 func (r *Repo) GetFilePath(imageID int64) (string, error) {
 	var path string
-	err := r.DB.QueryRow(`SELECT file_path FROM images WHERE id = ?`, imageID).Scan(&path)
+	err := r.DB.QueryRow(`SELECT file_path FROM images WHERE id = ? AND NOT EXISTS (SELECT 1 FROM import_recovery ir WHERE ir.image_id = images.id AND ir.retained = 1)`, imageID).Scan(&path)
 	return path, err
 }
 
@@ -921,7 +952,7 @@ func (r *Repo) ListImagesByIDs(ids []int64) ([]Image, error) {
 		placeholders[i] = "?"
 		args[i] = id
 	}
-	query := `SELECT ` + imageSelectCols + ` FROM images WHERE trashed = 0 AND id IN (` +
+	query := `SELECT ` + imageSelectCols + ` FROM images WHERE trashed = 0 AND NOT EXISTS (SELECT 1 FROM import_recovery ir WHERE ir.image_id = images.id AND ir.retained = 1) AND id IN (` +
 		strings.Join(placeholders, ",") + `)`
 	rows, err := r.DB.Query(query, args...)
 	if err != nil {

@@ -34,6 +34,26 @@ func TestImportDoesNotReuseRegisteredMissingPath(t *testing.T) {
 	}
 }
 
+func TestImportDoesNotOverwriteUnregisteredFile(t *testing.T) {
+	root := t.TempDir()
+	reserved := filepath.Join(root, "reserved.png")
+	if err := os.WriteFile(reserved, []byte("user file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := (&ImageService{}).ImportMedia(root, []ClipboardMedia{{Name: "reserved.png", Data: "aW1wb3J0"}}, false, 0, 0)
+	if err != nil || len(ids) != 1 {
+		t.Fatalf("import with existing file: ids=%v err=%v", ids, err)
+	}
+	image, err := (&ImageService{}).GetImage(root, ids[0])
+	if err != nil || filepath.Base(image.FilePath) != "reserved (1).png" {
+		t.Fatalf("existing file path reused: image=%+v err=%v", image, err)
+	}
+	data, err := os.ReadFile(reserved)
+	if err != nil || string(data) != "user file" {
+		t.Fatalf("existing user file changed: %q err=%v", data, err)
+	}
+}
+
 func TestImportRejectsNonfiniteDropCoordinates(t *testing.T) {
 	for _, value := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
 		for _, coordinates := range [][2]float64{{value, 0}, {0, value}} {
