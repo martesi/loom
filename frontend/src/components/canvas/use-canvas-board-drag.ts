@@ -4,7 +4,8 @@ import type {
   CanvasData,
   GeometryUpdate,
 } from '../../../bindings/loom/internal/service'
-import type { CanvasBoardOwner, DragGesture } from './canvas-board-owner'
+import type { DragGesture } from './canvas-board-gestures'
+import type { CanvasBoardOwner } from './canvas-board-owner'
 
 export function useCanvasBoardDrag(
   owner: CanvasBoardOwner,

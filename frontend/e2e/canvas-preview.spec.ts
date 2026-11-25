@@ -1,6 +1,6 @@
-import { createServer } from 'node:http'
 import { execFileSync } from 'node:child_process'
 import { rm } from 'node:fs/promises'
+import { createServer } from 'node:http'
 import { previewTierForNode } from '../src/lib/preview-tier'
 import { expect, test } from './test-fixtures'
 import {
@@ -273,7 +273,8 @@ test.describe('Canvas progressive previews', () => {
         if (response) latest = response
         if (
           latest &&
-          latest.url.searchParams.get('w') !== older.url.searchParams.get('w') &&
+          latest.url.searchParams.get('w') !==
+            older.url.searchParams.get('w') &&
           latest.url.searchParams.get('w') !== retryUrl?.searchParams.get('w')
         ) {
           break
@@ -281,13 +282,13 @@ test.describe('Canvas progressive previews', () => {
       }
       if (!latest)
         throw new Error('Canvas zoom did not request a latest preview tier')
-      if (latest.url.searchParams.get('w') === retryUrl?.searchParams.get('w')) {
+      if (
+        latest.url.searchParams.get('w') === retryUrl?.searchParams.get('w')
+      ) {
         latest.release()
         await latest.fulfilled
         await page.setViewportSize({ width: 1600, height: 1000 })
-        const resizeHandle = node.locator(
-          '.react-flow__resize-control.handle.bottom.right'
-        )
+        const resizeHandle = node.getByTestId('resize-handle-se')
         await expect(resizeHandle).toBeVisible()
         const handleBounds = await resizeHandle.boundingBox()
         if (!handleBounds) throw new Error('Canvas resize handle has no bounds')
@@ -364,15 +365,31 @@ test.describe('Canvas progressive previews', () => {
   })
 
   test('video canvas nodes use revisioned tier 320 only', async ({ page }) => {
-    const videoPath = await fixturePath('preview-fixtures', 'video-rendition-check.mp4')
+    const videoPath = await fixturePath(
+      'preview-fixtures',
+      'video-rendition-check.mp4'
+    )
     execFileSync('ffmpeg', [
-      '-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=red:s=320x240:d=1',
-      '-c:v', 'libx264', '-pix_fmt', 'yuv420p', videoPath,
+      '-v',
+      'error',
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      'color=c=red:s=320x240:d=1',
+      '-c:v',
+      'libx264',
+      '-pix_fmt',
+      'yuv420p',
+      videoPath,
     ])
     let previewRequests = 0
     await page.route('**/loom-asset/preview/**', async (route) => {
       previewRequests++
-      await route.fulfill({ status: 400, body: 'video previews are limited to 320' })
+      await route.fulfill({
+        status: 400,
+        body: 'video previews are limited to 320',
+      })
     })
     try {
       await openFixtureRepo(page, 'preview-fixtures', { drawers: 'closed' })
@@ -382,7 +399,9 @@ test.describe('Canvas progressive previews', () => {
       const thumb = node.locator('img').first()
       await expect(thumb).toHaveJSProperty('complete', true)
       await expect
-        .poll(() => thumb.evaluate((image: HTMLImageElement) => image.naturalWidth))
+        .poll(() =>
+          thumb.evaluate((image: HTMLImageElement) => image.naturalWidth)
+        )
         .toBeGreaterThan(0)
       await expect(thumb).toHaveAttribute('src', /\?v=[^&]+$/)
       const box = await node.boundingBox()

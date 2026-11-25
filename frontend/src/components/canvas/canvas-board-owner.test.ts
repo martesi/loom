@@ -19,12 +19,14 @@ import type { Edge, Node, ReactFlowInstance } from '@xyflow/react'
 import { createElement, useRef, useState, useSyncExternalStore } from 'react'
 import {
   type CanvasData,
+  type GeometryUpdate,
   ImageService,
   UndoService,
 } from '../../../bindings/loom/internal/service'
 import { emptySelection } from '../../lib/selection'
 import { Toaster } from '../ui/toast'
 import { useCanvasBoardOwner } from './canvas-board-owner'
+import type { ResizeDirection } from './canvas-resize-geometry'
 import { useCanvasBoardModel } from './use-canvas-board-model'
 import { useCanvasRepository } from './use-canvas-repository'
 
@@ -40,6 +42,30 @@ mock.module('@lingui/core/macro', () => ({
 }))
 const { useUndoActions } = await import('../../lib/use-undo')
 const ignoreSelection = () => {}
+
+function resizeStart(node: Node, before: GeometryUpdate, pointerId = 1) {
+  const start = node.data.onResizeStart as (
+    pointerId: number,
+    direction: ResizeDirection,
+    before: GeometryUpdate,
+    cancelPointer: () => void
+  ) => number | null
+  return start(pointerId, 'nw', before, () => {})
+}
+
+function resizeEnd(
+  node: Node,
+  token: number,
+  after: GeometryUpdate,
+  pointerId = 1
+) {
+  const end = node.data.onResizeEnd as (
+    token: number,
+    pointerId: number,
+    after: GeometryUpdate
+  ) => void
+  end(token, pointerId, after)
+}
 
 const data: CanvasData = {
   images: [
@@ -195,20 +221,16 @@ describe('canvas board owner', () => {
     )
     await waitFor(() => expect(result.current.nodes).toHaveLength(1))
     act(() => {
-      const onResizeStart = result.current.nodes[0].data.onResizeStart as (
-        x: number,
-        y: number,
-        w: number,
-        h: number
-      ) => void
-      onResizeStart(10, 20, 150, 110)
-      const onResizeEnd = result.current.nodes[0].data.onResizeEnd as (
-        x: number,
-        y: number,
-        w: number,
-        h: number
-      ) => void
-      onResizeEnd(1, 2, 300, 200)
+      const node = result.current.nodes[0]
+      const token = resizeStart(node, {
+        imageId: 1,
+        x: 10,
+        y: 20,
+        w: 150,
+        h: 110,
+      })
+      if (token === null) throw new Error('resize start rejected')
+      resizeEnd(node, token, { imageId: 1, x: 1, y: 2, w: 300, h: 200 })
     })
     const undoDone = result.current.undo.undo()
     const redoDone = result.current.undo.redo()
@@ -253,21 +275,25 @@ describe('canvas board owner', () => {
       expect(result.current.owner.getSnapshot()).not.toBeNull()
     )
     const node = result.current.nodes[0]
-    const start = node.data.onResizeStart as (
-      x: number,
-      y: number,
-      w: number,
-      h: number
-    ) => void
-    const end = node.data.onResizeEnd as typeof start
-    act(() => start(10, 20, 150, 110))
+    const token = resizeStart(node, {
+      imageId: 1,
+      x: 10,
+      y: 20,
+      w: 150,
+      h: 110,
+    })
+    if (token === null) throw new Error('resize start rejected')
     const refreshing = result.current.repository.reload()
-    act(() => end(1, 2, 300, 200))
+    act(() =>
+      resizeEnd(node, token, { imageId: 1, x: 1, y: 2, w: 300, h: 200 })
+    )
     pending.resolve(data)
     await act(async () => {
       await refreshing
     })
-    act(() => end(1, 2, 300, 200))
+    act(() =>
+      resizeEnd(node, token, { imageId: 1, x: 1, y: 2, w: 300, h: 200 })
+    )
     await act(async () => {
       await result.current.owner.execute(async () => {})
     })
@@ -292,23 +318,23 @@ describe('canvas board owner', () => {
       expect(result.current.owner.getSnapshot()).not.toBeNull()
     )
     const node = result.current.nodes[0]
-    const start = node.data.onResizeStart as (
-      x: number,
-      y: number,
-      w: number,
-      h: number
-    ) => void
-    const end = node.data.onResizeEnd as typeof start
-    act(() => {
-      start(10, 20, 150, 110)
-      end(1, 2, 300, 200)
+    const token = resizeStart(node, {
+      imageId: 1,
+      x: 10,
+      y: 20,
+      w: 150,
+      h: 110,
     })
+    if (token === null) throw new Error('resize start rejected')
+    act(() =>
+      resizeEnd(node, token, { imageId: 1, x: 1, y: 2, w: 300, h: 200 })
+    )
     await waitFor(() => expect(result.current.error).toBe(error.message))
     expect(write).toHaveBeenCalledTimes(1)
     expect(ImageService.LoadCanvas).toHaveBeenCalledTimes(2)
   })
 
-  it('submits an unchanged displayed rectangle before queued redo', async () => {
+  it('skips an unchanged rectangle before queued redo', async () => {
     spyOn(ImageService, 'LoadCanvas').mockImplementation(
       () => Promise.resolve(data) as never
     )
@@ -327,28 +353,21 @@ describe('canvas board owner', () => {
       expect(result.current.owner.getSnapshot()).not.toBeNull()
     )
     const node = result.current.nodes[0]
-    const start = node.data.onResizeStart as (
-      x: number,
-      y: number,
-      w: number,
-      h: number
-    ) => void
-    const end = node.data.onResizeEnd as typeof start
-    act(() => {
-      start(10, 20, 150, 110)
-      end(10, 20, 150, 110)
+    const token = resizeStart(node, {
+      imageId: 1,
+      x: 10,
+      y: 20,
+      w: 150,
+      h: 110,
     })
+    if (token === null) throw new Error('resize start rejected')
+    act(() =>
+      resizeEnd(node, token, { imageId: 1, x: 10, y: 20, w: 150, h: 110 })
+    )
     await act(async () => {
       await result.current.undo.redo()
     })
-    const rectangle = [{ imageId: 1, x: 10, y: 20, w: 150, h: 110 }]
-    expect(write).toHaveBeenCalledWith(
-      '/repo',
-      '1',
-      rectangle,
-      rectangle,
-      rectangle
-    )
+    expect(write).not.toHaveBeenCalled()
     expect(redo).toHaveBeenCalledTimes(1)
   })
 

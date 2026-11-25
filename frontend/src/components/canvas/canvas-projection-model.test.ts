@@ -65,6 +65,8 @@ const graph = (value: CanvasData) =>
   canvasProjectionGraph(
     value,
     0,
+    () => null,
+    () => false,
     () => {},
     () => {}
   )

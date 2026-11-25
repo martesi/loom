@@ -1,9 +1,11 @@
 import type { Edge, Node } from '@xyflow/react'
 import type {
   CanvasData,
+  GeometryUpdate,
   ImageInfo,
 } from '../../../bindings/loom/internal/service'
 import { renditionGenerationUrl } from '../../lib/preview-tier'
+import type { ResizeDirection } from './canvas-resize-geometry'
 
 /** Map LoadCanvas DTOs without treating saved placement as graph membership. */
 export function canvasProjectionGraph(
@@ -11,12 +13,22 @@ export function canvasProjectionGraph(
   renditionGeneration: number,
   onResizeStart: (
     id: number,
-    x: number,
-    y: number,
-    w: number,
-    h: number
+    pointerId: number,
+    direction: ResizeDirection,
+    before: GeometryUpdate,
+    cancelPointer: () => void
+  ) => number | null,
+  onResizeMove: (
+    token: number,
+    pointerId: number,
+    after: GeometryUpdate
+  ) => boolean,
+  onResizeEnd: (
+    token: number,
+    pointerId: number,
+    after: GeometryUpdate
   ) => void,
-  onResizeEnd: (id: number, x: number, y: number, w: number, h: number) => void
+  onResizeCancel: (token: number, pointerId: number) => void
 ) {
   const images = (data.images ?? []).filter((image) => !image.trashed)
   const ids = new Set(images.map((image) => image.id))
@@ -24,7 +36,14 @@ export function canvasProjectionGraph(
     (edge) => ids.has(edge.sourceImageId) && ids.has(edge.derivedImageId)
   )
   const nodes: Node[] = images.map((image) =>
-    imageNode(image, renditionGeneration, onResizeStart, onResizeEnd)
+    imageNode(
+      image,
+      renditionGeneration,
+      onResizeStart,
+      onResizeMove,
+      onResizeEnd,
+      onResizeCancel
+    )
   )
   const edges: Edge[] = relationships.map((edge) => ({
     id: String(edge.id),
@@ -46,12 +65,22 @@ function imageNode(
   generation: number,
   onResizeStart: (
     id: number,
-    x: number,
-    y: number,
-    w: number,
-    h: number
+    pointerId: number,
+    direction: ResizeDirection,
+    before: GeometryUpdate,
+    cancelPointer: () => void
+  ) => number | null,
+  onResizeMove: (
+    token: number,
+    pointerId: number,
+    after: import('../../../bindings/loom/internal/service').GeometryUpdate
+  ) => boolean,
+  onResizeEnd: (
+    token: number,
+    pointerId: number,
+    after: import('../../../bindings/loom/internal/service').GeometryUpdate
   ) => void,
-  onResizeEnd: (id: number, x: number, y: number, w: number, h: number) => void
+  onResizeCancel: (token: number, pointerId: number) => void
 ): Node {
   return {
     id: String(image.id),
@@ -69,10 +98,15 @@ function imageNode(
       showFileName: true,
       width: image.width,
       height: image.height,
-      onResizeStart: (x: number, y: number, w: number, h: number) =>
-        onResizeStart(image.id, x, y, w, h),
-      onResizeEnd: (x: number, y: number, w: number, h: number) =>
-        onResizeEnd(image.id, x, y, w, h),
+      onResizeStart: (
+        pointerId: number,
+        direction: ResizeDirection,
+        before: GeometryUpdate,
+        cancelPointer: () => void
+      ) => onResizeStart(image.id, pointerId, direction, before, cancelPointer),
+      onResizeMove,
+      onResizeEnd,
+      onResizeCancel,
     },
   }
 }

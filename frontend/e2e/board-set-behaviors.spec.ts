@@ -31,7 +31,7 @@ test('node resize and movement persist while Space drag pans instead of moving n
   await node.click()
 
   const beforeResize = await nodeBox(node)
-  const handle = page.locator('.react-flow__resize-control.handle').last()
+  const handle = node.getByTestId('resize-handle-se')
   await expect(handle).toBeVisible()
   await dragBy(page, handle, 60, 40)
   await expect

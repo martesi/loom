@@ -249,9 +249,7 @@ test('top-left resize undo and redo restore position and size', async ({
   const node = imageNodes(page).first()
   await node.click()
   const before = await node.boundingBox()
-  const handle = await node
-    .locator('.react-flow__resize-control.handle.top.left')
-    .boundingBox()
+  const handle = await node.getByTestId('resize-handle-nw').boundingBox()
   if (!before || !handle) throw new Error('missing resize target')
   await page.mouse.move(
     handle.x + handle.width / 2,
@@ -277,7 +275,7 @@ test('top-left resize undo and redo restore position and size', async ({
   await expect
     .poll(geometry)
     .toEqual([before.x, before.y, before.width, before.height].map(Math.round))
-  await node.locator('.react-flow__resize-control.handle.top.left').click()
+  await node.getByTestId('resize-handle-nw').focus()
   await page.keyboard.press('ControlOrMeta+Shift+z')
   await expect
     .poll(geometry)
@@ -347,7 +345,7 @@ test('resize is one undoable geometry change', async ({ page }) => {
   const node = imageNodes(page).first()
   await node.click()
   const before = await node.boundingBox()
-  const handle = node.locator('.react-flow__resize-control.handle.bottom.right')
+  const handle = node.getByTestId('resize-handle-se')
   const bounds = await handle.boundingBox()
   if (!before || !bounds) throw new Error('missing resize target')
   await page.mouse.move(

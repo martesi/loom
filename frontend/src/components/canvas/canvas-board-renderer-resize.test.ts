@@ -5,13 +5,14 @@ import type { Edge, Node } from '@xyflow/react'
 import { createElement, useRef, useState, useSyncExternalStore } from 'react'
 import {
   type CanvasData,
+  type GeometryUpdate,
   ImageService,
   UndoService,
 } from '../../../bindings/loom/internal/service'
 import { emptySelection } from '../../lib/selection'
 import { useCanvasBoardOwner } from './canvas-board-owner'
 import { enqueueCanvasMutation } from './canvas-mutation-queue'
-import { filterBlockedResizeChanges } from './canvas-resize-guard'
+import type { ResizeDirection } from './canvas-resize-geometry'
 import { useCanvasBoardModel } from './use-canvas-board-model'
 
 mock.module('@lingui/core/macro', () => ({
@@ -95,10 +96,35 @@ function setupServices(metadata: CanvasData = data) {
 }
 
 function resizeCallbacks(node: Node) {
-  type Resize = (x: number, y: number, w: number, h: number) => void
+  type Start = (
+    pointerId: number,
+    direction: ResizeDirection,
+    before: GeometryUpdate,
+    cancelPointer: () => void
+  ) => number | null
+  type Move = (
+    token: number,
+    pointerId: number,
+    after: GeometryUpdate
+  ) => boolean
+  type Finish = (
+    token: number,
+    pointerId: number,
+    after: GeometryUpdate
+  ) => void
+  const start = node.data.onResizeStart as Start
   return {
-    start: node.data.onResizeStart as Resize,
-    end: node.data.onResizeEnd as Resize,
+    start: (
+      before = rectangle,
+      pointerId = 1,
+      direction: ResizeDirection = 'nw'
+    ) => start(pointerId, direction, before, () => {}),
+    move: node.data.onResizeMove as Move,
+    end: node.data.onResizeEnd as Finish,
+    cancel: node.data.onResizeCancel as (
+      token: number,
+      pointerId: number
+    ) => void,
   }
 }
 
@@ -107,53 +133,52 @@ afterEach(() => {
   mock.restore()
 })
 
-{
-  it('keeps a submitted resize queued across rendition changes', async () => {
-    const write = setupServices({
-      ...data,
-      groups: [
-        { id: 42, name: 'Set', kind: 'set', coverImageId: 1, memberIds: [1] },
-      ],
-    })
-    const { result, rerender } = renderHook(
-      ({ generation }) => useBoard(generation),
-      { initialProps: { generation: 0 } }
-    )
-    await act(async () => {
-      await result.current.owner.refresh()
-    })
-    let release = () => {}
-    const blocked = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    const first = result.current.owner.execute(() => blocked)
-    const { start, end } = resizeCallbacks(result.current.nodes[0])
-    act(() => {
-      start(10, 20, 150, 110)
-      end(1, 2, 300, 200)
-    })
-    rerender({ generation: 1 })
-    expect(result.current.nodes[0].id).toBe('1')
-    expect(write).not.toHaveBeenCalled()
-    await act(async () => {
-      release()
-      await first
-      await result.current.owner.execute(async () => {})
-    })
-    expect(write).toHaveBeenCalledTimes(1)
-    expect(write).toHaveBeenCalledWith(
-      '/repo',
-      '1',
-      [rectangle],
-      [rectangle],
-      [resized]
-    )
-    expect(result.current.callbacks.current.report).not.toHaveBeenCalled()
+it('keeps a submitted resize queued across rendition changes', async () => {
+  const write = setupServices({
+    ...data,
+    groups: [
+      { id: 42, name: 'Set', kind: 'set', coverImageId: 1, memberIds: [1] },
+    ],
   })
-}
+  const { result, rerender } = renderHook(
+    ({ generation }) => useBoard(generation),
+    { initialProps: { generation: 0 } }
+  )
+  await act(async () => {
+    await result.current.owner.refresh()
+  })
+  let release = () => {}
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const first = result.current.owner.execute(() => blocked)
+  const { start, end } = resizeCallbacks(result.current.nodes[0])
+  let token = 0
+  act(() => {
+    token = start(rectangle) ?? 0
+    end(token, 1, resized)
+  })
+  rerender({ generation: 1 })
+  expect(result.current.nodes[0].id).toBe('1')
+  expect(write).not.toHaveBeenCalled()
+  await act(async () => {
+    release()
+    await first
+    await result.current.owner.execute(async () => {})
+  })
+  expect(write).toHaveBeenCalledTimes(1)
+  expect(write).toHaveBeenCalledWith(
+    '/repo',
+    '1',
+    [rectangle],
+    [rectangle],
+    [resized]
+  )
+  expect(result.current.callbacks.current.report).not.toHaveBeenCalled()
+})
 
 for (const invalidation of ['refresh', 'dispose'] as const) {
-  it(`cancels a submitted resize when ${invalidation} wins before dispatch`, async () => {
+  it(`preserves a submitted resize across ${invalidation} while respecting owner lifetime`, async () => {
     const write = setupServices()
     const { result, unmount } = renderHook(() => useBoard(0, null))
     await act(async () => {
@@ -166,9 +191,10 @@ for (const invalidation of ['refresh', 'dispose'] as const) {
     })
     const first = owner.execute(() => blocked)
     const { start, end } = resizeCallbacks(result.current.nodes[0])
+    let token = 0
     act(() => {
-      start(10, 20, 150, 110)
-      end(1, 2, 300, 200)
+      token = start(rectangle) ?? 0
+      end(token, 1, resized)
     })
     if (invalidation === 'refresh') {
       await act(async () => {
@@ -180,7 +206,8 @@ for (const invalidation of ['refresh', 'dispose'] as const) {
       await first
       await owner.execute(async () => {})
     })
-    expect(write).not.toHaveBeenCalled()
+    if (invalidation === 'refresh') expect(write).toHaveBeenCalledTimes(1)
+    else expect(write).not.toHaveBeenCalled()
   })
 }
 
@@ -195,22 +222,22 @@ it('cancels an unfinished resize when the renderer is rebuilt', async () => {
   })
   const { start, end } = resizeCallbacks(result.current.nodes[0])
   const cancel = spyOn(result.current.owner, 'cancelResize')
-  act(() => start(10, 20, 150, 110))
+  let token = 0
+  act(() => {
+    token = start(rectangle) ?? 0
+  })
   rerender({ generation: 1 })
   expect(cancel).toHaveBeenCalledTimes(1)
-  act(() => {
-    end(1, 2, 300, 200)
-    start(10, 20, 150, 110)
-    end(1, 2, 300, 200)
-  })
+  act(() => end(token, 1, resized))
   await act(async () => {
     await result.current.owner.execute(async () => {})
   })
   expect(write).not.toHaveBeenCalled()
   const current = resizeCallbacks(result.current.nodes[0])
+  let currentToken = 0
   act(() => {
-    current.start(10, 20, 150, 110)
-    current.end(1, 2, 300, 200)
+    currentToken = current.start(rectangle) ?? 0
+    current.end(currentToken, 1, resized)
   })
   await act(async () => {
     await result.current.owner.execute(async () => {})
@@ -218,86 +245,39 @@ it('cancels an unfinished resize when the renderer is rebuilt', async () => {
   expect(write).toHaveBeenCalledTimes(1)
 })
 
-it('keeps a rejected pointer resize blocked through its post-end dimensions event', async () => {
+it('rejects resize starts during a pending layout and accepts a fresh pointer later', async () => {
   const write = setupServices()
   const { result } = renderHook(() => useBoard(0))
   await act(async () => {
     await result.current.owner.refresh()
   })
   const releaseLayout = result.current.owner.reserveLayout()
-  const { start, end } = resizeCallbacks(result.current.nodes[0])
-  act(() => start(10, 20, 150, 110))
-  expect(result.current.owner.isResizeBlocked(1)).toBe(true)
+  const { start, cancel } = resizeCallbacks(result.current.nodes[0])
+  expect(start(rectangle, 7)).toBeNull()
   releaseLayout()
   expect(result.current.owner.isLayoutPending()).toBe(false)
-  act(() => end(1, 2, 300, 200))
-  expect(result.current.owner.isResizeBlocked(1)).toBe(true)
-  const finalChange = filterBlockedResizeChanges(
-    [
-      {
-        id: '1',
-        type: 'dimensions',
-        dimensions: { width: 300, height: 200 },
-        resizing: false,
-      },
-    ],
-    result.current.owner.isResizeBlocked
-  )
-  expect(finalChange.changes).toEqual([])
-  expect(finalChange.completed).toEqual([1])
-  for (const id of finalChange.completed)
-    result.current.owner.finishBlockedResize(id)
-  expect(result.current.owner.isResizeBlocked(1)).toBe(false)
+  const token = start(rectangle, 8)
+  expect(token).not.toBeNull()
+  if (token === null) throw new Error('fresh pointer was rejected')
+  act(() => cancel(token, 8))
   expect(result.current.nodes[0].width).toBe(150)
   expect(result.current.nodes[0].height).toBe(110)
   expect(write).not.toHaveBeenCalled()
-})
-
-it('cancels a held blocked resize when its renderer is rebuilt', async () => {
-  const write = setupServices()
-  const { result, rerender } = renderHook(
-    ({ generation }) => useBoard(generation),
-    { initialProps: { generation: 0 } }
-  )
-  await act(async () => {
-    await result.current.owner.refresh()
-  })
-  const releaseLayout = result.current.owner.reserveLayout()
-  const { start, end } = resizeCallbacks(result.current.nodes[0])
-  act(() => start(10, 20, 150, 110))
-  expect(result.current.owner.isResizeBlocked(1)).toBe(true)
-  rerender({ generation: 1 })
-  expect(result.current.owner.isResizeBlocked(1)).toBe(false)
-  releaseLayout()
-  act(() => end(1, 2, 300, 200))
-  await act(async () => {
-    await result.current.owner.execute(async () => {})
-  })
-  expect(write).not.toHaveBeenCalled()
-  expect(result.current.nodes[0].width).toBe(150)
-  expect(result.current.nodes[0].height).toBe(110)
 })
 
 for (const capability of ['relationship', 'geometry'] as const) {
-  it(`restores and suppresses the rest of an active resize before a ${capability} command`, async () => {
+  it(`restores and rejects late pointer events after a ${capability} command`, async () => {
     const write = setupServices()
     const { result } = renderHook(() => useBoard(0))
     await act(async () => {
       await result.current.owner.refresh()
     })
     result.current.owner.setMode('edit')
-    const { start } = resizeCallbacks(result.current.nodes[0])
+    const { start, move, end } = resizeCallbacks(result.current.nodes[0])
+    let token = 0
     act(() => {
-      start(10, 20, 150, 110)
-      result.current.setNodes((nodes) =>
-        nodes.map((node) => ({
-          ...node,
-          position: { x: 1, y: 2 },
-          width: 300,
-          height: 200,
-          measured: { width: 300, height: 200 },
-        }))
-      )
+      token = start(rectangle, 11) ?? 0
+      move(token, 11, resized)
     })
     await act(async () => {
       await enqueueCanvasMutation(
@@ -309,21 +289,8 @@ for (const capability of ['relationship', 'geometry'] as const) {
     expect(result.current.nodes[0].position).toEqual({ x: 10, y: 20 })
     expect(result.current.nodes[0].width).toBe(150)
     expect(result.current.nodes[0].height).toBe(110)
-    expect(result.current.owner.isResizeBlocked(1)).toBe(true)
-    const finalChange = filterBlockedResizeChanges(
-      [
-        {
-          id: '1',
-          type: 'dimensions',
-          dimensions: { width: 300, height: 200 },
-          resizing: false,
-        },
-      ],
-      result.current.owner.isResizeBlocked
-    )
-    expect(finalChange.changes).toEqual([])
-    for (const id of finalChange.completed)
-      result.current.owner.finishBlockedResize(id)
+    expect(move(token, 11, resized)).toBe(false)
+    end(token, 11, resized)
     expect(write).not.toHaveBeenCalled()
   })
 }
@@ -334,23 +301,20 @@ it('undo cancels an active resize and prevents its final dimensions from writing
     applied: false,
     error: '',
   } as never)
+  const redo = spyOn(UndoService, 'Redo').mockResolvedValue({
+    applied: false,
+    error: '',
+  } as never)
   const { result } = renderHook(() => useBoard(0))
   await act(async () => {
     await result.current.owner.refresh()
   })
   result.current.owner.setMode('edit')
-  const { start } = resizeCallbacks(result.current.nodes[0])
+  const { start, move, end } = resizeCallbacks(result.current.nodes[0])
+  let token = 0
   act(() => {
-    start(10, 20, 150, 110)
-    result.current.setNodes((nodes) =>
-      nodes.map((node) => ({
-        ...node,
-        position: { x: 1, y: 2 },
-        width: 300,
-        height: 200,
-        measured: { width: 300, height: 200 },
-      }))
-    )
+    token = start(rectangle, 12) ?? 0
+    move(token, 12, resized)
   })
   const actions = renderHook(
     () => useUndoActions('/repo', async () => {}, result.current.owner),
@@ -361,18 +325,18 @@ it('undo cancels an active resize and prevents its final dimensions from writing
   expect(result.current.nodes[0].position).toEqual({ x: 10, y: 20 })
   expect(result.current.nodes[0].width).toBe(150)
   expect(result.current.nodes[0].height).toBe(110)
-  expect(result.current.owner.isResizeBlocked(1)).toBe(true)
-  const finalChange = filterBlockedResizeChanges(
-    [
-      {
-        id: '1',
-        type: 'dimensions',
-        dimensions: { width: 300, height: 200 },
-        resizing: false,
-      },
-    ],
-    result.current.owner.isResizeBlocked
-  )
-  expect(finalChange.changes).toEqual([])
+  expect(move(token, 12, resized)).toBe(false)
+  end(token, 12, resized)
+
+  const second = resizeCallbacks(result.current.nodes[0])
+  const secondToken = second.start(rectangle, 13)
+  if (secondToken === null) throw new Error('redo resize was rejected')
+  expect(second.move(secondToken, 13, resized)).toBe(true)
+  await act(async () => actions.result.current.redo())
+  expect(redo).toHaveBeenCalledTimes(1)
+  expect(result.current.nodes[0].position).toEqual({ x: 10, y: 20 })
+  expect(result.current.nodes[0].width).toBe(150)
+  expect(result.current.nodes[0].height).toBe(110)
+  second.end(secondToken, 13, resized)
   expect(write).not.toHaveBeenCalled()
 })

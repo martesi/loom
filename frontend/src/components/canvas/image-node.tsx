@@ -1,17 +1,13 @@
 import { t } from '@lingui/core/macro'
-import {
-  Handle,
-  type NodeProps,
-  NodeResizer,
-  Position,
-  useStore,
-} from '@xyflow/react'
+import { Handle, type NodeProps, Position, useStore } from '@xyflow/react'
 import { memo, useEffect, useState } from 'react'
 import { DEFAULT_NODE_HEIGHT, DEFAULT_NODE_WIDTH } from '../../lib/node-size'
 import { previewRequestUrl, previewTierForNode } from '../../lib/preview-tier'
 import { cn } from '../../lib/utils'
+import type { ImageResizeCallbacks } from './image-node-resize-handles'
+import { ImageNodeResizeHandles } from './image-node-resize-handles'
 
-export interface ImageNodeData {
+export interface ImageNodeData extends ImageResizeCallbacks {
   fileName: string
   thumbUrl: string
   previewUrl?: string
@@ -19,22 +15,13 @@ export interface ImageNodeData {
   showFileName: boolean
   width?: number
   height?: number
-  onResizeStart?: (x: number, y: number, w: number, h: number) => void
-  onResizeEnd?: (x: number, y: number, w: number, h: number) => void
   [key: string]: unknown
 }
 
 export const ImageNode = memo(
-  function ImageNode({ data, selected, width, height }: NodeProps) {
-    const {
-      fileName,
-      thumbUrl,
-      previewUrl,
-      missing,
-      showFileName,
-      onResizeStart,
-      onResizeEnd,
-    } = data as unknown as ImageNodeData
+  function ImageNode({ id, data, selected, width, height }: NodeProps) {
+    const { fileName, thumbUrl, previewUrl, missing, showFileName } =
+      data as unknown as ImageNodeData
     const [failedThumbUrl, setFailedThumbUrl] = useState<string | null>(null)
     const [naturalSize, setNaturalSize] = useState<{
       w: number
@@ -156,7 +143,7 @@ export const ImageNode = memo(
           height: height ?? DEFAULT_NODE_HEIGHT,
         }}
         className={cn(
-          'group flex flex-col rounded-lg bg-card border shadow-[0_1px_3px_rgba(0,0,0,0.08),0_4px_12px_rgba(0,0,0,0.05)] transition-shadow duration-150 hover:shadow-[0_2px_6px_rgba(0,0,0,0.12),0_8px_20px_rgba(0,0,0,0.08)]',
+          'group relative flex flex-col rounded-lg bg-card border shadow-[0_1px_3px_rgba(0,0,0,0.08),0_4px_12px_rgba(0,0,0,0.05)] transition-shadow duration-150 hover:shadow-[0_2px_6px_rgba(0,0,0,0.12),0_8px_20px_rgba(0,0,0,0.08)]',
           missing
             ? 'border-[1.5px] border-dashed border-danger opacity-90'
             : 'border-black/[0.08] dark:border-white/[0.10]',
@@ -168,19 +155,9 @@ export const ImageNode = memo(
           position={Position.Left}
           style={{ visibility: 'hidden' }}
         />
-        <NodeResizer
-          minWidth={100}
-          minHeight={80}
-          isVisible={selected && data.canResize !== false}
-          handleClassName="!h-2.5 !w-2.5 !rounded-sm !border !border-primary !bg-white"
-          lineClassName="!border-primary"
-          onResizeStart={(_event, params) =>
-            onResizeStart?.(params.x, params.y, params.width, params.height)
-          }
-          onResizeEnd={(_event, params) =>
-            onResizeEnd?.(params.x, params.y, params.width, params.height)
-          }
-        />
+        {selected && data.canResize !== false && (
+          <ImageNodeResizeHandles id={id} callbacks={nodeData} />
+        )}
         <div className={cn('relative flex-1 min-h-0', missing && 'grayscale')}>
           {thumbUrl && failedThumbUrl !== thumbUrl ? (
             <img

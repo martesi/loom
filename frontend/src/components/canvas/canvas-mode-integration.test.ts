@@ -255,13 +255,20 @@ it('uses accepted snapshots for internal View and Edit while preserving Edit geo
     ])
   ).toBeNull()
   expect(
-    result.current.owner.beginResize(result.current.owner.getSnapshot(), {
-      imageId: 1,
-      x: 0,
-      y: 0,
-      w: 150,
-      h: 110,
-    })
+    result.current.owner.beginResize(
+      result.current.owner.getSnapshot(),
+      {
+        imageId: 1,
+        x: 0,
+        y: 0,
+        w: 150,
+        h: 110,
+      },
+      'nw',
+      1,
+      () => {},
+      () => {}
+    )
   ).toBeNull()
   const view = result.current.nodes.map((node) => node.position)
   await act(async () => {

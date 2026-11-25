@@ -8,9 +8,12 @@ import {
   useRef,
   useState,
 } from 'react'
-import type { CanvasData } from '../../../bindings/loom/internal/service'
+import type {
+  CanvasData,
+  GeometryUpdate,
+} from '../../../bindings/loom/internal/service'
 import type { Selection } from '../../lib/selection'
-import type { CanvasBoardOwner, ResizeGesture } from './canvas-board-owner'
+import type { CanvasBoardOwner } from './canvas-board-owner'
 import { applyHistoryToNodes } from './canvas-projection-geometry'
 import { canvasProjectionGraph } from './canvas-projection-model'
 import {
@@ -113,38 +116,67 @@ export function useCanvasBoardModel({
   projectionRef.current = projection
 
   useEffect(() => {
+    const cancelGesture = () => owner.cancelGesture()
+    window.addEventListener('blur', cancelGesture)
+    return () => window.removeEventListener('blur', cancelGesture)
+  }, [owner])
+
+  useEffect(() => {
     const board = owner.getSnapshot()
     if (board && board.data !== data) return
-    const activeGestures = new Map<number, ResizeGesture>()
-    const resizeIds = new Set<number>()
+    const activeGestures = new Map<number, number>()
     let rendererActive = true
+    const updateNodeGeometry = (imageId: number, geometry: GeometryUpdate) => {
+      setNodes((current) =>
+        current.map((node) =>
+          node.id === String(imageId)
+            ? {
+                ...node,
+                position: {
+                  x: geometry.x ?? node.position.x,
+                  y: geometry.y ?? node.position.y,
+                },
+                width: geometry.w ?? node.width,
+                height: geometry.h ?? node.height,
+                measured:
+                  geometry.w === null || geometry.h === null
+                    ? node.measured
+                    : { width: geometry.w, height: geometry.h },
+              }
+            : node
+        )
+      )
+    }
     const graph = canvasProjectionGraph(
       data,
       renditionGeneration,
-      (imageId, x, y, w, h) => {
-        if (!rendererActive) return
-        resizeIds.add(imageId)
-        const previous = activeGestures.get(imageId)
-        if (previous) owner.cancelResize(previous)
-        const gesture = owner.beginResize(
+      (imageId, pointerId, direction, before, cancelPointer) => {
+        if (!rendererActive) return null
+        let token = 0
+        const gestureToken = owner.beginResize(
           board?.data === data ? board : null,
-          {
-            imageId,
-            x,
-            y,
-            w,
-            h,
-          },
+          before,
+          direction,
+          pointerId,
+          (geometry) => updateNodeGeometry(imageId, geometry),
           () => {
+            activeGestures.delete(token)
+            cancelPointer()
             setNodes((current) =>
               current.map((node) =>
                 node.id === String(imageId)
                   ? {
                       ...node,
-                      position: { x, y },
-                      width: w,
-                      height: h,
-                      measured: { width: w, height: h },
+                      position: {
+                        x: before.x ?? 0,
+                        y: before.y ?? 0,
+                      },
+                      width: before.w ?? 150,
+                      height: before.h ?? 110,
+                      measured: {
+                        width: before.w ?? 150,
+                        height: before.h ?? 110,
+                      },
                       dragging: false,
                     }
                   : node
@@ -152,27 +184,35 @@ export function useCanvasBoardModel({
             )
           }
         )
-        if (gesture) {
-          activeGestures.set(imageId, gesture)
-        } else {
-          activeGestures.delete(imageId)
+        if (gestureToken === null) {
           if (owner.isLayoutPending())
             callbacks.current.report(
               new Error(
                 'Canvas layout is being saved. Try resizing the image again.'
               )
             )
+          return null
         }
+        token = gestureToken
+        activeGestures.set(token, pointerId)
+        return token
       },
-      (imageId, x, y, w, h) => {
-        if (!rendererActive) return
-        const gesture = activeGestures.get(imageId)
-        // Once submitted, the owner controls cancellation even if this renderer is rebuilt.
-        activeGestures.delete(imageId)
-        if (gesture)
-          void owner
-            .endResize(gesture, { imageId, x, y, w, h })
-            .catch(callbacks.current.report)
+      (token, pointerId, geometry) => {
+        if (!rendererActive || activeGestures.get(token) !== pointerId)
+          return false
+        return owner.updateResize(token, pointerId, geometry)
+      },
+      (token, pointerId, geometry) => {
+        if (!rendererActive || activeGestures.get(token) !== pointerId) return
+        activeGestures.delete(token)
+        void owner
+          .endResize(token, pointerId, geometry)
+          .catch(callbacks.current.report)
+      },
+      (token, pointerId) => {
+        if (activeGestures.get(token) !== pointerId) return
+        activeGestures.delete(token)
+        owner.cancelResize(token, pointerId)
       }
     )
     const history = owner.takeHistory()
@@ -180,11 +220,9 @@ export function useCanvasBoardModel({
       focusCanvasWhenEdgeRemoved(graph.edges, host.current)
       return () => {
         rendererActive = false
-        for (const gesture of activeGestures.values())
-          owner.cancelResize(gesture)
-        for (const imageId of resizeIds) owner.cancelBlockedResize(imageId)
+        for (const [token, pointerId] of activeGestures)
+          owner.cancelResize(token, pointerId)
         activeGestures.clear()
-        resizeIds.clear()
       }
     }
     const placedIds = new Set(
@@ -248,10 +286,9 @@ export function useCanvasBoardModel({
     setEdges(nextEdges)
     return () => {
       rendererActive = false
-      for (const gesture of activeGestures.values()) owner.cancelResize(gesture)
-      for (const imageId of resizeIds) owner.cancelBlockedResize(imageId)
+      for (const [token, pointerId] of activeGestures)
+        owner.cancelResize(token, pointerId)
       activeGestures.clear()
-      resizeIds.clear()
     }
   }, [
     data,

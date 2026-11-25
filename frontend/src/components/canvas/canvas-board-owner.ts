@@ -6,31 +6,16 @@ import {
   type LayoutSnapshot,
   type UndoResult,
 } from '../../../bindings/loom/internal/service'
+import type { DragGesture, ResizeGesture } from './canvas-board-gestures'
+import { createCanvasLayoutWriteGate } from './canvas-layout-write-gate'
 import {
   allowsCanvasCapability,
   type CanvasCapability,
   type CanvasInternalMode,
 } from './canvas-mode-policy'
 import { buildDisplayGeometry } from './canvas-projection-geometry'
+import type { ResizeDirection } from './canvas-resize-geometry'
 import { joinCanvasSnapshot } from './canvas-snapshot'
-
-export interface ResizeGesture {
-  cancelled: boolean
-  generation: number
-  revision: string
-  expected: GeometryUpdate
-  before: GeometryUpdate
-  onCancel?: () => void
-}
-
-export interface DragGesture {
-  cancelled: boolean
-  generation: number
-  revision: string
-  expected: GeometryUpdate[]
-  before: GeometryUpdate[]
-  onCancel?: () => void
-}
 
 export interface CanvasBoardExecutor {
   execute<T>(action: () => Promise<T>): Promise<T>
@@ -50,9 +35,6 @@ export interface CanvasBoardOwner extends CanvasBoardExecutor {
   isLayoutPending(): boolean
   guardLayout(action: () => Promise<void>): Promise<void>
   reserveLayout(): () => void
-  isResizeBlocked(imageId: number): boolean
-  finishBlockedResize(imageId: number): void
-  cancelBlockedResize(imageId: number): void
   beginModeTransition(): void
   setMode(mode: CanvasInternalMode): void
   allows(capability: CanvasCapability): boolean
@@ -63,10 +45,18 @@ export interface CanvasBoardOwner extends CanvasBoardExecutor {
   beginResize(
     board: AcceptedCanvasBoard | null,
     before: GeometryUpdate,
-    onCancel?: () => void
-  ): ResizeGesture | null
-  endResize(gesture: ResizeGesture, after: GeometryUpdate): Promise<void>
-  cancelResize(gesture: ResizeGesture): void
+    direction: ResizeDirection,
+    pointerId: number,
+    onPreview: (geometry: GeometryUpdate) => void,
+    onCancel: () => void
+  ): number | null
+  updateResize(token: number, pointerId: number, after: GeometryUpdate): boolean
+  endResize(
+    token: number,
+    pointerId: number,
+    after: GeometryUpdate
+  ): Promise<void>
+  cancelResize(token: number, pointerId: number): void
   beginDrag(
     board: AcceptedCanvasBoard | null,
     before: GeometryUpdate[],
@@ -107,8 +97,8 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
   let mode: CanvasInternalMode = 'legacy'
   let modeRevision = 0
   let lifetimeRevision = 0
-  let pendingLayouts = 0
-  const blockedResizes = new Set<number>()
+  let nextGestureToken = 1
+  const layoutGate = createCanvasLayoutWriteGate()
   let accepted: AcceptedCanvasBoard | null = null
   let acceptedGeneration = -1
   let gesture: ResizeGesture | DragGesture | null = null
@@ -121,12 +111,6 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
   })
   let lifetime = new AbortController()
   const listeners = new Set<() => void>()
-  function withLayoutWrite(action: () => Promise<void>) {
-    pendingLayouts++
-    return new Promise<void>((resolve) => resolve(action())).finally(() => {
-      pendingLayouts--
-    })
-  }
   function refresh() {
     const request = loadBoard()
     latestRefresh = request
@@ -171,21 +155,9 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
     getMode: () => mode,
     getModeRevision: () => modeRevision,
     getLifetimeRevision: () => lifetimeRevision,
-    isLayoutPending: () => pendingLayouts > 0,
-    guardLayout: withLayoutWrite,
-    reserveLayout() {
-      pendingLayouts++
-      return () => {
-        pendingLayouts--
-      }
-    },
-    isResizeBlocked: (imageId) => blockedResizes.has(imageId),
-    finishBlockedResize: (imageId) => {
-      blockedResizes.delete(imageId)
-    },
-    cancelBlockedResize: (imageId) => {
-      blockedResizes.delete(imageId)
-    },
+    isLayoutPending: layoutGate.isPending,
+    guardLayout: layoutGate.guard,
+    reserveLayout: layoutGate.reserve,
     beginModeTransition: () => {
       modeRevision++
     },
@@ -195,7 +167,7 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
       mode = next
     },
     allows: (capability) =>
-      !(capability === 'geometry' && pendingLayouts > 0) &&
+      !(capability === 'geometry' && layoutGate.isPending()) &&
       allowsCanvasCapability(mode, capability),
     execute<T>(action: () => Promise<T>): Promise<T> {
       // Queue outer operations only: awaiting a nested execute would deadlock.
@@ -249,10 +221,9 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
     },
     isActive: () => active,
     getSnapshot: () => accepted,
-    beginResize(board, before, onCancel) {
-      if (pendingLayouts > 0) blockedResizes.add(before.imageId)
-      else blockedResizes.delete(before.imageId)
+    beginResize(board, before, direction, pointerId, onPreview, onCancel) {
       if (
+        gesture ||
         !owner.allows('geometry') ||
         !active ||
         !board ||
@@ -264,34 +235,74 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
         (item) => item.id === before.imageId
       )?.geometry
       if (!stored) return null
-      owner.cancelGesture()
-      gesture = {
+      const current: ResizeGesture = {
+        kind: 'resize',
+        token: nextGestureToken++,
+        pointerId,
         cancelled: false,
         generation,
+        modeRevision,
+        lifetimeRevision,
         revision: board.snapshot.revision,
         expected: { ...stored },
         before: { ...before },
+        direction,
+        onPreview,
         onCancel,
       }
-      return gesture
+      gesture = current
+      return current.token
     },
-    endResize(current, after) {
-      if (gesture !== current) return Promise.resolve()
+    updateResize(token, pointerId, after) {
+      const current = gesture
+      if (
+        current?.kind !== 'resize' ||
+        current.token !== token ||
+        current.pointerId !== pointerId
+      )
+        return false
+      if (
+        current.cancelled ||
+        !active ||
+        current.lifetimeRevision !== lifetimeRevision ||
+        current.modeRevision !== modeRevision ||
+        current.generation !== generation
+      ) {
+        owner.cancelResize(token, pointerId)
+        return false
+      }
+      current.onPreview(after)
+      return true
+    },
+    endResize(token, pointerId, after) {
+      const current = gesture
+      if (
+        current?.kind !== 'resize' ||
+        current.token !== token ||
+        current.pointerId !== pointerId
+      )
+        return Promise.resolve()
+      if (
+        current.cancelled ||
+        !active ||
+        current.lifetimeRevision !== lifetimeRevision ||
+        current.modeRevision !== modeRevision ||
+        current.generation !== generation
+      ) {
+        owner.cancelResize(token, pointerId)
+        return Promise.resolve()
+      }
       gesture = null
+      current.onPreview(after)
       const batch = buildDisplayGeometry(
         new Map([[current.expected.imageId, current.expected]]),
         [current.before],
         [after]
       )
+      if (!batch.changed) return Promise.resolve()
       return owner.execute(async () => {
-        if (
-          !allowsCanvasCapability(mode, 'geometry') ||
-          !active ||
-          current.cancelled ||
-          current.generation !== generation
-        )
-          return
-        await withLayoutWrite(async () => {
+        if (!active || current.lifetimeRevision !== lifetimeRevision) return
+        await layoutGate.guard(async () => {
           await ImageService.SetGeometryFromDisplayAtRevision(
             repoPath,
             current.revision,
@@ -310,11 +321,17 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
         })
       })
     },
-    cancelResize(current) {
+    cancelResize(token, pointerId) {
+      const current = gesture
+      if (
+        current?.kind !== 'resize' ||
+        current.token !== token ||
+        current.pointerId !== pointerId
+      )
+        return
+      gesture = null
       current.cancelled = true
-      blockedResizes.add(current.before.imageId)
-      current.onCancel?.()
-      if (gesture === current) gesture = null
+      current.onCancel()
     },
     beginDrag(board, before, onCancel) {
       if (
@@ -341,6 +358,7 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
         expected.push({ ...geometry })
       }
       const current: DragGesture = {
+        kind: 'drag',
         cancelled: false,
         generation,
         revision: board.snapshot.revision,
@@ -367,7 +385,7 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
           current.generation !== generation
         )
           return
-        await withLayoutWrite(async () => {
+        await layoutGate.guard(async () => {
           await ImageService.SetGeometryFromDisplayAtRevision(
             repoPath,
             current.revision,
@@ -401,7 +419,7 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
       owner.cancelGesture()
       const requestMode = modeRevision
       const signal = lifetime.signal
-      await withLayoutWrite(async () => {
+      await layoutGate.guard(async () => {
         await ImageService.SetGeometryFromDisplayAtRevision(
           repoPath,
           board.snapshot.revision,
@@ -439,11 +457,7 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
       gesture = null
       if (current) {
         current.cancelled = true
-        if (Array.isArray(current.before)) current.onCancel?.()
-        else {
-          blockedResizes.add(current.before.imageId)
-          current.onCancel?.()
-        }
+        current.onCancel?.()
       }
     },
     isGestureActive: (current) =>
@@ -464,7 +478,6 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
       generation++
       pendingHistory = []
       readyHistory = []
-      blockedResizes.clear()
       owner.cancelGesture()
       listeners.clear()
     },

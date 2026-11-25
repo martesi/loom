@@ -41,7 +41,14 @@ it('blocks new geometry gestures until a pending layout settles', async () => {
   )
   await writing
   const drag = owner.beginDrag(board, [before])
-  const resize = owner.beginResize(board, before)
+  const resize = owner.beginResize(
+    board,
+    before,
+    'nw',
+    1,
+    () => {},
+    () => {}
+  )
   release()
   await operation
   expect(drag).toBeNull()

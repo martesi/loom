@@ -25,7 +25,7 @@ function mockSnapshot() {
 
 afterEach(() => mock.restore())
 
-it('rejects a queued resize if a graph refresh wins before dispatch', async () => {
+it('preserves a submitted resize across a graph refresh before dispatch', async () => {
   const write = mockSnapshot()
   const owner = createCanvasBoardOwner('/repo')
   const board = await owner.refresh()
@@ -34,26 +34,40 @@ it('rejects a queued resize if a graph refresh wins before dispatch', async () =
     release = resolve
   })
   const first = owner.execute(() => blocked)
-  const gesture = owner.beginResize(board, rectangle)
-  expect(gesture).not.toBeNull()
-  if (!gesture) throw new Error('missing gesture')
-  const pending = owner.endResize(gesture, resized)
+  const token = owner.beginResize(
+    board,
+    rectangle,
+    'nw',
+    1,
+    () => {},
+    () => {}
+  )
+  expect(token).not.toBeNull()
+  if (token === null) throw new Error('missing gesture')
+  const pending = owner.endResize(token, 1, resized)
   await owner.refresh()
   release()
   await Promise.all([first, pending])
-  expect(write).not.toHaveBeenCalled()
+  expect(write).toHaveBeenCalledTimes(1)
 })
 
 it('ignores resize callbacks after the repository owner is disposed', async () => {
   const write = mockSnapshot()
   const owner = createCanvasBoardOwner('/one')
   const board = await owner.refresh()
-  const gesture = owner.beginResize(board, rectangle)
-  expect(gesture).not.toBeNull()
-  if (!gesture) throw new Error('missing gesture')
+  const token = owner.beginResize(
+    board,
+    rectangle,
+    'nw',
+    1,
+    () => {},
+    () => {}
+  )
+  expect(token).not.toBeNull()
+  if (token === null) throw new Error('missing gesture')
   owner.dispose()
   const next = createCanvasBoardOwner('/two')
   await next.refresh()
-  await owner.endResize(gesture, resized)
+  await owner.endResize(token, 1, resized)
   expect(write).not.toHaveBeenCalled()
 })

@@ -35,7 +35,7 @@ test('multi-image drag is one undoable geometry change', async ({
   await page.keyboard.press('ControlOrMeta+0')
   const nodes = imageNodes(page)
   await nodes.first().click()
-  const handle = page.locator('.react-flow__resize-control.handle').last()
+  const handle = nodes.first().getByTestId('resize-handle-se')
   await dragBy(page, handle, 70, 40)
   await selectImageNodes(page, [0, 1])
   const before = await Promise.all([
@@ -265,7 +265,7 @@ test('auto-arrange respects resized node bounds', async ({ page }) => {
   const nodes = imageNodes(page)
   await nodes.first().click()
   const beforeResize = await nodeBox(nodes.first())
-  const handle = page.locator('.react-flow__resize-control.handle').last()
+  const handle = nodes.first().getByTestId('resize-handle-se')
   await expect(handle).toBeVisible()
   await dragBy(page, handle, 220, 80)
   await expect
