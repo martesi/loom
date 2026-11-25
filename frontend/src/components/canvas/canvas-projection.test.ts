@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { applyNodeChanges, type Edge, type Node } from '@xyflow/react'
 import {
+  arrangeEditProjection,
   createCanvasProjection,
   enterEdit,
   enterView,
@@ -35,6 +36,65 @@ const at = (nodes: Node[], id: string) =>
   nodes.find((node) => node.id === id)?.position
 
 describe('canvas projection', () => {
+  it('freshly arranges the whole Edit graph and stages orphans without overlap', () => {
+    const nodes = ['1', '2', '3', '4', '5'].map(makeNode)
+    const edges = [link('a', '1', '2'), link('b', '3', '4')]
+    let state = enterEdit(createCanvasProjection(input(nodes, edges)))
+    state = setEditNodes(
+      state,
+      state.editNodes.map((node) => ({
+        ...node,
+        position: { x: 900, y: 800 },
+        width: node.id === '1' ? 250 : node.width,
+      }))
+    )
+    const arranged = arrangeEditProjection(state)
+    expect(arranged.editNodes).toHaveLength(5)
+    expect(at(arranged.editNodes, '1')).not.toEqual({ x: 900, y: 800 })
+    expect(arranged.editNodes[0].width).toBe(250)
+    expect(at(arranged.editNodes, '1')?.y).toBeLessThan(
+      at(arranged.editNodes, '3')?.y ?? 0
+    )
+    for (let i = 0; i < arranged.editNodes.length; i++) {
+      for (let j = i + 1; j < arranged.editNodes.length; j++) {
+        const a = arranged.editNodes[i]
+        const b = arranged.editNodes[j]
+        expect(
+          a.position.x + (a.width ?? 150) <= b.position.x ||
+            b.position.x + (b.width ?? 150) <= a.position.x ||
+            a.position.y + (a.height ?? 110) <= b.position.y ||
+            b.position.y + (b.height ?? 110) <= a.position.y
+        ).toBe(true)
+      }
+    }
+    expect(
+      arrangeEditProjection(arranged).editNodes.map((node) => node.position)
+    ).toEqual(arranged.editNodes.map((node) => node.position))
+    expect(() => arrangeEditProjection(enterView(state))).toThrow()
+  })
+
+  it('arranges using current relationships and pairing order, not prior View positions', () => {
+    const nodes = ['1', '2', '3', '4'].map(makeNode)
+    const oldEdges = [link('a', '1', '2'), link('b', '3', '4')]
+    let state = enterEdit(createCanvasProjection(input(nodes, oldEdges)))
+    const newEdges = [link('a', '2', '1'), link('b', '3', '4')]
+    state = reconcileCanvasProjection(state, {
+      ...input(nodes, newEdges),
+      pairingOrders: new Map([
+        ['a', 2],
+        ['b', 1],
+      ]),
+    })
+    const arranged = arrangeEditProjection(state)
+    const first = at(arranged.editNodes, '3')
+    const source = at(arranged.editNodes, '2')
+    const derivative = at(arranged.editNodes, '1')
+    expect(first?.y).toBeLessThan(source?.y ?? 0)
+    expect(source?.x).toBeLessThan(derivative?.x ?? 0)
+    expect(arranged.viewNodes).toBe(state.viewNodes)
+    expect(arranged.expectedGeometry).toBe(state.expectedGeometry)
+  })
+
   it('shows paired nodes in View and retains their positions in Edit', () => {
     const nodes = ['1', '2', '3'].map((id) => ({
       id,

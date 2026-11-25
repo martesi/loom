@@ -170,6 +170,31 @@ export function setEditNodes(
   return { ...state, editNodes: nodes }
 }
 
+/** Compute a fresh whole-graph arrangement without writing geometry or history. */
+export function arrangeEditProjection(
+  state: CanvasProjectionState
+): CanvasProjectionState {
+  if (state.mode !== 'edit') throw new Error('arrange requires Edit')
+  const layout = layoutChronologicalGraph({
+    nodes: state.editNodes.map(nodeSize),
+    edges: chronologicalEdges(state.edges, state.pairingOrders),
+    stagingCenter: center(state.editViewport, state.viewportSize),
+  })
+  const boxes = [
+    ...layout.components.flatMap((item) => item.boxes),
+    ...layout.staged,
+  ]
+  const positions = new Map(
+    boxes.map((box) => [box.id, { x: box.x, y: box.y }])
+  )
+  const editNodes = state.editNodes.map((node) => {
+    const position = positions.get(node.id)
+    if (!position) throw new Error(`missing arranged node: ${node.id}`)
+    return { ...node, position }
+  })
+  return { ...state, editNodes }
+}
+
 export function enterView(state: CanvasProjectionState): CanvasProjectionState {
   return state.mode === 'view' ? state : { ...state, mode: 'view' }
 }
@@ -200,17 +225,24 @@ function project(
   return layoutChronologicalGraph({
     nodes: nodes.map(nodeSize),
     previous,
-    edges: edges.map((edge) => {
-      const pairingOrder = orders.get(edge.id)
-      if (pairingOrder === undefined)
-        throw new Error(`missing pairing order: ${edge.id}`)
-      return {
-        id: edge.id,
-        source: edge.source,
-        target: edge.target,
-        pairingOrder,
-      }
-    }),
+    edges: chronologicalEdges(edges, orders),
+  })
+}
+
+function chronologicalEdges(
+  edges: readonly Edge[],
+  orders: ReadonlyMap<string, number>
+) {
+  return edges.map((edge) => {
+    const pairingOrder = orders.get(edge.id)
+    if (pairingOrder === undefined)
+      throw new Error(`missing pairing order: ${edge.id}`)
+    return {
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      pairingOrder,
+    }
   })
 }
 
