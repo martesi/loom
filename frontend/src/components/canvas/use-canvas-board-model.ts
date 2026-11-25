@@ -265,6 +265,7 @@ export function useCanvasBoardModel({
     setHoveredNodeId,
     mode: projection.mode,
     transitionMode: projection.transitionMode,
+    arrangeEdit: projection.arrangeEdit,
     updateProjectionViewport: projection.updateViewport,
     setViewAnchor: projection.setAnchor,
   }

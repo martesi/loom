@@ -177,7 +177,11 @@ export function CanvasWorkspaceContent(props: Props) {
   const validTarget = (source: number, id: string) =>
     validateRelationshipTarget(source, id, data, groupMembers)
   const arrange = (nodeIds?: string[]) =>
-    arrangeCanvas(repo.path, nodes, edges, data, reload, nodeIds)
+    boardModel.owner.getMode() === 'edit'
+      ? boardModel.arrangeEdit()
+      : boardModel.owner.getMode() === 'legacy'
+        ? arrangeCanvas(repo.path, nodes, edges, data, reload, nodeIds)
+        : Promise.resolve()
   const alignHorizontal = () =>
     alignCanvas('horizontal', repo.path, displayNodes, data, reload)
   const alignVertical = () =>

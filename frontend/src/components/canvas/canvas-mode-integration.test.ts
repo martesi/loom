@@ -4,6 +4,7 @@ import type { Edge, Node, Viewport } from '@xyflow/react'
 import { useRef, useState, useSyncExternalStore } from 'react'
 import {
   type CanvasData,
+  type GeometryUpdate,
   ImageService,
 } from '../../../bindings/loom/internal/service'
 import { emptySelection } from '../../lib/selection'
@@ -43,10 +44,155 @@ const relationships = [
   },
 ]
 let viewport: Viewport = { x: 0, y: 0, zoom: 1 }
-
 afterEach(() => {
   cleanup()
   mock.restore()
+})
+
+it('arranges the displayed Edit graph as one guarded batch, not stored coordinates', async () => {
+  spyOn(ImageService, 'LoadCanvas').mockResolvedValue(data as never)
+  let links = relationships
+  let geometry: GeometryUpdate[] = images.map((image) => ({
+    imageId: image.id,
+    x: image.canvasX,
+    y: image.canvasY,
+    w: 150,
+    h: 110,
+  }))
+  spyOn(ImageService, 'GetLayoutSnapshot').mockImplementation(
+    () =>
+      Promise.resolve({
+        revision: '1',
+        relationships: links,
+        images: images.map((image) => ({
+          id: image.id,
+          width: image.width,
+          height: image.height,
+          geometry: geometry.find((row) => row.imageId === image.id),
+        })),
+      }) as never
+  )
+  const write = spyOn(
+    ImageService,
+    'SetGeometryFromDisplayAtRevision'
+  ).mockImplementation((_path, _revision, _expected, _before, after) => {
+    geometry = after
+    return Promise.resolve() as never
+  })
+  const { result } = renderHook(() => {
+    const owner = useCanvasBoardOwner('/repo')
+    const board = useSyncExternalStore(owner.subscribe, owner.getSnapshot)
+    const [nodes, setNodes] = useState<Node[]>([])
+    const [edges, setEdges] = useState<Edge[]>([])
+    const model = useCanvasBoardModel({
+      data: board?.data ?? empty,
+      owner,
+      renditionGeneration: 0,
+      callbacks: useRef({ report: mock() }),
+      selection: emptySelection,
+      nodes,
+      setNodes,
+      edges,
+      setEdges,
+      target: null,
+      host: useRef(null),
+    })
+    return { owner, nodes, setNodes, model }
+  })
+  await act(async () => {
+    await result.current.owner.refresh()
+  })
+  await act(async () => {
+    await result.current.model.transitionMode('edit')
+  })
+  act(() =>
+    result.current.setNodes((nodes) =>
+      nodes.map((node) =>
+        node.id === '1'
+          ? {
+              ...node,
+              position: { x: 900, y: 800 },
+              width: 250,
+              height: 180,
+              measured: { width: 250, height: 180 },
+            }
+          : node
+      )
+    )
+  )
+  links = [{ ...relationships[0], sourceImageId: 2, derivedImageId: 1 }]
+  await act(async () => {
+    await result.current.owner.refresh()
+  })
+  const before = result.current.nodes.map((node) => ({
+    imageId: Number(node.id),
+    ...node.position,
+    w: node.width ?? 150,
+    h: node.height ?? 110,
+  }))
+  await act(async () => {
+    await result.current.owner.execute(() => result.current.model.arrangeEdit())
+  })
+  expect(write).toHaveBeenCalledTimes(1)
+  expect(write.mock.calls[0][2][0]).toEqual({
+    imageId: 1,
+    x: 10,
+    y: 20,
+    w: 150,
+    h: 110,
+  })
+  expect(write.mock.calls[0][3]).toEqual(before)
+  expect(write.mock.calls[0][4]).toHaveLength(3)
+  expect(result.current.nodes[0].position).not.toEqual({ x: 900, y: 800 })
+  const arranged = result.current.nodes.map((node) => node.position)
+  expect(arranged[1].x).toBeLessThan(arranged[0].x)
+  await act(async () => {
+    await result.current.owner.execute(() => result.current.model.arrangeEdit())
+  })
+  expect(write).toHaveBeenCalledTimes(1)
+  expect(result.current.nodes.map((node) => node.position)).toEqual(arranged)
+  const after = write.mock.calls[0][4]
+  geometry = before
+  await act(async () => {
+    await result.current.owner.applyHistory({
+      applied: true,
+      kind: 'geometry',
+      geometry,
+    } as never)
+  })
+  expect(result.current.nodes.map((node) => node.position)).toEqual(
+    before.map(({ x, y }) => ({ x, y }))
+  )
+  geometry = after
+  await act(async () => {
+    await result.current.owner.applyHistory({
+      applied: true,
+      kind: 'geometry',
+      geometry,
+    } as never)
+  })
+  expect(result.current.nodes.map((node) => node.position)).toEqual(arranged)
+  act(() =>
+    result.current.setNodes((nodes) =>
+      nodes.map((node) =>
+        node.id === '1' ? { ...node, position: { x: 1234, y: 5678 } } : node
+      )
+    )
+  )
+  write.mockRejectedValueOnce(new Error('stale revision'))
+  await act(async () => {
+    await expect(
+      result.current.owner.execute(() => result.current.model.arrangeEdit())
+    ).rejects.toThrow('stale revision')
+  })
+  expect(result.current.nodes[0].position).toEqual({ x: 1234, y: 5678 })
+  await act(async () => {
+    await result.current.model.transitionMode('view')
+  })
+  await act(async () => {
+    await result.current.owner.execute(() => result.current.model.arrangeEdit())
+  })
+  expect(write).toHaveBeenCalledTimes(2)
 })
 
 it('uses accepted snapshots for internal View and Edit while preserving Edit geometry on refresh', async () => {

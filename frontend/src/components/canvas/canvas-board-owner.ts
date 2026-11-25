@@ -61,6 +61,13 @@ export interface CanvasBoardOwner extends CanvasBoardExecutor {
     onCancel?: () => void
   ): DragGesture | null
   endDrag(gesture: DragGesture, after: GeometryUpdate[]): Promise<void>
+  /** Called inside execute, alongside mode transitions and other mutations. */
+  commitDisplayedLayout(
+    board: AcceptedCanvasBoard,
+    before: GeometryUpdate[],
+    after: GeometryUpdate[],
+    accept: () => void
+  ): Promise<void>
   cancelGesture(): void
   isGestureActive(gesture: DragGesture): boolean
   subscribe(listener: () => void): () => void
@@ -324,6 +331,38 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
         })
         await owner.refresh()
       })
+    },
+    async commitDisplayedLayout(board, before, after, accept) {
+      if (mode !== 'edit' || !active) return
+      if (board !== accepted || acceptedGeneration !== generation)
+        throw new Error('Canvas changed during layout. Try again.')
+      const batch = buildDisplayGeometry(
+        new Map(
+          (board.snapshot.images ?? []).map((item) => [item.id, item.geometry])
+        ),
+        before,
+        after
+      )
+      if (!batch.changed) return
+      const revisionGeneration = generation
+      owner.cancelGesture()
+      await ImageService.SetGeometryFromDisplayAtRevision(
+        repoPath,
+        board.snapshot.revision,
+        batch.expected,
+        batch.before,
+        batch.after
+      ).catch(async (error: unknown) => {
+        await owner
+          .refresh()
+          .catch((reloadError: unknown) =>
+            console.error('canvas arrange reload failed', reloadError)
+          )
+        throw error
+      })
+      if (active && mode === 'edit' && generation === revisionGeneration)
+        accept()
+      if (active) await owner.refresh()
     },
     cancelGesture() {
       const current = gesture

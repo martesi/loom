@@ -7,6 +7,7 @@ import type {
 } from './canvas-board-owner'
 import type { CanvasInternalMode } from './canvas-mode-policy'
 import {
+  arrangeEditProjection,
   type CanvasProjectionState,
   createCanvasProjection,
   enterEdit,
@@ -90,6 +91,30 @@ export function useCanvasProjectionController(props: Props) {
   }
   function setAnchor(anchor: XYPosition | null) {
     if (state.current) state.current = setViewAnchor(state.current, anchor)
+  }
+  /** The action system calls this inside the owner's serialized queue. */
+  async function arrangeEdit() {
+    const { owner } = current.current
+    if (owner.getMode() !== 'edit') return
+    const input = source.current
+    const previous = state.current
+    if (!input || !previous || owner.getSnapshot() !== input.board)
+      throw new Error('Canvas snapshot is not ready for arrangement')
+    const before = capture(previous)
+    const next = arrangeEditProjection(before)
+    const geometry = (nodes: Node[]) =>
+      nodes.map((node) => ({
+        imageId: Number(node.id),
+        ...node.position,
+        w: node.width ?? node.measured?.width ?? 150,
+        h: node.height ?? node.measured?.height ?? 110,
+      }))
+    await owner.commitDisplayedLayout(
+      input.board,
+      geometry(before.editNodes),
+      geometry(next.editNodes),
+      () => publish(next)
+    )
   }
   async function transitionMode(target: 'view' | 'edit') {
     const { owner } = current.current
@@ -177,7 +202,14 @@ export function useCanvasProjectionController(props: Props) {
         .catch(current.current.report)
     return true
   }
-  return { mode, transitionMode, updateViewport, setAnchor, reconcile }
+  return {
+    mode,
+    transitionMode,
+    updateViewport,
+    setAnchor,
+    reconcile,
+    arrangeEdit,
+  }
 }
 
 function compensateAnchor(

@@ -427,7 +427,9 @@ export function CanvasMainSurface(props: Props) {
           canFitSelection={selectedCanvasNodeIds.length > 0}
           canAutoArrange={
             mode !== 'view' &&
-            (displayNodes.length >= 2 || selectedCanvasNodeIds.length > 1)
+            (mode === 'edit'
+              ? displayNodes.length > 0
+              : displayNodes.length >= 2 || selectedCanvasNodeIds.length > 1)
           }
           canMutateGeometry={mode !== 'view'}
           shortcuts={{
