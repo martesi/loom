@@ -21,6 +21,8 @@ export interface DragGesture {
   kind: 'drag'
   cancelled: boolean
   generation: number
+  modeRevision: number
+  lifetimeRevision: number
   revision: string
   expected: GeometryUpdate[]
   before: GeometryUpdate[]

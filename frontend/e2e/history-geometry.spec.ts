@@ -342,4 +342,22 @@ test('viewport culling cancels an active pointer resize without a late write', a
   await expect(first).toBeVisible()
   await expect.poll(geometry).toEqual(before)
   await expect(page.locator('.react-flow__edge')).toHaveCount(0)
+
+  const freshHandle = first.getByTestId('resize-handle-se')
+  const freshBox = await freshHandle.boundingBox()
+  if (!freshBox) throw new Error('fresh resize handle was not restored')
+  const freshX = freshBox.x + freshBox.width / 2
+  const freshY = freshBox.y + freshBox.height / 2
+  await page.mouse.move(freshX, freshY)
+  await page.mouse.down()
+  await page.mouse.move(freshX + 20, freshY + 15, { steps: 3 })
+  await page.mouse.up()
+  await expect
+    .poll(async () => (await geometry())[2])
+    .toBeGreaterThan(before[2])
+  const resized = await geometry()
+  await page.keyboard.press('ControlOrMeta+z')
+  await expect.poll(geometry).toEqual(before)
+  await page.keyboard.press('ControlOrMeta+Shift+z')
+  await expect.poll(geometry).toEqual(resized)
 })

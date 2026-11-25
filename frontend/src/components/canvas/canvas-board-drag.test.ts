@@ -148,7 +148,7 @@ it('keeps a completed drag queued across a renderer-only rerender', async () => 
   expect(report).not.toHaveBeenCalled()
 })
 
-it('discards a completed queued drag when a refresh wins before dispatch', async () => {
+it('preserves a completed queued drag when refresh wins before dispatch', async () => {
   const write = setup()
   const owner = createCanvasBoardOwner('/repo')
   const board = await owner.refresh()
@@ -165,7 +165,7 @@ it('discards a completed queued drag when a refresh wins before dispatch', async
   await owner.refresh()
   release()
   await Promise.all([blocked, pending])
-  expect(write).not.toHaveBeenCalled()
+  expect(write).toHaveBeenCalledTimes(1)
 })
 
 it('restores cancelled displayed positions and ignores later pointer changes', async () => {

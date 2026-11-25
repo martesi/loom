@@ -6,6 +6,7 @@ import {
   type LayoutSnapshot,
   type UndoResult,
 } from '../../../bindings/loom/internal/service'
+import type { CanvasBoardExecutor } from './canvas-board-executor'
 import type { DragGesture, ResizeGesture } from './canvas-board-gestures'
 import { createCanvasLayoutWriteGate } from './canvas-layout-write-gate'
 import {
@@ -16,12 +17,6 @@ import {
 import { buildDisplayGeometry } from './canvas-projection-geometry'
 import type { ResizeDirection } from './canvas-resize-geometry'
 import { joinCanvasSnapshot } from './canvas-snapshot'
-
-export interface CanvasBoardExecutor {
-  execute<T>(action: () => Promise<T>): Promise<T>
-  cancelGesture?(): void
-  isActive?(): boolean
-}
 
 export interface AcceptedCanvasBoard {
   snapshot: LayoutSnapshot
@@ -300,9 +295,10 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
         [after]
       )
       if (!batch.changed) return Promise.resolve()
-      return owner.execute(async () => {
-        if (!active || current.lifetimeRevision !== lifetimeRevision) return
-        await layoutGate.guard(async () => {
+      const releaseLayout = layoutGate.reserve()
+      return owner
+        .execute(async () => {
+          if (!active || current.lifetimeRevision !== lifetimeRevision) return
           await ImageService.SetGeometryFromDisplayAtRevision(
             repoPath,
             current.revision,
@@ -319,7 +315,7 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
           })
           await owner.refresh()
         })
-      })
+        .finally(releaseLayout)
     },
     cancelResize(token, pointerId) {
       const current = gesture
@@ -361,6 +357,8 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
         kind: 'drag',
         cancelled: false,
         generation,
+        modeRevision,
+        lifetimeRevision,
         revision: board.snapshot.revision,
         expected,
         before: before.map((item) => ({ ...item })),
@@ -377,15 +375,22 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
         current.before,
         after
       )
-      return owner.execute(async () => {
-        if (
-          !allowsCanvasCapability(mode, 'geometry') ||
-          !active ||
-          current.cancelled ||
-          current.generation !== generation
-        )
-          return
-        await layoutGate.guard(async () => {
+      if (
+        current.cancelled ||
+        !active ||
+        current.generation !== generation ||
+        current.modeRevision !== modeRevision ||
+        current.lifetimeRevision !== lifetimeRevision ||
+        !allowsCanvasCapability(mode, 'geometry')
+      ) {
+        current.onCancel?.()
+        return Promise.resolve()
+      }
+      if (!batch.changed) return Promise.resolve()
+      const releaseLayout = layoutGate.reserve()
+      return owner
+        .execute(async () => {
+          if (!active || current.lifetimeRevision !== lifetimeRevision) return
           await ImageService.SetGeometryFromDisplayAtRevision(
             repoPath,
             current.revision,
@@ -402,7 +407,7 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
           })
           await owner.refresh()
         })
-      })
+        .finally(releaseLayout)
     },
     async commitDisplayedLayout(board, before, after, accept) {
       if (mode !== 'edit' || !active) return
@@ -475,6 +480,7 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
       active = false
       lifetimeRevision++
       lifetime.abort()
+      layoutGate.releaseAll()
       generation++
       pendingHistory = []
       readyHistory = []

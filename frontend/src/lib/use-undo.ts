@@ -3,7 +3,7 @@ import {
   type UndoResult,
   UndoService,
 } from '../../bindings/loom/internal/service'
-import type { CanvasBoardExecutor } from '../components/canvas/canvas-board-owner'
+import type { CanvasBoardExecutor } from '../components/canvas/canvas-board-executor'
 import { useToast } from '../components/ui/toast'
 
 // Failed inverses of hard-purge operations surface their reason through the app toast.
