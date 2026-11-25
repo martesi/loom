@@ -116,21 +116,42 @@ export function useCanvasBoardModel({
     const board = owner.getSnapshot()
     if (board && board.data !== data) return
     const activeGestures = new Map<number, ResizeGesture>()
+    const resizeIds = new Set<number>()
     let rendererActive = true
     const graph = canvasProjectionGraph(
       data,
       renditionGeneration,
       (imageId, x, y, w, h) => {
         if (!rendererActive) return
+        resizeIds.add(imageId)
         const previous = activeGestures.get(imageId)
         if (previous) owner.cancelResize(previous)
-        const gesture = owner.beginResize(board?.data === data ? board : null, {
-          imageId,
-          x,
-          y,
-          w,
-          h,
-        })
+        const gesture = owner.beginResize(
+          board?.data === data ? board : null,
+          {
+            imageId,
+            x,
+            y,
+            w,
+            h,
+          },
+          () => {
+            setNodes((current) =>
+              current.map((node) =>
+                node.id === String(imageId)
+                  ? {
+                      ...node,
+                      position: { x, y },
+                      width: w,
+                      height: h,
+                      measured: { width: w, height: h },
+                      dragging: false,
+                    }
+                  : node
+              )
+            )
+          }
+        )
         if (gesture) {
           activeGestures.set(imageId, gesture)
         } else {
@@ -144,8 +165,8 @@ export function useCanvasBoardModel({
         }
       },
       (imageId, x, y, w, h) => {
+        if (!rendererActive) return
         const gesture = activeGestures.get(imageId)
-        owner.finishBlockedResize(imageId)
         // Once submitted, the owner controls cancellation even if this renderer is rebuilt.
         activeGestures.delete(imageId)
         if (gesture)
@@ -161,7 +182,9 @@ export function useCanvasBoardModel({
         rendererActive = false
         for (const gesture of activeGestures.values())
           owner.cancelResize(gesture)
+        for (const imageId of resizeIds) owner.cancelBlockedResize(imageId)
         activeGestures.clear()
+        resizeIds.clear()
       }
     }
     const placedIds = new Set(
@@ -226,7 +249,9 @@ export function useCanvasBoardModel({
     return () => {
       rendererActive = false
       for (const gesture of activeGestures.values()) owner.cancelResize(gesture)
+      for (const imageId of resizeIds) owner.cancelBlockedResize(imageId)
       activeGestures.clear()
+      resizeIds.clear()
     }
   }, [
     data,

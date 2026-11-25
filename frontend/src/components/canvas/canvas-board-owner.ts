@@ -12,6 +12,7 @@ import {
   type CanvasInternalMode,
 } from './canvas-mode-policy'
 import { buildDisplayGeometry } from './canvas-projection-geometry'
+import { joinCanvasSnapshot } from './canvas-snapshot'
 
 export interface ResizeGesture {
   cancelled: boolean
@@ -19,6 +20,7 @@ export interface ResizeGesture {
   revision: string
   expected: GeometryUpdate
   before: GeometryUpdate
+  onCancel?: () => void
 }
 
 export interface DragGesture {
@@ -50,6 +52,7 @@ export interface CanvasBoardOwner extends CanvasBoardExecutor {
   reserveLayout(): () => void
   isResizeBlocked(imageId: number): boolean
   finishBlockedResize(imageId: number): void
+  cancelBlockedResize(imageId: number): void
   beginModeTransition(): void
   setMode(mode: CanvasInternalMode): void
   allows(capability: CanvasCapability): boolean
@@ -59,7 +62,8 @@ export interface CanvasBoardOwner extends CanvasBoardExecutor {
   getSnapshot(): AcceptedCanvasBoard | null
   beginResize(
     board: AcceptedCanvasBoard | null,
-    before: GeometryUpdate
+    before: GeometryUpdate,
+    onCancel?: () => void
   ): ResizeGesture | null
   endResize(gesture: ResizeGesture, after: GeometryUpdate): Promise<void>
   cancelResize(gesture: ResizeGesture): void
@@ -144,7 +148,7 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
     const snapshot = await ImageService.GetLayoutSnapshot(repoPath)
     if (!isCurrent()) return null
     if (!snapshot) throw new Error('Canvas layout snapshot is unavailable')
-    const data = joinSnapshot(metadata, snapshot)
+    const data = joinCanvasSnapshot(metadata, snapshot)
     // An intermediate publication may not have reached React before this one.
     // Keep its replay membership, but use this snapshot's authoritative rows.
     const geometry = new Map(
@@ -177,6 +181,9 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
     },
     isResizeBlocked: (imageId) => blockedResizes.has(imageId),
     finishBlockedResize: (imageId) => {
+      blockedResizes.delete(imageId)
+    },
+    cancelBlockedResize: (imageId) => {
       blockedResizes.delete(imageId)
     },
     beginModeTransition: () => {
@@ -242,7 +249,7 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
     },
     isActive: () => active,
     getSnapshot: () => accepted,
-    beginResize(board, before) {
+    beginResize(board, before, onCancel) {
       if (pendingLayouts > 0) blockedResizes.add(before.imageId)
       else blockedResizes.delete(before.imageId)
       if (
@@ -264,6 +271,7 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
         revision: board.snapshot.revision,
         expected: { ...stored },
         before: { ...before },
+        onCancel,
       }
       return gesture
     },
@@ -304,6 +312,8 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
     },
     cancelResize(current) {
       current.cancelled = true
+      blockedResizes.add(current.before.imageId)
+      current.onCancel?.()
       if (gesture === current) gesture = null
     },
     beginDrag(board, before, onCancel) {
@@ -429,7 +439,11 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
       gesture = null
       if (current) {
         current.cancelled = true
-        if ('onCancel' in current) current.onCancel?.()
+        if (Array.isArray(current.before)) current.onCancel?.()
+        else {
+          blockedResizes.add(current.before.imageId)
+          current.onCancel?.()
+        }
       }
     },
     isGestureActive: (current) =>
@@ -463,33 +477,4 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
     },
   }
   return owner
-}
-
-function joinSnapshot(
-  metadata: CanvasData,
-  snapshot: LayoutSnapshot
-): CanvasData {
-  const byId = new Map(
-    (metadata.images ?? []).map((image) => [image.id, image])
-  )
-  const images = (snapshot.images ?? []).map((node) => {
-    const image = byId.get(node.id)
-    if (!image)
-      throw new Error(
-        `Canvas snapshot metadata missing for image ${node.id}. Refresh and try again.`
-      )
-    const { x, y, w, h } = node.geometry
-    return {
-      ...image,
-      width: node.width,
-      height: node.height,
-      trashed: false,
-      placed: x !== null && y !== null,
-      canvasX: x ?? 0,
-      canvasY: y ?? 0,
-      canvasW: w ?? 0,
-      canvasH: h ?? 0,
-    }
-  })
-  return { ...metadata, images, relationships: snapshot.relationships }
 }

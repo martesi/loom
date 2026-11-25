@@ -22,6 +22,7 @@ import { applyCanvasNodeSelection } from '../../lib/canvas-selection'
 import { emptySelection, type Selection } from '../../lib/selection'
 import type { CanvasBoardOwner } from './canvas-board-owner'
 import type { CanvasInternalMode } from './canvas-mode-policy'
+import { filterBlockedResizeChanges } from './canvas-resize-guard'
 import { useCanvasBoardDrag } from './use-canvas-board-drag'
 
 interface MenuState {
@@ -199,6 +200,13 @@ export function CanvasFlow(props: Props) {
         panActivationKeyCode={null}
         nodesDraggable={!space && mode !== 'view'}
         onNodesChange={(changes) => {
+          const guarded = filterBlockedResizeChanges(
+            changes,
+            owner.isResizeBlocked
+          )
+          changes = guarded.changes
+          for (const imageId of guarded.completed)
+            owner.finishBlockedResize(imageId)
           if (!owner.allows('geometry'))
             changes = changes.filter(
               (change) =>
@@ -208,11 +216,6 @@ export function CanvasFlow(props: Props) {
                   (change.resizing || change.setAttributes)
                 )
             )
-          changes = changes.filter(
-            (change) =>
-              !('id' in change && owner.isResizeBlocked(Number(change.id))) ||
-              (change.type !== 'position' && change.type !== 'dimensions')
-          )
           changes = drag.filterChanges(changes)
           setNodes((n) => applyNodeChanges(changes, n))
           const selected = changes.filter((c) => c.type === 'select')
