@@ -70,6 +70,7 @@ it('arranges the displayed Edit graph as one guarded batch, not stored coordinat
       renditionGeneration: 0,
       callbacks: useRef({ report: mock() }),
       selection: emptySelection,
+      setSelection: ignoreSelection,
       nodes,
       setNodes,
       edges,

@@ -60,12 +60,14 @@ it('merges committed positions into the latest graph, not the graph used for lay
     const board = useSyncExternalStore(owner.subscribe, owner.getSnapshot)
     const [nodes, setNodes] = useState<Node[]>([])
     const [edges, setEdges] = useState<Edge[]>([])
+    const [selection, setSelection] = useState(emptySelection)
     const model = useCanvasBoardModel({
       data: board?.data ?? empty,
       owner,
       renditionGeneration: 0,
       callbacks: useRef({ report: mock() }),
-      selection: emptySelection,
+      selection,
+      setSelection,
       nodes,
       setNodes,
       edges,
@@ -73,7 +75,7 @@ it('merges committed positions into the latest graph, not the graph used for lay
       target: null,
       host: useRef(null),
     })
-    return { owner, nodes, setNodes, edges, model }
+    return { owner, nodes, setNodes, edges, selection, setSelection, model }
   })
   await act(async () => {
     await result.current.owner.refresh()
@@ -89,6 +91,15 @@ it('merges committed positions into the latest graph, not the graph used for lay
     )
   )
   expect(result.current.edges).toHaveLength(1)
+  act(() =>
+    result.current.setSelection({
+      surface: 'canvas',
+      ids: [1, 2],
+      edges: [7],
+      group: null,
+    })
+  )
+  expect(result.current.model.displayEdges[0].selected).toBe(true)
   let operation: Promise<void> = Promise.resolve()
   await act(async () => {
     operation = result.current.owner.execute(() =>
@@ -99,11 +110,24 @@ it('merges committed positions into the latest graph, not the graph used for lay
     await result.current.owner.refresh()
   })
   expect(result.current.edges).toHaveLength(0)
+  expect(result.current.selection).toEqual({
+    surface: 'canvas',
+    ids: [1, 2],
+    edges: [],
+    group: null,
+  })
   await act(async () => {
     release()
     await operation
   })
   expect(result.current.edges).toHaveLength(0)
+  expect(result.current.selection.ids).toEqual([1, 2])
+  expect(result.current.selection.edges).toEqual([])
+  expect(
+    result.current.model.displayNodes
+      .filter((node) => node.selected)
+      .map((node) => node.id)
+  ).toEqual(['1', '2'])
   expect(result.current.nodes.map((node) => node.position)).toEqual(
     geometry.map(({ x, y }) => ({ x, y }))
   )
