@@ -44,7 +44,7 @@ it('navigates to live projected nodes and reveals hidden View assets', async () 
     setExpanded: mock(),
     openAssets: mock(),
   } as unknown as Parameters<typeof useCanvasAssetOperations>[0]
-  const { result } = renderHook(() => useCanvasAssetOperations(props))
+  const { result, rerender } = renderHook(() => useCanvasAssetOperations(props))
   await act(async () => result.current.go(1))
   expect(setCenter).toHaveBeenCalledWith(220, 290, { zoom: 2 })
   expect(setSelection).toHaveBeenCalledWith({
@@ -57,6 +57,7 @@ it('navigates to live projected nodes and reveals hidden View assets', async () 
   expect(selectAssets).toHaveBeenCalledWith([2])
   expect(setReveal).toHaveBeenCalledWith({ id: 2, folder: null })
   owner.setMode('edit')
+  rerender()
   nodes.set('2', {
     id: '2',
     position: { x: 500, y: 600 },

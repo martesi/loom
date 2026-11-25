@@ -77,19 +77,19 @@ export function useCanvasAssetOperations({
       navigation.current.generation++
     }
   }, [])
+  // A retained callback must keep the revision from the render that created it.
+  const modeRevision = owner.getModeRevision()
   async function go(id: number, folder = false) {
     const isOwnerCurrent = () =>
       navigationActive.current &&
       navigation.current.owner === owner &&
       navigation.current.repoPath === repoPath &&
-      owner.isActive?.() !== false
+      owner.isActive?.() !== false &&
+      owner.getModeRevision() === modeRevision
     if (!isOwnerCurrent()) return
     const request = ++navigation.current.generation
-    const modeRevision = owner.getModeRevision()
     const isCurrent = () =>
-      navigation.current.generation === request &&
-      isOwnerCurrent() &&
-      owner.getModeRevision() === modeRevision
+      navigation.current.generation === request && isOwnerCurrent()
     const image = await ImageService.GetImage(repoPath, id)
     if (!isCurrent() || !image) return
     const mode = owner.getMode()

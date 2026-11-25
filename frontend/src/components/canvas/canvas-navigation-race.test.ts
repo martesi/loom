@@ -99,6 +99,69 @@ it('ignores a retained repository callback without interrupting current navigati
   expect(setCenter).toHaveBeenCalledWith(275, 55, { zoom: 1 })
 })
 
+for (const strict of [false, true]) {
+  for (const backToLegacy of [false, true]) {
+    it(`ignores an old mode callback after ${backToLegacy ? 'an ABA transition' : 'entering View'} (StrictMode: ${strict})`, async () => {
+      let resolveImage: (value: never) => void = () => {}
+      const getImage = spyOn(ImageService, 'GetImage').mockImplementation(
+        (_path, id) =>
+          id === 2
+            ? new Promise((resolve) => {
+                resolveImage = resolve
+              })
+            : Promise.resolve({ id: 1, placed: true, canvasX: 100 } as never)
+      )
+      const setCenter = mock(async () => true)
+      const hook = renderHook(
+        () => {
+          const owner = useCanvasBoardOwner('/repo')
+          const [selection, setSelection] = useState(emptySelection)
+          const operations = useCanvasAssetOperations({
+            owner,
+            repoPath: '/repo',
+            selection,
+            setSelection,
+            flow: {
+              getNode: () => ({
+                position: { x: 200, y: 20 },
+                width: 100,
+                height: 80,
+              }),
+              getZoom: () => 1,
+              setCenter,
+            },
+            setExpanded: mock(),
+            openAssets: mock(),
+            selectAssets: mock(),
+            setReveal: mock(),
+          } as unknown as Parameters<typeof useCanvasAssetOperations>[0])
+          return { owner, operations, selection }
+        },
+        { reactStrictMode: strict }
+      )
+      const retainedGo = hook.result.current.operations.go
+      hook.result.current.owner.setMode('view')
+      if (backToLegacy) hook.result.current.owner.setMode('legacy')
+      hook.rerender()
+      const currentRequest = hook.result.current.operations.go(2)
+      await act(async () => retainedGo(1))
+      expect(getImage).toHaveBeenCalledTimes(1)
+      expect(getImage).toHaveBeenCalledWith('/repo', 2)
+      await act(async () => {
+        resolveImage({ id: 2, placed: true, canvasX: 200, canvasY: 0 } as never)
+        await currentRequest
+      })
+      expect(hook.result.current.selection.ids).toEqual([2])
+      expect(setCenter).toHaveBeenCalledTimes(1)
+      expect(setCenter).toHaveBeenCalledWith(
+        backToLegacy ? 275 : 250,
+        backToLegacy ? 55 : 60,
+        { zoom: 1 }
+      )
+    })
+  }
+}
+
 it('does not start navigation from a retained callback after unmount', async () => {
   const getImage = spyOn(ImageService, 'GetImage').mockResolvedValue(
     null as never

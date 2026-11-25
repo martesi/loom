@@ -113,88 +113,104 @@ afterEach(() => {
   mock.restore()
 })
 
-it('discards a scheduled palette choice from the previous repository', async () => {
-  let frame: FrameRequestCallback = () => {}
-  spyOn(globalThis, 'requestAnimationFrame').mockImplementation((callback) => {
-    frame = callback
-    return 1
-  })
-  let resolveImage: (value: never) => void = () => {}
-  const getImage = spyOn(ImageService, 'GetImage').mockImplementation(
-    () =>
-      new Promise((resolve) => {
-        resolveImage = resolve
+for (const interruption of ['repository', 'mode'] as const) {
+  it(`discards a scheduled palette choice after a ${interruption} change`, async () => {
+    let frame: FrameRequestCallback = () => {}
+    spyOn(globalThis, 'requestAnimationFrame').mockImplementation(
+      (callback) => {
+        frame = callback
+        return 1
+      }
+    )
+    let resolveImage: (value: never) => void = () => {}
+    const getImage = spyOn(ImageService, 'GetImage').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveImage = resolve
+        })
+    )
+    const setCenter = mock(async () => true)
+    const hook = renderHook(
+      ({ path }) => {
+        const owner = useCanvasBoardOwner(path)
+        const [selection, setSelection] = useState(emptySelection)
+        const operations = useCanvasAssetOperations({
+          owner,
+          repoPath: path,
+          selection,
+          setSelection,
+          flow: {
+            getNode: () => ({
+              position: { x: 200, y: 0 },
+              width: 150,
+              height: 110,
+            }),
+            getZoom: () => 1,
+            setCenter,
+          },
+          setExpanded: mock(),
+          openAssets: mock(),
+          selectAssets: mock(),
+          setReveal: mock(),
+        } as unknown as Parameters<typeof useCanvasAssetOperations>[0])
+        const context = {
+          owner,
+          repoPath: path,
+          go: operations.go,
+          selection,
+          displayNodes: [],
+          selectedCanvasNodeIds: [],
+          selectedIds: () => [],
+          selectedImageRecords: [],
+          relationshipActions: [],
+          visible: { current: [] },
+          data: { images: [], relationships: [], groups: [] },
+          undoActions: { undo: async () => {}, redo: async () => {} },
+        } as unknown as CanvasActionsContext
+        const actions = useCanvasActionSystem({
+          context,
+          report: mock(),
+          paletteOpen: false,
+          setPaletteOpen: mock(),
+          setRecentActionIds: mock(),
+          pendingRecentAction: useRef(null),
+          trashIds: null,
+          purgeIds: null,
+          host: useRef(null),
+          paletteAssetRequest: 0,
+          setPaletteAssets: mock(),
+          setPaletteAssetsLoading: mock(),
+          setPaletteAssetsError: mock(),
+        })
+        return { actions, operations, owner, selection }
+      },
+      { initialProps: { path: '/a' } }
+    )
+    act(() =>
+      hook.result.current.actions.choosePaletteAsset({
+        id: 1,
+        fileName: '1.png',
+        filePath: '/a/1.png',
+        tags: [],
       })
-  )
-  const setCenter = mock(async () => true)
-  const hook = renderHook(
-    ({ path }) => {
-      const owner = useCanvasBoardOwner(path)
-      const [selection, setSelection] = useState(emptySelection)
-      const operations = useCanvasAssetOperations({
-        owner,
-        repoPath: path,
-        selection,
-        setSelection,
-        flow: { getNode: () => undefined, getZoom: () => 1, setCenter },
-        setExpanded: mock(),
-        openAssets: mock(),
-        selectAssets: mock(),
-        setReveal: mock(),
-      } as unknown as Parameters<typeof useCanvasAssetOperations>[0])
-      const context = {
-        owner,
-        repoPath: path,
-        go: operations.go,
-        selection,
-        displayNodes: [],
-        selectedCanvasNodeIds: [],
-        selectedIds: () => [],
-        selectedImageRecords: [],
-        relationshipActions: [],
-        visible: { current: [] },
-        data: { images: [], relationships: [], groups: [] },
-        undoActions: { undo: async () => {}, redo: async () => {} },
-      } as unknown as CanvasActionsContext
-      const actions = useCanvasActionSystem({
-        context,
-        report: mock(),
-        paletteOpen: false,
-        setPaletteOpen: mock(),
-        setRecentActionIds: mock(),
-        pendingRecentAction: useRef(null),
-        trashIds: null,
-        purgeIds: null,
-        host: useRef(null),
-        paletteAssetRequest: 0,
-        setPaletteAssets: mock(),
-        setPaletteAssetsLoading: mock(),
-        setPaletteAssetsError: mock(),
-      })
-      return { actions, operations, selection }
-    },
-    { initialProps: { path: '/a' } }
-  )
-  act(() =>
-    hook.result.current.actions.choosePaletteAsset({
-      id: 1,
-      fileName: '1.png',
-      filePath: '/a/1.png',
-      tags: [],
+    )
+    if (interruption === 'mode') hook.result.current.owner.setMode('view')
+    hook.rerender({ path: interruption === 'repository' ? '/b' : '/a' })
+    const currentRequest = hook.result.current.operations.go(2)
+    act(() => frame(0))
+    expect(getImage).toHaveBeenCalledTimes(1)
+    expect(getImage).toHaveBeenCalledWith(
+      interruption === 'repository' ? '/b' : '/a',
+      2
+    )
+    await act(async () => {
+      resolveImage({ id: 2, placed: true, canvasX: 200, canvasY: 0 } as never)
+      await currentRequest
     })
-  )
-  hook.rerender({ path: '/b' })
-  const currentRequest = hook.result.current.operations.go(2)
-  act(() => frame(0))
-  expect(getImage).toHaveBeenCalledTimes(1)
-  expect(getImage).toHaveBeenCalledWith('/b', 2)
-  await act(async () => {
-    resolveImage({ id: 2, placed: true, canvasX: 200, canvasY: 0 } as never)
-    await currentRequest
+    expect(hook.result.current.selection.ids).toEqual([2])
+    expect(setCenter).toHaveBeenCalledWith(275, 55, { zoom: 1 })
   })
-  expect(hook.result.current.selection.ids).toEqual([2])
-  expect(setCenter).toHaveBeenCalledWith(275, 55, { zoom: 1 })
-})
+}
 
 it('rechecks the current mode when a previously enabled action reaches the queue', async () => {
   const owner = createCanvasBoardOwner('/repo')
