@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"loom/internal/media"
 	"loom/internal/store"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -114,9 +115,12 @@ func (s *ImageService) CopyMedia(repoPath string, ids []int64, converted bool) (
 }
 
 // ImportMedia always creates fresh files and identities, with no copied metadata.
-func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, place bool, x, y float64) ([]int64, error) {
+func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, place bool, x, y float64) (resultIDs []int64, resultErr error) {
 	if err := validateClipboardMedia(media); err != nil {
 		return nil, err
+	}
+	if place && (math.IsNaN(x) || math.IsInf(x, 0) || math.IsNaN(y) || math.IsInf(y, 0)) {
+		return nil, fmt.Errorf("import drop coordinates must be finite")
 	}
 	r, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
@@ -129,13 +133,19 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 		return nil, err
 	}
 	defer tx.Rollback()
+	// Reserve database paths under a writer lock before creating files, so
+	// absent files belonging to existing rows are not recreated by an import.
+	if _, err := tx.Exec(`UPDATE operation_log SET seq = seq WHERE 0`); err != nil {
+		return nil, fmt.Errorf("lock import transaction: %w", err)
+	}
 	paths := []string{}
 	committed := false
 	defer func() {
-		if !committed {
-			for _, path := range paths {
-				os.Remove(path)
-			}
+		if !committed && resultErr != nil && len(paths) > 0 {
+			// A pathname can be replaced after creation. Without an anchored,
+			// identity-safe cleanup primitive, unlinking it can delete someone
+			// else's file. Leave these paths for explicit inspection instead.
+			resultErr = fmt.Errorf("%w; created paths were not removed and may be externally discovered: %s", resultErr, strings.Join(paths, ", "))
 		}
 	}()
 	ids := make([]int64, 0, len(media))
@@ -154,6 +164,13 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 				candidate = fmt.Sprintf("%s (%d)%s", strings.TrimSuffix(name, ext), n, ext)
 			}
 			dest = filepath.Join(r.Path, candidate)
+			var reserved bool
+			if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images WHERE file_path = ?)`, dest).Scan(&reserved); err != nil {
+				return nil, fmt.Errorf("check import path reservation: %w", err)
+			}
+			if reserved {
+				continue
+			}
 			file, err = os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 			if os.IsExist(err) {
 				continue
