@@ -83,6 +83,10 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
   let pendingHistory: UndoResult[] = []
   let readyHistory: UndoResult[] = []
   let latestRefresh: Promise<AcceptedCanvasBoard | null> | null = null
+  let signalRefresh = () => {}
+  let refreshChanged = new Promise<void>((resolve) => {
+    signalRefresh = resolve
+  })
   let signalDisposal = () => {}
   let disposed = new Promise<null>((resolve) => {
     signalDisposal = () => resolve(null)
@@ -91,6 +95,11 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
   function refresh() {
     const request = loadBoard()
     latestRefresh = request
+    const notify = signalRefresh
+    refreshChanged = new Promise<void>((resolve) => {
+      signalRefresh = resolve
+    })
+    notify()
     return request
   }
   async function loadBoard() {
@@ -138,13 +147,23 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
       if (!active || !result.applied) return
       pendingHistory.push(result)
       const lifetime = disposed
-      let request = refresh()
+      refresh()
       const reconcile = async () => {
         while (active && pendingHistory.includes(result)) {
-          await Promise.race([request, lifetime])
+          const request = latestRefresh
+          if (!request) return
+          const outcome = await Promise.race([
+            request.then(
+              () => ({ kind: 'settled' as const }),
+              (error: unknown) => ({ kind: 'failed' as const, error })
+            ),
+            refreshChanged.then(() => ({ kind: 'superseded' as const })),
+            lifetime.then(() => ({ kind: 'disposed' as const })),
+          ])
           if (!active || !pendingHistory.includes(result)) return
-          if (!latestRefresh || latestRefresh === request) return
-          request = latestRefresh
+          if (request !== latestRefresh) continue
+          if (outcome.kind === 'failed') throw outcome.error
+          if (outcome.kind === 'settled' || outcome.kind === 'disposed') return
         }
       }
       await reconcile().catch((error: unknown) => {
