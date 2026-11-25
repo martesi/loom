@@ -206,7 +206,7 @@ export const DetailPanel = memo(function DetailPanel({
         await ImageService.UnlinkSource(path, id)
         await change()
       },
-      canMutateRelationships
+      () => owner.allowsAdmitted('relationship')
     ).catch(errors.current)
   }
   const unavailableCount = selection.ids.length - images.length

@@ -6,25 +6,26 @@ import {
   TagService,
 } from '../../../bindings/loom/internal/service'
 import type { Selection } from '../../lib/selection'
+import type { CanvasBoardOwner } from './canvas-board-owner'
 
 interface Props {
+  owner: CanvasBoardOwner
   repoPath: string
   selection: Selection
   selectedIds: number[]
   selectionRef: MutableRefObject<Selection>
   groupMembers: (id: number) => number[]
-  reload: () => Promise<void>
   fieldSubmissionPending: MutableRefObject<boolean>
   submissionScopeRef: MutableRefObject<{ key: string; revision: number }>
 }
 
 export function useInspectorFieldSubmission({
+  owner,
   repoPath,
   selection,
   selectedIds,
   selectionRef,
   groupMembers,
-  reload,
   fieldSubmissionPending,
   submissionScopeRef,
 }: Props) {
@@ -39,29 +40,35 @@ export function useInspectorFieldSubmission({
       if (fieldSubmissionPending.current)
         throw new Error(t`A save is already in progress.`)
       fieldSubmissionPending.current = true
-      return submitFieldValue({
-        command,
-        value,
-        imageIds,
-        expected,
-        repoPath,
-        selection,
-        selectedIds,
-        selectionRef,
-        groupMembers,
-        reload,
-        submissionScopeRef,
-      }).finally(() => {
-        fieldSubmissionPending.current = false
-      })
+      return owner
+        .admit(() =>
+          submitFieldValue({
+            command,
+            value,
+            imageIds,
+            expected,
+            repoPath,
+            selection,
+            selectedIds,
+            selectionRef,
+            groupMembers,
+            reload: async () => {
+              await owner.reconcile()
+            },
+            submissionScopeRef,
+          })
+        )
+        .finally(() => {
+          fieldSubmissionPending.current = false
+        })
     },
     [
       repoPath,
+      owner,
       selection,
       selectedIds,
       selectionRef,
       groupMembers,
-      reload,
       fieldSubmissionPending,
       submissionScopeRef,
     ]
@@ -154,8 +161,10 @@ async function moveFile(
     ids.length !== 1 ||
     !path ||
     path === records[0]?.filePath.slice(repoPath.length + 1)
-  )
+  ) {
+    await reload()
     return
+  }
   const image = records[0]
   if (!image || image.missing || image.trashed)
     throw new Error(t`This file cannot be moved in its current state.`)
@@ -170,7 +179,10 @@ async function addTag(
   reload: () => Promise<void>
 ) {
   const tag = value.trim()
-  if (!tag) return
+  if (!tag) {
+    await reload()
+    return
+  }
   const results = await Promise.allSettled(
     ids.map((id) => TagService.AddTag(repoPath, id, tag))
   )

@@ -74,6 +74,16 @@ it('rechecks mode after a delayed paste and imports without Canvas geometry in V
   const imported = spyOn(ImageService, 'ImportMedia').mockResolvedValue([
     1,
   ] as never)
+  spyOn(ImageService, 'LoadCanvas').mockResolvedValue({
+    images: [{ id: 1 }],
+    relationships: [],
+    groups: [],
+  } as never)
+  spyOn(ImageService, 'GetLayoutSnapshot').mockResolvedValue({
+    revision: '1',
+    images: [],
+    relationships: [],
+  } as never)
   const setSelection = mock()
   const props = {
     owner,

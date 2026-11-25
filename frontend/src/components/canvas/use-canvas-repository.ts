@@ -84,13 +84,13 @@ export function useCanvasRepository({
   const run = useCallback(
     (action: () => Promise<unknown>) => {
       void executor
-        .execute(async () => {
+        .admit(async () => {
           await action()
-          await reload()
+          await executor.reconcile()
         })
         .catch(report)
     },
-    [executor, reload, report]
+    [executor, report]
   )
   useEffect(() => {
     let cancelled = false

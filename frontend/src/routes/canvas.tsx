@@ -201,12 +201,12 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   })
   const { selectedIdsList } = boardModel
   const submitInspectorField = useInspectorFieldSubmission({
+    owner: boardOwner,
     repoPath: repo.path,
     selection,
     selectedIds: selectedIdsList,
     selectionRef,
     groupMembers,
-    reload,
     fieldSubmissionPending,
     submissionScopeRef,
   })
@@ -231,7 +231,6 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     selection,
     setSelection,
     selectedIds,
-    reload,
     setExpanded,
     openAssets,
     selectAssets,

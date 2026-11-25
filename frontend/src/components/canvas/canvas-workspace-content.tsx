@@ -97,7 +97,7 @@ export function CanvasWorkspaceContent(props: Props) {
     updateZoomCompensation,
     submissionScopeRef,
   } = props
-  const { report, reload, reloadForData, run, assetSelectionKey } = repository
+  const { report, reload, run, assetSelectionKey } = repository
   const {
     compressIds,
     setCompressIds,
@@ -172,6 +172,9 @@ export function CanvasWorkspaceContent(props: Props) {
     setHoveredNodeId,
   } = boardModel
   const { paste, importMedia, finishTrash, confirmPurge } = assetOperations
+  const reconcile = async () => {
+    await boardModel.owner.reconcile()
+  }
   const validTarget = (source: number, id: string) =>
     validateRelationshipTarget(source, id, data, groupMembers)
   const arrange = (nodeIds?: string[]) =>
@@ -180,12 +183,12 @@ export function CanvasWorkspaceContent(props: Props) {
         ? Promise.resolve()
         : boardModel.arrangeEdit()
       : boardModel.owner.getMode() === 'legacy'
-        ? arrangeCanvas(repo.path, nodes, edges, data, reload, nodeIds)
+        ? arrangeCanvas(repo.path, nodes, edges, data, reconcile, nodeIds)
         : Promise.resolve()
   const alignHorizontal = () =>
-    alignCanvas('horizontal', repo.path, displayNodes, data, reload)
+    alignCanvas('horizontal', repo.path, displayNodes, data, reconcile)
   const alignVertical = () =>
-    alignCanvas('vertical', repo.path, displayNodes, data, reload)
+    alignCanvas('vertical', repo.path, displayNodes, data, reconcile)
   function handleLocate(node: Node) {
     setMenu(null)
     openAssets()
@@ -318,6 +321,7 @@ export function CanvasWorkspaceContent(props: Props) {
         >
           <LibraryPanel
             key={repo.path}
+            owner={boardModel.owner}
             path={repo.path}
             selection={selection}
             select={selectAssets}
@@ -326,7 +330,6 @@ export function CanvasWorkspaceContent(props: Props) {
             onError={report}
             visible={markAssetsVisible}
             reveal={reveal}
-            change={reload}
             compress={compressAssets}
             searchFocusRequest={searchFocusRequest}
             navigatorModeRequest={navigatorModeRequest}
@@ -371,7 +374,6 @@ export function CanvasWorkspaceContent(props: Props) {
           paste={paste}
           dragTargetRaf={dragTargetRaf}
           pendingDragNode={pendingDragNode}
-          reloadForData={reloadForData}
           report={report}
           setError={setError}
           assetsPinned={assetsPinned}
@@ -405,11 +407,13 @@ export function CanvasWorkspaceContent(props: Props) {
             open={inspectorOpen}
             path={repo.path}
             data={data}
+            change={async () => {
+              await boardModel.owner.reconcile()
+            }}
             graphOrder={
               boardModel.mode === 'legacy' ? undefined : boardModel.graphOrder
             }
             selection={selection}
-            change={reload}
             go={goDetail}
             onError={report}
             commandRequest={inspectorCommandRequest}
@@ -441,10 +445,11 @@ export function CanvasWorkspaceContent(props: Props) {
         executeActionById={executeActionById}
         toggleFocusMode={toggleFocusMode}
         onImportFiles={(files) => {
-          void filesToMedia(files).then(importMedia).catch(report)
+          void importMedia(() => filesToMedia(files)).catch(report)
         }}
       />
       <CanvasOverlays
+        owner={boardModel.owner}
         repoPath={repo.path}
         actionCatalog={actionCatalog}
         defaultShortcuts={defaultShortcuts}

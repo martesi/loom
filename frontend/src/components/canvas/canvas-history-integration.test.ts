@@ -333,6 +333,10 @@ it('reconciles a superseded replay before a queued geometry commit', async () =>
 it('drops a failed superseding reconciliation instead of replaying it on a later refresh', async () => {
   let releaseReplay: (value: CanvasData) => void = () => {}
   let rejectIndependent: (error: Error) => void = () => {}
+  let signalReplayStarted = () => {}
+  const replayStarted = new Promise<void>((resolve) => {
+    signalReplayStarted = resolve
+  })
   const replayLoad = new Promise<CanvasData>((resolve) => {
     releaseReplay = resolve
   })
@@ -341,7 +345,10 @@ it('drops a failed superseding reconciliation instead of replaying it on a later
   })
   spyOn(ImageService, 'LoadCanvas')
     .mockResolvedValueOnce(data as never)
-    .mockImplementationOnce(() => replayLoad as never)
+    .mockImplementationOnce(() => {
+      signalReplayStarted()
+      return replayLoad as never
+    })
     .mockImplementationOnce(() => independentLoad as never)
     .mockResolvedValue(data as never)
   spyOn(ImageService, 'GetLayoutSnapshot').mockImplementation(
@@ -357,11 +364,18 @@ it('drops a failed superseding reconciliation instead of replaying it on a later
         relationships: [],
       }) as never
   )
-  spyOn(UndoService, 'Undo').mockResolvedValue({
-    applied: true,
-    kind: 'geometry',
-    geometry: [rect(1, 20, 20, 150, 110)],
-  } as never)
+  let signalUndoStarted = () => {}
+  const undoStarted = new Promise<void>((resolve) => {
+    signalUndoStarted = resolve
+  })
+  spyOn(UndoService, 'Undo').mockImplementation(async () => {
+    signalUndoStarted()
+    return {
+      applied: true,
+      kind: 'geometry',
+      geometry: [rect(1, 20, 20, 150, 110)],
+    } as never
+  })
   const { result } = renderHook(() => useBoard('/repo'), { wrapper })
   await act(async () => {
     await result.current.owner.refresh()
@@ -372,8 +386,8 @@ it('drops a failed superseding reconciliation instead of replaying it on a later
       () => null,
       (error: unknown) => error
     )
-    await Promise.resolve()
-    await Promise.resolve()
+    await undoStarted
+    await replayStarted
     const independent = result.current.owner.refresh()
     const refreshError = independent.then(
       () => null,

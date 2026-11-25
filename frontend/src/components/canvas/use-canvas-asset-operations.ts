@@ -7,6 +7,8 @@ import type { Selection } from '../../lib/selection'
 import type { CanvasBoardOwner } from './canvas-board-owner'
 import type { RevealRequest } from './use-canvas-workspace-state'
 
+type Media = Awaited<ReturnType<typeof readMedia>>
+
 interface Props {
   repoPath: string
   owner: CanvasBoardOwner
@@ -14,7 +16,6 @@ interface Props {
   selection: Selection
   setSelection: Dispatch<SetStateAction<Selection>>
   selectedIds: () => number[]
-  reload: () => Promise<void>
   setExpanded: Dispatch<SetStateAction<number | null>>
   openAssets: () => void
   selectAssets: (ids: number[]) => void
@@ -38,7 +39,6 @@ export function useCanvasAssetOperations({
   selection,
   setSelection,
   selectedIds,
-  reload,
   setExpanded,
   openAssets,
   selectAssets,
@@ -132,13 +132,17 @@ export function useCanvasAssetOperations({
   }
 
   async function paste(
-    media?: Awaited<ReturnType<typeof readMedia>>,
+    media?: Media | (() => Promise<Media>),
     surface = selection.surface
   ) {
     const point = center()
-    const assets = media ?? (await readMedia())
-    const { ids, canvas } = await owner.execute(async () => {
-      const canvas = surface === 'canvas' && owner.allows('canvas-drop')
+    const { ids, canvas } = await owner.admit(async () => {
+      const assets = media
+        ? typeof media === 'function'
+          ? await media()
+          : media
+        : await readMedia()
+      const canvas = surface === 'canvas' && owner.allowsAdmitted('canvas-drop')
       const ids = await ImageService.ImportMedia(
         repoPath,
         assets,
@@ -146,7 +150,7 @@ export function useCanvasAssetOperations({
         point.x,
         point.y
       )
-      await reload()
+      await owner.reconcile()
       return { ids, canvas }
     })
     setSelection({
@@ -158,9 +162,19 @@ export function useCanvasAssetOperations({
     if (!canvas && ids?.length) setReveal({ id: ids[0], folder: null })
   }
 
-  async function importMedia(media: Awaited<ReturnType<typeof readMedia>>) {
-    const ids = await ImageService.ImportMedia(repoPath, media, false, 0, 0)
-    await reload()
+  async function importMedia(media: Media | (() => Promise<Media>)) {
+    const ids = await owner.admit(async () => {
+      const assets = typeof media === 'function' ? await media() : media
+      const imported = await ImageService.ImportMedia(
+        repoPath,
+        assets,
+        false,
+        0,
+        0
+      )
+      await owner.reconcile()
+      return imported
+    })
     setSelection({ surface: 'assets', ids: ids ?? [], edges: [], group: null })
     if (ids?.length) setReveal({ id: ids[0], folder: null })
   }
@@ -181,10 +195,12 @@ export function useCanvasAssetOperations({
     }
     if (selection.edges.length) {
       if (!owner.allows('relationship')) return
-      await ImageService.UnlinkSources(repoPath, selection.edges)
+      await owner.admit(async () => {
+        await ImageService.UnlinkSources(repoPath, selection.edges)
+        await owner.reconcile()
+      })
     } else return
     setSelection({ ...selection, ids: [], edges: [], group: null })
-    await reload()
   }
 
   function confirmTrash(ids: number[]) {
@@ -195,9 +211,19 @@ export function useCanvasAssetOperations({
     if (!trashIds?.length || lifecyclePendingRef.current) return
     lifecyclePendingRef.current = true
     setLifecyclePending(true)
-    const outcomes = await Promise.allSettled(
-      trashIds.map((id) => ImageService.TrashImage(repoPath, id))
-    )
+    const { outcomes, refreshError } = await owner.admit(async () => {
+      const outcomes = await Promise.allSettled(
+        trashIds.map((id) => ImageService.TrashImage(repoPath, id))
+      )
+      let refreshError: unknown
+      await owner
+        .reconcile()
+        .then(() => undefined)
+        .catch((cause: unknown) => {
+          refreshError = cause
+        })
+      return { outcomes, refreshError }
+    })
     const failures = outcomes.flatMap((outcome, index) =>
       outcome.status === 'rejected'
         ? [{ id: trashIds[index], cause: outcome.reason }]
@@ -205,13 +231,6 @@ export function useCanvasAssetOperations({
     )
     setTrashIds(null)
     setSelection({ ...selection, ids: [], edges: [], group: null })
-    let refreshError: unknown
-    await reload().then(
-      () => undefined,
-      (cause: unknown) => {
-        refreshError = cause
-      }
-    )
     for (const failure of failures)
       console.error('asset trash failed', {
         assetId: failure.id,
@@ -237,11 +256,13 @@ export function useCanvasAssetOperations({
     if (owner.getMode() !== 'legacy' && purgeOrigin.current !== 'assets') return
     lifecyclePendingRef.current = true
     setLifecyclePending(true)
-    const purged = await owner.execute(async () => {
-      if (owner.getMode() !== 'legacy' && purgeOrigin.current !== 'assets')
+    const purged = await owner.admit(async () => {
+      if (owner.getMode() !== 'legacy' && purgeOrigin.current !== 'assets') {
+        await owner.reconcile()
         return false
+      }
       await ImageService.PurgeImages(repoPath, purgeIds)
-      await reload()
+      await owner.reconcile()
       return true
     })
     if (!purged) return

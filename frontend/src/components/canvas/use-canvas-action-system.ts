@@ -78,6 +78,12 @@ export function useCanvasActionSystem({
       execute: () => {
         const capability = canvasActionCapability(action.id)
         if (!allowsCanvasAction(context.owner.getMode(), action.id)) return
+        if (
+          action.id === 'remove-selected-relationships' ||
+          action.id === 'reverse-relationship' ||
+          action.id === 'remove-relationship'
+        )
+          return action.execute()
         // Other actions may own their own queue, such as paste and history.
         if (capability !== 'geometry' && capability !== 'relationship')
           return action.execute()

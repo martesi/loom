@@ -8,7 +8,6 @@ export function canvasSelectionActions(
   context: CanvasActionsContext
 ): CanvasAction[] {
   const {
-    reload,
     displayNodes,
     selectedCanvasNodeIds,
     handlePreview,
@@ -163,11 +162,14 @@ export function canvasSelectionActions(
       enabled: selectedImageRecords.some((image) => !image.archived),
       disabledReason: t`Select an unarchived Asset`,
       execute: () =>
-        Promise.all(
-          selectedIds().map((id) =>
-            ImageService.SetArchived(repoPath, id, true)
+        context.owner.admit(async () => {
+          await Promise.all(
+            selectedIds().map((id) =>
+              ImageService.SetArchived(repoPath, id, true)
+            )
           )
-        ).then(() => reload()),
+          await context.owner.reconcile()
+        }),
     },
     {
       id: 'unarchive-selection',
@@ -179,11 +181,14 @@ export function canvasSelectionActions(
       enabled: selectedImageRecords.some((image) => image.archived),
       disabledReason: t`Select an archived Asset`,
       execute: () =>
-        Promise.all(
-          selectedIds().map((id) =>
-            ImageService.SetArchived(repoPath, id, false)
+        context.owner.admit(async () => {
+          await Promise.all(
+            selectedIds().map((id) =>
+              ImageService.SetArchived(repoPath, id, false)
+            )
           )
-        ).then(() => reload()),
+          await context.owner.reconcile()
+        }),
     },
   ]
 }

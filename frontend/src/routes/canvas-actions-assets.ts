@@ -9,7 +9,6 @@ export function canvasAssetActions(
 ): CanvasAction[] {
   const {
     openAssets,
-    reload,
     selection,
     selectAssets,
     selectedIds,
@@ -106,11 +105,14 @@ export function canvasAssetActions(
       enabled: selectedImageRecords.some((image) => image.trashed),
       disabledReason: t`Select a trashed Asset`,
       execute: () =>
-        Promise.all(
-          selectedImageRecords
-            .filter((image) => image.trashed)
-            .map((image) => ImageService.RestoreImage(repoPath, image.id))
-        ).then(() => reload()),
+        context.owner.admit(async () => {
+          await Promise.all(
+            selectedImageRecords
+              .filter((image) => image.trashed)
+              .map((image) => ImageService.RestoreImage(repoPath, image.id))
+          )
+          await context.owner.reconcile()
+        }),
     },
     {
       id: 'compress-selection',
@@ -179,9 +181,10 @@ export function canvasAssetActions(
       execute: () => {
         const relationship = selectedRelationships[0]
         if (selectedRelationships.length !== 1 || !relationship) return
-        return ImageService.ReverseRelationship(repoPath, relationship.id).then(
-          () => reload()
-        )
+        return context.owner.admit(async () => {
+          await ImageService.ReverseRelationship(repoPath, relationship.id)
+          await context.owner.reconcile()
+        })
       },
     },
     {
@@ -197,9 +200,10 @@ export function canvasAssetActions(
       execute: () => {
         const relationship = relationshipActions[0]
         return relationship
-          ? ImageService.UnlinkSource(repoPath, relationship.id).then(() =>
-              reload()
-            )
+          ? context.owner.admit(async () => {
+              await ImageService.UnlinkSource(repoPath, relationship.id)
+              await context.owner.reconcile()
+            })
           : undefined
       },
     },

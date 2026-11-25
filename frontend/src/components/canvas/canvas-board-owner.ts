@@ -15,6 +15,13 @@ import {
   type CanvasInternalMode,
 } from './canvas-mode-policy'
 import { buildDisplayGeometry } from './canvas-projection-geometry'
+import {
+  canvasRepositoryBarrier,
+  enqueueCanvasRepositoryWork,
+  hasCanvasRepositoryWork,
+  hasOtherCanvasRepositoryWork,
+  isCanvasRepositoryBusy,
+} from './canvas-repository-queue'
 import type { ResizeDirection } from './canvas-resize-geometry'
 import { joinCanvasSnapshot } from './canvas-snapshot'
 
@@ -30,10 +37,14 @@ export interface CanvasBoardOwner extends CanvasBoardExecutor {
   isLayoutPending(): boolean
   guardLayout(action: () => Promise<void>): Promise<void>
   reserveLayout(): () => void
-  beginModeTransition(): void
+  admit<T>(action: () => Promise<T>, boardMutation?: boolean): Promise<T>
+  beginModeTransition(target?: CanvasInternalMode): number
+  cancelModeTransition(revision: number): void
   setMode(mode: CanvasInternalMode): void
   allows(capability: CanvasCapability): boolean
+  allowsAdmitted(capability: CanvasCapability): boolean
   refresh(): Promise<AcceptedCanvasBoard | null>
+  reconcile(): Promise<AcceptedCanvasBoard | null>
   applyHistory(result: UndoResult): Promise<void>
   takeHistory(): UndoResult[]
   getSnapshot(): AcceptedCanvasBoard | null
@@ -75,7 +86,10 @@ export interface CanvasBoardOwner extends CanvasBoardExecutor {
 export function useCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
   const owner = useRef<{ repoPath: string; executor: CanvasBoardOwner }>(null)
   if (!owner.current || owner.current.repoPath !== repoPath) {
-    owner.current = { repoPath, executor: createCanvasBoardOwner(repoPath) }
+    owner.current = {
+      repoPath,
+      executor: createCanvasBoardOwner(repoPath, true),
+    }
   }
   const current = owner.current.executor
   useEffect(() => {
@@ -85,8 +99,17 @@ export function useCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
   return current
 }
 
-export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
+export function createCanvasBoardOwner(
+  repoPath: string,
+  coordinateRepository = false
+): CanvasBoardOwner {
+  let requestedMode: CanvasInternalMode | null = null
   let tail: Promise<void> = Promise.resolve()
+  let activeAdmissions = 0
+  let executingLifetime: number | null = null
+  let dirty = false
+  const queuedAdmissions = new Set<() => void>()
+  const repositoryQueueIdentity = { disposed: false }
   let generation = 0
   let active = true
   let mode: CanvasInternalMode = 'legacy'
@@ -107,7 +130,21 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
   let lifetime = new AbortController()
   const listeners = new Set<() => void>()
   function refresh() {
-    const request = loadBoard()
+    if (
+      activeAdmissions > 0 &&
+      executingLifetime !== null &&
+      executingLifetime !== lifetimeRevision
+    )
+      return Promise.resolve(null)
+    if (
+      coordinateRepository &&
+      hasOtherCanvasRepositoryWork(repoPath, repositoryQueueIdentity)
+    )
+      return canvasRepositoryBarrier(repoPath).then(() => requestRefresh())
+    return requestRefresh()
+  }
+  function requestRefresh(authoritative = false) {
+    const request = loadBoard(authoritative)
     latestRefresh = request
     const notify = signalRefresh
     refreshChanged = new Promise<void>((resolve) => {
@@ -116,7 +153,9 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
     notify()
     return request
   }
-  async function loadBoard() {
+  async function loadBoard(
+    authoritative: boolean
+  ): Promise<AcceptedCanvasBoard | null> {
     if (!active) return null
     const request = ++generation
     owner.cancelGesture()
@@ -142,6 +181,7 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
     }))
     pendingHistory = []
     accepted = { snapshot, data }
+    if (authoritative || activeAdmissions === 0) dirty = false
     acceptedGeneration = generation
     for (const listener of listeners) listener()
     return accepted
@@ -153,19 +193,30 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
     isLayoutPending: layoutGate.isPending,
     guardLayout: layoutGate.guard,
     reserveLayout: layoutGate.reserve,
-    beginModeTransition: () => {
+    beginModeTransition: (target) => {
       modeRevision++
+      requestedMode = target ?? null
+      owner.cancelGesture()
+      return modeRevision
+    },
+    cancelModeTransition(revision) {
+      if (modeRevision === revision) requestedMode = null
     },
     setMode(next) {
       owner.cancelGesture()
       if (mode !== next) modeRevision++
       mode = next
+      requestedMode = null
     },
     allows: (capability) =>
-      !(capability === 'geometry' && layoutGate.isPending()) &&
-      allowsCanvasCapability(mode, capability),
+      !dirty &&
+      !layoutGate.isPending() &&
+      (!coordinateRepository || !isCanvasRepositoryBusy(repoPath)) &&
+      allowsCanvasCapability(requestedMode ?? mode, capability),
+    allowsAdmitted: (capability) =>
+      allowsCanvasCapability(requestedMode ?? mode, capability),
     execute<T>(action: () => Promise<T>): Promise<T> {
-      // Queue outer operations only: awaiting a nested execute would deadlock.
+      // Internal FIFO for work already admitted by its public entry point.
       const result = tail.then(action)
       tail = result.then(
         () => undefined,
@@ -173,13 +224,92 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
       )
       return result
     },
+    admit<T>(action: () => Promise<T>, boardMutation = true): Promise<T> {
+      // Admission happens synchronously before repository queue wait.
+      owner.cancelGesture()
+      const ticketLifetime = lifetimeRevision
+      const ticketRepo = repoPath
+      const release = layoutGate.reserve()
+      let dispatched = false
+      const releaseIfQueued = () => {
+        if (dispatched) return
+        queuedAdmissions.delete(releaseIfQueued)
+        release()
+      }
+      queuedAdmissions.add(releaseIfQueued)
+      const executeAdmitted = () =>
+        owner.execute(async () => {
+          if (
+            !active ||
+            lifetimeRevision !== ticketLifetime ||
+            repoPath !== ticketRepo
+          )
+            return undefined as T
+          dispatched = true
+          queuedAdmissions.delete(releaseIfQueued)
+          activeAdmissions++
+          executingLifetime = ticketLifetime
+          if (boardMutation) dirty = true
+          const startGeneration = generation
+          try {
+            const result = await action()
+            return result
+          } catch (error) {
+            if (
+              boardMutation &&
+              dirty &&
+              active &&
+              lifetimeRevision === ticketLifetime
+            ) {
+              if (generation === startGeneration) {
+                try {
+                  await requestRefresh(true)
+                } catch (reconcileError) {
+                  throw new Error(
+                    `The operation may have succeeded, but Canvas could not be reconciled: ${reconcileError instanceof Error ? reconcileError.message : String(reconcileError)}`
+                  )
+                }
+              }
+              if (dirty) {
+                throw new Error(
+                  `The operation may have succeeded, but Canvas could not be reconciled: ${error instanceof Error ? error.message : String(error)}`
+                )
+              }
+            }
+            throw error
+          } finally {
+            activeAdmissions--
+            executingLifetime = null
+          }
+        })
+      const result = coordinateRepository
+        ? enqueueCanvasRepositoryWork(
+            repoPath,
+            repositoryQueueIdentity,
+            () =>
+              active &&
+              lifetimeRevision === ticketLifetime &&
+              repoPath === ticketRepo,
+            executeAdmitted
+          )
+        : executeAdmitted()
+      return result
+        .then((value) => {
+          if (lifetimeRevision !== ticketLifetime) return undefined as T
+          return value
+        })
+        .finally(() => {
+          queuedAdmissions.delete(releaseIfQueued)
+          release()
+        })
+    },
     refresh,
     async applyHistory(result) {
       if (!active || !result.applied) return
       pendingHistory.push(result)
       const signal = lifetime.signal
       // Disposal can stop reconciliation before it observes this request.
-      void refresh().catch(() => {})
+      void owner.reconcile().catch(() => {})
       const reconcile = async () => {
         while (active && !signal.aborted && pendingHistory.includes(result)) {
           const request = latestRefresh
@@ -216,6 +346,15 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
     },
     isActive: () => active,
     getSnapshot: () => accepted,
+    reconcile() {
+      if (
+        activeAdmissions > 0 &&
+        executingLifetime !== null &&
+        executingLifetime !== lifetimeRevision
+      )
+        return Promise.resolve(null)
+      return requestRefresh(true)
+    },
     beginResize(board, before, direction, pointerId, onPreview, onCancel) {
       if (
         gesture ||
@@ -295,27 +434,24 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
         [after]
       )
       if (!batch.changed) return Promise.resolve()
-      const releaseLayout = layoutGate.reserve()
-      return owner
-        .execute(async () => {
-          if (!active || current.lifetimeRevision !== lifetimeRevision) return
-          await ImageService.SetGeometryFromDisplayAtRevision(
-            repoPath,
-            current.revision,
-            batch.expected,
-            batch.before,
-            batch.after
-          ).catch(async (error: unknown) => {
-            await owner
-              .refresh()
-              .catch((reloadError: unknown) =>
-                console.error('canvas resize reload failed', reloadError)
-              )
-            throw error
-          })
-          await owner.refresh()
+      return owner.admit(async () => {
+        if (!active || current.lifetimeRevision !== lifetimeRevision) return
+        await ImageService.SetGeometryFromDisplayAtRevision(
+          repoPath,
+          current.revision,
+          batch.expected,
+          batch.before,
+          batch.after
+        ).catch(async (error: unknown) => {
+          await owner
+            .reconcile()
+            .catch((reloadError: unknown) =>
+              console.error('canvas resize reload failed', reloadError)
+            )
+          throw error
         })
-        .finally(releaseLayout)
+        await owner.reconcile()
+      })
     },
     cancelResize(token, pointerId) {
       const current = gesture
@@ -387,27 +523,24 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
         return Promise.resolve()
       }
       if (!batch.changed) return Promise.resolve()
-      const releaseLayout = layoutGate.reserve()
-      return owner
-        .execute(async () => {
-          if (!active || current.lifetimeRevision !== lifetimeRevision) return
-          await ImageService.SetGeometryFromDisplayAtRevision(
-            repoPath,
-            current.revision,
-            batch.expected,
-            batch.before,
-            batch.after
-          ).catch(async (error: unknown) => {
-            await owner
-              .refresh()
-              .catch((reloadError: unknown) =>
-                console.error('canvas drag reload failed', reloadError)
-              )
-            throw error
-          })
-          await owner.refresh()
+      return owner.admit(async () => {
+        if (!active || current.lifetimeRevision !== lifetimeRevision) return
+        await ImageService.SetGeometryFromDisplayAtRevision(
+          repoPath,
+          current.revision,
+          batch.expected,
+          batch.before,
+          batch.after
+        ).catch(async (error: unknown) => {
+          await owner
+            .reconcile()
+            .catch((reloadError: unknown) =>
+              console.error('canvas drag reload failed', reloadError)
+            )
+          throw error
         })
-        .finally(releaseLayout)
+        await owner.reconcile()
+      })
     },
     async commitDisplayedLayout(board, before, after, accept) {
       if (mode !== 'edit' || !active) return
@@ -422,6 +555,7 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
       )
       if (!batch.changed) return
       owner.cancelGesture()
+      dirty = true
       const requestMode = modeRevision
       const signal = lifetime.signal
       await layoutGate.guard(async () => {
@@ -433,7 +567,7 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
           batch.after
         ).catch(async (error: unknown) => {
           await owner
-            .refresh()
+            .reconcile()
             .catch((reloadError: unknown) =>
               console.error('canvas arrange reload failed', reloadError)
             )
@@ -446,7 +580,7 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
           owner.getSnapshot() === board
         ) {
           accept()
-          await owner.refresh()
+          await owner.reconcile()
         } else {
           // The write is already in history. Reconcile its rows without replaying it.
           await owner.applyHistory({
@@ -478,9 +612,10 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
     },
     dispose() {
       active = false
+      repositoryQueueIdentity.disposed = true
       lifetimeRevision++
       lifetime.abort()
-      layoutGate.releaseAll()
+      for (const release of [...queuedAdmissions]) release()
       generation++
       pendingHistory = []
       readyHistory = []
@@ -488,11 +623,25 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
       listeners.clear()
     },
     activate() {
+      const wasInactive = !active
+      const needsFreshReconciliation =
+        coordinateRepository &&
+        hasCanvasRepositoryWork(repoPath, repositoryQueueIdentity)
+      repositoryQueueIdentity.disposed = false
       if (!active) {
         lifetimeRevision++
         lifetime = new AbortController()
       }
       active = true
+      if (wasInactive && needsFreshReconciliation)
+        void canvasRepositoryBarrier(repoPath)
+          .then(() => {
+            if (active) return requestRefresh(true)
+            return null
+          })
+          .catch((error: unknown) =>
+            console.error('canvas reactivation refresh failed', error)
+          )
     },
   }
   return owner

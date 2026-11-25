@@ -12,11 +12,13 @@ import { renditionGenerationUrl } from '../../lib/preview-tier'
 import { CompressionDialog } from '../compression-dialog'
 import { SettingsDialog } from '../settings-dialog'
 import { Button } from '../ui/button'
+import type { CanvasBoardOwner } from './canvas-board-owner'
 import type { PaletteAsset } from './command-palette'
 import { CommandPalette } from './command-palette'
 import { LightboxViewer } from './lightbox'
 
 interface Props {
+  owner: CanvasBoardOwner
   repoPath: string
   actionCatalog: CanvasAction[]
   defaultShortcuts: Record<string, string>
@@ -66,6 +68,7 @@ interface Props {
 }
 
 export function CanvasOverlays({
+  owner,
   repoPath,
   actionCatalog,
   defaultShortcuts,
@@ -132,7 +135,13 @@ export function CanvasOverlays({
           actions={actionCatalog}
           defaultShortcuts={defaultShortcuts}
           repoPath={repoPath || null}
-          rescanRepository={(path) => ImageService.RescanRepository(path)}
+          rescanRepository={(path) =>
+            owner.admit(async () => {
+              const result = await ImageService.RescanRepository(path)
+              await owner.reconcile()
+              return result
+            })
+          }
           invalidateRenditions={(path) =>
             ImageService.InvalidateRenditions(path)
           }
@@ -191,10 +200,13 @@ export function CanvasOverlays({
       )}
       {compressIds && (
         <CompressionDialog
+          owner={owner}
           path={repoPath}
           assetIds={compressIds}
           onClose={() => setCompressIds(null)}
-          onChange={reload}
+          onChange={async () => {
+            await owner.reconcile()
+          }}
         />
       )}
       <Dialog.Root

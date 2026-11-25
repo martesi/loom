@@ -15,11 +15,15 @@ export function useUndoActions(
   const toast = useToast()
 
   async function run(redo: boolean) {
-    if (executor?.isActive && !executor.isActive()) return
+    const lifetime = executor?.getLifetimeRevision?.()
+    const isCurrent = () =>
+      (!executor?.isActive || executor.isActive()) &&
+      (lifetime === undefined || executor?.getLifetimeRevision?.() === lifetime)
+    if (!isCurrent()) return
     const result = redo
       ? await UndoService.Redo(repoPath)
       : await UndoService.Undo(repoPath)
-    if (!result || (executor?.isActive && !executor.isActive())) return
+    if (!result || !isCurrent()) return
     if (result.error) {
       toast.add({
         title: redo ? t`Couldn't redo` : t`Couldn't undo`,
@@ -28,12 +32,25 @@ export function useUndoActions(
       })
       return
     }
-    if (result.applied) await onChange(result)
+    if (result.applied) {
+      await onChange(result)
+      if (!isCurrent()) return
+    }
   }
 
   function enqueue(redo: boolean) {
+    const lifetime = executor?.getLifetimeRevision?.()
     executor?.cancelGesture?.()
-    return executor ? executor.execute(() => run(redo)) : run(redo)
+    return executor
+      ? (executor.admit ?? executor.execute.bind(executor))(() => {
+          if (
+            lifetime !== undefined &&
+            executor.getLifetimeRevision?.() !== lifetime
+          )
+            return Promise.resolve()
+          return run(redo)
+        }, false)
+      : run(redo)
   }
   return { undo: () => enqueue(false), redo: () => enqueue(true) }
 }

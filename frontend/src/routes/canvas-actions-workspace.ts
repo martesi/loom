@@ -22,7 +22,6 @@ export function canvasWorkspaceActions(
     toggleFocusMode,
     openSettings,
     openPalette,
-    reload,
     setRepoOpenRequest,
     setNavigatorModeRequest,
     setSearchFocusRequest,
@@ -208,10 +207,11 @@ export function canvasWorkspaceActions(
             aliases: [t`reload`, t`refresh`],
             context: t`Workspace`,
             enabled: true,
-            execute: async () => {
-              await ImageService.RescanRepository(repoPath)
-              await reload()
-            },
+            execute: () =>
+              context.owner.admit(async () => {
+                await ImageService.RescanRepository(repoPath)
+                await context.owner.reconcile()
+              }),
           },
         ]
       : []),

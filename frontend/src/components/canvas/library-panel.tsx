@@ -21,6 +21,7 @@ import type { Selection } from '../../lib/selection'
 import { Button } from '../ui/button'
 import { AssetGallery } from './asset-gallery'
 import { AssetList } from './asset-list'
+import type { CanvasBoardOwner } from './canvas-board-owner'
 import {
   type AssetContextMenuState,
   LibraryContextMenu,
@@ -29,6 +30,7 @@ import { LibraryFilterControls } from './library-filter-controls'
 import { useSavedAssetViews } from './use-saved-asset-views'
 
 interface Props {
+  owner: CanvasBoardOwner
   path: string
   selection: Selection
   select: (ids: number[]) => void
@@ -37,7 +39,6 @@ interface Props {
   onError: (e: unknown) => void
   visible: (ids: number[]) => void
   reveal: { id: number; folder: string | null } | null
-  change: () => Promise<void>
   compress: (ids: number[]) => void
   searchFocusRequest: number
   navigatorModeRequest: {
@@ -57,6 +58,7 @@ interface Props {
 // callbacks from the route, unchanged selection/data), so the library list
 // is skipped while dragging.
 export const LibraryPanel = memo(function LibraryPanel({
+  owner,
   path,
   selection,
   select,
@@ -65,7 +67,6 @@ export const LibraryPanel = memo(function LibraryPanel({
   onError,
   visible,
   reveal,
-  change,
   compress,
   searchFocusRequest,
   navigatorModeRequest,
@@ -230,49 +231,51 @@ export const LibraryPanel = memo(function LibraryPanel({
   const tagName = tags.find((tag) => tag.id === tagId)?.name
   async function moveAssets(ids: number[], targetFolder: string) {
     const uniqueIds = [...new Set(ids)]
-    const outcomes = await Promise.allSettled(
-      uniqueIds.map(async (id) => {
-        const row = rows.find((item) => item.id === id)
-        if (!row) throw new Error(`Asset ${id} is not in the current folder`)
-        await ImageService.MoveFile(
-          path,
-          id,
-          [targetFolder, row.fileName].filter(Boolean).join('/')
-        )
-      })
-    )
-    const failures = outcomes.flatMap((result, index) =>
-      result.status === 'rejected'
-        ? [{ id: uniqueIds[index], cause: result.reason }]
-        : []
-    )
-    let refreshError: unknown
-    await change().then(
-      () => undefined,
-      (error: unknown) => {
-        refreshError = error
-      }
-    )
-    if (failures.length || refreshError) {
-      for (const failure of failures) {
-        console.error('asset move failed', {
-          assetId: failure.id,
-          cause: failure.cause,
+    await owner.admit(async () => {
+      const outcomes = await Promise.allSettled(
+        uniqueIds.map(async (id) => {
+          const row = rows.find((item) => item.id === id)
+          if (!row) throw new Error(`Asset ${id} is not in the current folder`)
+          await ImageService.MoveFile(
+            path,
+            id,
+            [targetFolder, row.fileName].filter(Boolean).join('/')
+          )
         })
+      )
+      const failures = outcomes.flatMap((result, index) =>
+        result.status === 'rejected'
+          ? [{ id: uniqueIds[index], cause: result.reason }]
+          : []
+      )
+      let refreshError: unknown
+      await owner.reconcile().then(
+        () => undefined,
+        (error: unknown) => {
+          refreshError = error
+        }
+      )
+      if (failures.length || refreshError) {
+        for (const failure of failures) {
+          console.error('asset move failed', {
+            assetId: failure.id,
+            cause: failure.cause,
+          })
+        }
+        if (refreshError)
+          console.error('asset move refresh failed', { cause: refreshError })
+        const contexts = failures.map(
+          ({ id, cause }) =>
+            `Asset ${id}: ${cause instanceof Error ? cause.message : String(cause)}`
+        )
+        const refreshed = refreshError
+          ? ` Refresh failed: ${refreshError instanceof Error ? refreshError.message : String(refreshError)}`
+          : ' The current state was refreshed.'
+        throw new Error(
+          `${uniqueIds.length - failures.length} of ${uniqueIds.length} assets moved.${contexts.length ? ` ${contexts.join('; ')}` : ''}${refreshed}`
+        )
       }
-      if (refreshError)
-        console.error('asset move refresh failed', { cause: refreshError })
-      const contexts = failures.map(
-        ({ id, cause }) =>
-          `Asset ${id}: ${cause instanceof Error ? cause.message : String(cause)}`
-      )
-      const refreshed = refreshError
-        ? ` Refresh failed: ${refreshError instanceof Error ? refreshError.message : String(refreshError)}`
-        : ' The current state was refreshed.'
-      throw new Error(
-        `${uniqueIds.length - failures.length} of ${uniqueIds.length} assets moved.${contexts.length ? ` ${contexts.join('; ')}` : ''}${refreshed}`
-      )
-    }
+    })
   }
   function dropInto(event: DragEvent, targetFolder: string) {
     const raw = event.dataTransfer.getData('application/x-loom-assets')
@@ -290,19 +293,21 @@ export const LibraryPanel = memo(function LibraryPanel({
     void moveAssets(payload.ids, targetFolder).catch(onError)
   }
   function renameAsset(id: number, name: string) {
-    const row = rows.find((item) => item.id === id)
-    if (!row) return
-    if (!name || name === row.fileName) return
     if (/[\\/]/.test(name)) {
       onError(new Error('File name cannot contain / or \\'))
       return
     }
-    void ImageService.MoveFile(
-      path,
-      id,
-      [folder, name].filter(Boolean).join('/')
-    )
-      .then(() => change())
+    void owner
+      .admit(async () => {
+        const row = rows.find((item) => item.id === id)
+        if (!row || !name || name === row.fileName) return
+        await ImageService.MoveFile(
+          path,
+          id,
+          [folder, name].filter(Boolean).join('/')
+        )
+        await owner.reconcile()
+      })
       .catch(onError)
   }
   function saveAssetView(id: string, name: string) {

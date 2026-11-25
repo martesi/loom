@@ -142,44 +142,50 @@ export function useCanvasProjectionController(props: Props) {
   }
   async function transitionMode(target: 'view' | 'edit') {
     const { owner } = current.current
-    owner.beginModeTransition()
+    const modeTicket = owner.beginModeTransition(target)
     const active = lifetime.current
     const isCurrent = () =>
       active !== null &&
       lifetime.current === active &&
       current.current.owner === owner &&
       active.owner === owner
-    await owner.execute(async () => {
-      if (!isCurrent()) return
-      const input = source.current
-      if (!input || owner.getSnapshot() !== input.board)
-        throw new Error('Canvas snapshot is not ready for a mode transition')
-      owner.cancelGesture()
-      current.current.cancelPointerGesture?.()
-      let next = state.current
-      if (!next) {
-        const viewport = current.current.flow?.getViewport() ?? {
-          x: 0,
-          y: 0,
-          zoom: 1,
-        }
-        next = createCanvasProjection({
-          ...input.graph,
-          geometry: (input.board.snapshot.images ?? []).map(
-            (item) => item.geometry
-          ),
-          viewport,
-          viewportSize: size(),
-        })
-      } else next = capture(next)
-      next = target === 'edit' ? enterEdit(next) : enterView(next)
-      if (!isCurrent()) return
-      owner.setMode(target)
-      publish(next)
-      const viewport = target === 'edit' ? next.editViewport : next.viewViewport
-      if (!isCurrent()) return
-      await current.current.flow?.setViewport(viewport)
-    })
+    try {
+      await owner.admit(async () => {
+        if (!isCurrent()) return
+        const input = source.current
+        if (!input || owner.getSnapshot() !== input.board)
+          throw new Error('Canvas snapshot is not ready for a mode transition')
+        owner.cancelGesture()
+        current.current.cancelPointerGesture?.()
+        let next = state.current
+        if (!next) {
+          const viewport = current.current.flow?.getViewport() ?? {
+            x: 0,
+            y: 0,
+            zoom: 1,
+          }
+          next = createCanvasProjection({
+            ...input.graph,
+            geometry: (input.board.snapshot.images ?? []).map(
+              (item) => item.geometry
+            ),
+            viewport,
+            viewportSize: size(),
+          })
+        } else next = capture(next)
+        next = target === 'edit' ? enterEdit(next) : enterView(next)
+        if (!isCurrent()) return
+        owner.setMode(target)
+        publish(next)
+        const viewport =
+          target === 'edit' ? next.editViewport : next.viewViewport
+        if (!isCurrent()) return
+        await current.current.flow?.setViewport(viewport)
+      }, false)
+    } catch (error) {
+      owner.cancelModeTransition(modeTicket)
+      throw error
+    }
   }
   function reconcile(
     board: AcceptedCanvasBoard,

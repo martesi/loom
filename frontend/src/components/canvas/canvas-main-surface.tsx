@@ -84,12 +84,13 @@ interface Props {
   target: DropTarget | null
   run: (action: () => Promise<unknown>) => void
   paste: (
-    media?: Awaited<ReturnType<typeof readMedia>>,
+    media?:
+      | Awaited<ReturnType<typeof readMedia>>
+      | (() => Promise<Awaited<ReturnType<typeof readMedia>>>),
     surface?: Selection['surface']
   ) => Promise<void>
   dragTargetRaf: MutableRefObject<number>
   pendingDragNode: MutableRefObject<Node | null>
-  reloadForData: () => Promise<CanvasData | null>
   report: (error: unknown) => void
   setError: Dispatch<SetStateAction<string>>
   assetsPinned: boolean
@@ -146,7 +147,6 @@ export function CanvasMainSurface(props: Props) {
     paste,
     dragTargetRaf,
     pendingDragNode,
-    reloadForData,
     report,
     setError,
     assetsPinned,
@@ -262,9 +262,9 @@ export function CanvasMainSurface(props: Props) {
         })
         if (id && validTarget(drag.source, id).valid)
           run(() =>
-            owner.allows('relationship')
+            owner.allowsAdmitted('relationship')
               ? ImageService.LinkSource(repoPath, drag.source, Number(id))
-              : Promise.resolve()
+              : owner.reconcile().then(() => undefined)
           )
         else if (id) {
           const result = validTarget(drag.source, id)
@@ -296,19 +296,24 @@ export function CanvasMainSurface(props: Props) {
               y: e.clientY,
             })
             void (async () => {
-              const images = await Promise.all(
-                uniqueIds.map((id) => ImageService.GetImage(repoPath, id))
-              )
-              if (
-                images.some((image) => !image || image.missing || image.trashed)
-              )
-                throw new Error(
-                  'Missing or trashed assets cannot be placed. Refine the selection and try again.'
+              const placed = await owner.admit(async () => {
+                if (!owner.allowsAdmitted('canvas-drop')) {
+                  await owner.reconcile()
+                  return false
+                }
+                const images = await Promise.all(
+                  uniqueIds.map((id) => ImageService.GetImage(repoPath, id))
                 )
-              const placed = await owner.execute(async () => {
-                if (!owner.allows('canvas-drop')) return false
+                if (
+                  images.some(
+                    (image) => !image || image.missing || image.trashed
+                  )
+                )
+                  throw new Error(
+                    'Missing or trashed assets cannot be placed. Refine the selection and try again.'
+                  )
                 await ImageService.PlaceImages(repoPath, uniqueIds, p.x, p.y, 0)
-                await reloadForData()
+                await owner.reconcile()
                 return true
               })
               if (!placed) return
@@ -325,9 +330,10 @@ export function CanvasMainSurface(props: Props) {
             })().catch(report)
           }
         } else
-          void filesToMedia(Array.from(e.dataTransfer.files))
-            .then((media) => paste(media, 'canvas'))
-            .catch(report)
+          void paste(
+            () => filesToMedia(Array.from(e.dataTransfer.files)),
+            'canvas'
+          ).catch(report)
       }}
     >
       <CanvasFlow

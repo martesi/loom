@@ -1,3 +1,4 @@
+import { runtimeMethodID } from './bindings'
 import { expect, test } from './test-fixtures'
 import {
   autoArrangeCanvas,
@@ -8,6 +9,11 @@ import {
   placeAssets,
   selectImageNodes,
 } from './test-helpers'
+
+const setGeometryMethodID = runtimeMethodID(
+  'imageservice.ts',
+  'SetGeometryFromDisplayAtRevision'
+)
 
 test('resize and link replay in order without moving unrelated nodes', async ({
   page,
@@ -248,6 +254,15 @@ test('selection change cancels a held resize and resize activation preserves mul
   const baselineWidth = await first.evaluate((element) =>
     Math.round(element.getBoundingClientRect().width)
   )
+  await selectedHandle.click()
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
+  await expect
+    .poll(async () =>
+      first.evaluate((element) =>
+        Math.round(element.getBoundingClientRect().width)
+      )
+    )
+    .toBe(baselineWidth)
   await selectedHandle.focus()
   await page.keyboard.press('Enter')
   await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
@@ -360,4 +375,78 @@ test('viewport culling cancels an active pointer resize without a late write', a
   await expect.poll(geometry).toEqual(before)
   await page.keyboard.press('ControlOrMeta+Shift+z')
   await expect.poll(geometry).toEqual(resized)
+})
+
+test('keeps a real geometry write admitted until backend response and reconciliation', async ({
+  page,
+}) => {
+  await openFixtureRepo(page, 'group-fixtures')
+  await dropAsset(page, 'group-alpha.png', { x: 500, y: 180 })
+  const node = imageNodes(page).first()
+  await node.click()
+  const geometry = async () => {
+    const box = await node.boundingBox()
+    if (!box) throw new Error('missing canvas node')
+    return [box.x, box.y, box.width, box.height].map(Math.round)
+  }
+  let releaseResponse = () => {}
+  let signalResponseStarted = () => {}
+  const responseGate = new Promise<void>((resolve) => {
+    releaseResponse = resolve
+  })
+  const responseStarted = new Promise<void>((resolve) => {
+    signalResponseStarted = resolve
+  })
+  await page.route('**/wails/runtime', async (route) => {
+    if (
+      route.request().postData()?.includes(`"methodID":${setGeometryMethodID}`)
+    ) {
+      const response = await route.fetch()
+      signalResponseStarted()
+      await responseGate
+      await route.fulfill({ response })
+      return
+    }
+    await route.continue()
+  })
+
+  const before = await geometry()
+  const handle = node.getByTestId('resize-handle-se')
+  const box = await handle.boundingBox()
+  if (!box) throw new Error('resize handle is unavailable')
+  const x = box.x + box.width / 2
+  const y = box.y + box.height / 2
+  await page.mouse.move(x, y)
+  await page.mouse.down()
+  await page.mouse.move(x + 26, y + 18, { steps: 3 })
+  await page.mouse.up()
+  await responseStarted
+
+  const submitted = await geometry()
+  expect(submitted[2]).toBeGreaterThan(before[2])
+  const nextHandle = node.getByTestId('resize-handle-se')
+  const nextBox = await nextHandle.boundingBox()
+  if (!nextBox) throw new Error('resize handle disappeared during write')
+  await page.mouse.move(
+    nextBox.x + nextBox.width / 2,
+    nextBox.y + nextBox.height / 2
+  )
+  await page.mouse.down()
+  await page.mouse.move(
+    nextBox.x + nextBox.width / 2 + 42,
+    nextBox.y + nextBox.height / 2 + 30,
+    {
+      steps: 3,
+    }
+  )
+  await page.mouse.up()
+  await expect.poll(geometry).toEqual(submitted)
+
+  releaseResponse()
+  await expect.poll(geometry).toEqual(submitted)
+  await page.keyboard.press('ControlOrMeta+z')
+  await expect.poll(geometry).toEqual(before)
+  await page.keyboard.press('ControlOrMeta+Shift+z')
+  await expect.poll(geometry).toEqual(submitted)
+  await page.unroute('**/wails/runtime')
 })

@@ -6,6 +6,7 @@ import {
   MediaService,
   SettingsService,
 } from '../../bindings/loom/internal/service'
+import type { CanvasBoardOwner } from './canvas/canvas-board-owner'
 
 type ImageFormat = 'avif' | 'webp' | 'jpeg' | 'png'
 type CompressionMode = 'copy' | 'replace'
@@ -13,6 +14,7 @@ type CompressionMode = 'copy' | 'replace'
 const settingsPrefix = 'image_tools.compress'
 
 interface Props {
+  owner: CanvasBoardOwner
   path: string
   assetIds: number[]
   onClose: () => void
@@ -20,6 +22,7 @@ interface Props {
 }
 
 export function CompressionDialog({
+  owner,
   path,
   assetIds,
   onClose,
@@ -96,35 +99,43 @@ export function CompressionDialog({
     const failures: string[] = []
 
     try {
-      await Promise.all([
-        SettingsService.Set(path, `${settingsPrefix}.mode`, mode),
-        SettingsService.Set(path, `${settingsPrefix}.format`, format),
-        SettingsService.Set(path, `${settingsPrefix}.quality`, String(quality)),
-        SettingsService.Set(path, `${settingsPrefix}.max_width`, maxWidth),
-        SettingsService.Set(path, `${settingsPrefix}.max_height`, maxHeight),
-      ])
+      await owner.admit(async () => {
+        await Promise.all([
+          SettingsService.Set(path, `${settingsPrefix}.mode`, mode),
+          SettingsService.Set(path, `${settingsPrefix}.format`, format),
+          SettingsService.Set(
+            path,
+            `${settingsPrefix}.quality`,
+            String(quality)
+          ),
+          SettingsService.Set(path, `${settingsPrefix}.max_width`, maxWidth),
+          SettingsService.Set(path, `${settingsPrefix}.max_height`, maxHeight),
+        ])
 
-      for (const id of assetIds) {
-        try {
-          const media = await MediaService.Transcode(path, id, {
-            targetExt: format === 'jpeg' ? '.jpg' : `.${format}`,
-            quality,
-            maxWidth: positiveInt(maxWidth) ?? 0,
-            maxHeight: positiveInt(maxHeight) ?? 0,
-          })
-          if (!media) throw new Error(t`Media transcode returned no result`)
-          if (mode === 'replace') {
-            await ImageService.ReplaceMedia(path, id, media)
-          } else {
-            await ImageService.ImportMedia(path, [media], false, 0, 0)
+        for (const id of assetIds) {
+          try {
+            const media = await MediaService.Transcode(path, id, {
+              targetExt: format === 'jpeg' ? '.jpg' : `.${format}`,
+              quality,
+              maxWidth: positiveInt(maxWidth) ?? 0,
+              maxHeight: positiveInt(maxHeight) ?? 0,
+            })
+            if (!media) throw new Error(t`Media transcode returned no result`)
+            if (mode === 'replace') {
+              await ImageService.ReplaceMedia(path, id, media)
+            } else {
+              await ImageService.ImportMedia(path, [media], false, 0, 0)
+            }
+            compressed++
+          } catch (cause) {
+            failures.push(
+              cause instanceof Error ? cause.message : String(cause)
+            )
           }
-          compressed++
-        } catch (cause) {
-          failures.push(cause instanceof Error ? cause.message : String(cause))
         }
-      }
 
-      await onChange()
+        await onChange()
+      })
       setSummary(
         failures.length
           ? t`${compressed} compressed, ${failures.length} failed`

@@ -11,20 +11,16 @@ export function enqueueCanvasMutation(
   const lifetime = owner.getLifetimeRevision()
   const board = owner.getSnapshot()
   owner.cancelGesture()
-  const release = capability === 'geometry' ? owner.reserveLayout() : () => {}
-  return owner
-    .execute(async () => {
-      if (owner.isActive?.() === false) return
-      if (
-        revision !== owner.getModeRevision() ||
-        lifetime !== owner.getLifetimeRevision() ||
-        board !== owner.getSnapshot() ||
-        !allowsCanvasCapability(owner.getMode(), capability) ||
-        !allowed()
-      )
-        throw new Error('Canvas changed. Try the command again.')
-      if (capability === 'geometry') await owner.guardLayout(action)
-      else await action()
-    })
-    .finally(release)
+  return owner.admit(async () => {
+    if (owner.isActive?.() === false) return
+    if (
+      revision !== owner.getModeRevision() ||
+      lifetime !== owner.getLifetimeRevision() ||
+      board !== owner.getSnapshot() ||
+      !allowsCanvasCapability(owner.getMode(), capability) ||
+      !allowed()
+    )
+      throw new Error('Canvas changed. Try the command again.')
+    await action()
+  })
 }
