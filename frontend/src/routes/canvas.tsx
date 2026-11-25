@@ -190,6 +190,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     setEdges,
     target,
     host,
+    flow,
   })
   const { selectedIdsList } = boardModel
   const submitInspectorField = useInspectorFieldSubmission({

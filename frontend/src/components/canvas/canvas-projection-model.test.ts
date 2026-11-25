@@ -203,7 +203,7 @@ describe('board projection mapping', () => {
     expect(
       state.projection.components.map((component) => component.pairingOrder)
     ).toEqual([2, 9])
-    expect(state.viewNodes.map((node) => node.id)).toEqual(['1', '2', '3', '4'])
+    expect(state.viewNodes.map((node) => node.id)).toEqual(['3', '4', '1', '2'])
     state = enterEdit(state)
     expect(state.editNodes).toHaveLength(5)
     const moved = applyNodeChanges(

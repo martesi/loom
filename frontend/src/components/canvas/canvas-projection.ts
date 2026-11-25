@@ -218,15 +218,13 @@ function viewNodes(
   nodes: readonly Node[],
   projection: ChronologicalProjection
 ): Node[] {
-  const boxes = new Map(
-    projection.components.flatMap((component) =>
-      component.boxes.map((box) => [box.id, box] as const)
-    )
+  const byId = new Map(nodes.map((node) => [node.id, node]))
+  return projection.components.flatMap((component) =>
+    component.boxes.flatMap((box) => {
+      const node = byId.get(box.id)
+      return node ? [{ ...node, position: { x: box.x, y: box.y } }] : []
+    })
   )
-  return nodes.flatMap((node) => {
-    const box = boxes.get(node.id)
-    return box ? [{ ...node, position: { x: box.x, y: box.y } }] : []
-  })
 }
 
 function nodeSize(node: Node): LayoutNode {

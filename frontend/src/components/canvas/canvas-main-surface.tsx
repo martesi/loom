@@ -1,5 +1,11 @@
 import { t } from '@lingui/core/macro'
-import type { Edge, Node, NodeTypes, ReactFlowInstance } from '@xyflow/react'
+import type {
+  Edge,
+  Node,
+  NodeTypes,
+  ReactFlowInstance,
+  Viewport,
+} from '@xyflow/react'
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import type { CanvasData } from '../../../bindings/loom/internal/service'
 import { ImageService } from '../../../bindings/loom/internal/service'
@@ -87,6 +93,7 @@ interface Props {
   assetsPinned: boolean
   closeAssets: (restoreFocus?: boolean) => void
   updateZoomCompensation: (zoom: number) => void
+  updateProjectionViewport: (viewport: Viewport) => void
   zoomRaf: MutableRefObject<number>
   pendingZoom: MutableRefObject<number>
   menu: MenuState | null
@@ -142,6 +149,7 @@ export function CanvasMainSurface(props: Props) {
     assetsPinned,
     closeAssets,
     updateZoomCompensation,
+    updateProjectionViewport,
     zoomRaf,
     pendingZoom,
     menu,
@@ -307,6 +315,7 @@ export function CanvasMainSurface(props: Props) {
       }}
     >
       <CanvasFlow
+        updateProjectionViewport={updateProjectionViewport}
         repoPath={repoPath}
         owner={owner}
         data={data}

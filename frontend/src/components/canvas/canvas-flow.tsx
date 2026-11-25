@@ -8,6 +8,7 @@ import {
   type NodeTypes,
   ReactFlow,
   SelectionMode,
+  type Viewport,
 } from '@xyflow/react'
 import {
   type Dispatch,
@@ -74,6 +75,7 @@ interface Props {
   pendingDragNode: MutableRefObject<Node | null>
   report: (error: unknown) => void
   updateZoomCompensation: (zoom: number) => void
+  updateProjectionViewport: (viewport: Viewport) => void
   zoomRaf: MutableRefObject<number>
   pendingZoom: MutableRefObject<number>
   isCanvasNodeSelected: (node: Node) => boolean
@@ -109,6 +111,7 @@ export function CanvasFlow(props: Props) {
     updateTarget,
     report,
     updateZoomCompensation,
+    updateProjectionViewport,
     zoomRaf,
     pendingZoom,
     isCanvasNodeSelected,
@@ -262,6 +265,7 @@ export function CanvasFlow(props: Props) {
           if (gesture) drag.finish(gesture, moved.length ? moved : [node])
         }}
         onMoveEnd={(_, v) => {
+          updateProjectionViewport(v)
           if (ready) void ImageService.SetViewport(repoPath, v).catch(report)
         }}
         onMove={(_, viewport) => {

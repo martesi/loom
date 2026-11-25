@@ -321,6 +321,7 @@ export function CanvasWorkspaceContent(props: Props) {
           />
         </ShelfPanel>
         <CanvasMainSurface
+          updateProjectionViewport={boardModel.updateProjectionViewport}
           repoPath={repo.path}
           owner={boardModel.owner}
           flow={flow}

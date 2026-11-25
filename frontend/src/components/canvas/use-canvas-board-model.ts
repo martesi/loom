@@ -5,6 +5,10 @@ import type { Selection } from '../../lib/selection'
 import type { CanvasBoardOwner, ResizeGesture } from './canvas-board-owner'
 import { applyHistoryToNodes } from './canvas-projection-geometry'
 import { canvasProjectionGraph } from './canvas-projection-model'
+import {
+  type CanvasProjectionViewport,
+  useCanvasProjectionController,
+} from './use-canvas-projection-controller'
 
 interface CanvasDropTarget {
   id: string
@@ -29,6 +33,7 @@ interface Props {
   setEdges: (update: Edge[] | ((edges: Edge[]) => Edge[])) => void
   target: CanvasDropTarget | null
   host: { current: HTMLDivElement | null }
+  flow?: CanvasProjectionViewport
 }
 
 export function useCanvasBoardModel({
@@ -43,6 +48,7 @@ export function useCanvasBoardModel({
   setEdges,
   target,
   host,
+  flow,
 }: Props) {
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null)
   const previousDisplayNodes = useRef(new Map<string, Node>())
@@ -51,17 +57,25 @@ export function useCanvasBoardModel({
     [selection.ids]
   )
   const selectedIdsList = selection.ids
+  const projection = useCanvasProjectionController({
+    owner,
+    nodes,
+    setNodes,
+    setEdges,
+    host,
+    flow,
+    report: callbacks.current.report,
+  })
+  const projectionRef = useRef(projection)
+  projectionRef.current = projection
 
   useEffect(() => {
     const board = owner.getSnapshot()
     if (board && board.data !== data) return
     const activeGestures = new Map<number, ResizeGesture>()
     let rendererActive = true
-    const placed = (data.images ?? []).filter(
-      (image) => image.placed && !image.trashed
-    )
     const graph = canvasProjectionGraph(
-      { ...data, images: placed },
+      data,
       renditionGeneration,
       (imageId, x, y, w, h) => {
         if (!rendererActive) return
@@ -89,10 +103,28 @@ export function useCanvasBoardModel({
       }
     )
     const history = owner.takeHistory()
+    if (board && projectionRef.current.reconcile(board, graph, history)) {
+      focusCanvasWhenEdgeRemoved(graph.edges, host.current)
+      return () => {
+        rendererActive = false
+        for (const gesture of activeGestures.values())
+          owner.cancelResize(gesture)
+        activeGestures.clear()
+      }
+    }
+    const placedIds = new Set(
+      (data.images ?? [])
+        .filter((image) => image.placed && !image.trashed)
+        .map((image) => String(image.id))
+    )
+    const legacyNodes = graph.nodes.filter((node) => placedIds.has(node.id))
+    const legacyEdges = graph.edges.filter(
+      (edge) => placedIds.has(edge.source) && placedIds.has(edge.target)
+    )
     // React Flow needs the measurements to keep edges mounted across reloads.
     setNodes((previous) => {
       const old = new Map(previous.map((node) => [node.id, node]))
-      const initial: Node[] = graph.nodes.map((node) => {
+      const initial: Node[] = legacyNodes.map((node) => {
         const prior = old.get(node.id)
         return history.length && prior
           ? {
@@ -110,7 +142,7 @@ export function useCanvasBoardModel({
             const byId = new Map(
               geometry.map((item) => [String(item.imageId), item])
             )
-            const defaults = new Map(graph.nodes.map((node) => [node.id, node]))
+            const defaults = new Map(legacyNodes.map((node) => [node.id, node]))
             return items.map((node) => {
               const item = byId.get(node.id)
               const fallback = defaults.get(node.id)
@@ -135,15 +167,8 @@ export function useCanvasBoardModel({
         initial
       )
     })
-    const nextEdges = graph.edges
-    const focused = document.activeElement
-    if (
-      focused instanceof SVGElement &&
-      focused.matches('.react-flow__edge') &&
-      host.current?.contains(focused) &&
-      !nextEdges.some((edge) => edge.id === focused.getAttribute('data-id'))
-    )
-      host.current.focus()
+    const nextEdges = legacyEdges
+    focusCanvasWhenEdgeRemoved(nextEdges, host.current)
     setEdges(nextEdges)
     return () => {
       rendererActive = false
@@ -208,13 +233,16 @@ export function useCanvasBoardModel({
   )
   const selectedCanvasNodeIds = useMemo(() => {
     if (selection.surface !== 'canvas') return []
-    const placedIds = new Set(
-      (data.images ?? [])
-        .filter((image) => image.placed && !image.trashed)
-        .map((image) => image.id)
-    )
-    return selection.ids.filter((id) => placedIds.has(id)).map(String)
-  }, [data.images, selection.surface, selection.ids])
+    const visibleIds =
+      projection.mode === 'legacy'
+        ? new Set(
+            (data.images ?? [])
+              .filter((image) => image.placed && !image.trashed)
+              .map((image) => image.id)
+          )
+        : new Set(nodes.map((node) => Number(node.id)))
+    return selection.ids.filter((id) => visibleIds.has(id)).map(String)
+  }, [data.images, nodes, projection.mode, selection.surface, selection.ids])
 
   return {
     owner,
@@ -224,5 +252,23 @@ export function useCanvasBoardModel({
     displayEdges,
     selectedCanvasNodeIds,
     setHoveredNodeId,
+    mode: projection.mode,
+    transitionMode: projection.transitionMode,
+    updateProjectionViewport: projection.updateViewport,
+    setViewAnchor: projection.setAnchor,
   }
+}
+
+function focusCanvasWhenEdgeRemoved(
+  edges: Edge[],
+  host: HTMLDivElement | null
+) {
+  const focused = document.activeElement
+  if (
+    focused instanceof SVGElement &&
+    focused.matches('.react-flow__edge') &&
+    host?.contains(focused) &&
+    !edges.some((edge) => edge.id === focused.getAttribute('data-id'))
+  )
+    host.focus()
 }
