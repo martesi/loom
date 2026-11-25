@@ -82,8 +82,18 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
   let gesture: ResizeGesture | DragGesture | null = null
   let pendingHistory: UndoResult[] = []
   let readyHistory: UndoResult[] = []
+  let latestRefresh: Promise<AcceptedCanvasBoard | null> | null = null
+  let signalDisposal = () => {}
+  let disposed = new Promise<null>((resolve) => {
+    signalDisposal = () => resolve(null)
+  })
   const listeners = new Set<() => void>()
-  async function refresh() {
+  function refresh() {
+    const request = loadBoard()
+    latestRefresh = request
+    return request
+  }
+  async function loadBoard() {
     if (!active) return null
     const request = ++generation
     owner.cancelGesture()
@@ -95,7 +105,18 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
     if (!isCurrent()) return null
     if (!snapshot) throw new Error('Canvas layout snapshot is unavailable')
     const data = joinSnapshot(metadata, snapshot)
-    readyHistory.push(...pendingHistory)
+    // An intermediate publication may not have reached React before this one.
+    // Keep its replay membership, but use this snapshot's authoritative rows.
+    const geometry = new Map(
+      (snapshot.images ?? []).map((image) => [image.id, image.geometry])
+    )
+    readyHistory = [...readyHistory, ...pendingHistory].map((result) => ({
+      ...result,
+      geometry: result.geometry?.flatMap((row) => {
+        const current = geometry.get(row.imageId)
+        return current ? [current] : []
+      }),
+    }))
     pendingHistory = []
     accepted = { snapshot, data }
     acceptedGeneration = generation
@@ -116,7 +137,20 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
     async applyHistory(result) {
       if (!active || !result.applied) return
       pendingHistory.push(result)
-      await refresh()
+      const lifetime = disposed
+      let request = refresh()
+      const reconcile = async () => {
+        while (active && pendingHistory.includes(result)) {
+          await Promise.race([request, lifetime])
+          if (!active || !pendingHistory.includes(result)) return
+          if (!latestRefresh || latestRefresh === request) return
+          request = latestRefresh
+        }
+      }
+      await reconcile().catch((error: unknown) => {
+        pendingHistory = pendingHistory.filter((item) => item !== result)
+        throw error
+      })
     },
     takeHistory() {
       const ready = readyHistory
@@ -262,6 +296,7 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
     },
     dispose() {
       active = false
+      signalDisposal()
       generation++
       pendingHistory = []
       readyHistory = []
@@ -269,6 +304,11 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
       listeners.clear()
     },
     activate() {
+      if (!active) {
+        disposed = new Promise<null>((resolve) => {
+          signalDisposal = () => resolve(null)
+        })
+      }
       active = true
     },
   }

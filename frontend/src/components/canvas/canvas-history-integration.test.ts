@@ -262,6 +262,183 @@ it('carries replay through a superseding refresh without publishing it early', a
   owner.dispose()
 })
 
+it('reconciles a superseded replay before a queued geometry commit', async () => {
+  let geometry = initial
+  let releaseReplay: (value: CanvasData) => void = () => {}
+  let releaseIndependent: (value: CanvasData) => void = () => {}
+  const replayLoad = new Promise<CanvasData>((resolve) => {
+    releaseReplay = resolve
+  })
+  const independentLoad = new Promise<CanvasData>((resolve) => {
+    releaseIndependent = resolve
+  })
+  spyOn(ImageService, 'LoadCanvas')
+    .mockResolvedValueOnce(data as never)
+    .mockImplementationOnce(() => replayLoad as never)
+    .mockImplementationOnce(() => independentLoad as never)
+    .mockResolvedValue(data as never)
+  spyOn(ImageService, 'GetLayoutSnapshot').mockImplementation(
+    () =>
+      Promise.resolve({
+        revision: String(geometry[0].x),
+        images: geometry.map((entry) => ({
+          id: entry.imageId,
+          width: 640,
+          height: 480,
+          geometry: entry,
+        })),
+        relationships: [],
+      }) as never
+  )
+  spyOn(UndoService, 'Undo').mockImplementation(() => {
+    geometry = [rect(1, 20, 20, 150, 110), ...initial.slice(1)]
+    return Promise.resolve({
+      applied: true,
+      kind: 'geometry',
+      geometry: [geometry[0]],
+    }) as never
+  })
+  const commit = mock(async () => {
+    geometry = [rect(1, 90, 20, 150, 110), ...initial.slice(1)]
+  })
+  const { result } = renderHook(() => useBoard('/repo'), { wrapper })
+  await act(async () => {
+    await result.current.owner.refresh()
+  })
+  await act(async () => {
+    const undo = result.current.undo.undo()
+    await Promise.resolve()
+    await Promise.resolve()
+    const independent = result.current.owner.refresh()
+    const later = result.current.owner.execute(async () => {
+      await commit()
+      await result.current.owner.refresh()
+    })
+    releaseReplay(data)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(commit).not.toHaveBeenCalled()
+    releaseIndependent(data)
+    await Promise.all([undo, independent, later])
+  })
+  expect(
+    result.current.owner.getSnapshot()?.snapshot.images?.[0].geometry.x
+  ).toBe(90)
+  expect(result.current.nodes.find((node) => node.id === '1')?.position.x).toBe(
+    90
+  )
+})
+
+it('drops a failed superseding reconciliation instead of replaying it on a later refresh', async () => {
+  let releaseReplay: (value: CanvasData) => void = () => {}
+  let rejectIndependent: (error: Error) => void = () => {}
+  const replayLoad = new Promise<CanvasData>((resolve) => {
+    releaseReplay = resolve
+  })
+  const independentLoad = new Promise<CanvasData>((_resolve, reject) => {
+    rejectIndependent = reject
+  })
+  spyOn(ImageService, 'LoadCanvas')
+    .mockResolvedValueOnce(data as never)
+    .mockImplementationOnce(() => replayLoad as never)
+    .mockImplementationOnce(() => independentLoad as never)
+    .mockResolvedValue(data as never)
+  spyOn(ImageService, 'GetLayoutSnapshot').mockImplementation(
+    () =>
+      Promise.resolve({
+        revision: 'current',
+        images: initial.map((entry) => ({
+          id: entry.imageId,
+          width: 640,
+          height: 480,
+          geometry: entry,
+        })),
+        relationships: [],
+      }) as never
+  )
+  spyOn(UndoService, 'Undo').mockResolvedValue({
+    applied: true,
+    kind: 'geometry',
+    geometry: [rect(1, 20, 20, 150, 110)],
+  } as never)
+  const { result } = renderHook(() => useBoard('/repo'), { wrapper })
+  await act(async () => {
+    await result.current.owner.refresh()
+  })
+  await act(async () => {
+    const undo = result.current.undo.undo()
+    const undoError = undo.then(
+      () => null,
+      (error: unknown) => error
+    )
+    await Promise.resolve()
+    await Promise.resolve()
+    const independent = result.current.owner.refresh()
+    const refreshError = independent.then(
+      () => null,
+      (error: unknown) => error
+    )
+    releaseReplay(data)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    rejectIndependent(new Error('load failed'))
+    expect(await undoError).toEqual(new Error('load failed'))
+    expect(await refreshError).toEqual(new Error('load failed'))
+    await result.current.owner.refresh()
+  })
+  expect(
+    result.current.owner.getSnapshot()?.snapshot.images?.[0].geometry.x
+  ).toBe(10)
+  expect(result.current.nodes.find((node) => node.id === '1')?.position.x).toBe(
+    10
+  )
+})
+
+it('releases a replay waiting on a superseding refresh when disposed', async () => {
+  let releaseReplay: (value: CanvasData) => void = () => {}
+  let releaseIndependent: (value: CanvasData) => void = () => {}
+  const replayLoad = new Promise<CanvasData>((resolve) => {
+    releaseReplay = resolve
+  })
+  const independentLoad = new Promise<CanvasData>((resolve) => {
+    releaseIndependent = resolve
+  })
+  spyOn(ImageService, 'LoadCanvas')
+    .mockImplementationOnce(() => replayLoad as never)
+    .mockImplementationOnce(() => independentLoad as never)
+  spyOn(UndoService, 'Undo').mockResolvedValue({
+    applied: true,
+    kind: 'geometry',
+    geometry: [initial[0]],
+  } as never)
+  const { result, unmount } = renderHook(() => useBoard('/repo'), { wrapper })
+  const owner = result.current.owner
+  const undo = result.current.undo.undo()
+  await Promise.resolve()
+  await Promise.resolve()
+  const independent = owner.refresh()
+  releaseReplay(data)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  unmount()
+  await undo
+  releaseIndependent(data)
+  expect(await independent).toBeNull()
+  expect(owner.takeHistory()).toEqual([])
+  expect(owner.getSnapshot()).toBeNull()
+})
+
+it('does not refresh for no-op or error replay results', async () => {
+  spyOn(UndoService, 'Undo')
+    .mockResolvedValueOnce({ applied: false } as never)
+    .mockResolvedValueOnce({ applied: true, error: 'Cannot undo' } as never)
+  const load = spyOn(ImageService, 'LoadCanvas')
+  const { result } = renderHook(() => useBoard('/repo'), { wrapper })
+  await act(async () => {
+    await result.current.undo.undo()
+    await result.current.undo.undo()
+  })
+  expect(load).not.toHaveBeenCalled()
+  expect(result.current.owner.takeHistory()).toEqual([])
+})
+
 it('does not dispatch a queued replay after a repository switch', async () => {
   const undo = spyOn(UndoService, 'Undo').mockImplementation(
     () => Promise.resolve({ applied: true }) as never
