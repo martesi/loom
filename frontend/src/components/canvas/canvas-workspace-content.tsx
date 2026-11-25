@@ -35,7 +35,6 @@ import type { useCanvasWorkspaceState } from './use-canvas-workspace-state'
 import type { useInspectorFieldSubmission } from './use-inspector-field-submission'
 
 const nodeTypes = { image: ImageNode }
-
 interface Props {
   repo: RepoInfo
   flow: ReactFlowInstance
@@ -173,7 +172,6 @@ export function CanvasWorkspaceContent(props: Props) {
     setHoveredNodeId,
   } = boardModel
   const { paste, importMedia, finishTrash, confirmPurge } = assetOperations
-
   const validTarget = (source: number, id: string) =>
     validateRelationshipTarget(source, id, data, groupMembers)
   const arrange = (nodeIds?: string[]) =>
@@ -403,6 +401,7 @@ export function CanvasWorkspaceContent(props: Props) {
           shortcutHint={actionById.get('toggle-inspector')?.shortcut}
         >
           <DetailPanel
+            owner={boardModel.owner}
             open={inspectorOpen}
             path={repo.path}
             data={data}

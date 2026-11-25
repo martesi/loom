@@ -181,6 +181,7 @@ it('uses the projected graph for navigation and preview in View and Edit', async
         edges: app.model.displayEdges,
       }),
       createElement(DetailPanel, {
+        owner: app.owner,
         open: true,
         path: '/repo',
         data: boardData(),

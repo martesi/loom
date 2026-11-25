@@ -133,10 +133,19 @@ export function useCanvasBoardModel({
         })
         if (gesture) {
           activeGestures.set(imageId, gesture)
-        } else activeGestures.delete(imageId)
+        } else {
+          activeGestures.delete(imageId)
+          if (owner.isLayoutPending())
+            callbacks.current.report(
+              new Error(
+                'Canvas layout is being saved. Try resizing the image again.'
+              )
+            )
+        }
       },
       (imageId, x, y, w, h) => {
         const gesture = activeGestures.get(imageId)
+        owner.finishBlockedResize(imageId)
         // Once submitted, the owner controls cancellation even if this renderer is rebuilt.
         activeGestures.delete(imageId)
         if (gesture)

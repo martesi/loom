@@ -44,6 +44,12 @@ export interface AcceptedCanvasBoard {
 export interface CanvasBoardOwner extends CanvasBoardExecutor {
   getMode(): CanvasInternalMode
   getModeRevision(): number
+  getLifetimeRevision(): number
+  isLayoutPending(): boolean
+  guardLayout(action: () => Promise<void>): Promise<void>
+  reserveLayout(): () => void
+  isResizeBlocked(imageId: number): boolean
+  finishBlockedResize(imageId: number): void
   beginModeTransition(): void
   setMode(mode: CanvasInternalMode): void
   allows(capability: CanvasCapability): boolean
@@ -96,6 +102,9 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
   let active = true
   let mode: CanvasInternalMode = 'legacy'
   let modeRevision = 0
+  let lifetimeRevision = 0
+  let pendingLayouts = 0
+  const blockedResizes = new Set<number>()
   let accepted: AcceptedCanvasBoard | null = null
   let acceptedGeneration = -1
   let gesture: ResizeGesture | DragGesture | null = null
@@ -108,6 +117,12 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
   })
   let lifetime = new AbortController()
   const listeners = new Set<() => void>()
+  function withLayoutWrite(action: () => Promise<void>) {
+    pendingLayouts++
+    return new Promise<void>((resolve) => resolve(action())).finally(() => {
+      pendingLayouts--
+    })
+  }
   function refresh() {
     const request = loadBoard()
     latestRefresh = request
@@ -151,6 +166,19 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
   const owner: CanvasBoardOwner = {
     getMode: () => mode,
     getModeRevision: () => modeRevision,
+    getLifetimeRevision: () => lifetimeRevision,
+    isLayoutPending: () => pendingLayouts > 0,
+    guardLayout: withLayoutWrite,
+    reserveLayout() {
+      pendingLayouts++
+      return () => {
+        pendingLayouts--
+      }
+    },
+    isResizeBlocked: (imageId) => blockedResizes.has(imageId),
+    finishBlockedResize: (imageId) => {
+      blockedResizes.delete(imageId)
+    },
     beginModeTransition: () => {
       modeRevision++
     },
@@ -159,7 +187,9 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
       if (mode !== next) modeRevision++
       mode = next
     },
-    allows: (capability) => allowsCanvasCapability(mode, capability),
+    allows: (capability) =>
+      !(capability === 'geometry' && pendingLayouts > 0) &&
+      allowsCanvasCapability(mode, capability),
     execute<T>(action: () => Promise<T>): Promise<T> {
       // Queue outer operations only: awaiting a nested execute would deadlock.
       const result = tail.then(action)
@@ -213,6 +243,8 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
     isActive: () => active,
     getSnapshot: () => accepted,
     beginResize(board, before) {
+      if (pendingLayouts > 0) blockedResizes.add(before.imageId)
+      else blockedResizes.delete(before.imageId)
       if (
         !owner.allows('geometry') ||
         !active ||
@@ -245,27 +277,29 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
       )
       return owner.execute(async () => {
         if (
-          !owner.allows('geometry') ||
+          !allowsCanvasCapability(mode, 'geometry') ||
           !active ||
           current.cancelled ||
           current.generation !== generation
         )
           return
-        await ImageService.SetGeometryFromDisplayAtRevision(
-          repoPath,
-          current.revision,
-          batch.expected,
-          batch.before,
-          batch.after
-        ).catch(async (error: unknown) => {
-          await owner
-            .refresh()
-            .catch((reloadError: unknown) =>
-              console.error('canvas resize reload failed', reloadError)
-            )
-          throw error
+        await withLayoutWrite(async () => {
+          await ImageService.SetGeometryFromDisplayAtRevision(
+            repoPath,
+            current.revision,
+            batch.expected,
+            batch.before,
+            batch.after
+          ).catch(async (error: unknown) => {
+            await owner
+              .refresh()
+              .catch((reloadError: unknown) =>
+                console.error('canvas resize reload failed', reloadError)
+              )
+            throw error
+          })
+          await owner.refresh()
         })
-        await owner.refresh()
       })
     },
     cancelResize(current) {
@@ -317,27 +351,29 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
       )
       return owner.execute(async () => {
         if (
-          !owner.allows('geometry') ||
+          !allowsCanvasCapability(mode, 'geometry') ||
           !active ||
           current.cancelled ||
           current.generation !== generation
         )
           return
-        await ImageService.SetGeometryFromDisplayAtRevision(
-          repoPath,
-          current.revision,
-          batch.expected,
-          batch.before,
-          batch.after
-        ).catch(async (error: unknown) => {
-          await owner
-            .refresh()
-            .catch((reloadError: unknown) =>
-              console.error('canvas drag reload failed', reloadError)
-            )
-          throw error
+        await withLayoutWrite(async () => {
+          await ImageService.SetGeometryFromDisplayAtRevision(
+            repoPath,
+            current.revision,
+            batch.expected,
+            batch.before,
+            batch.after
+          ).catch(async (error: unknown) => {
+            await owner
+              .refresh()
+              .catch((reloadError: unknown) =>
+                console.error('canvas drag reload failed', reloadError)
+              )
+            throw error
+          })
+          await owner.refresh()
         })
-        await owner.refresh()
       })
     },
     async commitDisplayedLayout(board, before, after, accept) {
@@ -353,22 +389,40 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
       )
       if (!batch.changed) return
       owner.cancelGesture()
-      await ImageService.SetGeometryFromDisplayAtRevision(
-        repoPath,
-        board.snapshot.revision,
-        batch.expected,
-        batch.before,
-        batch.after
-      ).catch(async (error: unknown) => {
-        await owner
-          .refresh()
-          .catch((reloadError: unknown) =>
-            console.error('canvas arrange reload failed', reloadError)
-          )
-        throw error
+      const requestMode = modeRevision
+      const signal = lifetime.signal
+      await withLayoutWrite(async () => {
+        await ImageService.SetGeometryFromDisplayAtRevision(
+          repoPath,
+          board.snapshot.revision,
+          batch.expected,
+          batch.before,
+          batch.after
+        ).catch(async (error: unknown) => {
+          await owner
+            .refresh()
+            .catch((reloadError: unknown) =>
+              console.error('canvas arrange reload failed', reloadError)
+            )
+          throw error
+        })
+        if (!active || signal.aborted) return
+        if (
+          mode === 'edit' &&
+          modeRevision === requestMode &&
+          owner.getSnapshot() === board
+        ) {
+          accept()
+          await owner.refresh()
+        } else {
+          // The write is already in history. Reconcile its rows without replaying it.
+          await owner.applyHistory({
+            applied: true,
+            kind: 'geometry',
+            geometry: batch.after,
+          })
+        }
       })
-      if (active && mode === 'edit') accept()
-      if (active) await owner.refresh()
     },
     cancelGesture() {
       const current = gesture
@@ -391,15 +445,18 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
     },
     dispose() {
       active = false
+      lifetimeRevision++
       lifetime.abort()
       generation++
       pendingHistory = []
       readyHistory = []
+      blockedResizes.clear()
       owner.cancelGesture()
       listeners.clear()
     },
     activate() {
       if (!active) {
+        lifetimeRevision++
         lifetime = new AbortController()
       }
       active = true

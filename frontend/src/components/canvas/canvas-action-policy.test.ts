@@ -339,3 +339,128 @@ it('denies unknown actions in View and Edit, but preserves legacy behavior', () 
     expect(allowsCanvasAction('edit', id)).toBe(false)
   }
 })
+
+for (const change of [
+  'pending transition',
+  'mode ABA',
+  'owner lifetime',
+] as const) {
+  it(`rejects queued geometry after ${change} and keeps the queue live`, async () => {
+    const owner = createCanvasBoardOwner('/repo')
+    owner.setMode('edit')
+    const arrange = mock(async () => {})
+    const report = mock()
+    const context = {
+      owner,
+      repoPath: '/repo',
+      displayNodes: [{ id: '1' }],
+      selectedCanvasNodeIds: [],
+      selectedIds: () => [],
+      selectedImageRecords: [],
+      relationshipActions: [],
+      visible: { current: [] },
+      selection: emptySelection,
+      data: { images: [], relationships: [], groups: [] },
+      arrange,
+      undoActions: { undo: async () => {}, redo: async () => {} },
+    } as unknown as CanvasActionsContext
+    const { result } = renderHook(() =>
+      useCanvasActionSystem({
+        context,
+        report,
+        paletteOpen: false,
+        setPaletteOpen: mock(),
+        setRecentActionIds: mock(),
+        pendingRecentAction: useRef(null),
+        trashIds: null,
+        purgeIds: null,
+        host: useRef(null),
+        paletteAssetRequest: 0,
+        setPaletteAssets: mock(),
+        setPaletteAssetsLoading: mock(),
+        setPaletteAssetsError: mock(),
+      })
+    )
+    let release = () => {}
+    const blocker = owner.execute(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve
+        })
+    )
+    await Promise.resolve()
+    const action = result.current.actionById.get('auto-arrange-active')
+    if (!action) throw new Error('missing action')
+    const queued = result.current.executeAction(action)
+    if (change === 'pending transition') owner.beginModeTransition()
+    else if (change === 'mode ABA') {
+      owner.setMode('view')
+      owner.setMode('edit')
+    } else {
+      owner.dispose()
+      owner.activate()
+    }
+    await act(async () => {
+      release()
+      await Promise.all([blocker, queued])
+      await owner.execute(async () => {})
+    })
+    expect(arrange).not.toHaveBeenCalled()
+    expect(report).toHaveBeenCalledWith(expect.any(Error))
+    await act(async () => result.current.executeAction(action))
+    expect(arrange).toHaveBeenCalledTimes(1)
+    owner.dispose()
+  })
+}
+
+it('rejects a palette geometry intent when mode changes before its frame', async () => {
+  let frame: FrameRequestCallback = () => {}
+  spyOn(globalThis, 'requestAnimationFrame').mockImplementation((callback) => {
+    frame = callback
+    return 1
+  })
+  const owner = createCanvasBoardOwner('/repo')
+  owner.setMode('edit')
+  const arrange = mock(async () => {})
+  const report = mock()
+  const context = {
+    owner,
+    repoPath: '/repo',
+    displayNodes: [{ id: '1' }],
+    selectedCanvasNodeIds: [],
+    selectedIds: () => [],
+    selectedImageRecords: [],
+    relationshipActions: [],
+    visible: { current: [] },
+    selection: emptySelection,
+    data: { images: [], relationships: [], groups: [] },
+    arrange,
+    undoActions: { undo: async () => {}, redo: async () => {} },
+  } as unknown as CanvasActionsContext
+  const { result } = renderHook(() =>
+    useCanvasActionSystem({
+      context,
+      report,
+      paletteOpen: true,
+      setPaletteOpen: mock(),
+      setRecentActionIds: mock(),
+      pendingRecentAction: useRef(null),
+      trashIds: null,
+      purgeIds: null,
+      host: useRef(null),
+      paletteAssetRequest: 0,
+      setPaletteAssets: mock(),
+      setPaletteAssetsLoading: mock(),
+      setPaletteAssetsError: mock(),
+    })
+  )
+  const action = result.current.actionById.get('auto-arrange-active')
+  if (!action) throw new Error('missing action')
+  act(() => result.current.runPaletteAction(action))
+  owner.beginModeTransition()
+  act(() => frame(0))
+  await act(async () => owner.execute(async () => {}))
+  expect(arrange).not.toHaveBeenCalled()
+  expect(report).toHaveBeenCalledWith(expect.any(Error))
+  owner.dispose()
+})

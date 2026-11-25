@@ -16,6 +16,7 @@ import {
   allowsCanvasAction,
   canvasActionCapability,
 } from './canvas-mode-policy'
+import { enqueueCanvasMutation } from './canvas-mutation-queue'
 import type { PaletteAsset } from './command-palette'
 
 interface Props {
@@ -80,10 +81,14 @@ export function useCanvasActionSystem({
         // Other actions may own their own queue, such as paste and history.
         if (capability !== 'geometry' && capability !== 'relationship')
           return action.execute()
-        return context.owner.execute(async () => {
-          if (allowsCanvasAction(context.owner.getMode(), action.id))
+        return enqueueCanvasMutation(
+          context.owner,
+          capability,
+          async () => {
             await action.execute()
-        })
+          },
+          () => allowsCanvasAction(context.owner.getMode(), action.id)
+        )
       },
     }
   })
@@ -160,6 +165,10 @@ export function useCanvasActionSystem({
   function runPaletteAction(action: CanvasAction) {
     const currentAction = actionById.get(action.id)
     if (!currentAction?.enabled) return
+    const capability = canvasActionCapability(currentAction.id)
+    const revision = context.owner.getModeRevision()
+    const lifetime = context.owner.getLifetimeRevision()
+    const board = context.owner.getSnapshot()
     // The route owns focus after palette commands; do not race dialog restoration.
     setPaletteOpen(false)
     if (
@@ -176,6 +185,16 @@ export function useCanvasActionSystem({
       currentAction.id === 'purge-selection'
     if (isLifecycleAction) pendingRecentAction.current = currentAction.id
     requestAnimationFrame(() => {
+      if (
+        (capability === 'geometry' || capability === 'relationship') &&
+        (revision !== context.owner.getModeRevision() ||
+          lifetime !== context.owner.getLifetimeRevision() ||
+          board !== context.owner.getSnapshot() ||
+          context.owner.isActive?.() === false)
+      ) {
+        report(new Error('Canvas changed. Try the command again.'))
+        return
+      }
       void executeAction(currentAction).then(() => {
         if (!isLifecycleAction)
           setRecentActionIds((ids) =>

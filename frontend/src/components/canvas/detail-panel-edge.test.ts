@@ -46,7 +46,10 @@ afterEach(() => {
   mock.restore()
 })
 
-function renderEdge(canMutateRelationships: () => boolean) {
+function renderEdge(
+  canMutateRelationships: () => boolean,
+  owner = createCanvasBoardOwner('/repo')
+) {
   const change = mock(async () => {})
   const props = {
     open: true,
@@ -65,10 +68,45 @@ function renderEdge(canMutateRelationships: () => boolean) {
     onSubmitField: mock(async () => {}),
     selectionRevision: 0,
     restoreEnabled: false,
+    owner,
     canMutateRelationships,
   } as unknown as Parameters<typeof DetailPanel>[0]
   return { ...render(createElement(DetailPanel, props)), props, change }
 }
+
+it('serializes Inspector confirmation with pending board writes', async () => {
+  const unlink = spyOn(ImageService, 'UnlinkSource').mockResolvedValue(
+    undefined as never
+  )
+  const owner = createCanvasBoardOwner('/repo')
+  owner.setMode('edit')
+  let release = () => {}
+  const pending = owner.execute(
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve
+      })
+  )
+  await Promise.resolve()
+  renderEdge(() => owner.allows('relationship'), owner)
+  await act(async () => {})
+  fireEvent.click(screen.getByRole('button', { name: 'Remove relationship' }))
+  fireEvent.click(
+    within(screen.getByRole('dialog')).getByRole('button', {
+      name: 'Remove relationship',
+    })
+  )
+  await act(async () => {})
+  const callsBeforeRelease = unlink.mock.calls.length
+  await act(async () => {
+    release()
+    await pending
+    await owner.execute(async () => {})
+  })
+  expect(callsBeforeRelease).toBe(0)
+  expect(unlink).toHaveBeenCalledTimes(1)
+  owner.dispose()
+})
 
 it('Escape cancels edge removal without mutation', async () => {
   const unlink = spyOn(ImageService, 'UnlinkSource').mockResolvedValue(
@@ -134,6 +172,7 @@ it('lists and navigates related images in projected graph order', async () => {
   const props = {
     open: true,
     path: '/repo',
+    owner: createCanvasBoardOwner('/repo'),
     data: {
       images: [image(1), image(2), image(3)],
       relationships: [

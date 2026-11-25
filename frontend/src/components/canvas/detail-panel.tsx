@@ -11,11 +11,14 @@ import {
 import type { Selection } from '../../lib/selection'
 import { Button } from '../ui/button'
 import { ShortcutKeys } from '../ui/tooltip'
+import type { CanvasBoardOwner } from './canvas-board-owner'
+import { enqueueCanvasMutation } from './canvas-mutation-queue'
 import { DetailPanelDialogs } from './detail-panel-dialogs'
 import { DetailPanelFields } from './detail-panel-fields'
 import { DetailPanelRelations } from './detail-panel-relations'
 
 interface Props {
+  owner: CanvasBoardOwner
   open: boolean
   path: string
   data: CanvasData
@@ -46,6 +49,7 @@ interface Props {
 // Memoized for the same reason as LibraryPanel: stable props across
 // node-drag frames skip the Inspector subtree while dragging.
 export const DetailPanel = memo(function DetailPanel({
+  owner,
   open,
   path,
   data,
@@ -194,8 +198,17 @@ export const DetailPanel = memo(function DetailPanel({
     }
   }, [path, key, data])
   const tagLists = tagResult?.scope === scope ? tagResult.lists : []
-  const run = (action: () => Promise<unknown>) =>
-    void action().then(change).catch(errors.current)
+  const removeRelationship = (id: number) => {
+    void enqueueCanvasMutation(
+      owner,
+      'relationship',
+      async () => {
+        await ImageService.UnlinkSource(path, id)
+        await change()
+      },
+      canMutateRelationships
+    ).catch(errors.current)
+  }
   const unavailableCount = selection.ids.length - images.length
   const dialogs = (
     <DetailPanelDialogs
@@ -210,8 +223,7 @@ export const DetailPanel = memo(function DetailPanel({
       onError={onError}
       removeRelationshipId={removeRelationshipId}
       setRemoveRelationshipId={setRemoveRelationshipId}
-      run={run}
-      path={path}
+      removeRelationship={removeRelationship}
       canMutateRelationships={canMutateRelationships}
     />
   )

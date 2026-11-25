@@ -1,7 +1,6 @@
 import { Dialog } from '@base-ui-components/react/dialog'
 import { Plural, Trans } from '@lingui/react/macro'
 import type { Dispatch, SetStateAction } from 'react'
-import { ImageService } from '../../../bindings/loom/internal/service'
 import type { Selection } from '../../lib/selection'
 import { Button } from '../ui/button'
 
@@ -38,8 +37,7 @@ interface Props {
   onError: (error: unknown) => void
   removeRelationshipId: number | null
   setRemoveRelationshipId: Dispatch<SetStateAction<number | null>>
-  run: (action: () => Promise<unknown>) => void
-  path: string
+  removeRelationship: (id: number) => void
   canMutateRelationships: () => boolean
 }
 
@@ -56,8 +54,7 @@ export function DetailPanelDialogs(props: Props) {
     onError,
     removeRelationshipId,
     setRemoveRelationshipId,
-    run,
-    path,
+    removeRelationship,
     canMutateRelationships,
   } = props
   return (
@@ -179,11 +176,7 @@ export function DetailPanelDialogs(props: Props) {
                   const id = removeRelationshipId
                   setRemoveRelationshipId(null)
                   if (id !== null && canMutateRelationships())
-                    run(() =>
-                      canMutateRelationships()
-                        ? ImageService.UnlinkSource(path, id)
-                        : Promise.resolve()
-                    )
+                    removeRelationship(id)
                 }}
               >
                 <Trans>Remove relationship</Trans>

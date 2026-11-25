@@ -40,7 +40,13 @@ export function useCanvasBoardDrag(
       before,
       restore
     )
-    if (before.length && !current.current) restore()
+    if (before.length && !current.current) {
+      restore()
+      if (owner.isLayoutPending())
+        report(
+          new Error('Canvas layout is being saved. Try moving the image again.')
+        )
+    }
   }
 
   function take() {

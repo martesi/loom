@@ -208,6 +208,11 @@ export function CanvasFlow(props: Props) {
                   (change.resizing || change.setAttributes)
                 )
             )
+          changes = changes.filter(
+            (change) =>
+              !('id' in change && owner.isResizeBlocked(Number(change.id))) ||
+              (change.type !== 'position' && change.type !== 'dimensions')
+          )
           changes = drag.filterChanges(changes)
           setNodes((n) => applyNodeChanges(changes, n))
           const selected = changes.filter((c) => c.type === 'select')
