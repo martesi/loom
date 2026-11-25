@@ -194,6 +194,25 @@ export const DetailPanel = memo(function DetailPanel({
   const tagLists = tagResult?.scope === scope ? tagResult.lists : []
   const run = (action: () => Promise<unknown>) =>
     void action().then(change).catch(errors.current)
+  const unavailableCount = selection.ids.length - images.length
+  const dialogs = (
+    <DetailPanelDialogs
+      promptConfirmation={promptConfirmation}
+      setPromptConfirmation={setPromptConfirmation}
+      scope={scope}
+      unavailableCount={unavailableCount}
+      selection={selection}
+      selectionRevision={selectionRevision}
+      setPromptDraft={setPromptDraft}
+      onSubmitField={onSubmitField}
+      onError={onError}
+      removeRelationshipId={removeRelationshipId}
+      setRemoveRelationshipId={setRemoveRelationshipId}
+      run={run}
+      path={path}
+      canMutateRelationships={canMutateRelationships}
+    />
+  )
   if (selection.edges.length)
     return (
       <div className="loom-detail-panel grid gap-3 overflow-auto p-3 text-xs">
@@ -237,6 +256,7 @@ export const DetailPanel = memo(function DetailPanel({
               </Button>
             </div>
           ))}
+        {dialogs}
       </div>
     )
   if (!images.length && selection.ids.length > 0 && !imageDataLoaded)
@@ -275,7 +295,6 @@ export const DetailPanel = memo(function DetailPanel({
       </div>
     )
   const image = images.length === 1 ? images[0] : null
-  const unavailableCount = selection.ids.length - images.length
   const tagsReady =
     tagResult?.scope === scope && tagLists.length === images.length
   const tagNames = [...new Set(tagLists.flat())].sort((a, b) =>
@@ -364,22 +383,7 @@ export const DetailPanel = memo(function DetailPanel({
           })}
         </strong>
       )}
-      <DetailPanelDialogs
-        promptConfirmation={promptConfirmation}
-        setPromptConfirmation={setPromptConfirmation}
-        scope={scope}
-        unavailableCount={unavailableCount}
-        selection={selection}
-        selectionRevision={selectionRevision}
-        setPromptDraft={setPromptDraft}
-        onSubmitField={onSubmitField}
-        onError={onError}
-        removeRelationshipId={removeRelationshipId}
-        setRemoveRelationshipId={setRemoveRelationshipId}
-        run={run}
-        path={path}
-        canMutateRelationships={canMutateRelationships}
-      />{' '}
+      {dialogs}
       <DetailPanelRelations
         images={images}
         imageDataLoaded={imageDataLoaded}

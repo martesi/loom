@@ -50,6 +50,33 @@ async function createChain(page: Page) {
   }
 }
 
+test('Inspector confirms edge removal, Escape cancels, and undo restores one edge', async ({
+  page,
+}, testInfo) => {
+  await createChain(page)
+  await page.getByTestId('toggle-inspector-shelf').click()
+  await clickEdge(page, 'left')
+  const inspector = page.locator('aside[aria-label="Inspector"]')
+  const remove = inspector.getByRole('button', { name: 'Remove relationship' })
+  await expect(remove).toBeVisible()
+  await remove.click()
+  const dialog = page.getByRole('dialog', { name: 'Remove relationship?' })
+  await expect(dialog).toBeVisible()
+  await page.screenshot({
+    path: testInfo.outputPath('inspector-edge-confirmation.png'),
+  })
+  await page.keyboard.press('Escape')
+  await expect(dialog).not.toBeVisible()
+  await expect(page.locator('.react-flow__edge')).toHaveCount(2)
+  await remove.click()
+  await dialog.getByRole('button', { name: 'Remove relationship' }).click()
+  await expect(page.locator('.react-flow__edge')).toHaveCount(1)
+  await page.keyboard.press('ControlOrMeta+z')
+  await expect(page.locator('.react-flow__edge')).toHaveCount(2)
+  await page.keyboard.press('ControlOrMeta+Shift+z')
+  await expect(page.locator('.react-flow__edge')).toHaveCount(1)
+})
+
 test('undo reconciles edge selection before additive selection and delete', async ({
   page,
 }) => {

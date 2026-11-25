@@ -74,9 +74,13 @@ export function useCanvasActionSystem({
         : t`Available in Edit mode`,
       execute: () => {
         const capability = canvasActionCapability(action.id)
-        if (!capability) return action.execute()
+        if (!allowsCanvasAction(context.owner.getMode(), action.id)) return
+        // Other actions may own their own queue, such as paste and history.
+        if (capability !== 'geometry' && capability !== 'relationship')
+          return action.execute()
         return context.owner.execute(async () => {
-          if (context.owner.allows(capability)) await action.execute()
+          if (allowsCanvasAction(context.owner.getMode(), action.id))
+            await action.execute()
         })
       },
     }
