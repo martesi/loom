@@ -49,13 +49,18 @@ export function useCanvasProjectionController(props: Props) {
     null
   )
   const nodesBeforePublication = useRef<Node[] | null>(null)
+  const lifetime = useRef<{ owner: CanvasBoardOwner } | null>(null)
   const [mode, setMode] = useState<CanvasInternalMode>('legacy')
-  // biome-ignore lint/correctness/useExhaustiveDependencies: a new owner is a new repository lifetime.
   useEffect(() => {
+    const active = { owner: props.owner }
+    lifetime.current = active
     state.current = null
     source.current = null
     nodesBeforePublication.current = null
     setMode('legacy')
+    return () => {
+      if (lifetime.current === active) lifetime.current = null
+    }
   }, [props.owner])
 
   function size() {
@@ -87,7 +92,14 @@ export function useCanvasProjectionController(props: Props) {
   }
   async function transitionMode(target: 'view' | 'edit') {
     const { owner } = current.current
+    const active = lifetime.current
+    const isCurrent = () =>
+      active !== null &&
+      lifetime.current === active &&
+      current.current.owner === owner &&
+      active.owner === owner
     await owner.execute(async () => {
+      if (!isCurrent()) return
       const input = source.current
       if (!input || owner.getSnapshot() !== input.board)
         throw new Error('Canvas snapshot is not ready for a mode transition')
@@ -109,8 +121,10 @@ export function useCanvasProjectionController(props: Props) {
         })
       } else next = capture(next)
       next = target === 'edit' ? enterEdit(next) : enterView(next)
+      if (!isCurrent()) return
       publish(next)
       const viewport = target === 'edit' ? next.editViewport : next.viewViewport
+      if (!isCurrent()) return
       await current.current.flow?.setViewport(viewport)
     })
   }
@@ -190,7 +204,10 @@ function compensateAnchor(
   if (!dx && !dy) return next
   return {
     ...next,
-    viewAnchor: { x: anchor.x + dx, y: anchor.y + dy },
+    // Only explicit anchors persist; the implicit anchor follows the viewport.
+    viewAnchor: before.viewAnchor
+      ? { x: anchor.x + dx, y: anchor.y + dy }
+      : null,
     viewViewport: {
       ...next.viewViewport,
       x: next.viewViewport.x - dx * next.viewViewport.zoom,
