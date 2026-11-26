@@ -760,11 +760,17 @@ func (r *Repo) SwapRepresentation(imageID int64, outgoingStash, incomingPath, ac
 		return fmt.Errorf("representation replay is missing content fingerprints")
 	}
 	actualCurrent, _, err := FingerprintFile(context.Background(), currentPath)
-	if err != nil || actualCurrent != currentFingerprint {
+	if err != nil {
+		return fmt.Errorf("verify active representation: %w", err)
+	}
+	if actualCurrent != currentFingerprint {
 		return fmt.Errorf("active representation changed; replacement replay was refused")
 	}
 	actualIncoming, _, err := FingerprintFile(context.Background(), incomingPath)
-	if err != nil || actualIncoming != incomingFingerprint {
+	if err != nil {
+		return fmt.Errorf("verify stashed representation: %w", err)
+	}
+	if actualIncoming != incomingFingerprint {
 		return fmt.Errorf("stashed representation changed; replacement replay was refused")
 	}
 	if activePath != currentPath {
