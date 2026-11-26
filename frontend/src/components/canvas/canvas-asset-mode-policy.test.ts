@@ -113,8 +113,7 @@ it('imports a dropped file batch at the flow-space drop point in Edit', async ()
   const owner = createCanvasBoardOwner('/repo')
   owner.setMode('edit')
   const imported = spyOn(ImageService, 'ImportMedia').mockResolvedValue([
-    4,
-    5,
+    4, 5,
   ] as never)
   const props = {
     owner,
