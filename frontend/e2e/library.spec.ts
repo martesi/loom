@@ -1,4 +1,5 @@
 import { rm, writeFile } from 'node:fs/promises'
+import { legacyServiceCall } from './legacy-service'
 import { expect, test } from './test-fixtures'
 import {
   asset,
@@ -9,7 +10,6 @@ import {
   imageNodes,
   openAssetsShelf,
   openFixtureRepo,
-  placeAssets,
 } from './test-helpers'
 
 const fixturePng = Buffer.from(
@@ -43,8 +43,27 @@ test('library selection, search, placement filters, and folder navigation', asyn
   await page
     .locator('.react-flow__pane')
     .click({ position: { x: 500, y: 400 } })
+  const ids = await assets(page).evaluateAll((rows) =>
+    rows.map((row) => Number(row.getAttribute('data-asset-id')))
+  )
+  expect(ids).toHaveLength(4)
   await enterEdit(page)
-  await placeAssets(page, ['root-alpha.png'])
+  // Restore unplaced fixture state after Edit's initial layout commit so the
+  // placement filter still exercises a real mix of placed and unplaced assets.
+  await legacyServiceCall(page, 'imageservice.ts', 'UnplaceImages', [
+    await fixturePath('library-fixtures'),
+    ids,
+  ])
+  await page.reload()
+  await expect(page.getByTestId('canvas-mode-edit')).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+  await expect(imageNodes(page)).toHaveCount(4)
+  await dropAsset(page, 'root-alpha.png', { x: 100, y: 100 })
+  await expect(
+    imageNodes(page).filter({ hasText: 'root-alpha.png' })
+  ).toHaveClass(/selected/)
   await openAssetsShelf(page)
   await filters.click()
   await page.getByRole('combobox', { name: 'Placement' }).selectOption('placed')

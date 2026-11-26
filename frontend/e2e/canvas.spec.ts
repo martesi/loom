@@ -286,28 +286,27 @@ test('explicit relationship gesture, navigation, and individual selection', asyn
     .click()
   await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
 })
-test('Select all excludes unplaced assets without hiding them from Assets', async ({
+test('Select all includes loose images in Edit, while View hides them without removing assets', async ({
   page,
 }) => {
   await open(page, 'partial-set-fixtures')
   await enterEdit(page)
   await drop(page, 'partial-alpha.png', 80, 100)
-  await expect(canvasNodes(page)).toHaveCount(1)
+  await expect(canvasNodes(page)).toHaveCount(2)
   await canvasNodes(page).first().click()
   await page.keyboard.press('Control+a')
-  await expect(page.locator('.react-flow__node.selected')).toHaveCount(1)
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
   await expect(page.locator('.react-flow__node-group')).toHaveCount(0)
-  await page.locator('.react-flow__pane').click({ position: { x: 10, y: 10 } })
-
-  await page.locator('.react-flow__pane').click({
-    button: 'right',
-    position: { x: 10, y: 10 },
-  })
+  const empty = await emptyCanvasPoint(page)
+  await page.mouse.click(empty.x, empty.y)
+  await page.mouse.click(empty.x, empty.y, { button: 'right' })
   await page
     .getByRole('menu')
     .getByRole('menuitem', { name: 'Select all' })
     .click()
-  await expect(page.locator('.react-flow__node.selected')).toHaveCount(1)
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
+  await page.getByTestId('canvas-mode-view').click()
+  await expect(canvasNodes(page)).toHaveCount(0)
   await page.getByTestId('toggle-assets-shelf').click()
   await expect(
     assets(page).filter({ hasText: 'partial-beta.png' })

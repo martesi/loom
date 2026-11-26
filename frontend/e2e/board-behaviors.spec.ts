@@ -202,7 +202,7 @@ test('relationship gestures reject self-links', async ({ page }) => {
   await expect(page.locator('.react-flow__edge')).toHaveCount(0)
 })
 
-test('Sources navigation reveals and selects an unplaced asset', async ({
+test('Sources navigation selects a visible unplaced source in Edit', async ({
   page,
 }) => {
   await openFixtureRepo(page, 'sources-nav-fixtures')
@@ -221,14 +221,20 @@ test('Sources navigation reveals and selects an unplaced asset', async ({
     [sourceID],
   ])
   await page.reload()
-  await expect(imageNodes(page)).toHaveCount(1)
-  await imageNodes(page).first().click()
+  await expect(imageNodes(page)).toHaveCount(2)
+  await openAssetsShelf(page)
+  await asset(page, 'relation-alpha.png').click()
   if (
     (await page
       .locator('aside[aria-label="Inspector"]')
       .getAttribute('data-state')) !== 'open'
   )
     await page.getByTestId('toggle-inspector-shelf').click()
+  await expect(page.getByText(/× .* · Unplaced/)).toBeVisible()
+  await page.getByTestId('toggle-assets-shelf').click()
+  const sourceNode = imageNodes(page).filter({ hasText: 'relation-alpha.png' })
+  const derivedNode = imageNodes(page).filter({ hasText: 'relation-beta.png' })
+  await derivedNode.click()
 
   const sources = page
     .locator('.loom-detail-panel section')
@@ -236,24 +242,8 @@ test('Sources navigation reveals and selects an unplaced asset', async ({
   await expect(sources.getByText('relation-alpha.png')).toBeVisible()
   await sources.getByRole('button', { name: /Go to source asset/ }).click()
 
-  await expect(asset(page, 'relation-alpha.png')).toHaveAttribute(
-    'aria-selected',
-    'true'
-  )
-  // Locate scrolls the row into view, not just selects it.
-  await expect
-    .poll(async () => {
-      const rowBox = await asset(page, 'relation-alpha.png').boundingBox()
-      const listBox = await page
-        .getByRole('listbox', { name: 'Assets' })
-        .boundingBox()
-      if (!rowBox || !listBox) return false
-      return (
-        rowBox.y >= listBox.y &&
-        rowBox.y + rowBox.height <= listBox.y + listBox.height
-      )
-    })
-    .toBe(true)
+  await expect(sourceNode).toHaveClass(/selected/)
+  await expect(derivedNode).not.toHaveClass(/selected/)
   await expect(page.getByText(/× .* · Unplaced/)).toBeVisible()
 })
 
