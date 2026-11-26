@@ -244,6 +244,19 @@ func (r *Repo) scanAndRegisterImagesWithFingerprint(ctx context.Context, advance
 		if item.err != nil {
 			return changed, fmt.Errorf("fingerprint %s: %w", item.path, item.err)
 		}
+		var discardedHash string
+		err := r.DB.QueryRow(`SELECT sha256 FROM discarded_import_files WHERE file_path = ?`, item.path).Scan(&discardedHash)
+		if err != nil && err != sql.ErrNoRows {
+			return changed, err
+		}
+		if err == nil {
+			if item.fingerprint == discardedHash {
+				continue
+			}
+			if _, err := r.DB.Exec(`DELETE FROM discarded_import_files WHERE file_path = ?`, item.path); err != nil {
+				return changed, err
+			}
+		}
 		statMarker := fmt.Sprintf("stat:%d:%d", item.info.Size(), item.info.ModTime().UnixNano())
 		res, err := r.DB.Exec(`INSERT OR IGNORE INTO images (file_path, file_size, content_hash, source_fingerprint, source_revision) VALUES (?, ?, ?, ?, 1)`, item.path, item.info.Size(), statMarker, item.fingerprint)
 		if err != nil {

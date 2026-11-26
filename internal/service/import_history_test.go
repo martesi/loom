@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -511,6 +512,19 @@ func TestActiveFileCleanupFailureDoesNotRediscoverDiscardedImport(t *testing.T) 
 	cleanupDiscardedImportRedoBestEffortWith(repo, discarded, "test active-file cleanup failure", func(string) error {
 		return errors.New("simulated remove failure")
 	})
+	if _, err := repo.ScanAndRegisterImages(context.Background()); err != nil {
+		t.Fatalf("explicit scan after cleanup failure: %v", err)
+	}
+	var imageRows int
+	if err := repo.DB.QueryRow(`SELECT count(*) FROM images WHERE file_path = ?`, image.FilePath).Scan(&imageRows); err != nil || imageRows != 0 {
+		t.Fatalf("explicit scan resurrected discarded import: rows=%d err=%v", imageRows, err)
+	}
+	if _, err := repo.RefreshFingerprints(context.Background()); err != nil {
+		t.Fatalf("fingerprint refresh after cleanup failure: %v", err)
+	}
+	if err := repo.DB.QueryRow(`SELECT count(*) FROM images WHERE file_path = ?`, image.FilePath).Scan(&imageRows); err != nil || imageRows != 0 {
+		t.Fatalf("fingerprint refresh resurrected discarded import: rows=%d err=%v", imageRows, err)
+	}
 	var opCount, suppressionCount int
 	if err := repo.DB.QueryRow(`SELECT count(*) FROM operation_log WHERE kind = ?`, stepGraphInsert).Scan(&opCount); err != nil || opCount != 1 {
 		t.Fatalf("committed graph operation count = %d, err=%v", opCount, err)
