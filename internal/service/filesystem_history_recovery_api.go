@@ -132,6 +132,14 @@ func coordinateRepositoryRecovery(repo *store.Repo) error {
 		return err
 	}
 	if requestID != "" {
+		collision, err := requestIDHasFamilyCollision(repo.DB, requestID)
+		if err != nil {
+			return err
+		}
+		if collision {
+			return &filesystemHistoryPendingError{RequestID: requestID,
+				Message: "This legacy filesystem request ID collides with another request family. Automatic recovery is disabled; inspect the evidence manually."}
+		}
 		ledger, found, err := readFilesystemHistoryLedger(repo.DB, requestID)
 		if err != nil {
 			return err

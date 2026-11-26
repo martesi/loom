@@ -339,6 +339,13 @@ func recoverReplacementJournalsOnly(repo *store.Repo) error {
 		}
 	}
 	for _, requestID := range requestIDs {
+		collision, err := requestIDHasFamilyCollision(repo.DB, requestID)
+		if err != nil {
+			return err
+		}
+		if collision {
+			return fmt.Errorf("replacement request %s collides with another request family; automatic recovery is disabled", requestID)
+		}
 		journal, err := scanReplacementJournal(repo.DB.QueryRow(replacementJournalSelect+` WHERE request_id=? AND completed_at IS NULL`, requestID))
 		if err != nil {
 			return err

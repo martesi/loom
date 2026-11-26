@@ -19,6 +19,17 @@ func applyLegacyHistoryTx(tx *sql.Tx, s OpStep) (bool, error) {
 		}
 		return nil
 	}
+	visibleImage := func(id int64) error {
+		var available bool
+		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images i WHERE i.id=? AND i.trashed=0
+			AND NOT EXISTS(SELECT 1 FROM import_recovery ir WHERE ir.image_id=i.id AND ir.retained=1))`, id).Scan(&available); err != nil {
+			return err
+		}
+		if !available {
+			return fmt.Errorf("image %d is unavailable for group history", id)
+		}
+		return nil
+	}
 	switch s.Kind {
 	case stepLink, stepUnlink, stepLinks, stepUnlinks:
 		var links []linkStepPayload
@@ -137,6 +148,9 @@ func applyLegacyHistoryTx(tx *sql.Tx, s OpStep) (bool, error) {
 			if err := imageExists(id); err != nil {
 				return true, err
 			}
+			if err := visibleImage(id); err != nil {
+				return true, err
+			}
 			var member bool
 			if err := tx.QueryRow(`SELECT group_id IS NOT NULL FROM images WHERE id=?`, id).Scan(&member); err != nil {
 				return true, err
@@ -169,6 +183,9 @@ func applyLegacyHistoryTx(tx *sql.Tx, s OpStep) (bool, error) {
 			return true, err
 		}
 		if err := imageExists(p.ImageID); err != nil {
+			return true, err
+		}
+		if err := visibleImage(p.ImageID); err != nil {
 			return true, err
 		}
 		var groupExists bool
@@ -208,6 +225,22 @@ func applyLegacyHistoryTx(tx *sql.Tx, s OpStep) (bool, error) {
 				return true, err
 			}
 		}
+		if p.CoverImageID != nil {
+			var cover any
+			if *p.CoverImageID != 0 {
+				var member bool
+				if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images WHERE id=? AND group_id=?)`, *p.CoverImageID, p.GroupID).Scan(&member); err != nil {
+					return true, err
+				}
+				if !member {
+					return true, fmt.Errorf("group %d cover image %d is not a member after replay", p.GroupID, *p.CoverImageID)
+				}
+				cover = *p.CoverImageID
+			}
+			if _, err := tx.Exec(`UPDATE groups SET cover_image_id=? WHERE id=?`, cover, p.GroupID); err != nil {
+				return true, err
+			}
+		}
 		return true, nil
 	case stepGroupSetCover:
 		var p groupCoverStepPayload
@@ -215,6 +248,9 @@ func applyLegacyHistoryTx(tx *sql.Tx, s OpStep) (bool, error) {
 			return true, err
 		}
 		if err := imageExists(p.CoverImageID); err != nil {
+			return true, err
+		}
+		if err := visibleImage(p.CoverImageID); err != nil {
 			return true, err
 		}
 		updated, err := tx.Exec(`UPDATE groups SET cover_image_id=? WHERE id=? AND cover_image_id IS NOT ?

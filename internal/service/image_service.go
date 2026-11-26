@@ -282,7 +282,7 @@ func (s *ImageService) LoadCanvas(repoPath string) (*CanvasData, error) {
 			continue
 		}
 		groups = append(groups, GroupInfo{
-			ID: g.ID, Name: g.Name, Kind: g.Kind, CoverImageID: g.CoverImageID, MemberIDs: onBoard,
+			ID: g.ID, Name: g.Name, Kind: g.Kind, CoverImageID: visibleCoverImageID(g.CoverImageID, boardIDSet), MemberIDs: onBoard,
 		})
 	}
 
@@ -324,6 +324,13 @@ func (s *ImageService) LoadCanvas(repoPath string) (*CanvasData, error) {
 		}
 	}
 	return data, nil
+}
+
+func visibleCoverImageID(coverImageID int64, visible map[int64]bool) int64 {
+	if visible[coverImageID] {
+		return coverImageID
+	}
+	return 0
 }
 
 func (s *ImageService) probeSourceDimensions(path string) (media.Dimensions, error) {

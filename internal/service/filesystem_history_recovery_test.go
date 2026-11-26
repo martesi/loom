@@ -152,20 +152,20 @@ func persistLegacyPendingHistoryReplayForTest(repo *store.Repo, requestID string
 
 func TestFilesystemHistoryRetryCancelAndLinkedRecovery(t *testing.T) {
 	t.Run("cancel-no-effect", func(t *testing.T) {
-		t.Cleanup(func() { filesystemHistoryFault = nil })
+		t.Cleanup(func() { setFilesystemHistoryFault(nil) })
 		root, imageID := seedReplacementJournalRepo(t, "cancel bytes")
 		if _, _, err := (&ImageService{}).MoveFile(root, imageID, "moved.png"); err != nil {
 			t.Fatal(err)
 		}
 		cursor := historyCursor(t, root)
-		filesystemHistoryFault = func(point string) error {
+		setFilesystemHistoryFault(func(point string) error {
 			if point == "before-link" {
 				return errors.New("link prevented")
 			}
 			return nil
-		}
+		})
 		pending, err := (&UndoService{}).UndoWithRequest(root, "cancel-no-effect-request")
-		filesystemHistoryFault = nil
+		setFilesystemHistoryFault(nil)
 		if err != nil || pending == nil || !pending.PendingRecovery {
 			t.Fatalf("pre-link interruption: result=%+v err=%v", pending, err)
 		}
@@ -182,20 +182,20 @@ func TestFilesystemHistoryRetryCancelAndLinkedRecovery(t *testing.T) {
 	})
 
 	t.Run("linked-then-retry", func(t *testing.T) {
-		t.Cleanup(func() { filesystemHistoryFault = nil })
+		t.Cleanup(func() { setFilesystemHistoryFault(nil) })
 		root, imageID := seedReplacementJournalRepo(t, "linked bytes")
 		if _, _, err := (&ImageService{}).MoveFile(root, imageID, "moved.png"); err != nil {
 			t.Fatal(err)
 		}
 		cursor := historyCursor(t, root)
-		filesystemHistoryFault = func(point string) error {
+		setFilesystemHistoryFault(func(point string) error {
 			if point == "after-link" {
 				return errors.New("stop after link")
 			}
 			return nil
-		}
+		})
 		pending, err := (&UndoService{}).UndoWithRequest(root, "linked-recovery-request")
-		filesystemHistoryFault = nil
+		setFilesystemHistoryFault(nil)
 		if err != nil || pending == nil || !pending.PendingRecovery {
 			t.Fatalf("post-link interruption: result=%+v err=%v", pending, err)
 		}
@@ -212,21 +212,21 @@ func TestFilesystemHistoryRetryCancelAndLinkedRecovery(t *testing.T) {
 	})
 
 	t.Run("same-bytes-different-inode-is-not-recovered", func(t *testing.T) {
-		t.Cleanup(func() { filesystemHistoryFault = nil })
+		t.Cleanup(func() { setFilesystemHistoryFault(nil) })
 		root, imageID := seedReplacementJournalRepo(t, "identity bytes")
 		if _, _, err := (&ImageService{}).MoveFile(root, imageID, "moved.png"); err != nil {
 			t.Fatal(err)
 		}
-		filesystemHistoryFault = func(point string) error {
+		setFilesystemHistoryFault(func(point string) error {
 			if point == "after-link" {
 				return errors.New("stop after link")
 			}
 			return nil
-		}
+		})
 		if result, err := (&UndoService{}).UndoWithRequest(root, "different-inode-request"); err != nil || result == nil || !result.PendingRecovery {
 			t.Fatalf("setup pending request: result=%+v err=%v", result, err)
 		}
-		filesystemHistoryFault = nil
+		setFilesystemHistoryFault(nil)
 		linked := filepath.Join(root, "source.png")
 		if err := os.Remove(linked); err != nil {
 			t.Fatal(err)
@@ -247,20 +247,20 @@ func TestFilesystemHistoryRetryCancelAndLinkedRecovery(t *testing.T) {
 	})
 
 	t.Run("destination-only-after-unlink", func(t *testing.T) {
-		t.Cleanup(func() { filesystemHistoryFault = nil })
+		t.Cleanup(func() { setFilesystemHistoryFault(nil) })
 		root, imageID := seedReplacementJournalRepo(t, "unlinked bytes")
 		if _, _, err := (&ImageService{}).MoveFile(root, imageID, "moved.png"); err != nil {
 			t.Fatal(err)
 		}
 		cursor := historyCursor(t, root)
-		filesystemHistoryFault = func(point string) error {
+		setFilesystemHistoryFault(func(point string) error {
 			if point == "after-source-unlink" {
 				return errors.New("stop after unlink")
 			}
 			return nil
-		}
+		})
 		pending, err := (&UndoService{}).UndoWithRequest(root, "destination-only-request")
-		filesystemHistoryFault = nil
+		setFilesystemHistoryFault(nil)
 		if err != nil || pending == nil || !pending.PendingRecovery {
 			t.Fatalf("post-unlink interruption: result=%+v err=%v", pending, err)
 		}
@@ -305,22 +305,22 @@ func TestFilesystemHistoryRestartRollsForwardRecordedLinkedObject(t *testing.T) 
 }
 
 func TestFilesystemHistoryRefusesStaleNoEffectCancellation(t *testing.T) {
-	t.Cleanup(func() { filesystemHistoryFault = nil })
+	t.Cleanup(func() { setFilesystemHistoryFault(nil) })
 	root, imageID := seedReplacementJournalRepo(t, "stale cancel bytes")
 	if _, _, err := (&ImageService{}).MoveFile(root, imageID, "moved.png"); err != nil {
 		t.Fatal(err)
 	}
 	cursor := historyCursor(t, root)
-	filesystemHistoryFault = func(point string) error {
+	setFilesystemHistoryFault(func(point string) error {
 		if point == "before-link" {
 			return errors.New("stop before link")
 		}
 		return nil
-	}
+	})
 	if result, err := (&UndoService{}).UndoWithRequest(root, "stale-cancel-request"); err != nil || result == nil || !result.PendingRecovery {
 		t.Fatalf("create no-effect pending request: result=%+v err=%v", result, err)
 	}
-	filesystemHistoryFault = nil
+	setFilesystemHistoryFault(nil)
 	if err := os.WriteFile(filepath.Join(root, "source.png"), []byte("new occupant"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -340,7 +340,7 @@ func TestFilesystemHistoryRefusesStaleNoEffectCancellation(t *testing.T) {
 }
 
 func TestFilesystemHistorySerializesConcurrentCopyReader(t *testing.T) {
-	t.Cleanup(func() { filesystemHistoryFault = nil })
+	t.Cleanup(func() { setFilesystemHistoryFault(nil) })
 	root, imageID := seedReplacementJournalRepo(t, "reader lock bytes")
 	if _, _, err := (&ImageService{}).MoveFile(root, imageID, "moved.png"); err != nil {
 		t.Fatal(err)
@@ -349,14 +349,14 @@ func TestFilesystemHistorySerializesConcurrentCopyReader(t *testing.T) {
 	continueReplay := make(chan struct{})
 	var releaseReplay sync.Once
 	t.Cleanup(func() { releaseReplay.Do(func() { close(continueReplay) }) })
-	filesystemHistoryFault = func(point string) error {
+	setFilesystemHistoryFault(func(point string) error {
 		if point == "after-link" {
 			close(afterLink)
 			<-continueReplay
 			return errors.New("leave verified link for coordinator")
 		}
 		return nil
-	}
+	})
 	undoDone := make(chan error, 1)
 	go func() {
 		_, err := (&UndoService{}).UndoWithRequest(root, "concurrent-reader-undo")
@@ -394,7 +394,7 @@ func TestFilesystemHistorySerializesConcurrentCopyReader(t *testing.T) {
 	if err := <-undoDone; err != nil {
 		t.Fatalf("undo with pending linked state: %v", err)
 	}
-	filesystemHistoryFault = nil
+	setFilesystemHistoryFault(nil)
 	select {
 	case err := <-readerDone:
 		if err != nil {

@@ -6,6 +6,7 @@ import {
   ImageService,
   UndoService,
 } from '../../../bindings/loom/internal/service'
+import { installUndoProtocolMocks } from '../../lib/use-undo-test-protocol.test'
 import { createCanvasBoardOwner } from './canvas-board-owner'
 
 mock.module('@lingui/core/macro', () => ({
@@ -19,6 +20,7 @@ const wrapper = ({ children }: { children: React.ReactNode }) =>
   createElement(Toast.Provider, null, children)
 
 function setup() {
+  installUndoProtocolMocks()
   spyOn(ImageService, 'LoadCanvas').mockImplementation(
     () => Promise.resolve({ images: [{ id: 1 }], groups: [] }) as never
   )

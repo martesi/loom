@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, it, mock, spyOn } from 'bun:test'
 import { Toast } from '@base-ui-components/react/toast'
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { createElement } from 'react'
+import type { HistorySelection } from '../../bindings/loom/internal/service'
 import { UndoService } from '../../bindings/loom/internal/service'
 import type { CanvasBoardExecutor } from '../components/canvas/canvas-board-owner'
 
@@ -43,6 +44,20 @@ beforeEach(() => {
     configurable: true,
     value: testStorage,
   })
+  spyOn(UndoService, 'SelectHistoryReplay').mockImplementation(
+    async (_repo, direction) => selection(direction)
+  )
+  spyOn(UndoService, 'ReserveHistoryReplay').mockResolvedValue({
+    state: 'reserved',
+  } as never)
+  spyOn(UndoService, 'ExecuteHistoryReplay').mockResolvedValue({
+    state: 'complete',
+    result: { applied: false },
+  } as never)
+  spyOn(UndoService, 'SettleHistoryReplay').mockResolvedValue({
+    state: 'sealed',
+    result: { applied: false, error: 'sealed' },
+  } as never)
 })
 
 afterEach(() => {
@@ -72,14 +87,13 @@ it('assigns separate IDs to rapid queued Undo and Redo actions', async () => {
       return result
     },
   } satisfies CanvasBoardExecutor
-  const firstUndo = deferred<{ applied: boolean }>()
-  const undo = spyOn(UndoService, 'UndoWithRequest')
+  const firstUndo = deferred<{ state: string; result: { applied: boolean } }>()
+  const firstRedo = deferred<{ state: string; result: { applied: boolean } }>()
+  const replay = spyOn(UndoService, 'ExecuteHistoryReplay')
     .mockImplementationOnce(() => firstUndo.promise as never)
-    .mockResolvedValueOnce({ applied: false } as never)
-  const firstRedo = deferred<{ applied: boolean }>()
-  const redo = spyOn(UndoService, 'RedoWithRequest')
+    .mockResolvedValueOnce(complete({ applied: false }) as never)
     .mockImplementationOnce(() => firstRedo.promise as never)
-    .mockResolvedValueOnce({ applied: false } as never)
+    .mockResolvedValueOnce(complete({ applied: false }) as never)
   const { result } = renderHook(
     () => useUndoActions('/rapid', () => {}, executor),
     {
@@ -89,26 +103,26 @@ it('assigns separate IDs to rapid queued Undo and Redo actions', async () => {
 
   const undoOne = result.current.undo()
   const undoTwo = result.current.undo()
-  await waitFor(() => expect(undo).toHaveBeenCalledTimes(1))
-  expect(undo).toHaveBeenCalledWith('/rapid', 'undo-1')
-  firstUndo.resolve({ applied: false })
+  await waitFor(() => expect(replay).toHaveBeenCalledTimes(1))
+  expect(replay).toHaveBeenCalledWith('/rapid', 'undo-1')
+  firstUndo.resolve(complete({ applied: false }))
   await Promise.all([undoOne, undoTwo])
-  expect(undo).toHaveBeenNthCalledWith(2, '/rapid', 'undo-2')
+  expect(replay).toHaveBeenNthCalledWith(2, '/rapid', 'undo-2')
 
   const redoOne = result.current.redo()
   const redoTwo = result.current.redo()
-  await waitFor(() => expect(redo).toHaveBeenCalledTimes(1))
-  expect(redo).toHaveBeenCalledWith('/rapid', 'redo-1')
-  firstRedo.resolve({ applied: false })
+  await waitFor(() => expect(replay).toHaveBeenCalledTimes(3))
+  expect(replay).toHaveBeenCalledWith('/rapid', 'redo-1')
+  firstRedo.resolve(complete({ applied: false }))
   await Promise.all([redoOne, redoTwo])
-  expect(redo).toHaveBeenNthCalledWith(2, '/rapid', 'redo-2')
+  expect(replay).toHaveBeenNthCalledWith(4, '/rapid', 'redo-2')
 })
 
 it('persists an uncertain action and retries its ID without issuing another step', async () => {
   spyOn(crypto, 'randomUUID').mockReturnValue('durable-undo')
-  const undo = spyOn(UndoService, 'UndoWithRequest')
+  const undo = spyOn(UndoService, 'ExecuteHistoryReplay')
     .mockRejectedValueOnce(new Error('response lost'))
-    .mockResolvedValueOnce({ applied: true } as never)
+    .mockResolvedValueOnce(complete({ applied: true }) as never)
   const { result, unmount } = renderHook(
     () => useUndoActions('/durable', () => {}),
     {
@@ -118,7 +132,7 @@ it('persists an uncertain action and retries its ID without issuing another step
   const storageKey = `${storagePrefix}${encodeURIComponent('/durable')}:undo`
 
   await expect(result.current.undo()).rejects.toThrow('response lost')
-  expect(testStorage.getItem(storageKey)).toBe('durable-undo')
+  expect(testStorage.getItem(storageKey)).toContain('durable-undo')
   await act(async () => result.current.retryUndo())
   expect(undo).toHaveBeenNthCalledWith(1, '/durable', 'durable-undo')
   expect(undo).toHaveBeenNthCalledWith(2, '/durable', 'durable-undo')
@@ -130,7 +144,7 @@ it('persists an uncertain action and retries its ID without issuing another step
   const restored = renderHook(() => useUndoActions('/durable', () => {}), {
     wrapper,
   })
-  undo.mockResolvedValueOnce({ applied: false } as never)
+  undo.mockResolvedValueOnce(complete({ applied: false }) as never)
   await act(async () => restored.result.current.undo())
   expect(undo).toHaveBeenLastCalledWith('/durable', 'durable-undo')
   expect(undo).toHaveBeenCalledTimes(4)
@@ -141,9 +155,11 @@ it('does not reuse IDs after a definite failure result', async () => {
   spyOn(crypto, 'randomUUID')
     .mockReturnValueOnce('failed-action')
     .mockReturnValueOnce('next-action')
-  const undo = spyOn(UndoService, 'UndoWithRequest')
-    .mockResolvedValueOnce({ applied: false, error: 'not available' } as never)
-    .mockResolvedValueOnce({ applied: false } as never)
+  const undo = spyOn(UndoService, 'ExecuteHistoryReplay')
+    .mockResolvedValueOnce(
+      complete({ applied: false, error: 'not available' }) as never
+    )
+    .mockResolvedValueOnce(complete({ applied: false }) as never)
   const { result } = renderHook(() => useUndoActions('/failure', () => {}), {
     wrapper,
   })
@@ -155,10 +171,13 @@ it('does not reuse IDs after a definite failure result', async () => {
 
 it('keeps the request for a replacement owner after an old owner loses authority', async () => {
   spyOn(crypto, 'randomUUID').mockReturnValue('owner-request')
-  const oldResponse = deferred<{ applied: boolean }>()
-  const undo = spyOn(UndoService, 'UndoWithRequest')
+  const oldResponse = deferred<{
+    state: string
+    result: { applied: boolean }
+  }>()
+  const undo = spyOn(UndoService, 'ExecuteHistoryReplay')
     .mockImplementationOnce(() => oldResponse.promise as never)
-    .mockResolvedValueOnce({ applied: false } as never)
+    .mockResolvedValueOnce(complete({ applied: false }) as never)
   let oldActive = true
   const oldOwner = {
     isActive: () => oldActive,
@@ -177,12 +196,12 @@ it('keeps the request for a replacement owner after an old owner loses authority
   const storageKey = `${storagePrefix}${encodeURIComponent('/owner')}:undo`
   const oldAction = result.current.undo()
   await waitFor(() => expect(undo).toHaveBeenCalledTimes(1))
-  expect(testStorage.getItem(storageKey)).toBe('owner-request')
+  expect(testStorage.getItem(storageKey)).toContain('owner-request')
   oldActive = false
   rerender({ owner: newOwner })
-  oldResponse.resolve({ applied: true })
+  oldResponse.resolve(complete({ applied: true }))
   await oldAction
-  expect(testStorage.getItem(storageKey)).toBe('owner-request')
+  expect(testStorage.getItem(storageKey)).toContain('owner-request')
   await act(async () => result.current.retryUndo())
   expect(undo).toHaveBeenNthCalledWith(2, '/owner', 'owner-request')
   expect(testStorage.getItem(storageKey)).toBeNull()
@@ -196,4 +215,25 @@ function deferred<T>() {
     reject = rejectPromise
   })
   return { promise, resolve, reject }
+}
+
+function selection(direction: string): HistorySelection {
+  return {
+    repoPath: '/test',
+    direction,
+    revision: 1,
+    cursor: 1,
+    processEpoch: 'epoch',
+    sequence: 1,
+    kind: 'set_archived',
+    forward: '{}',
+    inverse: '{}',
+    createdAt: 'now',
+    noOp: false,
+    selectionHash: 'hash',
+  }
+}
+
+function complete(result: { applied: boolean; error?: string }) {
+  return { state: 'complete', result }
 }

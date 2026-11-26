@@ -2,8 +2,9 @@ package service
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
+	"path/filepath"
+	"sync"
 
 	"loom/internal/store"
 )
@@ -127,8 +128,9 @@ type groupExistenceStepPayload struct {
 }
 
 type groupMemberStepPayload struct {
-	GroupID int64 `json:"groupId"`
-	ImageID int64 `json:"imageId"`
+	GroupID      int64  `json:"groupId"`
+	ImageID      int64  `json:"imageId"`
+	CoverImageID *int64 `json:"coverImageId,omitempty"`
 }
 
 type groupCoverStepPayload struct {
@@ -507,13 +509,13 @@ func applyStep(repo *store.Repo, s OpStep) error {
 	}
 }
 
-// UndoService exposes the operation log to the frontend. Undo/Redo are
-// best-effort: if applying the inverse/forward step fails (most notably
-// because its target image was hard-purged since the operation was
-// recorded), the cursor does not move and the failure reason is returned
-// for the frontend to surface (e.g. as a toast) rather than silently
-// dropped.
+// UndoService exposes operation history to the frontend. History replay uses
+// SelectHistoryReplay, ReserveHistoryReplay, and ExecuteHistoryReplay so the
+// client can persist its intent before dispatch and the repository can bind a
+// request ID to one durable selection before any replay effect occurs.
 type UndoService struct{}
+
+var historyReplayActionLocks sync.Map
 
 type UndoResult struct {
 	Applied         bool   `json:"applied"`
@@ -575,127 +577,60 @@ func (s *UndoService) RedoWithRequest(repoPath, requestID string) (*UndoResult, 
 }
 
 func (s *UndoService) replay(repoPath string, redo bool, requestID string) (*UndoResult, error) {
+	lockKey, err := filepath.Abs(repoPath)
+	if err != nil {
+		lockKey = filepath.Clean(repoPath)
+	}
+	if resolved, err := filepath.EvalSymlinks(lockKey); err == nil {
+		lockKey = resolved
+	}
+	value, _ := historyReplayActionLocks.LoadOrStore(lockKey, &sync.Mutex{})
+	mu := value.(*sync.Mutex)
+	mu.Lock()
+	defer mu.Unlock()
 	if requestID == "" || len(requestID) > 128 {
 		return nil, fmt.Errorf("history replay request ID is required")
 	}
-	repo, unlock, err := openOperationRepoRaw(repoPath)
-	if err != nil {
+	direction := "undo"
+	if redo {
+		direction = "redo"
+	}
+	if status, found, err := s.historyReplayStatus(repoPath, requestID, direction); err != nil {
 		return nil, err
-	}
-	defer unlock()
-	defer repo.Close()
-	if err := rejectLegacyRedoTailRequestID(repo.DB, requestID); err != nil {
-		return nil, err
-	}
-	requestHash := replacementReplayRequestHash(repo.Path, redo, nil)
-	if receipt, found, err := readHistoryReplayRequest(repo.DB, requestID, repo.Path, redo); err != nil || found {
-		if err != nil {
-			return nil, err
-		}
-		if receipt.PendingRecovery {
-			if err := recoverReplacementJournals(repo); err != nil {
-				var pending *replacementRecoveryError
-				if errors.As(err, &pending) {
-					receipt.Error = pending.Error()
-				} else {
-					receipt.Error = err.Error()
-				}
-				return receipt, nil
-			}
-			receipt, found, err = readHistoryReplayRequest(repo.DB, requestID, repo.Path, redo)
-			if err != nil || !found {
-				if err == nil {
-					err = fmt.Errorf("history replay receipt disappeared during recovery")
-				}
-				return nil, err
-			}
-		}
-		return receipt, nil
-	}
-	if receipt, found, err := readReplacementReceipt(repo, requestID, requestHash); found || err != nil {
-		if err != nil {
-			return nil, err
-		}
-		if receipt.PendingRecovery {
-			if err := recoverReplacementJournals(repo); err != nil {
-				var pending *replacementRecoveryError
-				if errors.As(err, &pending) {
-					receipt.Message = pending.Error()
-				}
-				return replacementResultToUndo(receipt), nil
-			}
-			receipt, _, err = readReplacementReceipt(repo, requestID, requestHash)
+	} else if found {
+		if status.State == "reserved" {
+			status, err = s.ExecuteHistoryReplay(repoPath, requestID)
 			if err != nil {
 				return nil, err
 			}
 		}
-		return replacementResultToUndo(receipt), nil
-	}
-	if err := recoverReplacementJournals(repo); err != nil {
-		var pending *replacementRecoveryError
-		if errors.As(err, &pending) {
-			return &UndoResult{PendingRecovery: true, RequestID: pending.Journal.RequestID, Phase: pending.Journal.Phase, Error: pending.Error()}, nil
+		if status.Result != nil {
+			return status.Result, nil
 		}
-		var filesystemPending *filesystemHistoryPendingError
-		if errors.As(err, &filesystemPending) {
-			return filesystemPendingResult(filesystemPending.RequestID, "", filesystemPending.Error()), nil
-		}
-		return nil, err
+		return &UndoResult{Applied: false, PendingRecovery: status.State == "reserved" || status.State == "inspection", RequestID: requestID, Error: status.Reason}, nil
 	}
-	if pendingID, pendingKind, err := pendingHistoryReplay(repo); err != nil {
-		return nil, err
-	} else if pendingID != "" {
-		return &UndoResult{
-			PendingRecovery: true, RequestID: pendingID,
-			Error: fmt.Sprintf("History request %s for %s is still pending inspection; this request was not applied.", pendingID, pendingKind),
-		}, nil
-	}
-
-	handled, op, result, err := replayAtomicHistory(repo, redo, requestID)
+	selection, err := s.SelectHistoryReplay(repoPath, direction)
 	if err != nil {
-		if op == nil {
-			return nil, err
-		}
-		return &UndoResult{Applied: false, Kind: op.Kind, RequestID: requestID, Error: err.Error()}, nil
+		return nil, fmt.Errorf("select history replay: %w", err)
 	}
-	if handled {
-		return result, nil
+	reserved, err := s.ReserveHistoryReplay(repoPath, requestID, *selection)
+	if err != nil {
+		return nil, fmt.Errorf("reserve history replay: %w", err)
 	}
-	if op.Kind == stepRepresentation {
-		result, err := beginReplacementHistoryReplay(repo, op, redo, requestID)
-		if err != nil {
-			result, persistErr := persistHistoryReplayFailure(repo, requestID, redo, op, err)
-			if persistErr != nil {
-				return nil, errors.Join(err, persistErr)
-			}
-			return result, nil
-		}
-		return replacementResultToUndo(result), nil
+	if reserved.State != "reserved" {
+		return reserved.Result, nil
 	}
-	if op == nil {
-		return nil, fmt.Errorf("history replay did not select an operation")
-	}
-	// The remaining legacy steps perform filesystem work or own nested store
-	// transactions. Their selection, replay and cursor are not cross-process
-	// atomic; the process-local coordinator cannot exclude other processes.
-	raw := op.Inverse
-	if redo {
-		raw = op.Forward
-	}
-	var replay OpStep
-	if err := json.Unmarshal([]byte(raw), &replay); err != nil {
+	status, err := s.ExecuteHistoryReplay(repoPath, requestID)
+	if err != nil {
 		return nil, err
 	}
-	if replay.Kind == stepSetTrashed || replay.Kind == stepMoveFile {
-		return beginFilesystemHistoryReplay(repo, requestID, redo, op, replay)
+	if status.State != "complete" {
+		if status.Result != nil {
+			return status.Result, nil
+		}
+		return &UndoResult{Applied: false, PendingRecovery: status.State == "reserved" || status.State == "inspection", RequestID: requestID, Error: status.Reason}, nil
 	}
-	if err := applyStep(repo, replay); err != nil {
-		return &UndoResult{Applied: false, Kind: op.Kind, Error: err.Error()}, nil
-	}
-	if err := repo.MarkHistoryIfCurrent(op, redo); err != nil {
-		return nil, err
-	}
-	return &UndoResult{Applied: true, Kind: op.Kind}, nil
+	return status.Result, nil
 }
 
 func replacementResultToUndo(result *ReplacementResult) *UndoResult {

@@ -18,7 +18,7 @@ var importHistoryReplayCrashHook func(string)
 var atomicHistoryReplayCrashHook func(string)
 
 // Selection, replay and cursor update share one SQLite writer transaction.
-func replayAtomicHistory(repo *store.Repo, redo bool, requestID string) (bool, *store.Operation, *UndoResult, error) {
+func replayAtomicHistory(repo *store.Repo, redo bool, requestID string, bound ...HistorySelection) (bool, *store.Operation, *UndoResult, error) {
 	if err := repo.PrepareOperationLog(); err != nil {
 		return true, nil, nil, err
 	}
@@ -39,9 +39,27 @@ func replayAtomicHistory(repo *store.Repo, redo bool, requestID string) (bool, *
 	if result, found, err := readHistoryReplayRequest(tx, requestID, repo.Path, redo); err != nil || found {
 		return true, nil, result, err
 	}
-	op, err := repo.PeekHistoryInTx(tx, redo)
-	if err != nil {
-		return true, nil, nil, err
+	var op *store.Operation
+	if len(bound) > 0 {
+		selection := bound[0]
+		binding, found, err := readHistoryBinding(tx, requestID)
+		if err != nil || !found || binding.family != "history" || binding.state != "reserved" ||
+			!binding.selectionHash.Valid || binding.selectionHash.String != selection.SelectionHash {
+			return true, nil, nil, errors.Join(err, fmt.Errorf("history replay has no matching durable selection reservation"))
+		}
+		current, err := selectionFromTransaction(repo, tx, repo.Path, selection.Direction, selection.ProcessEpoch)
+		if err != nil {
+			return true, nil, nil, err
+		}
+		if !sameHistorySelection(selection, *current) {
+			return true, nil, nil, fmt.Errorf("reserved history selection no longer matches current history")
+		}
+		op = operationFromSelection(selection)
+	} else {
+		op, err = repo.PeekHistoryInTx(tx, redo)
+		if err != nil {
+			return true, nil, nil, err
+		}
 	}
 	if op == nil {
 		result := &UndoResult{Applied: false}

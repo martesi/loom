@@ -53,6 +53,18 @@ func loadGroupMemberships(tx *sql.Tx, imageIDs []int64) (map[int64]*int64, error
 	return memberships, nil
 }
 
+func requireVisibleGroupImage(tx *sql.Tx, imageID int64) error {
+	var available bool
+	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images i WHERE i.id=? AND i.trashed=0
+		AND NOT EXISTS(SELECT 1 FROM import_recovery ir WHERE ir.image_id=i.id AND ir.retained=1))`, imageID).Scan(&available); err != nil {
+		return err
+	}
+	if !available {
+		return fmt.Errorf("image %d is unavailable for group operations", imageID)
+	}
+	return nil
+}
+
 func groupHasMember(memberIDs []int64, imageID int64) bool {
 	for _, id := range memberIDs {
 		if id == imageID {
@@ -103,6 +115,9 @@ func (r *Repo) CreateGroup(name, kind string, coverImageID int64, memberIDs []in
 		return 0, err
 	}
 	for _, imageID := range memberIDs {
+		if err := requireVisibleGroupImage(tx, imageID); err != nil {
+			return 0, err
+		}
 		if groupID := memberships[imageID]; groupID != nil {
 			return 0, fmt.Errorf("image %d already belongs to group %d", imageID, *groupID)
 		}
@@ -187,6 +202,9 @@ func (r *Repo) RecreateGroup(id int64, name, kind string, coverImageID int64, me
 		return err
 	}
 	for _, memberID := range memberIDs {
+		if err := requireVisibleGroupImage(tx, memberID); err != nil {
+			return err
+		}
 		if groupID := memberships[memberID]; groupID != nil {
 			return fmt.Errorf("image %d already belongs to group %d while recreating group %d", memberID, *groupID, id)
 		}
@@ -238,6 +256,11 @@ func (r *Repo) UngroupWithSnapshot(groupID int64) (*Group, []int64, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	for _, memberID := range memberIDs {
+		if err := requireVisibleGroupImage(tx, memberID); err != nil {
+			return nil, nil, err
+		}
+	}
 	if _, err := tx.Exec(`UPDATE images SET group_id = NULL WHERE group_id = ?`, groupID); err != nil {
 		return nil, nil, err
 	}
@@ -285,6 +308,9 @@ func (r *Repo) AddGroupMemberChecked(groupID, imageID int64) (changed bool, err 
 	}
 	memberships, err := loadGroupMemberships(tx, []int64{imageID})
 	if err != nil {
+		return false, err
+	}
+	if err := requireVisibleGroupImage(tx, imageID); err != nil {
 		return false, err
 	}
 	if current := memberships[imageID]; current != nil {
@@ -346,6 +372,9 @@ func (r *Repo) RemoveGroupMemberCheckedWithSnapshot(groupID, imageID int64) (*Gr
 	}
 	memberIDs, err := groupMemberIDsTx(tx, groupID)
 	if err != nil {
+		return nil, nil, false, false, err
+	}
+	if err := requireVisibleGroupImage(tx, imageID); err != nil {
 		return nil, nil, false, false, err
 	}
 	dissolved := false
@@ -427,6 +456,9 @@ func (r *Repo) SetGroupCoverCheckedWithPrevious(groupID, imageID int64) (previou
 	if err != nil {
 		return previous, false, err
 	}
+	if err := requireVisibleGroupImage(tx, imageID); err != nil {
+		return previous, false, err
+	}
 	if currentGroup := memberships[imageID]; currentGroup == nil || *currentGroup != groupID {
 		return previous, false, fmt.Errorf("image %d is not a member of group %d", imageID, groupID)
 	}
@@ -499,6 +531,9 @@ func (r *Repo) MoveGroupMember(groupID, imageID int64) error {
 	defer tx.Rollback()
 	var exists int
 	if err := tx.QueryRow("SELECT 1 FROM groups WHERE id = ?", groupID).Scan(&exists); err != nil {
+		return err
+	}
+	if err := requireVisibleGroupImage(tx, imageID); err != nil {
 		return err
 	}
 	result, err := tx.Exec("UPDATE images SET group_id = ? WHERE id = ?", groupID, imageID)

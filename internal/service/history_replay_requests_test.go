@@ -189,20 +189,29 @@ func TestHistoryReplayDifferentConcurrentRequestsSerializeSelections(t *testing.
 	}
 	close(start)
 	wait.Wait()
+	applied := 0
 	for index := range results {
-		if errs[index] != nil || results[index] == nil || !results[index].Applied {
+		if errs[index] != nil || results[index] == nil {
 			t.Fatalf("caller %d: result=%+v err=%v", index, results[index], errs[index])
 		}
+		if results[index].Applied {
+			applied++
+		} else if results[index].Error == "" {
+			t.Fatalf("caller %d was neither applied nor safely sealed: %+v", index, results[index])
+		}
 	}
-	assertHistoryReplayCursor(t, root, 0)
+	if applied < 1 || applied > 2 {
+		t.Fatalf("concurrent requests applied an invalid number of selections: applied=%d results=%+v", applied, results)
+	}
+	assertHistoryReplayCursor(t, root, int64(2-applied))
 	repo, err := store.Bootstrap(root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer repo.Close()
 	var retained int
-	if err := repo.DB.QueryRow(`SELECT COUNT(*) FROM import_recovery WHERE retained=1`).Scan(&retained); err != nil || retained != 2 {
-		t.Fatalf("both distinct requests did not apply exactly once: retained=%d err=%v", retained, err)
+	if err := repo.DB.QueryRow(`SELECT COUNT(*) FROM import_recovery WHERE retained=1`).Scan(&retained); err != nil || retained != applied {
+		t.Fatalf("stale concurrent selection was applied: retained=%d err=%v", retained, err)
 	}
 }
 

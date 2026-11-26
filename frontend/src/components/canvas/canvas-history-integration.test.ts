@@ -1,4 +1,4 @@
-import { afterEach, expect, it, mock, spyOn } from 'bun:test'
+import { afterEach, beforeEach, expect, it, mock, spyOn } from 'bun:test'
 import { Toast } from '@base-ui-components/react/toast'
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import type { Edge, Node } from '@xyflow/react'
@@ -10,6 +10,7 @@ import {
   UndoService,
 } from '../../../bindings/loom/internal/service'
 import { emptySelection } from '../../lib/selection'
+import { installUndoProtocolMocks } from '../../lib/use-undo-test-protocol.test'
 import {
   createCanvasBoardOwner,
   useCanvasBoardOwner,
@@ -21,6 +22,11 @@ mock.module('@lingui/core/macro', () => ({
 }))
 const { useUndoActions } = await import('../../lib/use-undo')
 const ignoreSelection = () => {}
+
+beforeEach(() => {
+  installUndoProtocolMocks()
+  spyOn(ImageService, 'LoadCanvas').mockResolvedValue(data as never)
+})
 
 afterEach(() => {
   cleanup()
@@ -372,8 +378,7 @@ it('drops a failed superseding reconciliation instead of replaying it on a later
       () => null,
       (error: unknown) => error
     )
-    await Promise.resolve()
-    await Promise.resolve()
+    await waitFor(() => expect(UndoService.UndoWithRequest).toHaveBeenCalled())
     const independent = result.current.owner.refresh()
     const refreshError = independent.then(
       () => null,
@@ -414,8 +419,7 @@ it('releases a replay waiting on a superseding refresh when disposed', async () 
   const { result, unmount } = renderHook(() => useBoard('/repo'), { wrapper })
   const owner = result.current.owner
   const undo = result.current.undo.undo()
-  await Promise.resolve()
-  await Promise.resolve()
+  await waitFor(() => expect(UndoService.UndoWithRequest).toHaveBeenCalled())
   const independent = owner.refresh()
   releaseReplay(data)
   await new Promise((resolve) => setTimeout(resolve, 0))

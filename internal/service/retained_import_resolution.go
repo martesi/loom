@@ -210,7 +210,7 @@ func validateRetainedImportGraph(tx *sql.Tx, imageID int64) error {
 		return err
 	}
 	for _, current := range edges {
-		if err := validateRelationship(tx, current.source, current.derived, current.id); err != nil {
+		if err := validateRelationshipWithRecoveryImage(tx, current.source, current.derived, current.id, imageID); err != nil {
 			return fmt.Errorf("relationship %d: %w", current.id, err)
 		}
 	}

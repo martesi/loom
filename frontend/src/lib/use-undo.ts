@@ -1,6 +1,8 @@
 import { t } from '@lingui/core/macro'
 import { useRef } from 'react'
 import {
+  type HistoryReplayStatus,
+  type HistorySelection,
   type UndoResult,
   UndoService,
 } from '../../bindings/loom/internal/service'
@@ -16,12 +18,18 @@ interface ReplayAction {
   executor?: CanvasBoardExecutor
   onChange: (result: UndoResult) => void | Promise<void>
   retryOnly: boolean
+  selection?: HistorySelection
+}
+
+interface StoredIntent {
+  requestID: string
+  selection?: HistorySelection
 }
 
 interface RestoredRequests {
   repoPath: string
-  undo: string | null
-  redo: string | null
+  undo: StoredIntent | null
+  redo: StoredIntent | null
   undoClaimed: boolean
   redoClaimed: boolean
 }
@@ -43,20 +51,66 @@ export function useUndoActions(
 
   async function invoke(action: ReplayAction, requestID: string) {
     if (action.executor?.isActive && !action.executor.isActive()) return false
-    persistRequest(action.repoPath, action.direction, requestID)
-    const result =
-      action.direction === 'redo'
-        ? await UndoService.RedoWithRequest(action.repoPath, requestID)
-        : await UndoService.UndoWithRequest(action.repoPath, requestID)
-    if (!result || (action.executor?.isActive && !action.executor.isActive()))
-      return false
-    if (result.pendingRecovery) {
+    let selection =
+      action.selection ??
+      readIntent(action.repoPath, action.direction)?.selection
+    persistRequest(action.repoPath, action.direction, requestID, selection)
+    let status: HistoryReplayStatus | null
+    if (!selection && action.retryOnly) {
+      status = await UndoService.SettleHistoryReplay(
+        action.repoPath,
+        requestID,
+        action.direction,
+        ''
+      )
+    } else {
+      if (!selection) {
+        const selected = await UndoService.SelectHistoryReplay(
+          action.repoPath,
+          action.direction
+        )
+        if (!selected) throw new Error('History selection was unavailable')
+        selection = selected
+        persistRequest(action.repoPath, action.direction, requestID, selection)
+      }
+      status = await UndoService.ReserveHistoryReplay(
+        action.repoPath,
+        requestID,
+        selection
+      )
+    }
+    if (status?.state === 'reserved') {
+      status = await UndoService.ExecuteHistoryReplay(
+        action.repoPath,
+        requestID
+      )
+    }
+    const result = status?.result
+    if (action.executor?.isActive && !action.executor.isActive()) return false
+    if (!result) {
       toast.add({
         title:
           action.direction === 'redo'
             ? t`Redo needs recovery`
             : t`Undo needs recovery`,
-        description: result.error,
+        description:
+          status?.reason ??
+          t`The replay outcome is not confirmed. Retry this action to settle it.`,
+        type: 'danger',
+      })
+      return false
+    }
+    if (
+      status?.state === 'reserved' ||
+      status?.state === 'inspection' ||
+      status?.state === 'unknown'
+    ) {
+      toast.add({
+        title:
+          action.direction === 'redo'
+            ? t`Redo needs recovery`
+            : t`Undo needs recovery`,
+        description: status.reason ?? result.error,
         type: 'danger',
       })
       return false
@@ -78,17 +132,27 @@ export function useUndoActions(
   async function run(action: ReplayAction) {
     if (action.executor?.isActive && !action.executor.isActive()) return
     const storedRequestID = readRequest(action.repoPath, action.direction)
+    const storedIntent = readIntent(action.repoPath, action.direction)
     if (action.retryOnly) {
       if (storedRequestID === action.requestID) {
-        await invoke(action, action.requestID)
+        await invoke(
+          { ...action, selection: storedIntent?.selection },
+          action.requestID
+        )
       }
       return
     }
     if (storedRequestID && storedRequestID !== action.requestID) {
-      const resolved = await invoke(action, storedRequestID)
+      const resolved = await invoke(
+        { ...action, retryOnly: true, selection: storedIntent?.selection },
+        storedRequestID
+      )
       if (!resolved) return
     }
-    await invoke(action, action.requestID)
+    await invoke(
+      { ...action, selection: storedIntent?.selection },
+      action.requestID
+    )
   }
 
   function enqueue(direction: Direction, retryOnly = false) {
@@ -96,7 +160,7 @@ export function useUndoActions(
     const requestID = retryOnly
       ? readRequest(repoPath, direction)
       : wasRestored
-        ? restored.current[direction]
+        ? (restored.current[direction]?.requestID ?? null)
         : null
     if (retryOnly && !requestID) return Promise.resolve()
     executor?.cancelGesture?.()
@@ -139,15 +203,43 @@ function requestStorageKey(repoPath: string, direction: Direction) {
 }
 
 function readRequest(repoPath: string, direction: Direction) {
-  return window.localStorage.getItem(requestStorageKey(repoPath, direction))
+  return readIntent(repoPath, direction)?.requestID ?? null
+}
+
+function readIntent(
+  repoPath: string,
+  direction: Direction
+): StoredIntent | null {
+  const value = window.localStorage.getItem(
+    requestStorageKey(repoPath, direction)
+  )
+  if (!value) return null
+  try {
+    const parsed: unknown = JSON.parse(value)
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      'requestID' in parsed &&
+      typeof parsed.requestID === 'string'
+    ) {
+      return parsed as StoredIntent
+    }
+  } catch {
+    // Legacy request-ID-only entries are settled without selecting new history.
+  }
+  return { requestID: value }
 }
 
 function persistRequest(
   repoPath: string,
   direction: Direction,
-  requestID: string
+  requestID: string,
+  selection?: HistorySelection
 ) {
-  window.localStorage.setItem(requestStorageKey(repoPath, direction), requestID)
+  window.localStorage.setItem(
+    requestStorageKey(repoPath, direction),
+    JSON.stringify({ requestID, selection } satisfies StoredIntent)
+  )
 }
 
 function clearRequest(
@@ -156,7 +248,7 @@ function clearRequest(
   requestID: string
 ) {
   const key = requestStorageKey(repoPath, direction)
-  if (window.localStorage.getItem(key) === requestID) {
+  if (readIntent(repoPath, direction)?.requestID === requestID) {
     window.localStorage.removeItem(key)
   }
 }
@@ -164,8 +256,8 @@ function clearRequest(
 function loadRestoredRequests(repoPath: string): RestoredRequests {
   return {
     repoPath,
-    undo: readRequest(repoPath, 'undo'),
-    redo: readRequest(repoPath, 'redo'),
+    undo: readIntent(repoPath, 'undo'),
+    redo: readIntent(repoPath, 'redo'),
     undoClaimed: false,
     redoClaimed: false,
   }

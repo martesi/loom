@@ -77,6 +77,9 @@ func beginReplacementHistoryReplay(repo *store.Repo, op *store.Operation, redo b
 	if err := rejectLegacyRedoTailRequestID(tx, requestID); err != nil {
 		return nil, err
 	}
+	if err := validateReservedHistoryBindingTx(repo, tx, repo.Path, requestID, redo, op); err != nil {
+		return nil, err
+	}
 	if receipt, found, err := readHistoryReplayRequest(tx, requestID, repo.Path, redo); err != nil || found {
 		if err != nil {
 			return nil, err

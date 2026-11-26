@@ -16,10 +16,16 @@ func (r *Repo) ListRelationshipsAmong(imageIDs []int64) ([]Relationship, error) 
 		args[i] = id
 	}
 	set := "(" + strings.Join(placeholders, ",") + ")"
-	rows, err := r.DB.Query(`
-		SELECT id, source_image_id, derived_image_id, pairing_order, created_at FROM relationships
-		WHERE source_image_id IN `+set+` AND derived_image_id IN `+set+` ORDER BY pairing_order, id`,
-		append(append([]any{}, args...), args...)...)
+	query := `
+		SELECT rel.id, rel.source_image_id, rel.derived_image_id, rel.pairing_order, rel.created_at FROM relationships rel
+		JOIN images source ON source.id=rel.source_image_id
+		JOIN images derived ON derived.id=rel.derived_image_id
+		WHERE rel.source_image_id IN ` + set + ` AND rel.derived_image_id IN ` + set + `
+		AND source.trashed=0 AND derived.trashed=0
+		AND NOT EXISTS (SELECT 1 FROM import_recovery ir WHERE ir.image_id=source.id AND ir.retained=1)
+		AND NOT EXISTS (SELECT 1 FROM import_recovery ir WHERE ir.image_id=derived.id AND ir.retained=1)
+		ORDER BY rel.pairing_order, rel.id`
+	rows, err := r.DB.Query(query, append(append([]any{}, args...), args...)...)
 	if err != nil {
 		return nil, err
 	}

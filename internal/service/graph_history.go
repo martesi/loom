@@ -32,11 +32,23 @@ func graphRecord(repo *store.Repo, tx *sql.Tx, kind string, forward, inverse OpS
 }
 
 func validateRelationship(tx *sql.Tx, source, derived, excluded int64) error {
+	return validateRelationshipWithRecoveryImage(tx, source, derived, excluded, 0)
+}
+
+func validateRelationshipWithRecoveryImage(tx *sql.Tx, source, derived, excluded, recoveryImageID int64) error {
 	if source == derived {
 		return fmt.Errorf("cannot link an image to itself")
 	}
 	var n int
-	if err := tx.QueryRow(`SELECT count(*) FROM images WHERE id IN (?, ?) AND trashed = 0`, source, derived).Scan(&n); err != nil {
+	query := `SELECT count(*) FROM images i WHERE i.id IN (?, ?) AND i.trashed = 0
+		AND NOT EXISTS (SELECT 1 FROM import_recovery ir WHERE ir.image_id=i.id AND ir.retained=1)`
+	if recoveryImageID > 0 {
+		query = `SELECT count(*) FROM images i WHERE i.id IN (?, ?) AND i.trashed=0
+			AND (i.id=? OR NOT EXISTS(SELECT 1 FROM import_recovery ir WHERE ir.image_id=i.id AND ir.retained=1))`
+		if err := tx.QueryRow(query, source, derived, recoveryImageID).Scan(&n); err != nil {
+			return err
+		}
+	} else if err := tx.QueryRow(query, source, derived).Scan(&n); err != nil {
 		return err
 	}
 	if n != 2 {
@@ -55,6 +67,18 @@ func validateRelationship(tx *sql.Tx, source, derived, excluded int64) error {
 	}
 	if n != 0 {
 		return fmt.Errorf("linking would create a cycle")
+	}
+	return nil
+}
+
+func requireVisibleRelationshipEndpoints(tx *sql.Tx, source, derived int64) error {
+	var count int
+	if err := tx.QueryRow(`SELECT count(*) FROM images i WHERE i.id IN (?,?) AND i.trashed=0
+		AND NOT EXISTS (SELECT 1 FROM import_recovery ir WHERE ir.image_id=i.id AND ir.retained=1)`, source, derived).Scan(&count); err != nil {
+		return err
+	}
+	if count != 2 {
+		return fmt.Errorf("relationship endpoint is unavailable")
 	}
 	return nil
 }
@@ -150,6 +174,9 @@ func (s *ImageService) UnlinkSources(path string, ids []int64) error {
 		if err != nil {
 			return fmt.Errorf("relationship %d: %w", id, err)
 		}
+		if err := requireVisibleRelationshipEndpoints(tx, r.SourceImageID, r.DerivedImageID); err != nil {
+			return err
+		}
 		p.Relationships = append(p.Relationships, r)
 	}
 	if err := applyGraphTx(tx, stepGraphDelete, p); err != nil {
@@ -180,6 +207,9 @@ func (s *ImageService) ReverseRelationship(path string, id int64) error {
 	defer tx.Rollback()
 	r, err := relationshipTx(tx, id)
 	if err != nil {
+		return err
+	}
+	if err := requireVisibleRelationshipEndpoints(tx, r.SourceImageID, r.DerivedImageID); err != nil {
 		return err
 	}
 	if err := validateRelationshipFiles(tx, r.SourceImageID, r.DerivedImageID); err != nil {

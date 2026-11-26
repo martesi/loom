@@ -12,12 +12,20 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"loom/internal/store"
 )
 
 var filesystemHistoryFault func(string) error
+var filesystemHistoryFaultMu sync.RWMutex
 var filesystemHistoryCrashHook func(string)
+
+func setFilesystemHistoryFault(hook func(string) error) {
+	filesystemHistoryFaultMu.Lock()
+	filesystemHistoryFault = hook
+	filesystemHistoryFaultMu.Unlock()
+}
 
 type filesystemHistoryLedger struct {
 	requestID       string
@@ -105,6 +113,9 @@ func reserveFilesystemHistoryReplay(repo *store.Repo, requestID string, redo boo
 		return nil, nil, err
 	}
 	if err := rejectLegacyRedoTailRequestID(tx, requestID); err != nil {
+		return nil, nil, err
+	}
+	if err := validateReservedHistoryBindingTx(repo, tx, repo.Path, requestID, redo, op); err != nil {
 		return nil, nil, err
 	}
 	if receipt, found, err := readHistoryReplayRequest(tx, requestID, repo.Path, redo); err != nil || found {
@@ -405,6 +416,8 @@ func filesystemHistoryCrash(point string) {
 }
 
 func filesystemHistoryFail(point string) error {
+	filesystemHistoryFaultMu.RLock()
+	defer filesystemHistoryFaultMu.RUnlock()
 	if filesystemHistoryFault != nil {
 		return filesystemHistoryFault(point)
 	}

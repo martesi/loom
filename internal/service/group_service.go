@@ -149,9 +149,20 @@ func (s *GroupService) RemoveMember(repoPath string, groupID, imageID int64) err
 		return recordOp(repo, stepGroupExistence, step(stepGroupExistence, fwd), step(stepGroupExistence, inv))
 	}
 
-	p := groupMemberStepPayload{GroupID: groupID, ImageID: imageID}
-	return recordOp(repo, stepGroupMemberRemove, step(stepGroupMemberRemove, p), step(stepGroupMemberAdd, p))
+	postRemoval, err := repo.GetGroup(groupID)
+	if err != nil {
+		return err
+	}
+	forward := groupMemberStepPayload{
+		GroupID: groupID, ImageID: imageID, CoverImageID: int64Pointer(postRemoval.CoverImageID),
+	}
+	inverse := groupMemberStepPayload{
+		GroupID: groupID, ImageID: imageID, CoverImageID: int64Pointer(g.CoverImageID),
+	}
+	return recordOp(repo, stepGroupMemberRemove, step(stepGroupMemberRemove, forward), step(stepGroupMemberAdd, inverse))
 }
+
+func int64Pointer(value int64) *int64 { return &value }
 
 // SetCover reads the group's current cover before changing it, so that
 // value can be captured as the undo inverse — there's no boolean to negate

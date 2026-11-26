@@ -23,6 +23,7 @@ import {
   UndoService,
 } from '../../../bindings/loom/internal/service'
 import { emptySelection } from '../../lib/selection'
+import { installUndoProtocolMocks } from '../../lib/use-undo-test-protocol.test'
 import { Toaster } from '../ui/toast'
 import { useCanvasBoardOwner } from './canvas-board-owner'
 import { useCanvasBoardModel } from './use-canvas-board-model'
@@ -129,6 +130,7 @@ function useBoard(repoPath: string) {
 }
 
 beforeEach(() => {
+  installUndoProtocolMocks()
   spyOn(ImageService, 'GetLayoutSnapshot').mockImplementation(
     () =>
       Promise.resolve({

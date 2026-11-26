@@ -175,13 +175,24 @@ func recordGeometryBatch(repo *store.Repo, tx *sql.Tx, before, after []GeometryU
 	return cursor, err == nil, err
 }
 func (s *GroupService) UpdateMetadata(repoPath string, id int64, name, kind string) error {
-	r, err := store.Bootstrap(repoPath)
+	r, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return err
 	}
+	defer unlock()
 	defer r.Close()
-	_, err = r.DB.Exec("UPDATE groups SET name = ?, kind = ? WHERE id = ?", name, kind, id)
-	return err
+	result, err := r.DB.Exec(`UPDATE groups SET name = ?, kind = ? WHERE id = ? AND EXISTS (
+		SELECT 1 FROM images WHERE group_id=groups.id AND trashed=0
+		AND NOT EXISTS (SELECT 1 FROM import_recovery ir WHERE ir.image_id=images.id AND ir.retained=1))`, name, kind, id)
+	if err != nil {
+		return err
+	}
+	if changed, err := result.RowsAffected(); err != nil {
+		return err
+	} else if changed != 1 {
+		return fmt.Errorf("group %d is unavailable", id)
+	}
+	return nil
 }
 
 // RelationshipsForImage includes unplaced endpoints for Inspector navigation.
@@ -191,7 +202,15 @@ func (s *ImageService) RelationshipsForImage(repoPath string, imageID int64) ([]
 		return nil, err
 	}
 	defer r.Close()
-	rows, err := r.DB.Query("SELECT id,source_image_id,derived_image_id,pairing_order,created_at FROM relationships WHERE source_image_id = ? OR derived_image_id = ? ORDER BY pairing_order, id", imageID, imageID)
+	rows, err := r.DB.Query(`SELECT rel.id,rel.source_image_id,rel.derived_image_id,rel.pairing_order,rel.created_at
+		FROM relationships rel
+		JOIN images source ON source.id=rel.source_image_id
+		JOIN images derived ON derived.id=rel.derived_image_id
+		WHERE (rel.source_image_id=? OR rel.derived_image_id=?)
+		AND source.trashed=0 AND derived.trashed=0
+		AND NOT EXISTS (SELECT 1 FROM import_recovery ir WHERE ir.image_id=source.id AND ir.retained=1)
+		AND NOT EXISTS (SELECT 1 FROM import_recovery ir WHERE ir.image_id=derived.id AND ir.retained=1)
+		ORDER BY rel.pairing_order,rel.id`, imageID, imageID)
 	if err != nil {
 		return nil, err
 	}
