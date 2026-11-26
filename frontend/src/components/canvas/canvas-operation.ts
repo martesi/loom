@@ -108,6 +108,10 @@ function isCancelled(
   )
 }
 
+export function isCanvasOperationCancellation(value: unknown) {
+  return isCancelled(value)
+}
+
 function isRejected(value: unknown): value is Error & { canvasRejected: true } {
   return value instanceof Error && Reflect.get(value, 'canvasRejected') === true
 }
@@ -190,15 +194,21 @@ export function submitCanvasOperation<T>(
     (repository.queued.get(runtime.token) ?? 0) + 1
   )
   const previous = repository.tail
-  const result = previous.then(
-    () => dispatch(repoPath, repository, runtime, ticket, action),
-    () => dispatch(repoPath, repository, runtime, ticket, action)
+  const dispatchResult: Promise<CanvasOperationOutcome<T>> = previous.then(() =>
+    Promise.resolve().then(() =>
+      dispatch<T>(repoPath, repository, runtime, ticket, action)
+    )
+  )
+  const result = dispatchResult.then(
+    (outcome) => outcome,
+    (error: unknown) => settleFailure<T>(repository, ticket, error)
   )
   repository.tail = result.then(
     () => undefined,
     () => undefined
   )
   return result.then((outcome) => {
+    if (repository.active === ticket) repository.active = null
     decrementQueued(repository, runtime.token, ticket.blocksLayout)
     if (outcome.status === 'success' && !runtime.isCurrent(ticket.lifetime))
       return {
@@ -306,23 +316,25 @@ function dispatch<T>(
               })
             : !repository.dirty
               ? settleFailure(repository, ticket, error)
-              : recover(
-                  repository,
-                  runtime,
-                  createContext(repoPath, repository, runtime, ticket, true)
-                ).then(
-                  () => settleFailure(repository, ticket, error),
-                  (reconcileError: unknown) =>
-                    isCancelled(reconcileError)
-                      ? settle(repository, ticket, {
-                          status: 'cancelled',
-                          reason: reconcileError.message,
-                        })
-                      : settle(repository, ticket, {
-                          status: 'failed',
-                          error: possibleSuccessError(reconcileError),
-                        })
-                )
+              : Promise.resolve()
+                  .then(() =>
+                    recover(
+                      repository,
+                      runtime,
+                      createContext(repoPath, repository, runtime, ticket, true)
+                    )
+                  )
+                  .then(
+                    () => settleFailure(repository, ticket, error),
+                    (reconcileError: unknown) =>
+                      settleFailure(
+                        repository,
+                        ticket,
+                        new Error(
+                          `${errorOf(error).message} Canvas reconciliation also failed: ${errorOf(reconcileError).message}`
+                        )
+                      )
+                  )
     )
 }
 
@@ -381,10 +393,7 @@ function createContext(
         throw new Error('This Canvas operation cannot perform a write.')
       if (affectsBoardState(ticket.request)) repository.dirty = true
       ticket.effectStarted = true
-      return operation().then((value) => {
-        assertCurrent()
-        return value
-      })
+      return operation()
     },
     reconcile: () =>
       recover(

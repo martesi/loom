@@ -5,6 +5,8 @@ import { ImageService } from '../../../bindings/loom/internal/service'
 import { emptySelection } from '../../lib/selection'
 import type { CanvasActionsContext } from '../../routes/canvas-actions-context'
 import { createCanvasBoardOwner } from './canvas-board-owner'
+import { isCanvasOperationPending } from './canvas-operation'
+import { canvasEffects, runCanvasEffectBatch } from './canvas-operation-effects'
 import { refreshBoard } from './canvas-operation-test-utils'
 
 mock.module('@lingui/core/macro', () => ({
@@ -209,5 +211,90 @@ for (const operation of [
     })
     expect(reload).toHaveBeenCalledTimes(1)
     owner.dispose()
+  })
+}
+
+for (const operation of [
+  { name: 'archive', restore: false },
+  { name: 'unarchive', restore: false },
+  { name: 'restore', restore: true },
+] as const) {
+  it(`${operation.name} disposal preserves partial failure and releases the replacement gate`, async () => {
+    spyOn(console, 'error').mockImplementation(() => {})
+    const repoPath = `/repo-disposed-batch-${operation.name}`
+    const images = [1, 2].map((id) => ({ id }))
+    spyOn(ImageService, 'LoadCanvas').mockResolvedValue({
+      images,
+      relationships: [],
+      groups: [],
+    } as never)
+    spyOn(ImageService, 'GetLayoutSnapshot').mockResolvedValue({
+      revision: '1',
+      images: [],
+      relationships: [],
+    } as never)
+    let releaseCommitted!: () => void
+    let signalCommitted!: () => void
+    const committed = new Promise<void>((resolve) => {
+      releaseCommitted = resolve
+    })
+    const started = new Promise<void>((resolve) => {
+      signalCommitted = resolve
+    })
+    const serviceWrite = (_path: string, id: number) => {
+      if (id === 1) return Promise.reject(new Error('first write failed'))
+      signalCommitted()
+      return committed
+    }
+    if (operation.restore)
+      spyOn(ImageService, 'RestoreImage').mockImplementation(
+        serviceWrite as never
+      )
+    else
+      spyOn(ImageService, 'SetArchived').mockImplementation(
+        serviceWrite as never
+      )
+
+    const owner = createCanvasBoardOwner(repoPath, true)
+    expect((await owner.activate()).status).toBe('success')
+    const board = owner.getSnapshot()
+    if (!board) throw new Error('expected an active board')
+    const action = owner.submit(
+      { kind: 'mutation', capability: 'lifecycle', board },
+      (context) =>
+        runCanvasEffectBatch(operation.name, [1, 2], (id) =>
+          operation.restore
+            ? canvasEffects.restoreImage(context, repoPath, id)
+            : canvasEffects.setArchived(
+                context,
+                repoPath,
+                id,
+                operation.name === 'archive'
+              )
+        )
+    )
+    await started
+    owner.dispose()
+    releaseCommitted()
+    expect(await action).toMatchObject({
+      status: 'failed',
+      error: {
+        message: expect.stringContaining('Asset 1: first write failed'),
+      },
+    })
+    expect(isCanvasOperationPending(repoPath)).toBe(false)
+
+    const replacement = createCanvasBoardOwner(repoPath, true)
+    expect((await replacement.activate()).status).toBe('success')
+    expect(replacement.isLayoutPending()).toBe(false)
+    const freshBoard = replacement.getSnapshot()
+    if (!freshBoard) throw new Error('expected replacement board')
+    const subsequent = await replacement.submit(
+      { kind: 'mutation', capability: 'lifecycle', board: freshBoard },
+      (context) => context.effect(async () => {})
+    )
+    expect(subsequent.status).toBe('success')
+    expect(replacement.isLayoutPending()).toBe(false)
+    replacement.dispose()
   })
 }

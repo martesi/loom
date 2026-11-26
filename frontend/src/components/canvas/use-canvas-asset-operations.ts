@@ -140,6 +140,12 @@ export function useCanvasAssetOperations({
     const point = center()
     const board = owner.getSnapshot()
     const lifetime = owner.getLifetimeRevision()
+    const intent = navigation.current.generation
+    const isCurrentIntent = () =>
+      navigationActive.current &&
+      navigation.current.generation === intent &&
+      navigation.current.owner === owner &&
+      navigation.current.repoPath === repoPath
     const source = media
       ? typeof media === 'function'
         ? media()
@@ -154,6 +160,7 @@ export function useCanvasAssetOperations({
       owner.getLifetimeRevision() !== lifetime
     )
       return
+    if (!isCurrentIntent()) return
     if (preparation.status === 'failed') throw preparation.error
     const outcome = await owner.submit(
       {
@@ -174,7 +181,7 @@ export function useCanvasAssetOperations({
         return { ids, canvas }
       }
     )
-    if (outcome.status === 'cancelled') return
+    if (!isCurrentIntent() || outcome.status === 'cancelled') return
     const { ids, canvas } = unwrapCanvasOutcome(outcome)
     setSelection({
       surface: canvas ? 'canvas' : 'assets',
@@ -186,20 +193,46 @@ export function useCanvasAssetOperations({
   }
 
   async function importMedia(media: Media | (() => Promise<Media>)) {
+    const intent = navigation.current.generation
+    const board = owner.getSnapshot()
+    const lifetime = owner.getLifetimeRevision()
+    const isCurrentIntent = () =>
+      navigationActive.current &&
+      navigation.current.generation === intent &&
+      navigation.current.owner === owner &&
+      navigation.current.repoPath === repoPath
+    const preparation = await Promise.resolve()
+      .then(() =>
+        typeof media === 'function' ? media() : Promise.resolve(media)
+      )
+      .then(
+        (assets) => ({ status: 'success' as const, assets }),
+        (error: unknown) => ({ status: 'failed' as const, error })
+      )
+    if (
+      !isCurrentIntent() ||
+      owner.isActive?.() === false ||
+      owner.getLifetimeRevision() !== lifetime
+    )
+      return
+    if (preparation.status === 'failed') throw preparation.error
     const outcome = await owner.submit(
       {
         kind: 'mutation',
         capability: 'lifecycle',
-        board: owner.getSnapshot(),
+        board,
       },
-      async (context) => {
-        const assets = await context.prepare(() =>
-          typeof media === 'function' ? media() : Promise.resolve(media)
+      (context) =>
+        canvasEffects.importMedia(
+          context,
+          repoPath,
+          preparation.assets,
+          false,
+          0,
+          0
         )
-        return canvasEffects.importMedia(context, repoPath, assets, false, 0, 0)
-      }
     )
-    if (outcome.status === 'cancelled') return
+    if (!isCurrentIntent() || outcome.status === 'cancelled') return
     const ids = unwrapCanvasOutcome(outcome)
     setSelection({ surface: 'assets', ids: ids ?? [], edges: [], group: null })
     if (ids?.length) setReveal({ id: ids[0], folder: null })

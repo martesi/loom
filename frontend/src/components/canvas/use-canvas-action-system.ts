@@ -203,6 +203,19 @@ export function useCanvasActionSystem({
     const board = context.owner.getSnapshot()
     // The route owns focus after palette commands; do not race dialog restoration.
     setPaletteOpen(false)
+    // Start clipboard access in the palette event. A frame delay can lose the
+    // browser's transient user activation before navigator.clipboard.read().
+    if (currentAction.id === 'paste') {
+      void executeAction(currentAction).then(() =>
+        setRecentActionIds((ids) =>
+          [
+            currentAction.id,
+            ...ids.filter((id) => id !== currentAction.id),
+          ].slice(0, 6)
+        )
+      )
+      return
+    }
     if (
       currentAction.id === 'open-settings' ||
       currentAction.id === 'open-appearance-settings' ||

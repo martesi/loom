@@ -268,6 +268,169 @@ it('rejects valid prepared media against a snapshot replaced during preparation'
   owner.dispose()
 })
 
+it('does not import prepared media after selection intent changes and returns to its prior value', async () => {
+  const owner = createCanvasBoardOwner('/repo-selection-prep')
+  const importMedia = spyOn(ImageService, 'ImportMedia').mockResolvedValue([
+    7,
+  ] as never)
+  spyOn(ImageService, 'LoadCanvas').mockResolvedValue({
+    images: [],
+    relationships: [],
+    groups: [],
+  } as never)
+  spyOn(ImageService, 'GetLayoutSnapshot').mockResolvedValue({
+    revision: '1',
+    images: [],
+    relationships: [],
+  } as never)
+  await refreshBoard(owner)
+  const original: Selection = {
+    surface: 'assets',
+    ids: [1],
+    edges: [],
+    group: null,
+  }
+  let currentProps = {
+    owner,
+    repoPath: '/repo-selection-prep',
+    selection: original,
+    center: () => ({ x: 10, y: 20 }),
+    setSelection: mock(),
+    setReveal: mock(),
+  } as unknown as Parameters<typeof useCanvasAssetOperations>[0]
+  const { result, rerender } = renderHook(() =>
+    useCanvasAssetOperations(currentProps)
+  )
+  let resolveMedia!: (media: ClipboardMedia[]) => void
+  const prepared = new Promise<ClipboardMedia[]>((resolve) => {
+    resolveMedia = resolve
+  })
+  const paste = result.current.paste(() => prepared)
+  currentProps = {
+    ...currentProps,
+    selection: { ...original, ids: [2] },
+  }
+  rerender()
+  currentProps = { ...currentProps, selection: original }
+  rerender()
+  resolveMedia([{ name: 'fresh.png', data: 'aGVsbG8=' }])
+  await expect(paste).resolves.toBeUndefined()
+  expect(importMedia).not.toHaveBeenCalled()
+  owner.dispose()
+})
+
+it('does not queue file import after selection changes during preparation', async () => {
+  const owner = createCanvasBoardOwner('/repo-file-selection')
+  const importMedia = spyOn(ImageService, 'ImportMedia').mockResolvedValue([
+    8,
+  ] as never)
+  spyOn(ImageService, 'LoadCanvas').mockResolvedValue({
+    images: [],
+    relationships: [],
+    groups: [],
+  } as never)
+  spyOn(ImageService, 'GetLayoutSnapshot').mockResolvedValue({
+    revision: '1',
+    images: [],
+    relationships: [],
+  } as never)
+  await refreshBoard(owner)
+  let currentProps = {
+    owner,
+    repoPath: '/repo-file-selection',
+    selection: {
+      surface: 'assets' as const,
+      ids: [1],
+      edges: [],
+      group: null,
+    },
+    center: () => ({ x: 0, y: 0 }),
+    setSelection: mock(),
+    setReveal: mock(),
+  } as unknown as Parameters<typeof useCanvasAssetOperations>[0]
+  const { result, rerender } = renderHook(() =>
+    useCanvasAssetOperations(currentProps)
+  )
+  let resolveMedia!: (media: ClipboardMedia[]) => void
+  const prepared = new Promise<ClipboardMedia[]>((resolve) => {
+    resolveMedia = resolve
+  })
+  const pending = result.current.importMedia(() => prepared)
+  currentProps = {
+    ...currentProps,
+    selection: { ...currentProps.selection, ids: [2] },
+  }
+  rerender()
+  resolveMedia([{ name: 'dropped.png', data: 'aGVsbG8=' }])
+  await pending
+  expect(importMedia).not.toHaveBeenCalled()
+  owner.dispose()
+})
+
+it('keeps dispatched import authoritative but does not replace newer selection', async () => {
+  const owner = createCanvasBoardOwner('/repo-selection-response')
+  const imported: number[] = []
+  let signalImportStarted!: () => void
+  const importStarted = new Promise<void>((resolve) => {
+    signalImportStarted = resolve
+  })
+  let resolveImport!: (ids: number[]) => void
+  spyOn(ImageService, 'ImportMedia').mockImplementation(() => {
+    signalImportStarted()
+    return new Promise<number[]>((resolve) => {
+      resolveImport = (ids) => {
+        imported.push(...ids)
+        resolve(ids)
+      }
+    }) as never
+  })
+  spyOn(ImageService, 'LoadCanvas').mockResolvedValue({
+    images: [],
+    relationships: [],
+    groups: [],
+  } as never)
+  spyOn(ImageService, 'GetLayoutSnapshot').mockResolvedValue({
+    revision: '1',
+    images: [],
+    relationships: [],
+  } as never)
+  await refreshBoard(owner)
+  const setSelection = mock()
+  const setReveal = mock()
+  const initial: Selection = {
+    surface: 'assets',
+    ids: [1],
+    edges: [],
+    group: null,
+  }
+  let currentProps = {
+    owner,
+    repoPath: '/repo-selection-response',
+    selection: initial,
+    center: () => ({ x: 10, y: 20 }),
+    setSelection,
+    setReveal,
+  } as unknown as Parameters<typeof useCanvasAssetOperations>[0]
+  const { result, rerender } = renderHook(() =>
+    useCanvasAssetOperations(currentProps)
+  )
+  const paste = result.current.paste([
+    { name: 'persisted.png', data: 'aGVsbG8=' },
+  ])
+  await importStarted
+  currentProps = {
+    ...currentProps,
+    selection: { ...initial, ids: [2] },
+  }
+  rerender()
+  resolveImport([9])
+  await paste
+  expect(imported).toEqual([9])
+  expect(setSelection).not.toHaveBeenCalled()
+  expect(setReveal).not.toHaveBeenCalled()
+  owner.dispose()
+})
+
 it('consumes prepared media without importing after a repository owner switch', async () => {
   const owner = createCanvasBoardOwner('/repo-disposed-paste')
   spyOn(ImageService, 'LoadCanvas').mockResolvedValue({

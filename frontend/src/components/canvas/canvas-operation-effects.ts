@@ -9,6 +9,7 @@ import {
   UndoService,
 } from '../../../bindings/loom/internal/service'
 import type { CanvasOperationContext } from './canvas-operation'
+import { isCanvasOperationCancellation } from './canvas-operation'
 
 export const canvasEffects = {
   addTag: (
@@ -173,11 +174,20 @@ export async function runCanvasEffectBatch(
     ids.map((id) => () => effect(id))
   )
   const failures = results.flatMap((result, index) =>
-    result.status === 'rejected'
+    result.status === 'rejected' &&
+    !isCanvasOperationCancellation(result.reason)
       ? [{ id: ids[index], cause: result.reason }]
       : []
   )
-  if (!failures.length) return
+  if (!failures.length) {
+    const cancellation = results.find(
+      (result) =>
+        result.status === 'rejected' &&
+        isCanvasOperationCancellation(result.reason)
+    )
+    if (cancellation?.status === 'rejected') throw cancellation.reason
+    return
+  }
   for (const failure of failures)
     console.error(`canvas ${operation} failed`, {
       assetId: failure.id,

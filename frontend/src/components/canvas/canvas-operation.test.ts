@@ -348,6 +348,54 @@ it('cancels prepared work after owner replacement and permits fresh activation',
   expect(outcome.status).toBe('success')
 })
 
+it('cleans pending gates after disposal during a dispatched effect and recovers the replacement owner', async () => {
+  const owner = runtime('/canvas-op-disposed-effect')
+  await start(owner)
+  const board = owner.runtime.getSnapshot()
+  const write = deferred<void>()
+  const started = deferred<void>()
+  const pending = submitCanvasOperation(
+    owner.repo,
+    owner.runtime,
+    mutation(board),
+    (context) =>
+      context.effect(() => {
+        started.resolve()
+        return write.promise
+      })
+  )
+  await started.promise
+  owner.replaceLifetime()
+  write.resolve()
+
+  expect(await pending).toMatchObject({ status: 'cancelled' })
+  expect(isCanvasOperationPending(owner.repo)).toBe(false)
+
+  const reactivated = await submitCanvasOperation(
+    owner.repo,
+    owner.runtime,
+    { kind: 'recovery' },
+    (context) => context.reconcile()
+  )
+  expect(reactivated.status).toBe('success')
+  expect(isCanvasOperationPending(owner.repo)).toBe(false)
+
+  const replacement = runtime(owner.repo)
+  expect((await start(replacement)).status).toBe('success')
+  const replacementBoard = replacement.runtime.getSnapshot()
+  const freshMutation = await submitCanvasOperation(
+    replacement.repo,
+    replacement.runtime,
+    mutation(replacementBoard),
+    (context) => context.effect(async () => 'fresh write')
+  )
+  expect(freshMutation).toMatchObject({
+    status: 'success',
+    value: 'fresh write',
+  })
+  expect(isCanvasOperationPending(owner.repo)).toBe(false)
+})
+
 it('rejects a stale board after async preparation before performing its effect', async () => {
   const owner = runtime('/canvas-op-stale-board')
   await start(owner)

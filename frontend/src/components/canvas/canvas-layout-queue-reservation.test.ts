@@ -264,6 +264,8 @@ it('blocks gestures after reconciliation failure until a later refresh succeeds'
   )
   expect(outcome).toMatchObject({ status: 'failed' })
   if (outcome.status === 'failed')
+    expect(outcome.error.message).toContain('backend write failed')
+  if (outcome.status === 'failed')
     expect(outcome.error.message).toContain('reconciliation failed')
   expect(owner.beginDrag(board, [before])).toBeNull()
   const fresh = await refreshBoard(owner)
