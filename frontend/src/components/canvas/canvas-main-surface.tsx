@@ -27,6 +27,10 @@ import {
   captureCanvasSelectionIntent,
   isCanvasSelectionIntentCurrent,
 } from './canvas-selection-intent'
+import type {
+  CanvasViewportOrigin,
+  CanvasViewportPhase,
+} from './canvas-viewport-origin'
 import { PerfHud } from './perf-hud'
 import type { CanvasAssetIntent } from './use-canvas-asset-operations'
 import { useCanvasConnectionTool } from './use-canvas-connection-tool'
@@ -125,7 +129,15 @@ interface Props {
   assetsPinned: boolean
   closeAssets: (restoreFocus?: boolean) => void
   updateZoomCompensation: (zoom: number) => void
-  updateProjectionViewport: (viewport: Viewport) => void
+  updateProjectionViewport: (
+    viewport: Viewport,
+    origin: CanvasViewportOrigin,
+    phase: CanvasViewportPhase
+  ) => void
+  onViewportReady: () => void
+  beginUserViewportIntent: () => void
+  finishUserViewportIntent: () => void
+  getViewportOrigin: (event: unknown) => CanvasViewportOrigin
   zoomRaf: MutableRefObject<number>
   pendingZoom: MutableRefObject<number>
   menu: MenuState | null
@@ -190,6 +202,10 @@ export function CanvasMainSurface(props: Props) {
     closeAssets,
     updateZoomCompensation,
     updateProjectionViewport,
+    onViewportReady,
+    beginUserViewportIntent,
+    finishUserViewportIntent,
+    getViewportOrigin,
     zoomRaf,
     pendingZoom,
     menu,
@@ -393,6 +409,10 @@ export function CanvasMainSurface(props: Props) {
         connectionTool={connectionTool}
         transitionMode={transitionMode}
         updateProjectionViewport={updateProjectionViewport}
+        onViewportReady={onViewportReady}
+        beginUserViewportIntent={beginUserViewportIntent}
+        finishUserViewportIntent={finishUserViewportIntent}
+        getViewportOrigin={getViewportOrigin}
         repoPath={repoPath}
         owner={owner}
         data={data}

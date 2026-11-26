@@ -22,7 +22,10 @@ import { applyCanvasNodeSelection } from '../../lib/canvas-selection'
 import { emptySelection, type Selection } from '../../lib/selection'
 import type { CanvasBoardOwner } from './canvas-board-owner'
 import type { CanvasInternalMode } from './canvas-mode-policy'
-import { writeCanvasModeViewport } from './canvas-mode-viewport'
+import type {
+  CanvasViewportOrigin,
+  CanvasViewportPhase,
+} from './canvas-viewport-origin'
 import { useCanvasBoardDrag } from './use-canvas-board-drag'
 import type {
   CanvasConnectionTool,
@@ -84,7 +87,15 @@ interface Props {
   pendingDragNode: MutableRefObject<Node | null>
   report: (error: unknown) => void
   updateZoomCompensation: (zoom: number) => void
-  updateProjectionViewport: (viewport: Viewport) => void
+  updateProjectionViewport: (
+    viewport: Viewport,
+    origin: CanvasViewportOrigin,
+    phase: CanvasViewportPhase
+  ) => void
+  onViewportReady: () => void
+  beginUserViewportIntent: () => void
+  finishUserViewportIntent: () => void
+  getViewportOrigin: (event: unknown) => CanvasViewportOrigin
   zoomRaf: MutableRefObject<number>
   pendingZoom: MutableRefObject<number>
   isCanvasNodeSelected: (node: Node) => boolean
@@ -94,6 +105,8 @@ interface Props {
 
 export function CanvasFlow(props: Props) {
   const keyboardContextMenu = useRef(false)
+  const viewportInputCandidate = useRef(false)
+  const viewportInputGeneration = useRef(0)
   const {
     repoPath,
     owner,
@@ -124,6 +137,10 @@ export function CanvasFlow(props: Props) {
     report,
     updateZoomCompensation,
     updateProjectionViewport,
+    onViewportReady,
+    beginUserViewportIntent,
+    finishUserViewportIntent,
+    getViewportOrigin,
     zoomRaf,
     pendingZoom,
     isCanvasNodeSelected,
@@ -174,6 +191,7 @@ export function CanvasFlow(props: Props) {
         </div>
       )}
       <ReactFlow
+        onInit={onViewportReady}
         nodesFocusable
         edgesFocusable
         onKeyDownCapture={(event) => {
@@ -183,8 +201,32 @@ export function CanvasFlow(props: Props) {
             (event.key === 'ContextMenu' ||
               (event.shiftKey && event.key === 'F10'))
         }}
-        onPointerDownCapture={() => {
+        onPointerDownCapture={(event) => {
           keyboardContextMenu.current = false
+          const target = event.target instanceof Element ? event.target : null
+          viewportInputCandidate.current =
+            target !== null &&
+            target.closest('.react-flow__pane') !== null &&
+            (space || event.button !== 0 || event.pointerType === 'touch')
+        }}
+        onPointerUpCapture={() => {
+          viewportInputCandidate.current = false
+        }}
+        onPointerCancel={() => {
+          viewportInputCandidate.current = false
+          finishUserViewportIntent()
+        }}
+        onWheelCapture={() => {
+          const generation = ++viewportInputGeneration.current
+          viewportInputCandidate.current = true
+          requestAnimationFrame(() => {
+            if (viewportInputGeneration.current === generation)
+              viewportInputCandidate.current = false
+          })
+        }}
+        onMoveStart={() => {
+          if (viewportInputCandidate.current) beginUserViewportIntent()
+          viewportInputCandidate.current = false
         }}
         data-total-image-nodes={
           (data.images ?? []).filter((image) => image.placed && !image.trashed)
@@ -306,16 +348,21 @@ export function CanvasFlow(props: Props) {
           const gesture = drag.take()
           if (gesture) drag.finish(gesture, moved.length ? moved : [node])
         }}
-        onMoveEnd={(_, v) => {
-          updateProjectionViewport(v)
+        onMoveEnd={(event, v) => {
+          const origin = getViewportOrigin(event)
+          void updateProjectionViewport(v, ready ? origin : 'external', 'end')
+          if (origin === 'user') finishUserViewportIntent()
           if (!ready) return
-          if (mode === 'legacy') {
+          if (mode === 'legacy' && origin === 'user')
             void ImageService.SetViewport(repoPath, v).catch(report)
-          } else writeCanvasModeViewport(repoPath, mode, v)
         }}
-        onMove={(_, viewport) => {
-          if (ready && mode !== 'legacy')
-            writeCanvasModeViewport(repoPath, mode, viewport)
+        onMove={(event, viewport) => {
+          const origin = getViewportOrigin(event)
+          void updateProjectionViewport(
+            viewport,
+            ready ? origin : 'external',
+            'move'
+          )
           // Zoom badges read this once per frame at most; onMove fires
           // per input event during pans.
           pendingZoom.current = viewport.zoom

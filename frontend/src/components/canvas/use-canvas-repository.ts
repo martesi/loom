@@ -139,11 +139,9 @@ export function useCanvasRepository({
       .then((result) => {
         if (!isCurrent()) return
         setReady(true)
-        const hasSavedView =
-          modeViewports && readCanvasModeViewport(repoPath, 'view') !== null
         if (
           !repositoryViewport &&
-          (!modeViewports || !hasSavedView) &&
+          !modeViewports &&
           (result?.data.images ?? []).some(
             (image) => image.placed && !image.trashed
           )

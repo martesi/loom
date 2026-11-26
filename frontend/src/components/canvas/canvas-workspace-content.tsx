@@ -265,18 +265,42 @@ export function CanvasWorkspaceContent(props: Props) {
     setPreviewImageId(imageId)
   }
   const persistViewport = boardModel.mode === 'legacy'
-  const fitAll = () => fitCanvas(flow, repo.path, undefined, persistViewport)
+  const runViewportCommand = (operation: () => Promise<void>) => {
+    const command = boardModel.beginViewportCommand()
+    return command.waitForViewport.then(() => {
+      if (!boardModel.isViewportCommandCurrent(command)) return
+      return operation().then(
+        () => {
+          boardModel.persistViewportCommand(command, flow.getViewport())
+        },
+        (error: unknown) => {
+          boardModel.cancelViewportCommand(command)
+          throw error
+        }
+      )
+    })
+  }
+  const fitAll = () =>
+    runViewportCommand(() =>
+      fitCanvas(flow, repo.path, undefined, persistViewport)
+    )
   const fitSelection = () =>
-    fitCanvas(
-      flow,
-      repo.path,
-      nodes.filter(isCanvasNodeSelected),
-      persistViewport
+    runViewportCommand(() =>
+      fitCanvas(
+        flow,
+        repo.path,
+        nodes.filter(isCanvasNodeSelected),
+        persistViewport
+      )
     )
   const resetZoom = () =>
-    resetCanvasZoom(flow, host, repo.path, persistViewport)
+    runViewportCommand(() =>
+      resetCanvasZoom(flow, host, repo.path, persistViewport)
+    )
   const zoomBy = (factor: number) =>
-    zoomCanvas(flow, repo.path, factor, persistViewport)
+    runViewportCommand(() =>
+      zoomCanvas(flow, repo.path, factor, persistViewport)
+    )
   function toggleFocusMode() {
     setFocusCanvas((focused) => !focused)
     requestAnimationFrame(() => host.current?.focus())
@@ -417,6 +441,10 @@ export function CanvasWorkspaceContent(props: Props) {
         </ShelfPanel>
         <CanvasMainSurface
           updateProjectionViewport={boardModel.updateProjectionViewport}
+          onViewportReady={boardModel.onFlowReady}
+          beginUserViewportIntent={boardModel.beginUserViewportIntent}
+          finishUserViewportIntent={boardModel.finishUserViewportIntent}
+          getViewportOrigin={boardModel.getViewportOrigin}
           repoPath={repo.path}
           owner={boardModel.owner}
           mode={boardModel.mode}

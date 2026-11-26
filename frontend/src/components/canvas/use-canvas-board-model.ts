@@ -317,6 +317,14 @@ export function useCanvasBoardModel({
     transitionMode: projection.transitionMode,
     arrangeEdit: projection.arrangeEdit,
     updateProjectionViewport: projection.updateViewport,
+    onFlowReady: projection.onFlowReady,
+    beginUserViewportIntent: projection.beginUserViewportIntent,
+    finishUserViewportIntent: projection.finishUserViewportIntent,
+    getViewportOrigin: projection.getViewportOrigin,
+    beginViewportCommand: projection.beginViewportCommand,
+    isViewportCommandCurrent: projection.isViewportCommandCurrent,
+    persistViewportCommand: projection.persistViewportCommand,
+    cancelViewportCommand: projection.cancelViewportCommand,
     setViewAnchor: projection.setAnchor,
   }
 }

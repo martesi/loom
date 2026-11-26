@@ -121,6 +121,7 @@ export interface CanvasBoardOwner extends CanvasBoardExecutor {
   getMode(): CanvasInternalMode
   getModeRevision(): number
   getModeRequestRevision(): number
+  getActivationEpoch(): number
   requestModeTransition(mode: CanvasInternalMode): number
   setMode(mode: CanvasInternalMode): void
   allows(capability: CanvasCapability): boolean
@@ -325,6 +326,7 @@ export function createCanvasBoardOwner(
     getMode: () => mode,
     getModeRevision: () => modeRevision,
     getModeRequestRevision: () => modeRequestRevision,
+    getActivationEpoch: () => activationEpoch,
     requestModeTransition(next) {
       modeRequestRevision++
       modeRevision++

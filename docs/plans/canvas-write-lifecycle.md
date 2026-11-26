@@ -99,3 +99,17 @@ repository. On first use, the existing repository viewport is the fallback for
 both modes. Once a mode-specific viewport exists, it takes precedence. Repository
 readiness gates viewport restoration and saves so an initial default viewport
 cannot replace a saved viewport.
+
+Viewport operations also use a controller-local request lifecycle. Each request
+captures its owner, repository, mode request revision, and owner activation epoch.
+Only one XYFlow setter may be in flight. A newer owner, mode, or user-navigation
+request supersedes queued work, then waits for an already-dispatched setter to
+settle before applying its target. This ordering matters because XYFlow can apply
+a viewport before its promise resolves and does not expose cancellation. Restore,
+initial-fit, anchor, command, and user origins are kept separate so setter echoes
+cannot be saved as user navigation. A false setter result is retried a bounded
+number of times and then reported instead of leaving the restore pending forever.
+
+This local viewport lifecycle does not settle remote mutation outcomes. The
+shared coordinator, Undo/Redo settlement, and per-child batch outcome tracking
+remain integration blockers described above.
