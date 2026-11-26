@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -18,6 +19,9 @@ func TestLinkSourceToGroupValidationAndDuplicates(t *testing.T) {
 
 	addImage := func(name string) int64 {
 		t.Helper()
+		if err := os.WriteFile(filepath.Join(repoPath, name), []byte("fixture"), 0600); err != nil {
+			t.Fatal(err)
+		}
 		res, err := repo.DB.Exec(`INSERT INTO images (file_path) VALUES (?)`, filepath.Join(repoPath, name))
 		if err != nil {
 			t.Fatal(err)
@@ -54,7 +58,7 @@ func TestLinkSourceToGroupValidationAndDuplicates(t *testing.T) {
 	if _, err := repo.DB.Exec(`INSERT INTO relationships (source_image_id, derived_image_id) VALUES (?, ?)`, one, source); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.LinkSourceToGroup(repoPath, source, groupID); err == nil {
+	if err := svc.linkSourceToGroup(repoPath, source, groupID); err == nil {
 		t.Fatal("expected cycle validation to reject the fan-out")
 	}
 	if got := count(); got != 1 {
@@ -68,7 +72,7 @@ func TestLinkSourceToGroupValidationAndDuplicates(t *testing.T) {
 	if _, err := repo.DB.Exec(`UPDATE images SET group_id = ? WHERE id = ?`, groupID, source); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.LinkSourceToGroup(repoPath, source, groupID); err == nil {
+	if err := svc.linkSourceToGroup(repoPath, source, groupID); err == nil {
 		t.Fatal("expected source-in-set rejection")
 	}
 	if got := count(); got != 0 {
@@ -82,7 +86,7 @@ func TestLinkSourceToGroupValidationAndDuplicates(t *testing.T) {
 	if _, err := repo.DB.Exec(`INSERT INTO relationships (source_image_id, derived_image_id) VALUES (?, ?)`, source, one); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.LinkSourceToGroup(repoPath, source, groupID); err != nil {
+	if err := svc.linkSourceToGroup(repoPath, source, groupID); err != nil {
 		t.Fatalf("valid mixed fan-out: %v", err)
 	}
 	if got := count(); got != 2 {
@@ -91,7 +95,11 @@ func TestLinkSourceToGroupValidationAndDuplicates(t *testing.T) {
 	if _, err := repo.DB.Exec(`DELETE FROM relationships`); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.LinkSourceToGroup(repoPath, source, groupID); err != nil {
+	if err := svc.linkSourceToGroup(repoPath, source, groupID); err != nil {
+		t.Fatal(err)
+	}
+	before, err := repo.ListRelationships()
+	if err != nil {
 		t.Fatal(err)
 	}
 	undo := &UndoService{}
@@ -107,6 +115,15 @@ func TestLinkSourceToGroupValidationAndDuplicates(t *testing.T) {
 	if got := count(); got != 2 {
 		t.Fatalf("redo restored %d fan-out edges, want 2", got)
 	}
+	after, err := repo.ListRelationships()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range before {
+		if before[i].ID != after[i].ID || before[i].PairingOrder != after[i].PairingOrder {
+			t.Fatalf("fan-out identity changed: %v -> %v", before, after)
+		}
+	}
 }
 
 func TestLinkSourceToGroupRollsBackWhenOperationLogFails(t *testing.T) {
@@ -117,6 +134,9 @@ func TestLinkSourceToGroupRollsBackWhenOperationLogFails(t *testing.T) {
 	}
 	addImage := func(name string) int64 {
 		t.Helper()
+		if err := os.WriteFile(filepath.Join(repoPath, name), []byte("fixture"), 0600); err != nil {
+			t.Fatal(err)
+		}
 		res, err := repo.DB.Exec(`INSERT INTO images (file_path) VALUES (?)`, filepath.Join(repoPath, name))
 		if err != nil {
 			t.Fatal(err)
@@ -144,7 +164,7 @@ func TestLinkSourceToGroupRollsBackWhenOperationLogFails(t *testing.T) {
 	}
 	repo.Close()
 
-	if err := (&ImageService{}).LinkSourceToGroup(repoPath, source, groupID); err == nil {
+	if err := (&ImageService{}).linkSourceToGroup(repoPath, source, groupID); err == nil {
 		t.Fatal("expected operation-log failure")
 	}
 	repo, err = store.Bootstrap(repoPath)
@@ -174,6 +194,9 @@ func TestBatchRelationshipReplayRollsBackOnPartialFailure(t *testing.T) {
 			}
 			addImage := func(name string) int64 {
 				t.Helper()
+				if err := os.WriteFile(filepath.Join(repoPath, name), []byte("fixture"), 0600); err != nil {
+					t.Fatal(err)
+				}
 				res, err := repo.DB.Exec(`INSERT INTO images (file_path) VALUES (?)`, filepath.Join(repoPath, name))
 				if err != nil {
 					t.Fatal(err)
@@ -197,7 +220,7 @@ func TestBatchRelationshipReplayRollsBackOnPartialFailure(t *testing.T) {
 				t.Fatal(err)
 			}
 			repo.Close()
-			if err := (&ImageService{}).LinkSourceToGroup(repoPath, source, groupID); err != nil {
+			if err := (&ImageService{}).linkSourceToGroup(repoPath, source, groupID); err != nil {
 				t.Fatal(err)
 			}
 			if direction == "redo" {

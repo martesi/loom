@@ -4,23 +4,32 @@ import {
   ReactFlowProvider,
   useReactFlow,
 } from '@xyflow/react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import '@xyflow/react/dist/style.css'
 import {
-  type CanvasData,
-  type ImageInfo,
-  ImageService,
-  type RepoInfo,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
+import '@xyflow/react/dist/style.css'
+import type {
+  CanvasData,
+  ImageInfo,
+  RepoInfo,
 } from '../../bindings/loom/internal/service'
 import { canvasCenter } from '../components/canvas/canvas-board-operations'
+import { useCanvasBoardOwner } from '../components/canvas/canvas-board-owner'
 import { CanvasWorkspaceContent } from '../components/canvas/canvas-workspace-content'
 import { useCanvasAssetOperations } from '../components/canvas/use-canvas-asset-operations'
 import { useCanvasBoardModel } from '../components/canvas/use-canvas-board-model'
+import { useCanvasCamera } from '../components/canvas/use-canvas-camera'
 import { useCanvasRepository } from '../components/canvas/use-canvas-repository'
 import { useCanvasWorkspaceState } from '../components/canvas/use-canvas-workspace-state'
 import { useInspectorFieldSubmission } from '../components/canvas/use-inspector-field-submission'
 import { emptySelection, type Selection } from '../lib/selection'
 import { useUndoActions } from '../lib/use-undo'
+
+const emptyData: CanvasData = { images: [], relationships: [], groups: [] }
 
 // Where a preview was opened from. Canvas opens keep the existing
 // relationship-component carousel; folder opens step through that folder's
@@ -33,6 +42,7 @@ export function CanvasWorkspace({ repo }: { repo: RepoInfo }) {
   )
 }
 function Canvas({ repo }: { repo: RepoInfo }) {
+  const boardOwner = useCanvasBoardOwner(repo.path)
   const flow = useReactFlow(),
     host = useRef<HTMLDivElement>(null)
   const inverseZoom = useRef(1)
@@ -70,11 +80,11 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       root.removeEventListener('focusin', syncActiveMetadata)
     }
   }, [])
-  const [data, setData] = useState<CanvasData>({
-    images: [],
-    relationships: [],
-    groups: [],
-  })
+  const accepted = useSyncExternalStore(
+    boardOwner.subscribe,
+    boardOwner.getSnapshot
+  )
+  const data = accepted?.data ?? emptyData
   const [renditionGeneration, setRenditionGeneration] = useState(0)
   const invalidateMountedRenditions = useCallback(() => {
     setRenditionGeneration((current) => current + 1)
@@ -85,9 +95,27 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     active: false,
     anchor: [],
   })
-  const dropTargets = useRef<Node[]>([])
-  const [selection, setSelection] = useState<Selection>(emptySelection),
+  const [storedSelection, setSelection] = useState<Selection>(emptySelection),
     [expanded, setExpanded] = useState<number | null>(null)
+  const liveRelationshipIds = new Set(
+    (data.relationships ?? []).map((item) => item.id)
+  )
+  const liveEdges = storedSelection.edges.filter((id) =>
+    liveRelationshipIds.has(id)
+  )
+  const selection =
+    liveEdges.length === storedSelection.edges.length
+      ? storedSelection
+      : { ...storedSelection, edges: liveEdges }
+  useEffect(() => {
+    setSelection((current) => {
+      const liveIds = new Set((data.relationships ?? []).map((item) => item.id))
+      const edges = current.edges.filter((id) => liveIds.has(id))
+      return edges.length === current.edges.length
+        ? current
+        : { ...current, edges }
+    })
+  }, [data.relationships])
   const selectionRef = useRef(selection)
   selectionRef.current = selection
   const submissionScope = `${repo.path}\u0000${selection.surface}\u0000${selection.ids
@@ -124,14 +152,20 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     setReveal,
     target,
   } = workspaceState
-  const { report, reload, reloadForData, run, assetSelectionKey } =
+  const camera = useCanvasCamera(repo.path, flow, host, (error) => {
+    console.error('canvas camera failed', error)
+    setError(error instanceof Error ? error.message : String(error))
+  })
+  const { report, reload, reloadForData, run, assetSelectionKey, initialMode } =
     useCanvasRepository({
       repoPath: repo.path,
+      executor: boardOwner,
       flow,
+      camera: camera.camera,
+      host,
       updateZoomCompensation,
       selection,
       refresh,
-      setData,
       setRefresh,
       setError,
       setReady,
@@ -153,17 +187,27 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   callbacks.current = { report, run, selectAssets }
   const boardModel = useCanvasBoardModel({
     data,
-    expanded,
-    repoPath: repo.path,
+    owner: boardOwner,
     renditionGeneration,
     callbacks,
     selection,
+    setSelection,
     nodes,
     setNodes,
     edges,
     setEdges,
     target,
-    dropTargets,
+    host,
+    flow,
+    camera,
+    initialMode,
+    repoPath: repo.path,
+    cancelPointerGesture: () => {
+      workspaceState.relation.current = null
+      workspaceState.setRelationshipPreview(null)
+      workspaceState.updateTarget(null)
+      modifiedMarquee.current.active = false
+    },
   })
   const { selectedIdsList } = boardModel
   const submitInspectorField = useInspectorFieldSubmission({
@@ -176,36 +220,25 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     fieldSubmissionPending,
     submissionScopeRef,
   })
-  const canCreateSet = useMemo(
-    () =>
-      selection.surface === 'canvas' &&
-      selection.group === null &&
-      selection.ids.length >= 2 &&
-      new Set(selection.ids).size === selection.ids.length &&
-      selection.ids.every((id) => {
-        const image = (data.images ?? []).find((item) => item.id === id)
-        return image?.placed && !image.trashed && !image.groupId
-      }),
-    [selection.surface, selection.group, selection.ids, data.images]
+  const undoActions = useUndoActions(
+    repo.path,
+    boardOwner.applyHistory,
+    boardOwner
   )
-  const undoActions = useUndoActions(repo.path, reload)
   useEffect(() => {
     const timer = window.setInterval(
       () => {
-        void ImageService.LoadCanvas(repo.path)
-          .then((result) => {
-            if (result) setData(result)
-            setRefresh((current) => current + 1)
-          })
-          .catch((error) => callbacks.current.report(error))
+        void reload().catch((error) => callbacks.current.report(error))
       },
       60 * 60 * 1000
     )
     return () => window.clearInterval(timer)
-  }, [repo.path, setRefresh])
+  }, [reload])
   const assetOperations = useCanvasAssetOperations({
     repoPath: repo.path,
+    owner: boardOwner,
     flow,
+    camera,
     selection,
     setSelection,
     selectedIds,
@@ -215,7 +248,6 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     selectAssets,
     setReveal,
     center,
-    canCreateSet,
     purgeIds,
     trashIds,
     setPurgeIds,
@@ -229,6 +261,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   return (
     <CanvasWorkspaceContent
       repo={repo}
+      camera={camera}
       flow={flow}
       host={host}
       data={data}
@@ -244,16 +277,21 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       expanded={expanded}
       setExpanded={setExpanded}
       modifiedMarquee={modifiedMarquee}
-      dropTargets={dropTargets}
       workspaceState={workspaceState}
-      repository={{ report, reload, reloadForData, run, assetSelectionKey }}
+      repository={{
+        report,
+        reload,
+        reloadForData,
+        run,
+        assetSelectionKey,
+        initialMode,
+      }}
       assetOperations={assetOperations}
       selectAssets={selectAssets}
       groupMembers={groupMembers}
       selectedIds={selectedIds}
       boardModel={boardModel}
       submitInspectorField={submitInspectorField}
-      canCreateSet={canCreateSet}
       undoActions={undoActions}
       assetSelectionRecords={assetSelectionRecords}
       updateZoomCompensation={updateZoomCompensation}

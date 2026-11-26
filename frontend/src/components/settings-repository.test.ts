@@ -25,8 +25,20 @@ mock.module('@lingui/core/macro', () => ({
 function Trans({ children }: { children: unknown }) {
   return children
 }
+function Plural({
+  value,
+  one,
+  other,
+}: {
+  value: number
+  one: string
+  other: string
+}) {
+  return (value === 1 ? one : other).replace('#', String(value))
+}
 mock.module('@lingui/react/macro', () => ({
   Trans,
+  Plural,
 }))
 const { RepositorySettings } = await import('./settings-repository')
 

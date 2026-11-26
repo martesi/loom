@@ -6,7 +6,9 @@ import {
   autoArrangeCanvas,
   imageNodes as canvasNodes,
   dropAsset,
-  dropAssetRow,
+  emptyCanvasPoint,
+  enterEdit,
+  moveImageNode,
   openFixtureRepo as open,
   openAssetsShelf,
 } from './test-helpers'
@@ -22,7 +24,7 @@ async function nodePosition(node: ReturnType<Page['locator']>) {
   if (!match) throw new Error(`missing node transform: ${transform}`)
   return { x: Number(match[1]), y: Number(match[2]) }
 }
-test('Assets selection, placement, unplace, trash and viewport persistence', async ({
+test('Assets selection, placement, trash and viewport persistence', async ({
   page,
 }) => {
   await open(page, 'canvas-fixtures')
@@ -38,6 +40,7 @@ test('Assets selection, placement, unplace, trash and viewport persistence', asy
   await expect(
     page.getByText('Drag an asset from Assets onto the canvas.')
   ).toBeVisible()
+  await enterEdit(page)
   const rows = assets(page)
   await rows.first().click()
   await rows.last().click({ modifiers: ['Shift'] })
@@ -57,7 +60,10 @@ test('Assets selection, placement, unplace, trash and viewport persistence', asy
   await rows.first().click()
   await expect(page.locator('[role=option][aria-selected=true]')).toHaveCount(1)
   await expect(page.locator('.react-flow__node.selected')).toHaveCount(0)
-  await canvasNodes(page).first().click()
+  const firstNode = canvasNodes(page).first()
+  const firstBox = await firstNode.boundingBox()
+  if (!firstBox) throw new Error('Canvas node has no bounds')
+  await firstNode.click({ position: { x: firstBox.width - 20, y: 20 } })
   await expect(page.locator('[role=option][aria-selected=true]')).toHaveCount(0)
   await expect(page.locator('.react-flow__node.selected')).toHaveCount(1)
   await page.keyboard.press('Control+a')
@@ -68,9 +74,10 @@ test('Assets selection, placement, unplace, trash and viewport persistence', asy
     /scale\(1\)/
   )
   await autoArrangeCanvas(page)
+  await expect(page.getByTestId('dock-unplace')).toHaveCount(0)
   await page.keyboard.press('Delete')
-  // Canvas Delete is reversible unplace, not Assets trash.
-  await expect(page.locator('.react-flow__node')).toHaveCount(0)
+  await expect(page.locator('.react-flow__node')).toHaveCount(2)
+  await openAssetsShelf(page)
   await expect(rows).toHaveCount(2)
   await rows.first().click()
   await page.keyboard.press('Delete')
@@ -80,7 +87,6 @@ test('Assets selection, placement, unplace, trash and viewport persistence', asy
   await expect(assetTrashDialog).toBeVisible()
   await assetTrashDialog.getByRole('button', { name: 'Move to trash' }).click()
   await expect(rows).toHaveCount(1)
-  await dropAssetRow(page, rows.first(), { x: 90, y: 90 })
   await expect(page.locator('.react-flow__node')).toHaveCount(1)
   const viewport = page.locator('.react-flow__viewport')
   const viewportSaved = page.waitForResponse(
@@ -105,12 +111,14 @@ test('canvas context menus and auto-arrange preserve the canvas origin', async (
   page,
 }) => {
   await open(page, 'canvas-menu-actions-fixtures')
+  await enterEdit(page)
   await drop(page, 'context-alpha.png', 280, 240)
   await drop(page, 'context-beta.png', 520, 420)
   await page.keyboard.press('ControlOrMeta+0')
 
   const nodes = canvasNodes(page)
   await expect(nodes).toHaveCount(2)
+  await moveImageNode(page, nodes.nth(1), 100, 100)
   const before = [
     await nodePosition(nodes.nth(0)),
     await nodePosition(nodes.nth(1)),
@@ -150,75 +158,54 @@ test('canvas context menus and auto-arrange preserve the canvas origin', async (
     3
   )
 
-  await page.locator('.react-flow__pane').click({
-    button: 'right',
-    position: { x: 850, y: 100 },
-  })
+  const empty = await emptyCanvasPoint(page)
+  await page.mouse.click(empty.x, empty.y, { button: 'right' })
   const paneMenu = page.getByRole('menu')
   await expect(paneMenu).toBeVisible()
   await expect(
-    paneMenu.getByRole('button', { name: 'Select all', exact: true })
+    paneMenu.getByRole('menuitem', { name: 'Select all', exact: true })
   ).toBeVisible()
   await expect(
-    paneMenu.getByRole('button', { name: 'Auto-arrange Canvas', exact: true })
+    paneMenu.getByRole('menuitem', { name: 'Auto-arrange Canvas', exact: true })
   ).toBeVisible()
   await paneMenu
-    .getByRole('button', { name: 'Select all', exact: true })
+    .getByRole('menuitem', { name: 'Select all', exact: true })
     .click()
   await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
   await nodes.first().click({ button: 'right' })
   const selectionMenu = page.getByRole('menu')
   await expect(
-    selectionMenu.getByRole('button', {
+    selectionMenu.getByRole('menuitem', {
       name: 'Auto-arrange selection',
       exact: true,
     })
   ).toBeVisible()
   await page.keyboard.press('Escape')
-  await page
-    .locator('.react-flow__pane')
-    .click({ position: { x: 850, y: 100 } })
+  const emptyAgain = await emptyCanvasPoint(page)
+  await page.mouse.click(emptyAgain.x, emptyAgain.y)
 
   await nodes.first().click({ button: 'right' })
   const nodeMenu = page.getByRole('menu')
   await expect(nodeMenu).toBeVisible()
   await expect(
-    nodeMenu.getByRole('button', { name: 'Find in Assets', exact: true })
+    nodeMenu.getByRole('menuitem', { name: 'Find in Assets', exact: true })
   ).toBeVisible()
   await expect(
-    nodeMenu.getByRole('button', { name: 'Remove from canvas', exact: true })
-  ).toBeVisible()
-  await nodeMenu
-    .getByRole('button', { name: 'Remove from canvas', exact: true })
-    .click()
-  await expect(nodes).toHaveCount(1)
-  await page.getByTestId('toggle-inspector-shelf').click()
+    nodeMenu.getByRole('menuitem', { name: 'Remove from canvas', exact: true })
+  ).toHaveCount(0)
   await expect(
-    page.getByRole('heading', { name: 'No Selection', exact: true })
+    nodeMenu.getByRole('menuitem', { name: 'Archive' })
   ).toBeVisible()
-  await page.getByTestId('toggle-inspector-shelf').click()
+  await page.keyboard.press('Escape')
   await openAssetsShelf(page)
   await expect(assets(page)).toHaveCount(2)
-
-  await nodes.first().click({ button: 'right' })
-  await page.getByRole('menu').getByRole('button', { name: 'Trash' }).click()
-  const trashDialog = page.getByRole('dialog', {
-    name: 'Move 1 asset to trash?',
-  })
-  await expect(trashDialog).toBeVisible()
-  await trashDialog.getByRole('button', { name: 'Move to trash' }).click()
-  await expect(nodes).toHaveCount(0)
-  await expect(assets(page)).toHaveCount(1)
-  await page.getByTestId('toggle-inspector-shelf').click()
-  await expect(
-    page.getByRole('heading', { name: 'No Selection', exact: true })
-  ).toBeVisible()
 })
 
-test('explicit relationship gesture, navigation, and semantic sets', async ({
+test('explicit relationship gesture, navigation, and individual selection', async ({
   page,
 }) => {
   await open(page, 'menu-linux-fixtures')
+  await enterEdit(page)
   await drop(page, 'menu-alpha.png', 50, 100)
   await drop(page, 'menu-beta.png', 280, 200)
   await page.keyboard.press('ControlOrMeta+0')
@@ -265,7 +252,9 @@ test('explicit relationship gesture, navigation, and semantic sets', async ({
   await page.keyboard.up('Control')
   await expect(page.locator('.react-flow__edge')).toHaveCount(1)
   await nodes.nth(0).click()
-  await page.getByTestId('toggle-inspector-shelf').click()
+  const inspector = page.locator('aside[aria-label="Inspector"]')
+  if ((await inspector.getAttribute('data-state')) !== 'open')
+    await page.getByTestId('toggle-inspector-shelf').click()
   await expect(page.getByRole('heading', { name: 'Derived' })).toBeVisible()
   await page.getByRole('button', { name: /^Go to derived asset .+/ }).click()
   await expect(nodes.nth(1)).toHaveClass(/selected/)
@@ -284,57 +273,48 @@ test('explicit relationship gesture, navigation, and semantic sets', async ({
     .click()
   await expect(page.locator('.react-flow__edge')).toHaveCount(0)
   await page.keyboard.press('Control+a')
-  await page.getByTestId('dock-create-set').click()
-  await expect(page.locator('.react-flow__node-group')).toHaveCount(1)
-  await page.locator('.react-flow__node-group').dblclick()
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
+  await expect(page.getByTestId('dock-create-set')).toHaveCount(0)
   await expect(nodes).toHaveCount(2)
-  await page.locator('.react-flow__pane').click({ position: { x: 10, y: 10 } })
-  await expect(page.locator('.react-flow__node-group')).toHaveCount(1)
-  await page.locator('.react-flow__pane').click({
-    button: 'right',
-    position: { x: 10, y: 10 },
-  })
+  const empty = await emptyCanvasPoint(page)
+  await page.mouse.click(empty.x, empty.y)
+  await expect(page.locator('.react-flow__node-group')).toHaveCount(0)
+  await page.mouse.click(empty.x, empty.y, { button: 'right' })
   await page
     .getByRole('menu')
-    .getByRole('button', { name: 'Select all' })
+    .getByRole('menuitem', { name: 'Select all' })
     .click()
-  await expect(page.locator('.react-flow__node-group.selected')).toHaveCount(1)
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
 })
-test('Select all highlights a set with an unplaced member', async ({
+test('Select all includes loose images in Edit, while View hides them without removing assets', async ({
   page,
 }) => {
   await open(page, 'partial-set-fixtures')
+  await enterEdit(page)
   await drop(page, 'partial-alpha.png', 80, 100)
-  await drop(page, 'partial-beta.png', 280, 100)
   await expect(canvasNodes(page)).toHaveCount(2)
   await canvasNodes(page).first().click()
   await page.keyboard.press('Control+a')
   await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
-  await page.getByTestId('dock-create-set').click()
-
-  const group = page.locator('.react-flow__node-group')
-  await expect(group).toHaveCount(1)
-  await group.dblclick()
-  await expect(canvasNodes(page)).toHaveCount(2)
-  await canvasNodes(page).first().click()
-  await expect(page.locator('.react-flow__node.selected')).toHaveCount(1)
-  await page.keyboard.press('Delete')
-  await expect(canvasNodes(page)).toHaveCount(1)
-  await page.locator('.react-flow__pane').click({ position: { x: 10, y: 10 } })
-  await expect(group).toHaveCount(1)
-
-  await page.locator('.react-flow__pane').click({
-    button: 'right',
-    position: { x: 10, y: 10 },
-  })
+  await expect(page.locator('.react-flow__node-group')).toHaveCount(0)
+  const empty = await emptyCanvasPoint(page)
+  await page.mouse.click(empty.x, empty.y)
+  await page.mouse.click(empty.x, empty.y, { button: 'right' })
   await page
     .getByRole('menu')
-    .getByRole('button', { name: 'Select all' })
+    .getByRole('menuitem', { name: 'Select all' })
     .click()
-  await expect(group).toHaveClass(/selected/)
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
+  await page.getByTestId('canvas-mode-view').click()
+  await expect(canvasNodes(page)).toHaveCount(0)
+  await page.getByTestId('toggle-assets-shelf').click()
+  await expect(
+    assets(page).filter({ hasText: 'partial-beta.png' })
+  ).toBeVisible()
 })
 test('marquee selection replaces the Canvas selection', async ({ page }) => {
   await open(page, 'set-fixtures')
+  await enterEdit(page)
   await drop(page, 'set-alpha.png', 360, 100)
   await drop(page, 'set-beta.png', 580, 100)
   await drop(page, 'set-gamma.png', 820, 100)

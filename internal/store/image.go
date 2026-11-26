@@ -41,6 +41,8 @@ type Relationship struct {
 	ID             int64
 	SourceImageID  int64
 	DerivedImageID int64
+	PairingOrder   int64
+	CreatedAt      *string
 }
 
 var imageExtensions = map[string]bool{
@@ -508,11 +510,11 @@ func (r *Repo) GetImageByID(imageID int64) (Image, error) {
 // ListRelationships returns edges between two non-trashed images.
 func (r *Repo) ListRelationships() ([]Relationship, error) {
 	rows, err := r.DB.Query(`
-		SELECT rel.id, rel.source_image_id, rel.derived_image_id
+		SELECT rel.id, rel.source_image_id, rel.derived_image_id, rel.pairing_order, rel.created_at
 		FROM relationships rel
 		JOIN images s ON s.id = rel.source_image_id
 		JOIN images d ON d.id = rel.derived_image_id
-		WHERE s.trashed = 0 AND d.trashed = 0`)
+		WHERE s.trashed = 0 AND d.trashed = 0 ORDER BY rel.pairing_order, rel.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -521,7 +523,7 @@ func (r *Repo) ListRelationships() ([]Relationship, error) {
 	var rels []Relationship
 	for rows.Next() {
 		var rel Relationship
-		if err := rows.Scan(&rel.ID, &rel.SourceImageID, &rel.DerivedImageID); err != nil {
+		if err := rows.Scan(&rel.ID, &rel.SourceImageID, &rel.DerivedImageID, &rel.PairingOrder, &rel.CreatedAt); err != nil {
 			return nil, err
 		}
 		rels = append(rels, rel)
@@ -832,8 +834,8 @@ func (r *Repo) UnlinkSource(relationshipID int64) error {
 // the frontend has on hand.
 func (r *Repo) GetRelationship(relationshipID int64) (*Relationship, error) {
 	var rel Relationship
-	err := r.DB.QueryRow(`SELECT id, source_image_id, derived_image_id FROM relationships WHERE id = ?`, relationshipID).
-		Scan(&rel.ID, &rel.SourceImageID, &rel.DerivedImageID)
+	err := r.DB.QueryRow(`SELECT id, source_image_id, derived_image_id, pairing_order, created_at FROM relationships WHERE id = ?`, relationshipID).
+		Scan(&rel.ID, &rel.SourceImageID, &rel.DerivedImageID, &rel.PairingOrder, &rel.CreatedAt)
 	if err != nil {
 		return nil, err
 	}

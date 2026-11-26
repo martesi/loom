@@ -4,19 +4,16 @@ import { Info } from 'lucide-react'
 import { memo, useEffect, useRef, useState } from 'react'
 import {
   type CanvasData,
-  GroupService,
   type ImageInfo,
   ImageService,
   TagService,
 } from '../../../bindings/loom/internal/service'
 import type { Selection } from '../../lib/selection'
 import { Button } from '../ui/button'
-import { Input } from '../ui/input'
 import { ShortcutKeys } from '../ui/tooltip'
 import { DetailPanelDialogs } from './detail-panel-dialogs'
 import { DetailPanelFields } from './detail-panel-fields'
 import { DetailPanelRelations } from './detail-panel-relations'
-import { SetComparisonDialog } from './set-comparison-dialog'
 
 interface Props {
   open: boolean
@@ -43,6 +40,8 @@ interface Props {
   ) => Promise<void>
   selectionRevision: number
   restoreEnabled: boolean
+  canMutateRelationships?: () => boolean
+  graphOrder?: number[]
 }
 // Memoized for the same reason as LibraryPanel: stable props across
 // node-drag frames skip the Inspector subtree while dragging.
@@ -60,6 +59,8 @@ export const DetailPanel = memo(function DetailPanel({
   onSubmitField,
   restoreEnabled,
   selectionRevision,
+  canMutateRelationships = () => true,
+  graphOrder,
 }: Props) {
   const [imageResult, setImageResult] = useState<{
       path: string
@@ -84,7 +85,6 @@ export const DetailPanel = memo(function DetailPanel({
       revision: number
     } | null>(null),
     [tagError, setTagError] = useState(''),
-    [compareGroup, setCompareGroup] = useState<number | null>(null),
     [removeRelationshipId, setRemoveRelationshipId] = useState<number | null>(
       null
     )
@@ -92,7 +92,6 @@ export const DetailPanel = memo(function DetailPanel({
   const scope = `${path}\u0000${key}`
   const imageDataLoaded = imageResult.path === path && imageResult.key === key
   const images = imageDataLoaded ? imageResult.images : []
-  const group = data.groups?.find((g) => g.id === selection.group)
   const errors = useRef(onError)
   const focusedCommandRequest = useRef<number | null>(null)
   const selectionFocusKey = `${selection.surface}:${key}:${selection.group ?? ''}`
@@ -139,7 +138,6 @@ export const DetailPanel = memo(function DetailPanel({
       return
     }
     if (
-      !group &&
       key &&
       !imageDataLoaded &&
       ['move-rename-file', 'add-tag', 'save-prompt'].includes(
@@ -149,21 +147,10 @@ export const DetailPanel = memo(function DetailPanel({
       return
     const frame = requestAnimationFrame(() => {
       if (!open) return
-      if (
-        commandRequest.command === 'compare-set' &&
-        selection.group !== null
-      ) {
-        setCompareGroup(selection.group)
-        focusedCommandRequest.current = commandRequest.request
-        onCommandRequestHandled(commandRequest.request)
-        return
-      }
       const fieldByCommand: Record<string, string> = {
         'move-rename-file': 'asset-path',
         'add-tag': 'new-tag',
         'save-prompt': 'prompt-text',
-        'edit-set-name': 'set-name',
-        'edit-set-kind': 'set-kind',
       }
       const field = fieldByCommand[commandRequest.command]
       const target = field
@@ -172,7 +159,6 @@ export const DetailPanel = memo(function DetailPanel({
       if (target) {
         target.focus()
       }
-      // Some rendered forms, such as a selected set, do not include asset fields.
       focusedCommandRequest.current = commandRequest.request
       onCommandRequestHandled(commandRequest.request)
     })
@@ -181,7 +167,6 @@ export const DetailPanel = memo(function DetailPanel({
     commandRequest,
     open,
     onCommandRequestHandled,
-    group,
     imageDataLoaded,
     key,
     selection.group,
@@ -211,80 +196,25 @@ export const DetailPanel = memo(function DetailPanel({
   const tagLists = tagResult?.scope === scope ? tagResult.lists : []
   const run = (action: () => Promise<unknown>) =>
     void action().then(change).catch(errors.current)
-  if (group) {
-    const memberImages = (data.images ?? []).filter(
-      (image) => (group.memberIds ?? []).includes(image.id) && !image.trashed
-    )
-    const saveMetadata = (form: HTMLFormElement) => {
-      const name = form.elements.namedItem('set-name') as HTMLInputElement
-      const kind = form.elements.namedItem('set-kind') as HTMLInputElement
-      run(() =>
-        GroupService.UpdateMetadata(path, group.id, name.value, kind.value)
-      )
-    }
-    return (
-      <form
-        className="loom-detail-panel grid gap-3 overflow-auto p-3 text-xs"
-        onBlur={(event) => {
-          if (event.target instanceof HTMLInputElement)
-            saveMetadata(event.currentTarget)
-        }}
-      >
-        <h2 className="text-sm font-semibold text-ink">
-          <Trans>Set</Trans>
-        </h2>
-        <label htmlFor="set-name-input" className="grid gap-1 text-ink-muted">
-          <Trans>Set name</Trans>
-          <Input
-            id="set-name-input"
-            name="set-name"
-            key={`${group.id}-name-${group.name}`}
-            defaultValue={group.name}
-          />
-        </label>
-        <label htmlFor="set-kind-input" className="grid gap-1 text-ink-muted">
-          <Trans>Kind</Trans>
-          <Input
-            id="set-kind-input"
-            name="set-kind"
-            key={`${group.id}-kind-${group.kind}`}
-            defaultValue={group.kind}
-          />
-        </label>
-        <p className="text-ink-muted">
-          {plural((group.memberIds ?? []).length, {
-            one: '# asset',
-            other: '# assets',
-          })}
-        </p>
-        <Button
-          variant="secondary"
-          size="sm"
-          disabled={memberImages.length < 2}
-          onClick={() => onAction('compare-set')}
-        >
-          <Trans>Compare</Trans>
-        </Button>
-        <SetComparisonDialog
-          open={compareGroup === group.id}
-          name={group.name}
-          images={memberImages}
-          coverImageId={group.coverImageId}
-          onClose={() => setCompareGroup(null)}
-          onSetCover={(imageId) =>
-            run(() => GroupService.SetCover(path, group.id, imageId))
-          }
-        />
-        <Button
-          variant="danger"
-          size="sm"
-          onClick={() => onAction('dissolve-set')}
-        >
-          <Trans>Dissolve set</Trans>
-        </Button>
-      </form>
-    )
-  }
+  const unavailableCount = selection.ids.length - images.length
+  const dialogs = (
+    <DetailPanelDialogs
+      promptConfirmation={promptConfirmation}
+      setPromptConfirmation={setPromptConfirmation}
+      scope={scope}
+      unavailableCount={unavailableCount}
+      selection={selection}
+      selectionRevision={selectionRevision}
+      setPromptDraft={setPromptDraft}
+      onSubmitField={onSubmitField}
+      onError={onError}
+      removeRelationshipId={removeRelationshipId}
+      setRemoveRelationshipId={setRemoveRelationshipId}
+      run={run}
+      path={path}
+      canMutateRelationships={canMutateRelationships}
+    />
+  )
   if (selection.edges.length)
     return (
       <div className="loom-detail-panel grid gap-3 overflow-auto p-3 text-xs">
@@ -321,12 +251,14 @@ export const DetailPanel = memo(function DetailPanel({
               <Button
                 variant="danger"
                 size="sm"
+                disabled={!canMutateRelationships()}
                 onClick={() => setRemoveRelationshipId(r.id)}
               >
                 <Trans>Remove relationship</Trans>
               </Button>
             </div>
           ))}
+        {dialogs}
       </div>
     )
   if (!images.length && selection.ids.length > 0 && !imageDataLoaded)
@@ -344,8 +276,8 @@ export const DetailPanel = memo(function DetailPanel({
         </h3>
         <p className="max-w-[200px] text-[11px] leading-relaxed text-ink-subtle">
           <Trans>
-            Select an image, set, or relationship on the Canvas or in Assets to
-            view metadata and links.
+            Select an image or relationship on the Canvas or in Assets to view
+            metadata and links.
           </Trans>
         </p>
         <div className="mt-4 flex flex-col gap-1.5 text-[10px] text-ink-subtle">
@@ -365,7 +297,6 @@ export const DetailPanel = memo(function DetailPanel({
       </div>
     )
   const image = images.length === 1 ? images[0] : null
-  const unavailableCount = selection.ids.length - images.length
   const tagsReady =
     tagResult?.scope === scope && tagLists.length === images.length
   const tagNames = [...new Set(tagLists.flat())].sort((a, b) =>
@@ -385,6 +316,14 @@ export const DetailPanel = memo(function DetailPanel({
   const outgoing = image
     ? (data.relationships ?? []).filter((r) => r.sourceImageId === image.id)
     : []
+  if (graphOrder) {
+    const rank = new Map(graphOrder.map((id, index) => [id, index]))
+    const compare = (a: number, b: number) =>
+      (rank.get(a) ?? Number.MAX_SAFE_INTEGER) -
+        (rank.get(b) ?? Number.MAX_SAFE_INTEGER) || a - b
+    incoming.sort((a, b) => compare(a.sourceImageId, b.sourceImageId))
+    outgoing.sort((a, b) => compare(a.derivedImageId, b.derivedImageId))
+  }
   const relationshipSections = [
     { kind: 'sources', title: t`Sources`, relationships: incoming },
     { kind: 'derived', title: t`Derived`, relationships: outgoing },
@@ -416,7 +355,7 @@ export const DetailPanel = memo(function DetailPanel({
           {selection.surface === 'canvas' && (
             <p className="rounded-md bg-black/[0.035] px-2 py-1.5 text-ink-muted">
               <Trans>
-                Ctrl/Cmd-drag this image onto another image or set to create a
+                Ctrl/Cmd-drag this image onto another image to create a
                 relationship.
               </Trans>
             </p>
@@ -454,21 +393,7 @@ export const DetailPanel = memo(function DetailPanel({
           })}
         </strong>
       )}
-      <DetailPanelDialogs
-        promptConfirmation={promptConfirmation}
-        setPromptConfirmation={setPromptConfirmation}
-        scope={scope}
-        unavailableCount={unavailableCount}
-        selection={selection}
-        selectionRevision={selectionRevision}
-        setPromptDraft={setPromptDraft}
-        onSubmitField={onSubmitField}
-        onError={onError}
-        removeRelationshipId={removeRelationshipId}
-        setRemoveRelationshipId={setRemoveRelationshipId}
-        run={run}
-        path={path}
-      />{' '}
+      {dialogs}
       <DetailPanelRelations
         images={images}
         imageDataLoaded={imageDataLoaded}
@@ -481,6 +406,7 @@ export const DetailPanel = memo(function DetailPanel({
         data={data}
         go={go}
         setRemoveRelationshipId={setRemoveRelationshipId}
+        canMutateRelationships={canMutateRelationships}
       />
     </div>
   )

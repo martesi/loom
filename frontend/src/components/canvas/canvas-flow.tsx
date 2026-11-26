@@ -8,18 +8,28 @@ import {
   type NodeTypes,
   ReactFlow,
   SelectionMode,
+  type Viewport,
 } from '@xyflow/react'
-import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
+import {
+  type Dispatch,
+  type MutableRefObject,
+  type SetStateAction,
+  useRef,
+} from 'react'
 import type { CanvasData } from '../../../bindings/loom/internal/service'
-import { ImageService } from '../../../bindings/loom/internal/service'
 import { applyCanvasNodeSelection } from '../../lib/canvas-selection'
 import { emptySelection, type Selection } from '../../lib/selection'
+import type { CanvasBoardOwner } from './canvas-board-owner'
+import type { CanvasInternalMode } from './canvas-mode-policy'
+import { useCanvasBoardDrag } from './use-canvas-board-drag'
+import type { useCanvasCamera } from './use-canvas-camera'
 
 interface MenuState {
-  kind: 'pane' | 'node' | 'selection'
+  kind: 'pane' | 'node' | 'selection' | 'edge'
   x: number
   y: number
   nodeId?: string
+  keyboard?: boolean
 }
 
 interface RelationshipPreview {
@@ -33,13 +43,15 @@ interface RelationshipPreview {
 interface DropTarget {
   id: string
   valid: boolean
-  kind: 'relationship' | 'set'
+  kind: 'relationship'
   reason?: string
-  members?: number
 }
 
 interface Props {
+  camera: ReturnType<typeof useCanvasCamera>
   repoPath: string
+  owner: CanvasBoardOwner
+  mode: CanvasInternalMode
   data: CanvasData
   selectionRef: MutableRefObject<Selection>
   displayNodes: Node[]
@@ -51,25 +63,22 @@ interface Props {
   inspectorPinned: boolean
   host: MutableRefObject<HTMLDivElement | null>
   modifiedMarquee: MutableRefObject<{ active: boolean; anchor: number[] }>
-  dropTargets: MutableRefObject<Node[]>
   setNodes: Dispatch<SetStateAction<Node[]>>
   setEdges: Dispatch<SetStateAction<Edge[]>>
   setSelection: Dispatch<SetStateAction<Selection>>
   setExpanded: Dispatch<SetStateAction<number | null>>
   closeInspector: (restoreFocus?: boolean) => void
-  groupMembers: (id: number) => number[]
-  expanded: number | null
   handlePreview: (node: Node) => void
   setHoveredNodeId: Dispatch<SetStateAction<string | null>>
   relation: MutableRefObject<{ source: number; x: number; y: number } | null>
   setRelationshipPreview: Dispatch<SetStateAction<RelationshipPreview | null>>
   updateTarget: (target: DropTarget | null) => void
   run: (action: () => Promise<unknown>) => void
-  resolveSetDropTarget: (node: Node) => Node | null
   dragTargetRaf: MutableRefObject<number>
   pendingDragNode: MutableRefObject<Node | null>
   report: (error: unknown) => void
   updateZoomCompensation: (zoom: number) => void
+  updateProjectionViewport: (viewport: Viewport) => void
   zoomRaf: MutableRefObject<number>
   pendingZoom: MutableRefObject<number>
   isCanvasNodeSelected: (node: Node) => boolean
@@ -78,8 +87,11 @@ interface Props {
 }
 
 export function CanvasFlow(props: Props) {
+  const keyboardContextMenu = useRef(false)
   const {
-    repoPath,
+    camera,
+    owner,
+    mode,
     data,
     selectionRef,
     displayNodes,
@@ -91,31 +103,26 @@ export function CanvasFlow(props: Props) {
     inspectorPinned,
     host,
     modifiedMarquee,
-    dropTargets,
     setNodes,
     setEdges,
     setSelection,
     setExpanded,
     closeInspector,
-    groupMembers,
-    expanded,
     handlePreview,
     setHoveredNodeId,
     relation,
     setRelationshipPreview,
     updateTarget,
-    run,
-    resolveSetDropTarget,
-    dragTargetRaf,
-    pendingDragNode,
     report,
     updateZoomCompensation,
+    updateProjectionViewport,
     zoomRaf,
     pendingZoom,
     isCanvasNodeSelected,
     selectedCanvasNodeIds,
     setMenu,
   } = props
+  const drag = useCanvasBoardDrag(owner, data, report, setNodes)
   return (
     <>
       {displayNodes.length === 0 && (
@@ -134,12 +141,7 @@ export function CanvasFlow(props: Props) {
             <div className="mt-4 grid gap-2 text-xs text-ink-muted">
               <p>
                 <Trans>
-                  Ctrl/Cmd-drag image → image or set to create a relationship.
-                </Trans>
-              </p>
-              <p>
-                <Trans>
-                  Select 2+ images, then Create set or press Ctrl/Cmd+G.
+                  Ctrl/Cmd-drag image → image to create a relationship.
                 </Trans>
               </p>
             </div>
@@ -147,6 +149,16 @@ export function CanvasFlow(props: Props) {
         </div>
       )}
       <ReactFlow
+        onKeyDownCapture={(event) => {
+          keyboardContextMenu.current =
+            event.target instanceof SVGElement &&
+            event.target.matches('.react-flow__edge') &&
+            (event.key === 'ContextMenu' ||
+              (event.shiftKey && event.key === 'F10'))
+        }}
+        onPointerDownCapture={() => {
+          keyboardContextMenu.current = false
+        }}
         data-total-image-nodes={
           (data.images ?? []).filter((image) => image.placed && !image.trashed)
             .length
@@ -186,24 +198,18 @@ export function CanvasFlow(props: Props) {
         }}
         panOnDrag={space ? [0, 1, 2] : [1, 2]}
         panActivationKeyCode={null}
-        nodesDraggable={!space}
+        nodesDraggable={!space && mode !== 'view'}
         onNodesChange={(changes) => {
-          if (dropTargets.current.length) {
-            const movedGroups = new Map(
-              changes.flatMap((change) =>
-                change.type === 'position' &&
-                change.position &&
-                change.id.startsWith('set-')
-                  ? [[change.id, change.position] as const]
-                  : []
-              )
+          if (!owner.allows('geometry'))
+            changes = changes.filter(
+              (change) =>
+                change.type !== 'position' &&
+                !(
+                  change.type === 'dimensions' &&
+                  (change.resizing || change.setAttributes)
+                )
             )
-            if (movedGroups.size)
-              dropTargets.current = dropTargets.current.map((group) => {
-                const position = movedGroups.get(group.id)
-                return position ? { ...group, position } : group
-              })
-          }
+          changes = drag.filterChanges(changes)
           setNodes((n) => applyNodeChanges(changes, n))
           const selected = changes.filter((c) => c.type === 'select')
           if (selected.length)
@@ -248,122 +254,36 @@ export function CanvasFlow(props: Props) {
         }}
         onNodeClick={(event, node) => {
           if (!(event.shiftKey || event.ctrlKey || event.metaKey))
-            setSelection(
-              node.type === 'group'
-                ? {
-                    surface: 'canvas',
-                    ids: groupMembers(Number(node.id.slice(4))),
-                    edges: [],
-                    group: Number(node.id.slice(4)),
-                  }
-                : {
-                    surface: 'canvas',
-                    ids: [Number(node.id)],
-                    edges: [],
-                    group: null,
-                  }
-            )
-          if (
-            node.type === 'image' &&
-            data.images?.find((i) => String(i.id) === node.id)?.groupId !==
-              expanded
-          )
-            setExpanded(null)
-        }}
-        onNodeDoubleClick={(_, node) => {
-          if (node.type === 'group') {
-            setExpanded(Number(node.id.slice(4)))
             setSelection({
               surface: 'canvas',
-              ids: groupMembers(Number(node.id.slice(4))),
+              ids: [Number(node.id)],
               edges: [],
               group: null,
             })
-          } else if (node.type === 'image') handlePreview(node)
+        }}
+        onNodeDoubleClick={(_, node) => {
+          if (node.type === 'image') handlePreview(node)
         }}
         onNodeMouseEnter={(_, node) => setHoveredNodeId(node.id)}
         onNodeMouseLeave={() => setHoveredNodeId(null)}
-        onNodeDragStart={() => {
+        onNodeDragStart={(_, node, moved) => {
           relation.current = null
           setRelationshipPreview(null)
           updateTarget(null)
-        }}
-        onNodeDrag={(_, node) => {
-          if (node.type !== 'image') return
-          // Coalesce pointermove bursts to one target resolution per frame.
-          pendingDragNode.current = node
-          if (dragTargetRaf.current) return
-          dragTargetRaf.current = requestAnimationFrame(() => {
-            dragTargetRaf.current = 0
-            const current = pendingDragNode.current
-            pendingDragNode.current = null
-            if (!current) return
-            const group = resolveSetDropTarget(current)
-            updateTarget(
-              group
-                ? {
-                    id: group.id,
-                    valid: true,
-                    kind: 'set',
-                    reason: 'Release to add or move into this set',
-                  }
-                : null
-            )
-          })
+          drag.start(moved.length ? moved : [node])
         }}
         onNodeDragStop={(_, node, moved) => {
-          if (dragTargetRaf.current) {
-            cancelAnimationFrame(dragTargetRaf.current)
-            dragTargetRaf.current = 0
-          }
-          pendingDragNode.current = null
           updateTarget(null)
-          run(async () => {
-            if (node.type === 'group') {
-              const group = (data.groups ?? []).find(
-                (g) => `set-${g.id}` === node.id
-              )
-              if (!group) return
-              const members = (data.images ?? []).filter(
-                (i) => (group.memberIds ?? []).includes(i.id) && i.placed
-              )
-              const dx =
-                  node.position.x - Math.min(...members.map((i) => i.canvasX)),
-                dy =
-                  node.position.y - Math.min(...members.map((i) => i.canvasY))
-              await ImageService.SetPositions(
-                repoPath,
-                members.map((i) => ({
-                  imageId: i.id,
-                  x: i.canvasX + dx,
-                  y: i.canvasY + dy,
-                }))
-              )
-              return
-            }
-            const target = resolveSetDropTarget(node)
-            if (target) {
-              await ImageService.PlaceImages(
-                repoPath,
-                moved.map((n) => Number(n.id)),
-                node.position.x,
-                node.position.y,
-                Number(target.id.slice(4))
-              )
-              return
-            }
-            await ImageService.SetPositions(
-              repoPath,
-              moved
-                .filter((n) => n.type === 'image')
-                .map((n) => ({ imageId: Number(n.id), ...n.position }))
-            )
-          })
+          const gesture = drag.take()
+          if (gesture) drag.finish(gesture, moved.length ? moved : [node])
         }}
-        onMoveEnd={(_, v) => {
-          if (ready) void ImageService.SetViewport(repoPath, v).catch(report)
+        onMoveStart={(event) => camera.startGesture(event)}
+        onMoveEnd={(event, v) => {
+          updateProjectionViewport(v)
+          if (ready) camera.endGesture(event, v)
         }}
-        onMove={(_, viewport) => {
+        onMove={(event, viewport) => {
+          if (ready) camera.moveGesture(event, viewport)
           // Zoom badges read this once per frame at most; onMove fires
           // per input event during pans.
           pendingZoom.current = viewport.zoom
@@ -373,9 +293,33 @@ export function CanvasFlow(props: Props) {
             updateZoomCompensation(pendingZoom.current)
           })
         }}
+        onEdgeClick={(event) => {
+          if (event.currentTarget instanceof SVGElement)
+            event.currentTarget.focus()
+        }}
         onPaneContextMenu={(event) => {
           event.preventDefault()
           setMenu({ kind: 'pane', x: event.clientX, y: event.clientY })
+        }}
+        onEdgeContextMenu={(event, edge) => {
+          event.preventDefault()
+          const edgeId = Number(edge.id)
+          setSelection((current) => ({
+            surface: 'canvas',
+            ids: [],
+            group: null,
+            edges:
+              current.surface === 'canvas' && current.edges.includes(edgeId)
+                ? current.edges
+                : [edgeId],
+          }))
+          setMenu({
+            kind: 'edge',
+            x: event.clientX,
+            y: event.clientY,
+            keyboard: keyboardContextMenu.current,
+          })
+          keyboardContextMenu.current = false
         }}
         onNodeContextMenu={(event, node) => {
           event.preventDefault()
@@ -388,21 +332,12 @@ export function CanvasFlow(props: Props) {
             })
             return
           }
-          setSelection(
-            node.type === 'group'
-              ? {
-                  surface: 'canvas',
-                  ids: groupMembers(Number(node.id.slice(4))),
-                  edges: [],
-                  group: Number(node.id.slice(4)),
-                }
-              : {
-                  surface: 'canvas',
-                  ids: [Number(node.id)],
-                  edges: [],
-                  group: null,
-                }
-          )
+          setSelection({
+            surface: 'canvas',
+            ids: [Number(node.id)],
+            edges: [],
+            group: null,
+          })
           setMenu({
             kind: 'node',
             x: event.clientX,

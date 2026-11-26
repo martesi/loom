@@ -1,8 +1,5 @@
 import { t } from '@lingui/core/macro'
-import {
-  GroupService,
-  ImageService,
-} from '../../bindings/loom/internal/service'
+import { ImageService } from '../../bindings/loom/internal/service'
 import type { CanvasAction } from '../lib/action-catalog'
 import { emptySelection } from '../lib/selection'
 import type { CanvasActionsContext } from './canvas-actions-context'
@@ -21,12 +18,9 @@ export function canvasSelectionActions(
     selectAssets,
     setSelection,
     data,
-    canCreateSet,
-    createSet,
     alignHorizontal,
     alignVertical,
     selectedIds,
-    confirmTrash,
     remove,
     selectedImageRecords,
     repoPath,
@@ -36,7 +30,7 @@ export function canvasSelectionActions(
       id: 'select-all',
       label: t`Select all in active surface`,
       description: t`Select all visible Assets or placed Canvas items`,
-      category: t`Selection and sets`,
+      category: t`Selection`,
       aliases: [t`select everything`],
       shortcut: 'Mod+A',
       context: t`Active surface`,
@@ -47,9 +41,12 @@ export function canvasSelectionActions(
         else
           setSelection({
             surface: 'canvas',
-            ids: (data.images ?? [])
-              .filter((image) => image.placed && !image.trashed)
-              .map((image) => image.id),
+            ids:
+              context.owner.getMode() === 'legacy'
+                ? (data.images ?? [])
+                    .filter((image) => image.placed && !image.trashed)
+                    .map((image) => image.id)
+                : displayNodes.map((node) => Number(node.id)),
             edges: [],
             group: null,
           })
@@ -59,7 +56,7 @@ export function canvasSelectionActions(
       id: 'select-all-canvas',
       label: t`Select all`,
       description: t`Select every placed Canvas item`,
-      category: t`Selection and sets`,
+      category: t`Selection`,
       aliases: [t`select all canvas items`],
       context: t`Canvas`,
       enabled: displayNodes.length > 0,
@@ -67,9 +64,12 @@ export function canvasSelectionActions(
       execute: () =>
         setSelection({
           surface: 'canvas',
-          ids: (data.images ?? [])
-            .filter((image) => image.placed && !image.trashed)
-            .map((image) => image.id),
+          ids:
+            context.owner.getMode() === 'legacy'
+              ? (data.images ?? [])
+                  .filter((image) => image.placed && !image.trashed)
+                  .map((image) => image.id)
+              : displayNodes.map((node) => Number(node.id)),
           edges: [],
           group: null,
         }),
@@ -78,7 +78,7 @@ export function canvasSelectionActions(
       id: 'clear-selection',
       label: t`Clear selection`,
       description: t`Clear the active selection`,
-      category: t`Selection and sets`,
+      category: t`Selection`,
       aliases: [t`deselect`],
       shortcut: 'Escape',
       context: t`Active surface`,
@@ -93,7 +93,7 @@ export function canvasSelectionActions(
       id: 'preview-selection',
       label: t`Preview`,
       description: t`Open the selected Canvas image in the preview viewer`,
-      category: t`Selection and sets`,
+      category: t`Selection`,
       aliases: [t`lightbox`, t`view image`],
       context: t`Canvas selection`,
       enabled: selectedCanvasNodeIds.length === 1,
@@ -107,7 +107,7 @@ export function canvasSelectionActions(
       id: 'locate-selection',
       label: t`Locate in Assets`,
       description: t`Reveal the selected Canvas item in Assets`,
-      category: t`Selection and sets`,
+      category: t`Selection`,
       aliases: [t`find in assets`, t`show in library`],
       context: t`Canvas selection`,
       enabled: selectedCanvasNodeIds.length === 1,
@@ -118,22 +118,10 @@ export function canvasSelectionActions(
       },
     },
     {
-      id: 'create-set',
-      label: t`Create set`,
-      description: t`Create a semantic set from selected Canvas items`,
-      category: t`Selection and sets`,
-      aliases: [t`group`, t`collection`],
-      shortcut: 'Mod+G',
-      context: t`Canvas selection`,
-      enabled: canCreateSet,
-      disabledReason: t`Select at least two ungrouped Canvas items`,
-      execute: createSet,
-    },
-    {
       id: 'align-horizontal',
       label: t`Align horizontally`,
       description: t`Align selected Canvas items along one row`,
-      category: t`Selection and sets`,
+      category: t`Selection`,
       aliases: [t`align row`],
       context: t`Canvas selection`,
       enabled: selectedCanvasNodeIds.length > 1,
@@ -144,30 +132,12 @@ export function canvasSelectionActions(
       id: 'align-vertical',
       label: t`Align vertically`,
       description: t`Align selected Canvas items along one column`,
-      category: t`Selection and sets`,
+      category: t`Selection`,
       aliases: [t`align column`],
       context: t`Canvas selection`,
       enabled: selectedCanvasNodeIds.length > 1,
       disabledReason: t`Select at least two Canvas items`,
       execute: alignVertical,
-    },
-    {
-      id: 'unplace-selection',
-      label: t`Unplace selected Canvas items`,
-      description: t`Remove selected nodes while keeping their assets`,
-      category: t`Clipboard and lifecycle`,
-      aliases: [t`remove from canvas`],
-      shortcut: 'Delete',
-      shortcuts: ['Delete', 'Backspace'],
-      context: t`Canvas selection`,
-      enabled:
-        selection.surface === 'canvas' &&
-        (selectedIds().length > 0 || selection.edges.length > 0),
-      disabledReason: t`Select Canvas items`,
-      execute: () =>
-        selection.surface === 'assets'
-          ? confirmTrash(selectedIds())
-          : remove(false),
     },
     {
       id: 'trash-selection',
@@ -182,18 +152,6 @@ export function canvasSelectionActions(
       disabledReason: t`Select Assets`,
       dangerous: true,
       execute: () => remove(false),
-    },
-    {
-      id: 'trash-canvas-selection',
-      label: t`Trash selection`,
-      description: t`Move selected Canvas assets to repository trash`,
-      category: t`Clipboard and lifecycle`,
-      aliases: [t`trash canvas items`],
-      context: t`Canvas selection`,
-      enabled: selection.surface === 'canvas' && selectedIds().length > 0,
-      disabledReason: t`Select Canvas items`,
-      dangerous: true,
-      execute: () => confirmTrash(selectedIds()),
     },
     {
       id: 'archive-selection',
@@ -226,20 +184,6 @@ export function canvasSelectionActions(
             ImageService.SetArchived(repoPath, id, false)
           )
         ).then(() => reload()),
-    },
-    {
-      id: 'dissolve-set',
-      label: t`Dissolve set`,
-      description: t`Remove the selected set while keeping its assets`,
-      category: t`Selection and sets`,
-      aliases: [t`ungroup`],
-      context: t`Set selection`,
-      enabled: selection.group !== null,
-      disabledReason: t`Select a set`,
-      execute: () =>
-        selection.group
-          ? GroupService.Ungroup(repoPath, selection.group).then(() => reload())
-          : undefined,
     },
   ]
 }

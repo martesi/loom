@@ -2,12 +2,12 @@ import { t } from '@lingui/core/macro'
 import {
   AlignCenterHorizontal,
   AlignCenterVertical,
-  Boxes,
+  ArrowLeftRight,
   Eye,
   Focus,
+  Link2,
   MapPin,
   Maximize2,
-  MinusCircle,
   PanelRight,
   RotateCcw,
   Sparkles,
@@ -24,13 +24,15 @@ export interface CanvasDockProps {
   canFitAll: boolean
   canFitSelection: boolean
   canAutoArrange: boolean
-  canCreateSet: boolean
+  canArrangeSelection?: boolean
+  canMutateGeometry?: boolean
+  canConnect?: boolean
+  onConnect?: (tool: 'derivative' | 'source' | 'reverse') => void
   shortcuts: {
     fitAll: string
     fitSelection: string
     resetZoom: string
     autoArrange: string
-    createSet: string
     inspect: string
     unplace: string
   }
@@ -84,7 +86,10 @@ export const CanvasDock = memo(function CanvasDock({
   canFitAll,
   canFitSelection,
   canAutoArrange,
-  canCreateSet,
+  canArrangeSelection = true,
+  canMutateGeometry = true,
+  canConnect = false,
+  onConnect,
   shortcuts,
   onAction,
 }: CanvasDockProps) {
@@ -124,18 +129,28 @@ export const CanvasDock = memo(function CanvasDock({
             icon={<RotateCcw className="h-3.5 w-3.5" />}
             onClick={() => onAction('reset-zoom')}
           />
-          <DockButton
-            testId="dock-auto-arrange"
-            label={t`Auto-arrange`}
-            shortcut={shortcuts.autoArrange}
-            icon={<Sparkles className="h-3.5 w-3.5" />}
-            disabled={!canAutoArrange}
-            onClick={() => onAction('auto-arrange-active')}
-          />
         </>
       )}
       {mode === 'single' && (
         <>
+          {canConnect && (
+            <>
+              <DockButton
+                testId="dock-connect-derivative"
+                label={t`Connect derivative`}
+                shortcut="D"
+                icon={<Link2 className="h-3.5 w-3.5" />}
+                onClick={() => onConnect?.('derivative')}
+              />
+              <DockButton
+                testId="dock-connect-source"
+                label={t`Connect source`}
+                shortcut="S"
+                icon={<Link2 className="h-3.5 w-3.5" />}
+                onClick={() => onConnect?.('source')}
+              />
+            </>
+          )}
           <DockButton
             testId="dock-preview"
             label={t`Preview`}
@@ -163,55 +178,50 @@ export const CanvasDock = memo(function CanvasDock({
             disabled={!canFitSelection}
             onClick={() => onAction('fit-selection')}
           />
-          <DockButton
-            testId="dock-unplace"
-            label={t`Unplace`}
-            shortcut={shortcuts.unplace}
-            danger
-            icon={<MinusCircle className="h-3.5 w-3.5" />}
-            onClick={() => onAction('unplace-selection')}
-          />
         </>
+      )}
+      {canConnect && (
+        <DockButton
+          testId="dock-reverse-relationship"
+          label={t`Reverse relationship`}
+          shortcut="R"
+          icon={<ArrowLeftRight className="h-3.5 w-3.5" />}
+          onClick={() => onConnect?.('reverse')}
+        />
       )}
       {mode === 'multiple' && (
         <>
           <DockButton
-            testId="dock-create-set"
-            label={t`Create Set (${selectionCount})`}
-            shortcut={shortcuts.createSet}
-            icon={<Boxes className="h-3.5 w-3.5" />}
-            disabled={!canCreateSet}
-            onClick={() => onAction('create-set')}
-          />
-          <DockButton
             testId="dock-align-horizontal"
             label={t`Align Horizontally`}
             icon={<AlignCenterHorizontal className="h-3.5 w-3.5" />}
+            disabled={!canMutateGeometry}
             onClick={() => onAction('align-horizontal')}
           />
           <DockButton
             testId="dock-align-vertical"
             label={t`Align Vertically`}
             icon={<AlignCenterVertical className="h-3.5 w-3.5" />}
+            disabled={!canMutateGeometry}
             onClick={() => onAction('align-vertical')}
           />
           <DockButton
             testId="dock-arrange-selection"
             label={t`Arrange Subgraph`}
-            shortcut={shortcuts.autoArrange}
             icon={<Sparkles className="h-3.5 w-3.5" />}
+            disabled={!canArrangeSelection}
             onClick={() => onAction('auto-arrange-selection')}
-          />
-          <DockButton
-            testId="dock-unplace"
-            label={t`Unplace Selection`}
-            shortcut={shortcuts.unplace}
-            danger
-            icon={<MinusCircle className="h-3.5 w-3.5" />}
-            onClick={() => onAction('unplace-selection')}
           />
         </>
       )}
+      <DockButton
+        testId="dock-auto-arrange"
+        label={t`Auto-arrange`}
+        shortcut={shortcuts.autoArrange}
+        icon={<Sparkles className="h-3.5 w-3.5" />}
+        disabled={!canAutoArrange}
+        onClick={() => onAction('auto-arrange-active')}
+      />
     </div>
   )
 }, areDockPropsEqual)
@@ -223,7 +233,10 @@ function areDockPropsEqual(previous: CanvasDockProps, next: CanvasDockProps) {
     previous.canFitAll === next.canFitAll &&
     previous.canFitSelection === next.canFitSelection &&
     previous.canAutoArrange === next.canAutoArrange &&
-    previous.canCreateSet === next.canCreateSet &&
+    previous.canArrangeSelection === next.canArrangeSelection &&
+    previous.canMutateGeometry === next.canMutateGeometry &&
+    previous.canConnect === next.canConnect &&
+    previous.onConnect === next.onConnect &&
     previous.onAction === next.onAction &&
     Object.keys(previous.shortcuts).every(
       (key) =>

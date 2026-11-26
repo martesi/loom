@@ -2,6 +2,7 @@ import { expect, test } from './test-fixtures'
 import {
   asset,
   assets,
+  enterEdit,
   imageNodes,
   openAssetsShelf,
   openFixtureRepo,
@@ -11,12 +12,16 @@ import {
 test.describe('P0 lifecycle and selection guards', () => {
   test('Assets trash and restore preserve the exact asset; purge requires confirmation', async ({
     page,
-  }) => {
+  }, testInfo) => {
     await openFixtureRepo(page, 'inspector-fixtures')
     const target = asset(page, 'inspect-alpha.png')
     const survivor = asset(page, 'inspect-beta.png')
 
     await target.click()
+    const inspector = page.getByLabel('Inspector')
+    await expect(
+      inspector.getByRole('textbox', { name: 'File path' })
+    ).toHaveValue('inspect-alpha.png')
     await page.keyboard.press('Delete')
     const trashDialog = page.getByRole('dialog', {
       name: 'Move 1 asset to trash?',
@@ -25,6 +30,22 @@ test.describe('P0 lifecycle and selection guards', () => {
     await trashDialog.getByRole('button', { name: 'Move to trash' }).click()
     await expect(trashDialog).toHaveCount(0)
     await expect(target).toHaveCount(0)
+    await expect(
+      inspector.getByRole('heading', { name: 'No Selection' })
+    ).toBeVisible()
+    await expect(
+      inspector.getByText(
+        'Select an image or relationship on the Canvas or in Assets to view metadata and links.'
+      )
+    ).toBeVisible()
+    await expect(
+      inspector.getByRole('textbox', { name: 'File path' })
+    ).toHaveCount(0)
+    await expect(inspector.getByText('inspect-alpha.png')).toHaveCount(0)
+    await testInfo.attach('inspector-after-trash', {
+      body: await page.screenshot(),
+      contentType: 'image/png',
+    })
     await openAssetsShelf(page)
     await page.getByRole('button', { name: /^Filters/ }).click()
     await page
@@ -86,6 +107,7 @@ test.describe('P0 lifecycle and selection guards', () => {
     page,
   }) => {
     await openFixtureRepo(page, 'dock-fixtures', { drawers: 'closed' })
+    await enterEdit(page)
     await placeAssets(page, ['dock-alpha.png', 'dock-beta.png'])
     const nodes = imageNodes(page)
     await nodes.first().click()
@@ -112,6 +134,7 @@ test.describe('P0 lifecycle and selection guards', () => {
     page,
   }) => {
     await openFixtureRepo(page, 'dock-fixtures')
+    await enterEdit(page)
     const first = asset(page, 'dock-alpha.png')
     const second = asset(page, 'dock-beta.png')
     await first.click()

@@ -46,6 +46,7 @@ interface Props {
   previewInfoOpen: boolean
   setPreviewInfoOpen: Dispatch<SetStateAction<boolean>>
   data: CanvasData
+  canvasImageIds?: number[]
   renditionGeneration: number
   onRenditionsInvalidated: () => void
   compressIds: number[] | null
@@ -91,6 +92,7 @@ export function CanvasOverlays({
   previewInfoOpen,
   setPreviewInfoOpen,
   data,
+  canvasImageIds,
   renditionGeneration,
   onRenditionsInvalidated,
   compressIds,
@@ -155,7 +157,12 @@ export function CanvasOverlays({
           }}
           tagsForImage={() => []}
           placementLabel={
-            (data.images ?? []).find((i) => i.id === previewImageId)?.placed
+            (
+              canvasImageIds
+                ? canvasImageIds.includes(previewImageId)
+                : (data.images ?? []).find((i) => i.id === previewImageId)
+                    ?.placed
+            )
               ? 'Canvas'
               : 'Library'
           }

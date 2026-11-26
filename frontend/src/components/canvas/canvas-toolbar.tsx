@@ -4,10 +4,15 @@ import { Command, MoreHorizontal, PanelLeft, PanelRight } from 'lucide-react'
 import type { Dispatch, RefObject, SetStateAction } from 'react'
 import type { RepoInfo } from '../../../bindings/loom/internal/service'
 import { cn } from '../../lib/utils'
+import { Button } from '../ui/button'
 import { Tooltip } from '../ui/tooltip'
+import type { CanvasInternalMode } from './canvas-mode-policy'
 import { RepoSelect } from './repo-select'
 
 interface Props {
+  mode: CanvasInternalMode
+  ready: boolean
+  onModeChange: (mode: 'view' | 'edit') => void
   repo: RepoInfo
   repoOpenRequest: number
   focusCanvas: boolean
@@ -25,6 +30,9 @@ interface Props {
 }
 
 export function CanvasToolbar({
+  mode,
+  ready,
+  onModeChange,
   repo,
   repoOpenRequest,
   focusCanvas,
@@ -57,6 +65,31 @@ export function CanvasToolbar({
           <Trans>Canvas</Trans>
         </h1>
         <RepoSelect repo={repo} openRequest={repoOpenRequest} />
+        <fieldset
+          aria-label={t`Canvas mode`}
+          className="flex gap-1 border-0 p-0"
+        >
+          <Button
+            data-testid="canvas-mode-view"
+            size="sm"
+            variant={mode === 'view' ? 'primary' : 'ghost'}
+            aria-pressed={mode === 'view'}
+            disabled={!ready}
+            onClick={() => onModeChange('view')}
+          >
+            <Trans>View</Trans>
+          </Button>
+          <Button
+            data-testid="canvas-mode-edit"
+            size="sm"
+            variant={mode === 'edit' ? 'primary' : 'ghost'}
+            aria-pressed={mode === 'edit'}
+            disabled={!ready}
+            onClick={() => onModeChange('edit')}
+          >
+            <Trans>Edit</Trans>
+          </Button>
+        </fieldset>
         <Tooltip
           label={t`Show commands`}
           shortcut={actionShortcut('show-commands')}

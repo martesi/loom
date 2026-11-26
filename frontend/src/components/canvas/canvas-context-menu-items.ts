@@ -4,7 +4,7 @@ import type { CanvasAction } from '../../lib/action-catalog'
 import type { MenuAction } from '../menu'
 
 export interface CanvasMenuState {
-  kind: 'pane' | 'node' | 'selection'
+  kind: 'pane' | 'node' | 'selection' | 'edge'
   x: number
   y: number
   nodeId?: string
@@ -44,40 +44,31 @@ export function createCanvasMenuItems({
 
   if (!menu) return []
   const showCommands = menuAction('show-commands')
+  if (menu.kind === 'edge')
+    return [
+      menuAction('reverse-relationship'),
+      menuAction('remove-selected-relationships'),
+      showCommands,
+    ]
   if (menu.kind === 'pane')
     return [
       menuAction('select-all-canvas'),
-      menuAction('auto-arrange-canvas', 'auto-arrange'),
+      menuAction('auto-arrange-active', 'auto-arrange'),
       showCommands,
     ]
   if (menu.kind === 'selection')
-    return [
-      menuAction('create-set'),
-      menuAction('auto-arrange-selection'),
-      menuAction(
-        'unplace-selection',
-        'remove-from-canvas',
-        t`Remove from canvas`,
-        true
-      ),
-      menuAction('trash-canvas-selection', 'trash', t`Trash selection`),
-      showCommands,
-    ]
+    return [menuAction('auto-arrange-selection'), showCommands]
   const nodeId = menu.nodeId
   if (!nodeId) return [showCommands]
-  if (nodeId.startsWith('set-'))
-    return [menuAction('dissolve-set'), showCommands]
   const image = (data.images ?? []).find(
     (candidate) => candidate.id === Number(nodeId)
   )
   if (!image) return [showCommands]
   return [
     menuAction('find-in-assets', 'find-assets', t`Find in Assets`),
-    menuAction('unplace-selection', 'remove', t`Remove from canvas`, true),
     image.archived
       ? menuAction('unarchive-selection', 'archive')
       : menuAction('archive-selection', 'archive'),
-    menuAction('trash-canvas-selection', 'trash', t`Trash`),
     showCommands,
   ]
 }

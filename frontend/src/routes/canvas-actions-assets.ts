@@ -19,15 +19,17 @@ export function canvasAssetActions(
     go,
     requestInspectorCommand,
     setCompressIds,
-    setExpanded,
-    expanded,
     canNavigateRelationship,
     relationshipActions,
     canRemoveRelationship,
     paste,
     undoActions,
     repoPath,
+    data,
   } = context
+  const selectedRelationships = (data.relationships ?? []).filter(
+    (relationship) => selection.edges.includes(relationship.id)
+  )
   return [
     {
       id: 'find-in-assets',
@@ -122,72 +124,6 @@ export function canvasAssetActions(
       execute: () => setCompressIds(selectedIds()),
     },
     {
-      id: 'compare-set',
-      label: t`Compare set`,
-      description: t`Open the selected set comparison`,
-      category: t`Selection and sets`,
-      aliases: [t`compare images`],
-      context: t`Set selection`,
-      enabled: selection.group !== null && selectedIds().length > 1,
-      disabledReason: t`Select a set with at least two assets`,
-      execute: () => requestInspectorCommand('compare-set'),
-    },
-    {
-      id: 'set-cover-image',
-      label: t`Set cover image`,
-      description: t`Choose a cover image in the set comparison`,
-      category: t`Selection and sets`,
-      aliases: [t`change set thumbnail`, t`cover`],
-      context: t`Set selection`,
-      enabled: selection.group !== null && selectedIds().length > 1,
-      disabledReason: t`Select a set with at least two assets`,
-      execute: () => requestInspectorCommand('compare-set'),
-    },
-    {
-      id: 'edit-set-name',
-      label: t`Edit set name`,
-      description: t`Focus the selected set name field`,
-      category: t`Selection and sets`,
-      aliases: [t`rename set`],
-      context: t`Set selection`,
-      enabled: selection.group !== null,
-      disabledReason: t`Select a set`,
-      execute: () => requestInspectorCommand('edit-set-name'),
-    },
-    {
-      id: 'edit-set-kind',
-      label: t`Edit set kind`,
-      description: t`Focus the selected set kind field`,
-      category: t`Selection and sets`,
-      aliases: [t`change set type`],
-      context: t`Set selection`,
-      enabled: selection.group !== null,
-      disabledReason: t`Select a set`,
-      execute: () => requestInspectorCommand('edit-set-kind'),
-    },
-    {
-      id: 'expand-selected-set',
-      label: t`Expand selected set`,
-      description: t`Show the selected set members at their stored positions`,
-      category: t`Selection and sets`,
-      aliases: [t`open group`],
-      context: t`Set selection`,
-      enabled: selection.group !== null,
-      disabledReason: t`Select a set`,
-      execute: () => setExpanded(selection.group),
-    },
-    {
-      id: 'collapse-active-set',
-      label: t`Collapse active set`,
-      description: t`Return the expanded set to its compact thumbnail stack`,
-      category: t`Selection and sets`,
-      aliases: [t`close group`],
-      context: t`Canvas`,
-      enabled: expanded !== null,
-      disabledReason: t`There is no expanded set`,
-      execute: () => setExpanded(null),
-    },
-    {
       id: 'go-to-source',
       label: t`Go to source`,
       description: t`Navigate to the source asset of the selected relationship`,
@@ -213,6 +149,39 @@ export function canvasAssetActions(
       execute: () => {
         const relationship = relationshipActions[0]
         if (relationship) return go(relationship.derivedImageId)
+      },
+    },
+    {
+      id: 'remove-selected-relationships',
+      label: t`Remove selected relationships`,
+      description: t`Unlink the selected Canvas relationships`,
+      category: t`Relationships`,
+      aliases: [t`unlink`],
+      shortcut: 'Delete',
+      shortcuts: ['Delete', 'Backspace'],
+      context: t`Canvas relationships`,
+      enabled:
+        selection.surface === 'canvas' && selectedRelationships.length > 0,
+      disabledReason: t`Select Canvas relationships`,
+      dangerous: true,
+      execute: () => remove(false),
+    },
+    {
+      id: 'reverse-relationship',
+      label: t`Reverse relationship`,
+      description: t`Reverse the selected relationship`,
+      category: t`Relationships`,
+      aliases: [t`reverse edge`],
+      context: t`One Canvas relationship`,
+      enabled:
+        selection.surface === 'canvas' && selectedRelationships.length === 1,
+      disabledReason: t`Select one Canvas relationship`,
+      execute: () => {
+        const relationship = selectedRelationships[0]
+        if (selectedRelationships.length !== 1 || !relationship) return
+        return ImageService.ReverseRelationship(repoPath, relationship.id).then(
+          () => reload()
+        )
       },
     },
     {
@@ -243,7 +212,10 @@ export function canvasAssetActions(
       shortcut: 'Shift+Delete',
       shortcuts: ['Shift+Delete', 'Shift+Backspace'],
       context: t`Active selection`,
-      enabled: selectedIds().length > 0,
+      enabled:
+        selectedIds().length > 0 &&
+        (context.owner.getMode() === 'legacy' ||
+          selection.surface === 'assets'),
       disabledReason: t`Select assets to purge`,
       dangerous: true,
       execute: () => remove(true),

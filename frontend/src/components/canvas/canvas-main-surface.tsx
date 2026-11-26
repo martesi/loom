@@ -1,5 +1,12 @@
 import { t } from '@lingui/core/macro'
-import type { Edge, Node, NodeTypes, ReactFlowInstance } from '@xyflow/react'
+import { Trans } from '@lingui/react/macro'
+import type {
+  Edge,
+  Node,
+  NodeTypes,
+  ReactFlowInstance,
+  Viewport,
+} from '@xyflow/react'
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import type { CanvasData } from '../../../bindings/loom/internal/service'
 import { ImageService } from '../../../bindings/loom/internal/service'
@@ -8,15 +15,20 @@ import { parseAssetDragPayload } from '../../lib/asset-drag-payload'
 import { filesToMedia, type readMedia } from '../../lib/clipboard'
 import type { Selection } from '../../lib/selection'
 import { type MenuAction, PositionedMenu } from '../menu'
+import type { CanvasBoardOwner } from './canvas-board-owner'
 import { CanvasDock } from './canvas-dock'
 import { CanvasFlow } from './canvas-flow'
+import type { CanvasInternalMode } from './canvas-mode-policy'
 import { PerfHud } from './perf-hud'
+import type { useCanvasCamera } from './use-canvas-camera'
+import { useCanvasConnectMode } from './use-canvas-connect-mode'
 
 interface MenuState {
-  kind: 'pane' | 'node' | 'selection'
+  kind: 'pane' | 'node' | 'selection' | 'edge'
   x: number
   y: number
   nodeId?: string
+  keyboard?: boolean
 }
 
 interface RelationshipPreview {
@@ -30,13 +42,15 @@ interface RelationshipPreview {
 interface DropTarget {
   id: string
   valid: boolean
-  kind: 'relationship' | 'set'
+  kind: 'relationship'
   reason?: string
-  members?: number
 }
 
 interface Props {
+  camera: ReturnType<typeof useCanvasCamera>
   repoPath: string
+  owner: CanvasBoardOwner
+  mode: CanvasInternalMode
   flow: ReactFlowInstance
   data: CanvasData
   setNodes: Dispatch<SetStateAction<Node[]>>
@@ -44,7 +58,6 @@ interface Props {
   setSelection: Dispatch<SetStateAction<Selection>>
   selectionRef: MutableRefObject<Selection>
   setExpanded: Dispatch<SetStateAction<number | null>>
-  expanded: number | null
   space: boolean
   ready: boolean
   inspectorOpen: boolean
@@ -53,7 +66,6 @@ interface Props {
   closeInspector: (restoreFocus?: boolean) => void
   host: MutableRefObject<HTMLDivElement | null>
   modifiedMarquee: MutableRefObject<{ active: boolean; anchor: number[] }>
-  dropTargets: MutableRefObject<Node[]>
   nodeTypes: NodeTypes
   displayNodes: Node[]
   displayEdges: Edge[]
@@ -69,7 +81,6 @@ interface Props {
     source: number,
     id: string
   ) => { valid: boolean; reason?: string }
-  groupMembers: (id: number) => number[]
   relation: MutableRefObject<{ source: number; x: number; y: number } | null>
   relationshipPreview: RelationshipPreview | null
   setRelationshipPreview: Dispatch<SetStateAction<RelationshipPreview | null>>
@@ -80,7 +91,6 @@ interface Props {
     media?: Awaited<ReturnType<typeof readMedia>>,
     surface?: Selection['surface']
   ) => Promise<void>
-  resolveSetDropTarget: (node: Node) => Node | null
   dragTargetRaf: MutableRefObject<number>
   pendingDragNode: MutableRefObject<Node | null>
   reloadForData: () => Promise<CanvasData | null>
@@ -89,6 +99,7 @@ interface Props {
   assetsPinned: boolean
   closeAssets: (restoreFocus?: boolean) => void
   updateZoomCompensation: (zoom: number) => void
+  updateProjectionViewport: (viewport: Viewport) => void
   zoomRaf: MutableRefObject<number>
   pendingZoom: MutableRefObject<number>
   menu: MenuState | null
@@ -96,7 +107,6 @@ interface Props {
   setMenu: Dispatch<SetStateAction<MenuState | null>>
   setHoveredNodeId: Dispatch<SetStateAction<string | null>>
   handlePreview: (node: Node) => void
-  canCreateSet: boolean
   actionById: ReadonlyMap<string, CanvasAction>
   runDockAction: (id: string) => void
   perfHud: boolean
@@ -105,7 +115,10 @@ interface Props {
 
 export function CanvasMainSurface(props: Props) {
   const {
+    camera,
     repoPath,
+    owner,
+    mode,
     flow,
     data,
     setNodes,
@@ -113,7 +126,6 @@ export function CanvasMainSurface(props: Props) {
     setSelection,
     selectionRef,
     setExpanded,
-    expanded,
     space,
     ready,
     inspectorOpen,
@@ -122,7 +134,6 @@ export function CanvasMainSurface(props: Props) {
     closeInspector,
     host,
     modifiedMarquee,
-    dropTargets,
     nodeTypes,
     displayNodes,
     displayEdges,
@@ -131,7 +142,6 @@ export function CanvasMainSurface(props: Props) {
     targetAt,
     isRelationshipDrag,
     validTarget,
-    groupMembers,
     relation,
     relationshipPreview,
     setRelationshipPreview,
@@ -139,7 +149,6 @@ export function CanvasMainSurface(props: Props) {
     target,
     run,
     paste,
-    resolveSetDropTarget,
     dragTargetRaf,
     pendingDragNode,
     reloadForData,
@@ -148,6 +157,7 @@ export function CanvasMainSurface(props: Props) {
     assetsPinned,
     closeAssets,
     updateZoomCompensation,
+    updateProjectionViewport,
     zoomRaf,
     pendingZoom,
     menu,
@@ -155,20 +165,39 @@ export function CanvasMainSurface(props: Props) {
     setMenu,
     setHoveredNodeId,
     handlePreview,
-    canCreateSet,
     actionById,
     runDockAction,
     perfHud,
     setPerfHud,
   } = props
+  const connect = useCanvasConnectMode({
+    mode,
+    owner,
+    repoPath,
+    selectionRef,
+    run,
+    validTarget,
+    setError,
+  })
   return (
     <main
       ref={host}
+      data-canvas-surface
       aria-label={t`Canvas`}
       tabIndex={-1}
       className="absolute inset-0 min-w-0 outline-none"
       onClickCapture={(event) => {
         if (
+          connect.active &&
+          event.target instanceof Element &&
+          connect.complete(event.target)
+        ) {
+          event.preventDefault()
+          event.stopPropagation()
+          return
+        }
+        if (
+          owner.allows('relationship') &&
           (event.ctrlKey || event.metaKey) &&
           targetAt(event.clientX, event.clientY)
         ) {
@@ -177,8 +206,17 @@ export function CanvasMainSurface(props: Props) {
         }
       }}
       onPointerDownCapture={(event) => {
+        if (
+          connect.active &&
+          event.target instanceof Element &&
+          event.target.closest('.react-flow__node,.react-flow__edge')
+        ) {
+          event.stopPropagation()
+          return
+        }
+        if (!owner.allows('relationship')) return
         const id = targetAt(event.clientX, event.clientY)
-        if ((event.ctrlKey || event.metaKey) && id && !id.startsWith('set-')) {
+        if ((event.ctrlKey || event.metaKey) && id) {
           relation.current = {
             source: Number(id),
             x: event.clientX,
@@ -186,6 +224,17 @@ export function CanvasMainSurface(props: Props) {
           }
           event.stopPropagation()
           event.preventDefault()
+        }
+      }}
+      onKeyDownCapture={(event) => {
+        if (
+          event.key === 'Enter' &&
+          connect.active &&
+          event.target instanceof Element &&
+          connect.complete(event.target)
+        ) {
+          event.preventDefault()
+          event.stopPropagation()
         }
       }}
       onPointerCancel={() => {
@@ -218,17 +267,7 @@ export function CanvasMainSurface(props: Props) {
                 id,
                 valid: result?.valid ?? false,
                 reason: result?.reason,
-                members: id.startsWith('set-')
-                  ? groupMembers(Number(id.slice(4))).filter(
-                      (memberId) =>
-                        !(data.relationships ?? []).some(
-                          (relationship) =>
-                            relationship.sourceImageId === drag.source &&
-                            relationship.derivedImageId === memberId
-                        )
-                    ).length
-                  : undefined,
-                kind: id.startsWith('set-') ? 'set' : 'relationship',
+                kind: 'relationship',
               }
             : null
         )
@@ -241,6 +280,7 @@ export function CanvasMainSurface(props: Props) {
         relation.current = null
         setRelationshipPreview(null)
         updateTarget(null)
+        if (!owner.allows('relationship')) return
         const id = targetAt(event.clientX, event.clientY)
         if (!isRelationshipDrag(drag, event.clientX, event.clientY)) {
           setSelection((current) => ({
@@ -264,17 +304,13 @@ export function CanvasMainSurface(props: Props) {
         })
         if (id && validTarget(drag.source, id).valid)
           run(() =>
-            id.startsWith('set-')
-              ? ImageService.LinkSourceToGroup(
-                  repoPath,
-                  drag.source,
-                  Number(id.slice(4))
-                )
-              : ImageService.LinkSource(repoPath, drag.source, Number(id))
+            owner.allows('relationship')
+              ? ImageService.LinkSource(repoPath, drag.source, Number(id))
+              : Promise.resolve()
           )
         else if (id) {
           const result = validTarget(drag.source, id)
-          setError(result.reason ?? 'Cannot create this relationship')
+          setError(result.reason ?? t`Cannot create this relationship`)
         }
       }}
       onDragOver={(e) => {
@@ -285,6 +321,7 @@ export function CanvasMainSurface(props: Props) {
         e.preventDefault()
         const raw = e.dataTransfer.getData('application/x-loom-assets')
         if (raw) {
+          if (!owner.allows('canvas-drop')) return
           const payload = parseAssetDragPayload(raw)
           if (!payload) {
             report(new Error('Invalid asset drag'))
@@ -297,11 +334,9 @@ export function CanvasMainSurface(props: Props) {
           {
             const uniqueIds = [...new Set(payload.ids)]
             const p = flow.screenToFlowPosition({
-                x: e.clientX,
-                y: e.clientY,
-              }),
-              target = targetAt(e.clientX, e.clientY),
-              group = target?.startsWith('set-') ? Number(target.slice(4)) : 0
+              x: e.clientX,
+              y: e.clientY,
+            })
             void (async () => {
               const images = await Promise.all(
                 uniqueIds.map((id) => ImageService.GetImage(repoPath, id))
@@ -312,36 +347,22 @@ export function CanvasMainSurface(props: Props) {
                 throw new Error(
                   'Missing or trashed assets cannot be placed. Refine the selection and try again.'
                 )
-              await ImageService.PlaceImages(
-                repoPath,
-                uniqueIds,
-                p.x,
-                p.y,
-                group
-              )
-              const refreshed = await reloadForData()
+              const placed = await owner.execute(async () => {
+                if (!owner.allows('canvas-drop')) return false
+                await ImageService.PlaceImages(repoPath, uniqueIds, p.x, p.y, 0)
+                await reloadForData()
+                return true
+              })
+              if (!placed) return
               if (!assetsPinned) {
                 closeAssets(false)
                 requestAnimationFrame(() => host.current?.focus())
               }
-              const collapsedSets = group
-                ? []
-                : (refreshed?.groups ?? data.groups ?? []).filter(
-                    (candidate) =>
-                      candidate.id !== expanded &&
-                      (candidate.memberIds ?? []).some((id) =>
-                        uniqueIds.includes(id)
-                      )
-                  )
-              const collapsedSet = collapsedSets[0]
-              const hiddenIds = new Set(
-                collapsedSets.flatMap((candidate) => candidate.memberIds ?? [])
-              )
               setSelection({
                 surface: 'canvas',
-                ids: group ? [] : uniqueIds.filter((id) => !hiddenIds.has(id)),
+                ids: uniqueIds,
                 edges: [],
-                group: group || collapsedSet?.id || null,
+                group: null,
               })
             })().catch(report)
           }
@@ -351,8 +372,34 @@ export function CanvasMainSurface(props: Props) {
             .catch(report)
       }}
     >
+      {connect.active && (
+        <div
+          role="status"
+          data-testid="connection-tool-status"
+          className="absolute left-1/2 top-14 z-20 flex -translate-x-1/2 items-center gap-3 rounded-md border border-border bg-card p-2 text-xs text-ink shadow-lg"
+        >
+          <span>
+            {connect.active.tool === 'reverse'
+              ? t`Click a relationship to reverse it`
+              : connect.active.tool === 'source'
+                ? t`Connect source ← selected image`
+                : t`Connect source → derivative`}
+          </span>
+          <button
+            type="button"
+            onClick={connect.exit}
+            className="rounded px-2 py-1 hover:bg-accent"
+          >
+            <Trans>Exit · Esc</Trans>
+          </button>
+        </div>
+      )}
       <CanvasFlow
+        camera={camera}
+        mode={mode}
+        updateProjectionViewport={updateProjectionViewport}
         repoPath={repoPath}
+        owner={owner}
         data={data}
         selectionRef={selectionRef}
         displayNodes={displayNodes}
@@ -364,21 +411,17 @@ export function CanvasMainSurface(props: Props) {
         inspectorPinned={inspectorPinned}
         host={host}
         modifiedMarquee={modifiedMarquee}
-        dropTargets={dropTargets}
         setNodes={setNodes}
         setEdges={setEdges}
         setSelection={setSelection}
         setExpanded={setExpanded}
         closeInspector={closeInspector}
-        groupMembers={groupMembers}
-        expanded={expanded}
         handlePreview={handlePreview}
         setHoveredNodeId={setHoveredNodeId}
         relation={relation}
         setRelationshipPreview={setRelationshipPreview}
         updateTarget={updateTarget}
         run={run}
-        resolveSetDropTarget={resolveSetDropTarget}
         dragTargetRaf={dragTargetRaf}
         pendingDragNode={pendingDragNode}
         report={report}
@@ -420,14 +463,9 @@ export function CanvasMainSurface(props: Props) {
           role="status"
           className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 rounded-md border border-black/10 bg-card/95 px-3 py-1.5 text-xs font-medium text-ink shadow-sm"
         >
-          {target.kind === 'set'
-            ? (target.reason ??
-              (target.members === 0
-                ? 'Already related'
-                : `Release to create ${target.members ?? 0} one-time relationships`))
-            : target.valid
-              ? 'Release to create relationship'
-              : (target.reason ?? 'Cannot create this relationship')}
+          {target.valid
+            ? t`Release to create relationship`
+            : (target.reason ?? t`Cannot create this relationship`)}
         </div>
       )}
       {menu && menuItems.length > 0 && (
@@ -435,6 +473,8 @@ export function CanvasMainSurface(props: Props) {
           x={menu.x}
           y={menu.y}
           items={menuItems}
+          restoreFocusOnSelect={menu.kind !== 'edge' || !!menu.keyboard}
+          restoreFocusOnPointerSelect={menu.kind !== 'edge'}
           onClose={() => setMenu(null)}
         />
       )}
@@ -451,15 +491,22 @@ export function CanvasMainSurface(props: Props) {
           canFitAll={displayNodes.length > 0}
           canFitSelection={selectedCanvasNodeIds.length > 0}
           canAutoArrange={
-            displayNodes.length >= 2 || selectedCanvasNodeIds.length > 1
+            mode !== 'view' &&
+            (mode === 'edit'
+              ? displayNodes.length > 0
+              : displayNodes.length >= 2 || selectedCanvasNodeIds.length > 1)
           }
-          canCreateSet={canCreateSet}
+          canMutateGeometry={mode !== 'view'}
+          canConnect={mode === 'edit'}
+          onConnect={connect.start}
+          canArrangeSelection={
+            actionById.get('auto-arrange-selection')?.enabled ?? false
+          }
           shortcuts={{
             fitAll: actionById.get('fit-all')?.shortcut ?? '',
             fitSelection: actionById.get('fit-selection')?.shortcut ?? '',
             resetZoom: actionById.get('reset-zoom')?.shortcut ?? '',
             autoArrange: actionById.get('auto-arrange-active')?.shortcut ?? '',
-            createSet: actionById.get('create-set')?.shortcut ?? '',
             inspect: actionById.get('toggle-inspector')?.shortcut ?? '',
             unplace: actionById.get('unplace-selection')?.shortcut ?? '',
           }}

@@ -1,7 +1,9 @@
+import { t } from '@lingui/core/macro'
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { LibraryService } from '../../../bindings/loom/internal/service'
 import type { CanvasAction } from '../../lib/action-catalog'
+import { sameSelection } from '../../lib/selection'
 import {
   readShortcutOverrides,
   shortcutOverridesEvent,
@@ -11,6 +13,10 @@ import type { CanvasActionsContext } from '../../routes/canvas-actions-context'
 import { canvasSelectionActions } from '../../routes/canvas-actions-selection'
 import { canvasViewActions } from '../../routes/canvas-actions-view'
 import { canvasWorkspaceActions } from '../../routes/canvas-actions-workspace'
+import {
+  allowsCanvasAction,
+  canvasActionCapability,
+} from './canvas-mode-policy'
 import type { PaletteAsset } from './command-palette'
 
 interface Props {
@@ -47,6 +53,11 @@ export function useCanvasActionSystem({
   const [shortcutOverrides, setShortcutOverrides] = useState(
     readShortcutOverrides
   )
+  const paletteIntent = useRef({ selection: context.selection, revision: 0 })
+  if (!sameSelection(paletteIntent.current.selection, context.selection)) {
+    paletteIntent.current.selection = context.selection
+    paletteIntent.current.revision++
+  }
   useEffect(() => {
     const sync = () => setShortcutOverrides(readShortcutOverrides())
     window.addEventListener(shortcutOverridesEvent, sync)
@@ -58,11 +69,30 @@ export function useCanvasActionSystem({
     ...canvasSelectionActions(context),
     ...canvasAssetActions(context),
   ]
-  const actionCatalog: CanvasAction[] = baseActionCatalog.map((action) =>
-    shortcutOverrides[action.id]
-      ? { ...action, shortcut: shortcutOverrides[action.id] }
-      : action
-  )
+  const actionCatalog: CanvasAction[] = baseActionCatalog.map((action) => {
+    const allowed = allowsCanvasAction(context.owner.getMode(), action.id)
+    return {
+      ...action,
+      shortcut: shortcutOverrides[action.id] ?? action.shortcut,
+      enabled: action.enabled && allowed,
+      disabledReason: allowed
+        ? action.disabledReason
+        : context.owner.getMode() === 'edit'
+          ? t`Not available in Edit mode`
+          : t`Available in Edit mode`,
+      execute: () => {
+        const capability = canvasActionCapability(action.id)
+        if (!allowsCanvasAction(context.owner.getMode(), action.id)) return
+        // Other actions may own their own queue, such as paste and history.
+        if (capability !== 'geometry' && capability !== 'relationship')
+          return action.execute()
+        return context.owner.execute(async () => {
+          if (allowsCanvasAction(context.owner.getMode(), action.id))
+            await action.execute()
+        })
+      },
+    }
+  })
   const defaultShortcuts = Object.fromEntries(
     baseActionCatalog.flatMap((action) =>
       action.shortcut ? [[action.id, action.shortcut] as const] : []
@@ -73,8 +103,15 @@ export function useCanvasActionSystem({
   actionRef.current = actionCatalog
 
   function executeAction(action: CanvasAction) {
-    if (!action.enabled) return Promise.resolve()
-    return Promise.resolve(action.execute()).catch(report)
+    const currentAction = actionRef.current.find(
+      (item) => item.id === action.id
+    )
+    if (
+      !currentAction?.enabled ||
+      !allowsCanvasAction(context.owner.getMode(), action.id)
+    )
+      return Promise.resolve()
+    return Promise.resolve(currentAction.execute()).catch(report)
   }
   function executeActionById(id: string) {
     const action = actionById.get(id)
@@ -129,6 +166,16 @@ export function useCanvasActionSystem({
   function runPaletteAction(action: CanvasAction) {
     const currentAction = actionById.get(action.id)
     if (!currentAction?.enabled) return
+    const changesCamera = [
+      'fit-all',
+      'fit-selection',
+      'reset-zoom',
+      'zoom-in',
+      'zoom-out',
+      'locate-selection',
+    ].includes(currentAction.id)
+    const camera = changesCamera ? context.cameraIntent : undefined
+    const cameraRevision = camera?.reserve()
     // The route owns focus after palette commands; do not race dialog restoration.
     setPaletteOpen(false)
     if (
@@ -136,7 +183,7 @@ export function useCanvasActionSystem({
       currentAction.id === 'open-appearance-settings' ||
       currentAction.id === 'show-shortcuts'
     ) {
-      requestAnimationFrame(() => void currentAction.execute())
+      requestAnimationFrame(() => void executeAction(currentAction))
       return
     }
     const isLifecycleAction =
@@ -145,7 +192,13 @@ export function useCanvasActionSystem({
       currentAction.id === 'purge-selection'
     if (isLifecycleAction) pendingRecentAction.current = currentAction.id
     requestAnimationFrame(() => {
-      void Promise.resolve(currentAction.execute()).then(() => {
+      if (
+        camera &&
+        (camera.version() !== cameraRevision ||
+          context.owner.isActive?.() === false)
+      )
+        return
+      void executeAction(currentAction).then(() => {
         if (!isLifecycleAction)
           setRecentActionIds((ids) =>
             [
@@ -190,8 +243,20 @@ export function useCanvasActionSystem({
   }
 
   function choosePaletteAsset(asset: PaletteAsset) {
+    const revision = ++paletteIntent.current.revision
+    const camera = context.cameraIntent
+    const cameraRevision = camera?.reserve()
     setPaletteOpen(false)
-    requestAnimationFrame(() => void context.go(asset.id).catch(report))
+    requestAnimationFrame(() => {
+      if (paletteIntent.current.revision !== revision) return
+      if (
+        camera &&
+        (camera.version() !== cameraRevision ||
+          context.owner.isActive?.() === false)
+      )
+        return
+      void context.go(asset.id).catch(report)
+    })
   }
 
   // Retry changes this request token to rerun the repository asset query.

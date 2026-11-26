@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"strconv"
 )
 
@@ -15,6 +16,30 @@ type Operation struct {
 	Forward   string
 	Inverse   string
 	CreatedAt string
+}
+
+// MarkHistoryIfCurrent checks the cursor and entry fields before moving it.
+// Identical replacement entries are indistinguishable. This check cannot roll
+// back side effects already performed by the replay, including file changes.
+func (r *Repo) MarkHistoryIfCurrent(op *Operation, redo bool) error {
+	expected, next := op.Seq, op.Seq-1
+	if redo {
+		expected, next = op.Seq-1, op.Seq
+	}
+	res, err := r.DB.Exec(`UPDATE settings SET value = ? WHERE scope = 'repo' AND key = 'undo_cursor' AND CAST(value AS INTEGER) = ?
+		AND EXISTS (SELECT 1 FROM operation_log WHERE seq = ? AND kind = ? AND forward = ? AND inverse = ? AND created_at = ?)`,
+		strconv.FormatInt(next, 10), expected, op.Seq, op.Kind, op.Forward, op.Inverse, op.CreatedAt)
+	if err != nil {
+		return err
+	}
+	count, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return fmt.Errorf("history changed during legacy replay; reload repository state")
+	}
+	return nil
 }
 
 // UndoCursor returns the seq of the most recently applied-or-redone
@@ -73,6 +98,10 @@ func (r *Repo) RecordOperationInTx(tx *sql.Tx, kind, forward, inverse string) er
 		return err
 	}
 	capUndoSessionBoundaryValue(r.Path, cursor)
+	// A new branch discards any archived redo tail before reusing its seqs.
+	if _, err := tx.Exec(`UPDATE settings SET value = ? WHERE scope = 'repo' AND key = 'undo_history_floor' AND CAST(value AS INTEGER) > ?`, strconv.FormatInt(cursor, 10), cursor); err != nil {
+		return err
+	}
 	newSeq := cursor + 1
 
 	if _, err := tx.Exec(`DELETE FROM operation_log WHERE seq > ?`, cursor); err != nil {
@@ -114,6 +143,52 @@ func undoCursorTx(tx *sql.Tx) (int64, error) {
 	return n, nil
 }
 
+// PeekHistoryInTx selects the current replay target from the caller's writer
+// transaction. PrepareOperationLog must be called before beginning the tx.
+func (r *Repo) PeekHistoryInTx(tx *sql.Tx, redo bool) (*Operation, error) {
+	undoSessionBoundariesMu.Lock()
+	boundary, prepared := undoSessionBoundaries[r.Path]
+	undoSessionBoundariesMu.Unlock()
+	if !prepared {
+		return nil, fmt.Errorf("prepare operation log before selecting history in a transaction")
+	}
+	cursor, err := undoCursorTx(tx)
+	if err != nil {
+		return nil, err
+	}
+	var floor string
+	err = tx.QueryRow(`SELECT value FROM settings WHERE scope = 'repo' AND key = 'undo_history_floor'`).Scan(&floor)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+	if err == nil {
+		value, err := strconv.ParseInt(floor, 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		if value > boundary {
+			boundary = value
+		}
+	}
+	seq := cursor
+	if redo {
+		seq++
+	}
+	if seq <= boundary {
+		return nil, nil
+	}
+	var op Operation
+	err = tx.QueryRow(`SELECT seq, kind, forward, inverse, created_at FROM operation_log WHERE seq = ?`, seq).
+		Scan(&op.Seq, &op.Kind, &op.Forward, &op.Inverse, &op.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &op, nil
+}
+
 func (r *Repo) getOperation(seq int64) (*Operation, error) {
 	if seq <= 0 {
 		return nil, nil
@@ -143,6 +218,11 @@ func (r *Repo) PeekUndo() (*Operation, error) {
 	if err != nil {
 		return nil, err
 	}
+	if floor, err := r.undoHistoryFloor(); err != nil {
+		return nil, err
+	} else if floor > boundary {
+		boundary = floor
+	}
 	if cursor <= boundary {
 		return nil, nil
 	}
@@ -161,11 +241,28 @@ func (r *Repo) PeekRedo() (*Operation, error) {
 	if err != nil {
 		return nil, err
 	}
+	if floor, err := r.undoHistoryFloor(); err != nil {
+		return nil, err
+	} else if floor > boundary {
+		boundary = floor
+	}
 	redoSeq := cursor + 1
 	if redoSeq <= boundary {
 		return nil, nil
 	}
 	return r.getOperation(redoSeq)
+}
+
+func (r *Repo) undoHistoryFloor() (int64, error) {
+	var value string
+	err := r.DB.QueryRow(`SELECT value FROM settings WHERE scope = 'repo' AND key = 'undo_history_floor'`).Scan(&value)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseInt(value, 10, 64)
 }
 
 // MarkUndone moves the cursor back before seq, after seq's inverse has been

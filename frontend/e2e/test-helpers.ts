@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { expect, type Locator, type Page } from '@playwright/test'
+import { setViewportMethodID } from './bindings'
 import { getE2ERunId } from './run-context'
 
 const runId = getE2ERunId()
@@ -84,11 +85,59 @@ export async function autoArrangeCanvas(page: Page) {
   }
   const canvasAction = page.getByTestId('dock-auto-arrange')
   if (!(await canvasAction.isVisible())) {
-    await page
-      .locator('.react-flow__pane')
-      .click({ position: { x: 600, y: 400 } })
+    const point = await emptyCanvasPoint(page)
+    await page.mouse.click(point.x, point.y)
   }
   await canvasAction.click()
+  await waitForStableNodePositions(page)
+}
+
+export async function enterEdit(page: Page) {
+  const edit = page.getByTestId('canvas-mode-edit')
+  if ((await edit.getAttribute('aria-pressed')) === 'true') return
+  const saved = page.waitForResponse(
+    (response) =>
+      response.url().endsWith('/wails/runtime') &&
+      response
+        .request()
+        .postData()
+        ?.includes(`"methodID":${setViewportMethodID}`) === true
+  )
+  await edit.click()
+  await expect(edit).toHaveAttribute('aria-pressed', 'true')
+  await saved
+  await waitForStableNodePositions(page)
+}
+
+export async function emptyCanvasPoint(page: Page) {
+  return page.locator('.react-flow__pane').evaluate((pane) => {
+    const bounds = pane.getBoundingClientRect()
+    for (let y = bounds.top + 40; y < bounds.bottom - 80; y += 40) {
+      for (let x = bounds.left + 40; x < bounds.right - 100; x += 40) {
+        if (document.elementFromPoint(x, y) === pane) return { x, y }
+      }
+    }
+    throw new Error('No unobstructed canvas background is available')
+  })
+}
+
+export async function moveImageNode(
+  page: Page,
+  node: Locator,
+  dx: number,
+  dy: number
+) {
+  const before = await node.getAttribute('style')
+  const box = await nodeBox(node)
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(
+    box.x + box.width / 2 + dx,
+    box.y + box.height / 2 + dy,
+    { steps: 8 }
+  )
+  await page.mouse.up()
+  await expect(node).not.toHaveAttribute('style', before ?? '')
   await waitForStableNodePositions(page)
 }
 

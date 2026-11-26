@@ -8,11 +8,28 @@ Loom is a local-first desktop workspace for image collections and derivation gra
 
 - **Assets** is the searchable catalog and filesystem view. Assets may stay unplaced.
 - **Canvas** is one infinite relationship workspace per repository. Drag assets onto it to place them.
-- **Relationships** record source → derived provenance. Ctrl/Cmd-drag an image onto another image or set to create one. Cycles are rejected.
-- **Sets** group sibling images such as variants or turnarounds. Select 2+ Canvas images and use **Create set** or `Ctrl/Cmd+G`.
+- **Relationships** record source → derived provenance. Ctrl/Cmd-drag an image onto another image to create one. Cycles are rejected.
+- Legacy Set data is retained, but Sets are not shown or created on the Canvas.
 - **Inspector** edits metadata and exposes Sources / Derived navigation for the active selection.
 
-Trash, restore, rename, move, import, clipboard operations, placement, sets, relationships, viewport state, and core metadata are persisted per repository. Trash is retained for 30 days, then permanently purged automatically.
+Trash, restore, rename, move, import, clipboard operations, placement, relationships, viewport state, and core metadata are persisted per repository. Trash is retained for 30 days, then permanently purged automatically.
+
+### Undo and concurrent writers
+
+Graph and geometry replay selects history, changes the database, and moves the
+cursor in one SQLite writer transaction. Database-only legacy link, archive,
+tag, prompt, position, and size replay uses the same boundary. A failed replay
+leaves those database changes and the cursor unchanged. Undo history remains
+limited to the current process session and the repository's history floor.
+
+Legacy file moves, trash/restore, representation swaps, and group replay still
+use separate store operations. Their replay is not atomic with history selection
+or cursor movement across processes. A cursor check rejects many stale replays,
+but cannot reverse side effects already applied, and identical replacement
+entries can be indistinguishable. Filesystem changes are not SQLite
+transactions; errors or concurrent writers can leave a file change without a
+matching cursor update. Some legacy forward mutations also write data and
+history separately. Avoid concurrent app processes editing one repository.
 
 ## Development
 

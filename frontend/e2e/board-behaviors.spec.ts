@@ -1,12 +1,15 @@
 import type { Locator, Page } from '@playwright/test'
+import { legacyServiceCall } from './legacy-service'
 import { expect, test } from './test-fixtures'
 import {
   asset,
   autoArrangeCanvas,
   ctrlDrag,
-  dropAsset,
+  enterEdit,
+  fixturePath,
   imageNodes,
   nodeBox,
+  openAssetsShelf,
   openFixtureRepo,
   placeAssets,
   selectImageNodes,
@@ -24,22 +27,74 @@ async function dragBy(page: Page, locator: Locator, dx: number, dy: number) {
   await page.mouse.up()
 }
 
+test('multi-image drag is one undoable geometry change', async ({
+  page,
+}, testInfo) => {
+  await openFixtureRepo(page, 'arrange-resize-fixtures')
+  await enterEdit(page)
+  await expect(imageNodes(page)).toHaveCount(3)
+  await page.keyboard.press('ControlOrMeta+0')
+  const nodes = imageNodes(page)
+  await nodes.first().click()
+  const handle = page.locator('.react-flow__resize-control.handle').last()
+  await dragBy(page, handle, 70, 40)
+  await selectImageNodes(page, [0, 1])
+  const before = await Promise.all([
+    nodeBox(nodes.nth(0)),
+    nodeBox(nodes.nth(1)),
+  ])
+  await dragBy(page, nodes.first(), 75, 45)
+  await expect
+    .poll(async () => (await nodeBox(nodes.first())).x - before[0].x)
+    .toBeGreaterThan(50)
+  const after = await Promise.all([
+    nodeBox(nodes.nth(0)),
+    nodeBox(nodes.nth(1)),
+  ])
+  expect(after[1].x - before[1].x).toBeGreaterThan(50)
+  await testInfo.attach('multi-image-drag', {
+    body: await page.screenshot(),
+    contentType: 'image/png',
+  })
+
+  const expectBoxes = async (expected: typeof before) => {
+    await expect
+      .poll(async () => {
+        const actual = await Promise.all([
+          nodeBox(nodes.nth(0)),
+          nodeBox(nodes.nth(1)),
+        ])
+        return actual.every((box, index) =>
+          (['x', 'y', 'width', 'height'] as const).every(
+            (key) => Math.abs(box[key] - expected[index][key]) < 1
+          )
+        )
+      })
+      .toBe(true)
+  }
+  await page.keyboard.press('ControlOrMeta+z')
+  await expectBoxes(before)
+  await page.keyboard.press('ControlOrMeta+Shift+z')
+  await expectBoxes(after)
+})
+
 test('relationships reject cycles, support ctrl-click selection, and delete as edges', async ({
   page,
 }) => {
   await openFixtureRepo(page, 'relationship-fixtures')
-  await placeAssets(page, [
-    'relation-alpha.png',
-    'relation-beta.png',
-    'relation-gamma.png',
-  ])
+  await enterEdit(page)
+  await expect(imageNodes(page)).toHaveCount(3)
   await autoArrangeCanvas(page)
   await page.keyboard.press('ControlOrMeta+0')
 
   const nodes = imageNodes(page)
   await nodes.nth(0).click()
-  await page.getByTestId('toggle-inspector-shelf').click()
-  await expect(page.getByText(/Ctrl\/Cmd-drag this image/)).toBeVisible()
+  if (
+    (await page
+      .locator('aside[aria-label="Inspector"]')
+      .getAttribute('data-state')) !== 'open'
+  )
+    await page.getByTestId('toggle-inspector-shelf').click()
 
   const first = await nodeBox(nodes.nth(0))
   const second = await nodeBox(nodes.nth(1))
@@ -109,17 +164,24 @@ test('relationships reject cycles, support ctrl-click selection, and delete as e
   await edge.focus()
   await page.keyboard.press('Enter')
   await expect(page.locator('.react-flow__edge.selected')).toHaveCount(1)
-  await page.getByTestId('toggle-inspector-shelf').click()
+  if (
+    (await page
+      .locator('aside[aria-label="Inspector"]')
+      .getAttribute('data-state')) !== 'open'
+  )
+    await page.getByTestId('toggle-inspector-shelf').click()
   await expect(
     page.getByRole('heading', { name: '1 relationship', exact: true })
   ).toBeVisible()
+  await edge.focus()
   await page.keyboard.press('Delete')
   await expect(page.locator('.react-flow__edge')).toHaveCount(0)
 })
 
 test('relationship gestures reject self-links', async ({ page }) => {
   await openFixtureRepo(page, 'relationship-self-link-fixtures')
-  await placeAssets(page, ['relation-alpha.png'])
+  await enterEdit(page)
+  await expect(imageNodes(page)).toHaveCount(1)
   await page.keyboard.press('ControlOrMeta+0')
 
   const node = imageNodes(page).first()
@@ -140,58 +202,39 @@ test('relationship gestures reject self-links', async ({ page }) => {
   await expect(page.locator('.react-flow__edge')).toHaveCount(0)
 })
 
-test('collapsed sets cannot be relationship sources', async ({ page }) => {
-  await openFixtureRepo(page, 'set-source-fixtures')
-  await placeAssets(page, [
-    'group-alpha.png',
-    'group-beta.png',
-    'group-gamma.png',
-  ])
-  await page.keyboard.press('ControlOrMeta+0')
-  await selectImageNodes(page, [0, 1])
-  await page.getByTestId('dock-create-set').click()
-
-  const group = page.locator('.react-flow__node-group')
-  await expect(group).toHaveCount(1)
-  const groupBox = await nodeBox(group)
-  const targetBox = await nodeBox(imageNodes(page).first())
-  await page.keyboard.down('Control')
-  await page.mouse.move(
-    groupBox.x + groupBox.width / 2,
-    groupBox.y + groupBox.height / 2
-  )
-  await page.mouse.down()
-  await page.mouse.move(
-    groupBox.x + groupBox.width / 2 + 12,
-    groupBox.y + groupBox.height / 2 + 8,
-    { steps: 2 }
-  )
-  await expect(page.getByTestId('relationship-preview')).toHaveCount(0)
-  await page.mouse.move(
-    targetBox.x + targetBox.width / 2,
-    targetBox.y + targetBox.height / 2,
-    { steps: 8 }
-  )
-  await expect(page.getByTestId('relationship-preview')).toHaveCount(0)
-  await page.mouse.up()
-  await page.keyboard.up('Control')
-
-  await expect(page.locator('.react-flow__edge')).toHaveCount(0)
-})
-
-test('Sources navigation reveals and selects an unplaced asset', async ({
+test('Sources navigation selects a visible unplaced source in Edit', async ({
   page,
 }) => {
   await openFixtureRepo(page, 'sources-nav-fixtures')
+  await enterEdit(page)
   await placeAssets(page, ['relation-alpha.png', 'relation-beta.png'])
   await page.keyboard.press('ControlOrMeta+0')
   await ctrlDrag(page, imageNodes(page).nth(0), imageNodes(page).nth(1))
   await expect(page.locator('.react-flow__edge')).toHaveCount(1)
 
-  await imageNodes(page).nth(0).click()
-  await page.getByTestId('dock-unplace').click()
-  await expect(imageNodes(page)).toHaveCount(1)
-  await imageNodes(page).first().click()
+  await openAssetsShelf(page)
+  const sourceID = Number(
+    await asset(page, 'relation-alpha.png').getAttribute('data-asset-id')
+  )
+  await legacyServiceCall(page, 'imageservice.ts', 'UnplaceImages', [
+    await fixturePath('sources-nav-fixtures'),
+    [sourceID],
+  ])
+  await page.reload()
+  await expect(imageNodes(page)).toHaveCount(2)
+  await openAssetsShelf(page)
+  await asset(page, 'relation-alpha.png').click()
+  if (
+    (await page
+      .locator('aside[aria-label="Inspector"]')
+      .getAttribute('data-state')) !== 'open'
+  )
+    await page.getByTestId('toggle-inspector-shelf').click()
+  await expect(page.getByText(/× .* · Unplaced/)).toBeVisible()
+  await page.getByTestId('toggle-assets-shelf').click()
+  const sourceNode = imageNodes(page).filter({ hasText: 'relation-alpha.png' })
+  const derivedNode = imageNodes(page).filter({ hasText: 'relation-beta.png' })
+  await derivedNode.click()
 
   const sources = page
     .locator('.loom-detail-panel section')
@@ -199,30 +242,15 @@ test('Sources navigation reveals and selects an unplaced asset', async ({
   await expect(sources.getByText('relation-alpha.png')).toBeVisible()
   await sources.getByRole('button', { name: /Go to source asset/ }).click()
 
-  await expect(asset(page, 'relation-alpha.png')).toHaveAttribute(
-    'aria-selected',
-    'true'
-  )
-  // Locate scrolls the row into view, not just selects it.
-  await expect
-    .poll(async () => {
-      const rowBox = await asset(page, 'relation-alpha.png').boundingBox()
-      const listBox = await page
-        .getByRole('listbox', { name: 'Assets' })
-        .boundingBox()
-      if (!rowBox || !listBox) return false
-      return (
-        rowBox.y >= listBox.y &&
-        rowBox.y + rowBox.height <= listBox.y + listBox.height
-      )
-    })
-    .toBe(true)
+  await expect(sourceNode).toHaveClass(/selected/)
+  await expect(derivedNode).not.toHaveClass(/selected/)
   await expect(page.getByText(/× .* · Unplaced/)).toBeVisible()
 })
 
 test('auto-arrange respects resized node bounds', async ({ page }) => {
   await openFixtureRepo(page, 'arrange-resize-fixtures')
-  await placeAssets(page, ['arrange-alpha.png', 'arrange-beta.png'])
+  await enterEdit(page)
+  await expect(imageNodes(page)).toHaveCount(3)
   await page.keyboard.press('ControlOrMeta+0')
 
   const nodes = imageNodes(page)
@@ -249,13 +277,12 @@ test('auto-arrange respects resized node bounds', async ({ page }) => {
     })
     .toBe(true)
 
-  await dropAsset(page, 'arrange-gamma.png', { x: 500, y: 450 })
   await expect(nodes).toHaveCount(3)
   await selectImageNodes(page, [1, 2])
   await nodes.nth(1).click({ button: 'right' })
   await page
     .getByRole('menu')
-    .getByRole('button', { name: 'Auto-arrange selection' })
+    .getByRole('menuitem', { name: 'Auto-arrange selection' })
     .click()
   await expect
     .poll(async () => {

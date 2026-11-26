@@ -40,6 +40,7 @@ interface Props {
   setRemoveRelationshipId: Dispatch<SetStateAction<number | null>>
   run: (action: () => Promise<unknown>) => void
   path: string
+  canMutateRelationships: () => boolean
 }
 
 export function DetailPanelDialogs(props: Props) {
@@ -57,6 +58,7 @@ export function DetailPanelDialogs(props: Props) {
     setRemoveRelationshipId,
     run,
     path,
+    canMutateRelationships,
   } = props
   return (
     <>
@@ -172,11 +174,16 @@ export function DetailPanelDialogs(props: Props) {
               <Button
                 variant="danger"
                 size="sm"
+                disabled={!canMutateRelationships()}
                 onClick={() => {
                   const id = removeRelationshipId
                   setRemoveRelationshipId(null)
-                  if (id !== null)
-                    run(() => ImageService.UnlinkSource(path, id))
+                  if (id !== null && canMutateRelationships())
+                    run(() =>
+                      canMutateRelationships()
+                        ? ImageService.UnlinkSource(path, id)
+                        : Promise.resolve()
+                    )
                 }}
               >
                 <Trans>Remove relationship</Trans>

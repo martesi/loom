@@ -4,6 +4,8 @@ import { expect, test } from './test-fixtures'
 import {
   asset,
   dropAsset,
+  emptyCanvasPoint,
+  enterEdit,
   imageNodes,
   openFixtureRepo,
   placeAssets,
@@ -323,6 +325,7 @@ test.describe('floating Canvas drawers', () => {
   }) => {
     await page.setViewportSize({ width: 1280, height: 800 })
     await openFixtureRepo(page, 'dock-fixtures', { drawers: 'closed' })
+    await enterEdit(page)
     const assets = page.locator('aside[aria-label="Assets"]')
 
     await page.getByTestId('toggle-assets-shelf').click()
@@ -433,6 +436,7 @@ test.describe('floating Canvas drawers', () => {
     await expect(inspector.getByText('Search assets in palette')).toBeVisible()
     await page.getByTestId('toggle-inspector-shelf').click()
 
+    await enterEdit(page)
     await placeAssets(page, ['dock-alpha.png', 'dock-beta.png'])
     await imageNodes(page).nth(0).click()
     await page.keyboard.press('ControlOrMeta+i')
@@ -454,17 +458,15 @@ test.describe('floating Canvas drawers', () => {
     await expect(
       inspector.getByText('dock-alpha.png', { exact: true })
     ).toHaveCount(0)
-    await page
-      .locator('.react-flow__pane')
-      .click({ position: { x: 700, y: 460 } })
+    const empty = await emptyCanvasPoint(page)
+    await page.mouse.click(empty.x, empty.y)
     await expect(inspector).toHaveAttribute('data-state', 'closed')
     await expect(page.getByRole('main', { name: 'Canvas' })).toBeFocused()
 
     await page.getByTestId('toggle-inspector-shelf').click()
     await page.getByTestId('pin-shelf-right').click()
-    await page
-      .locator('.react-flow__pane')
-      .click({ position: { x: 700, y: 460 } })
+    const pinnedEmpty = await emptyCanvasPoint(page)
+    await page.mouse.click(pinnedEmpty.x, pinnedEmpty.y)
     await expect(inspector).toHaveAttribute('data-state', 'open')
     await expect(inspector.getByText('No Selection')).toBeVisible()
   })

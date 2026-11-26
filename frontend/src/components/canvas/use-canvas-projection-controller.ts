@@ -1,0 +1,438 @@
+import type { Edge, Node, Viewport, XYPosition } from '@xyflow/react'
+import { useEffect, useRef, useState } from 'react'
+import type { UndoResult } from '../../../bindings/loom/internal/service'
+import { SettingsService } from '../../../bindings/loom/internal/service'
+import type {
+  AcceptedCanvasBoard,
+  CanvasBoardOwner,
+} from './canvas-board-owner'
+import { centeredViewport, spreadEditLayout } from './canvas-mode-layout'
+import type { CanvasInternalMode } from './canvas-mode-policy'
+import {
+  arrangeEditProjection,
+  arrangeEditSelection,
+  type CanvasProjectionState,
+  createCanvasProjection,
+  enterEdit,
+  enterView,
+  reconcileCanvasProjection,
+  setEditNodes,
+  setProjectionViewport,
+  setViewAnchor,
+} from './canvas-projection'
+import { applyProjectionUndo } from './canvas-projection-geometry'
+import type { useCanvasCamera } from './use-canvas-camera'
+
+export interface CanvasProjectionViewport {
+  getViewport(): Viewport
+  setViewport(viewport: Viewport): Promise<boolean>
+}
+
+interface Graph {
+  nodes: Node[]
+  edges: Edge[]
+  pairingOrders: ReadonlyMap<string, number>
+}
+
+interface Props {
+  owner: CanvasBoardOwner
+  nodes: Node[]
+  setNodes: (nodes: Node[]) => void
+  setEdges: (edges: Edge[]) => void
+  host: { current: HTMLDivElement | null }
+  flow?: CanvasProjectionViewport
+  camera?: ReturnType<typeof useCanvasCamera>
+  repoPath?: string
+  report: (error: unknown) => void
+  cancelPointerGesture?: () => void
+  reconcileSelection: (nodes: readonly Node[], edges: readonly Edge[]) => void
+}
+
+/** Internal only: legacy remains active until the full mode mutation policy exists. */
+export function useCanvasProjectionController(props: Props) {
+  const current = useRef(props)
+  current.current = props
+  const state = useRef<CanvasProjectionState | null>(null)
+  const source = useRef<{ board: AcceptedCanvasBoard; graph: Graph } | null>(
+    null
+  )
+  const nodesBeforePublication = useRef<Node[] | null>(null)
+  const lifetime = useRef<{ owner: CanvasBoardOwner } | null>(null)
+  const [mode, setMode] = useState<CanvasInternalMode>('legacy')
+  useEffect(() => {
+    const active = { owner: props.owner }
+    lifetime.current = active
+    state.current = null
+    source.current = null
+    nodesBeforePublication.current = null
+    props.owner.setMode('legacy')
+    setMode('legacy')
+    return () => {
+      if (lifetime.current === active) lifetime.current = null
+    }
+  }, [props.owner])
+
+  function size() {
+    const host = current.current.host.current
+    return { width: host?.clientWidth ?? 0, height: host?.clientHeight ?? 0 }
+  }
+  function publish(next: CanvasProjectionState) {
+    state.current = next
+    nodesBeforePublication.current = current.current.nodes
+    const nodes = next.mode === 'view' ? next.viewNodes : next.editNodes
+    current.current.reconcileSelection(nodes, next.edges)
+    current.current.setNodes(nodes)
+    current.current.setEdges([...next.edges])
+    setMode(next.mode)
+  }
+  function capture(next: CanvasProjectionState) {
+    const { nodes, flow } = current.current
+    if (next.mode === 'edit' && nodes !== nodesBeforePublication.current)
+      next = setEditNodes(next, nodes)
+    if (flow) next = setProjectionViewport(next, flow.getViewport(), size())
+    return next
+  }
+  function updateViewport(viewport: Viewport) {
+    if (state.current) {
+      state.current = setProjectionViewport(state.current, viewport, size())
+      if (current.current.camera)
+        state.current = {
+          ...state.current,
+          viewViewport: viewport,
+          editViewport: viewport,
+        }
+    }
+  }
+  function setAnchor(anchor: XYPosition | null) {
+    if (state.current) state.current = setViewAnchor(state.current, anchor)
+  }
+  /** The action system calls this inside the owner's serialized queue. */
+  async function arrangeEdit(nodeIds?: string[]) {
+    const { owner } = current.current
+    if (owner.getMode() !== 'edit') return
+    const input = source.current
+    const previous = state.current
+    const active = lifetime.current
+    if (!input || !previous || owner.getSnapshot() !== input.board)
+      throw new Error('Canvas snapshot is not ready for arrangement')
+    const before = capture(previous)
+    const next = nodeIds
+      ? arrangeEditSelection(before, nodeIds)
+      : arrangeEditProjection(before)
+    const geometry = (nodes: Node[]) =>
+      nodes.map((node) => ({
+        imageId: Number(node.id),
+        ...node.position,
+        w: node.width ?? node.measured?.width ?? 150,
+        h: node.height ?? node.measured?.height ?? 110,
+      }))
+    await owner.commitDisplayedLayout(
+      input.board,
+      geometry(before.editNodes),
+      geometry(next.editNodes),
+      () => {
+        const latest = state.current
+        if (
+          !active ||
+          lifetime.current !== active ||
+          !latest ||
+          latest.mode !== 'edit'
+        )
+          return
+        const positions = new Map(
+          next.editNodes.map((node) => [node.id, node.position])
+        )
+        const currentEdit = capture(latest)
+        publish(
+          setEditNodes(
+            currentEdit,
+            currentEdit.editNodes.map((node) => {
+              const position = positions.get(node.id)
+              return position ? { ...node, position } : node
+            })
+          )
+        )
+      }
+    )
+  }
+  async function transitionMode(target: 'view' | 'edit') {
+    const { owner } = current.current
+    if (current.current.camera && current.current.repoPath) {
+      await transitionPublicMode(target)
+      return
+    }
+    owner.beginModeTransition()
+    const active = lifetime.current
+    const isCurrent = () =>
+      active !== null &&
+      lifetime.current === active &&
+      current.current.owner === owner &&
+      active.owner === owner
+    await owner.execute(async () => {
+      if (!isCurrent()) return
+      const input = source.current
+      if (!input || owner.getSnapshot() !== input.board)
+        throw new Error('Canvas snapshot is not ready for a mode transition')
+      owner.cancelGesture()
+      current.current.cancelPointerGesture?.()
+      let next = state.current
+      if (!next) {
+        const viewport = current.current.flow?.getViewport() ?? {
+          x: 0,
+          y: 0,
+          zoom: 1,
+        }
+        next = createCanvasProjection({
+          ...input.graph,
+          geometry: (input.board.snapshot.images ?? []).map(
+            (item) => item.geometry
+          ),
+          viewport,
+          viewportSize: size(),
+        })
+      } else next = capture(next)
+      next = target === 'edit' ? enterEdit(next) : enterView(next)
+      if (!isCurrent()) return
+      owner.setMode(target)
+      publish(next)
+      const viewport = target === 'edit' ? next.editViewport : next.viewViewport
+      if (!isCurrent()) return
+      if (current.current.camera)
+        await current.current.camera.camera.move(async () => viewport)
+      else await current.current.flow?.setViewport(viewport)
+    })
+  }
+  function restoreMode(target: 'view' | 'edit') {
+    const input = source.current
+    if (state.current || !input) return false
+    const viewport = current.current.flow?.getViewport() ?? {
+      x: 0,
+      y: 0,
+      zoom: 1,
+    }
+    const initial = createCanvasProjection({
+      ...input.graph,
+      geometry: (input.board.snapshot.images ?? []).map(
+        (item) => item.geometry
+      ),
+      viewport,
+      viewportSize: size(),
+    })
+    const linked = new Set(initial.viewNodes.map((node) => node.id))
+    const restored: CanvasProjectionState = {
+      ...initial,
+      mode: target,
+      viewNodes: input.graph.nodes.filter((node) => linked.has(node.id)),
+      editNodes: [...input.graph.nodes],
+      editInitialized: true,
+    }
+    current.current.owner.setMode(target)
+    publish(restored)
+    return true
+  }
+  async function transitionPublicMode(target: 'view' | 'edit') {
+    const { owner, camera, repoPath, flow } = current.current
+    if (!camera || !repoPath || !flow) return
+    if (owner.getMode() === target && !camera.layoutPending()) return
+    owner.beginModeTransition()
+    const active = lifetime.current
+    const viewport = flow.getViewport()
+    const layout = owner.execute(async () => {
+      if (
+        !active ||
+        lifetime.current !== active ||
+        current.current.owner !== owner
+      )
+        return []
+      const input = source.current
+      if (!input || owner.getSnapshot() !== input.board)
+        throw new Error('Canvas snapshot is not ready for a mode transition')
+      owner.cancelGesture()
+      current.current.cancelPointerGesture?.()
+      const fresh = createCanvasProjection({
+        ...input.graph,
+        geometry: (input.board.snapshot.images ?? []).map(
+          (item) => item.geometry
+        ),
+        viewport,
+        viewportSize: size(),
+      })
+      const edited = target === 'edit' ? spreadEditLayout(fresh) : []
+      const arranged = target === 'edit' ? edited : fresh.viewNodes
+      const beforeById = new Map(
+        input.graph.nodes.map((node) => [node.id, node])
+      )
+      const previous = state.current && capture(state.current)
+      const displayed = previous
+        ? previous.mode === 'edit'
+          ? previous.editNodes
+          : previous.viewNodes
+        : current.current.nodes
+      for (const node of displayed) beforeById.set(node.id, node)
+      const toGeometry = (node: Node) => ({
+        imageId: Number(node.id),
+        x: node.position.x,
+        y: node.position.y,
+        w: node.width ?? node.measured?.width ?? 150,
+        h: node.height ?? node.measured?.height ?? 110,
+      })
+      await owner.commitDisplayedLayout(
+        input.board,
+        arranged.map((node) => toGeometry(beforeById.get(node.id) ?? node)),
+        arranged.map(toGeometry),
+        () => {},
+        true
+      )
+      const updated = owner.getSnapshot()
+      if (updated && updated !== input.board) {
+        const positions = new Map(
+          arranged.map((node) => [node.id, node.position])
+        )
+        source.current = {
+          board: updated,
+          graph: {
+            ...input.graph,
+            nodes: input.graph.nodes.map((node) => {
+              const position = positions.get(node.id)
+              return position ? { ...node, position } : node
+            }),
+          },
+        }
+      }
+      await SettingsService.Set(repoPath, 'canvas_mode', target)
+      if (lifetime.current !== active || current.current.owner !== owner)
+        return []
+      const next: CanvasProjectionState = {
+        ...fresh,
+        mode: target,
+        editNodes: edited,
+        editInitialized: target === 'edit',
+      }
+      owner.setMode(target)
+      publish(next)
+      return arranged
+    })
+    camera.trackLayout(layout)
+    await camera.camera.move(async () => {
+      const nodes = await layout
+      const linked = new Set(
+        (source.current?.graph.edges ?? []).flatMap((edge) => [
+          edge.source,
+          edge.target,
+        ])
+      )
+      const loose =
+        target === 'edit' ? nodes.filter((node) => !linked.has(node.id)) : []
+      return centeredViewport(loose.length ? loose : nodes, viewport, size())
+    }, 250)
+  }
+  function reconcile(
+    board: AcceptedCanvasBoard,
+    graph: Graph,
+    history: UndoResult[]
+  ) {
+    source.current = { board, graph }
+    if (!state.current) return false
+    const before = capture(state.current)
+    let next = reconcileCanvasProjection(before, {
+      ...graph,
+      geometry: (board.snapshot.images ?? []).map((item) => item.geometry),
+    })
+    for (const result of history) {
+      next = applyProjectionUndo(next, result, (nodes, geometry) => {
+        const rows = new Map(geometry.map((row) => [String(row.imageId), row]))
+        const defaults = new Map(graph.nodes.map((node) => [node.id, node]))
+        return nodes.map((node) => {
+          const row = rows.get(node.id)
+          const fallback = defaults.get(node.id)
+          if (!row || !fallback) return node
+          const width = row.w ?? fallback.width
+          const height = row.h ?? fallback.height
+          return {
+            ...node,
+            position:
+              row.x === null || row.y === null
+                ? node.position
+                : { x: row.x, y: row.y },
+            width,
+            height,
+            measured:
+              width === undefined || height === undefined
+                ? undefined
+                : { width, height },
+          }
+        })
+      })
+    }
+    if (next.mode === 'view' && current.current.camera) {
+      const linked = new Set(next.viewNodes.map((node) => node.id))
+      next = {
+        ...next,
+        viewNodes: graph.nodes.filter((node) => linked.has(node.id)),
+      }
+    } else if (next.mode === 'view') next = compensateAnchor(before, next)
+    publish(next)
+    if (
+      !current.current.camera &&
+      next.mode === 'view' &&
+      next.viewViewport !== before.viewViewport
+    )
+      void current.current.flow
+        ?.setViewport(next.viewViewport)
+        .catch(current.current.report)
+    return true
+  }
+  const graphOrder =
+    state.current?.projection.components.flatMap((component) =>
+      component.boxes.map((box) => Number(box.id))
+    ) ?? []
+  return {
+    mode,
+    graphOrder,
+    transitionMode,
+    restoreMode,
+    updateViewport,
+    setAnchor,
+    reconcile,
+    arrangeEdit,
+  }
+}
+
+function compensateAnchor(
+  before: CanvasProjectionState,
+  next: CanvasProjectionState
+) {
+  const anchor = before.viewAnchor ?? {
+    x:
+      (before.viewportSize.width / 2 - before.viewViewport.x) /
+      before.viewViewport.zoom,
+    y:
+      (before.viewportSize.height / 2 - before.viewViewport.y) /
+      before.viewViewport.zoom,
+  }
+  const nextById = new Map(next.viewNodes.map((node) => [node.id, node]))
+  const candidates = before.viewNodes.filter((node) => nextById.has(node.id))
+  candidates.sort(
+    (a, b) =>
+      Math.hypot(a.position.x - anchor.x, a.position.y - anchor.y) -
+      Math.hypot(b.position.x - anchor.x, b.position.y - anchor.y)
+  )
+  const old = candidates[0]
+  const moved = old && nextById.get(old.id)
+  if (!old || !moved) return next
+  const dx = moved.position.x - old.position.x
+  const dy = moved.position.y - old.position.y
+  if (!dx && !dy) return next
+  return {
+    ...next,
+    // Only explicit anchors persist; the implicit anchor follows the viewport.
+    viewAnchor: before.viewAnchor
+      ? { x: anchor.x + dx, y: anchor.y + dy }
+      : null,
+    viewViewport: {
+      ...next.viewViewport,
+      x: next.viewViewport.x - dx * next.viewViewport.zoom,
+      y: next.viewViewport.y - dy * next.viewViewport.zoom,
+    },
+  }
+}

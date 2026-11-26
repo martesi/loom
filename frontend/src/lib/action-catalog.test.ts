@@ -3,6 +3,7 @@ import {
   actionEligibility,
   availablePaletteActions,
   type CanvasAction,
+  displayShortcut,
   fuzzyMatch,
   normalizeShortcut,
   resolveRecentActions,
@@ -14,6 +15,11 @@ describe('action catalog helpers', () => {
   it('normalizes platform modifier aliases and modifier order', () => {
     expect(normalizeShortcut('Shift+ControlOrMeta+C')).toBe('mod+shift+c')
     expect(normalizeShortcut('Command+K')).toBe('mod+k')
+  })
+
+  it('formats normalized shortcuts for each platform', () => {
+    expect(displayShortcut('alt+shift+j', false)).toBe('Alt+Shift+J')
+    expect(displayShortcut('mod+shift+j', true)).toBe('⌘⇧J')
   })
 
   it('matches digit shortcuts by physical key and ? by its produced character', () => {

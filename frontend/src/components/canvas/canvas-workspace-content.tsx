@@ -13,32 +13,30 @@ import type { useUndoActions } from '../../lib/use-undo'
 import {
   alignCanvas,
   arrangeCanvas,
-  fitCanvas,
   isCanvasRelationshipDrag as isRelationshipDrag,
-  resetCanvasZoom,
   targetAt,
   validateRelationshipTarget,
-  zoomCanvas,
 } from './canvas-board-operations'
 import { CanvasMainSurface } from './canvas-main-surface'
 import { CanvasOverlays } from './canvas-overlays'
 import { CanvasToolbar } from './canvas-toolbar'
 import { DetailPanel } from './detail-panel'
-import { GroupNode } from './group-node'
 import { ImageNode } from './image-node'
 import { LibraryPanel } from './library-panel'
 import { ShelfPanel } from './shelf-panel'
 import type { useCanvasAssetOperations } from './use-canvas-asset-operations'
 import type { useCanvasBoardModel } from './use-canvas-board-model'
+import type { useCanvasCamera } from './use-canvas-camera'
 import type { useCanvasRepository } from './use-canvas-repository'
 import { useCanvasWorkspaceCommands } from './use-canvas-workspace-commands'
 import type { useCanvasWorkspaceState } from './use-canvas-workspace-state'
 import type { useInspectorFieldSubmission } from './use-inspector-field-submission'
 
-const nodeTypes = { image: ImageNode, group: GroupNode }
+const nodeTypes = { image: ImageNode }
 
 interface Props {
   repo: RepoInfo
+  camera: ReturnType<typeof useCanvasCamera>
   flow: ReactFlowInstance
   host: MutableRefObject<HTMLDivElement | null>
   data: CanvasData
@@ -54,7 +52,6 @@ interface Props {
   expanded: number | null
   setExpanded: Dispatch<SetStateAction<number | null>>
   modifiedMarquee: MutableRefObject<{ active: boolean; anchor: number[] }>
-  dropTargets: MutableRefObject<Node[]>
   workspaceState: ReturnType<typeof useCanvasWorkspaceState>
   repository: ReturnType<typeof useCanvasRepository>
   assetOperations: ReturnType<typeof useCanvasAssetOperations>
@@ -63,7 +60,6 @@ interface Props {
   selectedIds: () => number[]
   boardModel: ReturnType<typeof useCanvasBoardModel>
   submitInspectorField: ReturnType<typeof useInspectorFieldSubmission>
-  canCreateSet: boolean
   undoActions: ReturnType<typeof useUndoActions>
   assetSelectionRecords: { key: string; records: ImageInfo[] }
   updateZoomCompensation: (zoom: number) => void
@@ -73,6 +69,7 @@ interface Props {
 export function CanvasWorkspaceContent(props: Props) {
   const {
     repo,
+    camera,
     flow,
     host,
     data,
@@ -88,7 +85,6 @@ export function CanvasWorkspaceContent(props: Props) {
     expanded,
     setExpanded,
     modifiedMarquee,
-    dropTargets,
     workspaceState,
     repository,
     assetOperations,
@@ -97,7 +93,6 @@ export function CanvasWorkspaceContent(props: Props) {
     selectedIds,
     boardModel,
     submitInspectorField,
-    canCreateSet,
     undoActions,
     assetSelectionRecords,
     updateZoomCompensation,
@@ -175,7 +170,6 @@ export function CanvasWorkspaceContent(props: Props) {
     displayNodes,
     displayEdges,
     selectedCanvasNodeIds,
-    resolveSetDropTarget,
     setHoveredNodeId,
   } = boardModel
   const { paste, importMedia, finishTrash, confirmPurge } = assetOperations
@@ -183,7 +177,11 @@ export function CanvasWorkspaceContent(props: Props) {
   const validTarget = (source: number, id: string) =>
     validateRelationshipTarget(source, id, data, groupMembers)
   const arrange = (nodeIds?: string[]) =>
-    arrangeCanvas(repo.path, nodes, edges, data, reload, nodeIds)
+    boardModel.owner.getMode() === 'edit'
+      ? boardModel.arrangeEdit(nodeIds)
+      : boardModel.owner.getMode() === 'legacy'
+        ? arrangeCanvas(repo.path, nodes, edges, data, reload, nodeIds)
+        : Promise.resolve()
   const alignHorizontal = () =>
     alignCanvas('horizontal', repo.path, displayNodes, data, reload)
   const alignVertical = () =>
@@ -191,35 +189,22 @@ export function CanvasWorkspaceContent(props: Props) {
   function handleLocate(node: Node) {
     setMenu(null)
     openAssets()
-    if (node.type === 'group') {
-      const groupId = Number(node.id.slice(4))
-      const members = groupMembers(groupId)
-      selectAssets(members)
-      if (members.length) setReveal({ id: members[0], folder: null })
-    } else {
-      const imageId = Number(node.id)
-      selectAssets([imageId])
-      setReveal({ id: imageId, folder: null })
-    }
-    void flow
-      .setCenter(
-        node.position.x + (node.measured?.width ?? node.width ?? 150) / 2,
-        node.position.y + (node.measured?.height ?? node.height ?? 110) / 2,
-        { zoom: flow.getZoom() }
+    const imageId = Number(node.id)
+    selectAssets([imageId])
+    setReveal({ id: imageId, folder: null })
+    const live = boardModel.mode === 'legacy' ? node : flow.getNode(node.id)
+    if (!live) return
+    void camera
+      .center(
+        live.position.x + (live.measured?.width ?? live.width ?? 150) / 2,
+        live.position.y + (live.measured?.height ?? live.height ?? 110) / 2
       )
       .catch(report)
   }
   function handlePreview(node: Node) {
     workspaceState.setPreviewOrigin({ surface: 'canvas' })
     workspaceState.setPreviewFolderOrder(null)
-    if (node.type === 'group') {
-      const groupId = Number(node.id.slice(4))
-      const group = (data.groups ?? []).find((g) => g.id === groupId)
-      const firstId = group?.coverImageId ?? group?.memberIds?.[0]
-      if (firstId) setPreviewImageId(firstId)
-    } else {
-      setPreviewImageId(Number(node.id))
-    }
+    setPreviewImageId(Number(node.id))
   }
   function handleFolderPreview(
     imageId: number,
@@ -230,11 +215,30 @@ export function CanvasWorkspaceContent(props: Props) {
     workspaceState.setPreviewFolderOrder(orderedIds)
     setPreviewImageId(imageId)
   }
-  const fitAll = () => fitCanvas(flow, repo.path)
-  const fitSelection = () =>
-    fitCanvas(flow, repo.path, nodes.filter(isCanvasNodeSelected))
-  const resetZoom = () => resetCanvasZoom(flow, host, repo.path)
-  const zoomBy = (factor: number) => zoomCanvas(flow, repo.path, factor)
+  const fitAll = async () => {
+    await camera.fit(displayNodes, true)
+  }
+  const fitSelection = async () => {
+    await camera.fit(displayNodes.filter(isCanvasNodeSelected))
+  }
+  const resetZoom = async () => {
+    await camera.camera.move(async () => {
+      const viewport = flow.getViewport()
+      const x = (host.current?.clientWidth ?? 0) / 2
+      const y = (host.current?.clientHeight ?? 0) / 2
+      return {
+        x: x - (x - viewport.x) / viewport.zoom,
+        y: y - (y - viewport.y) / viewport.zoom,
+        zoom: 1,
+      }
+    })
+  }
+  const zoomBy = async (factor: number) => {
+    await camera.camera.move(async () => ({
+      ...flow.getViewport(),
+      zoom: Math.max(0.05, Math.min(4, flow.getZoom() * factor)),
+    }))
+  }
   function toggleFocusMode() {
     setFocusCanvas((focused) => !focused)
     requestAnimationFrame(() => host.current?.focus())
@@ -260,6 +264,7 @@ export function CanvasWorkspaceContent(props: Props) {
       alignHorizontal,
       alignVertical,
       toggleFocusMode,
+      cameraIntent: camera.camera,
     },
     selectionActions: {
       selectAssets,
@@ -267,7 +272,6 @@ export function CanvasWorkspaceContent(props: Props) {
       setExpanded,
       expanded,
       selectedIds,
-      canCreateSet,
       handlePreview,
       handleLocate,
       undoActions,
@@ -342,7 +346,11 @@ export function CanvasWorkspaceContent(props: Props) {
           />
         </ShelfPanel>
         <CanvasMainSurface
+          camera={camera}
+          updateProjectionViewport={boardModel.updateProjectionViewport}
           repoPath={repo.path}
+          owner={boardModel.owner}
+          mode={boardModel.mode}
           flow={flow}
           data={data}
           setNodes={setNodes}
@@ -350,7 +358,6 @@ export function CanvasWorkspaceContent(props: Props) {
           setSelection={setSelection}
           selectionRef={selectionRef}
           setExpanded={setExpanded}
-          expanded={expanded}
           space={space}
           ready={ready}
           inspectorOpen={inspectorOpen}
@@ -359,7 +366,6 @@ export function CanvasWorkspaceContent(props: Props) {
           closeInspector={closeInspector}
           host={host}
           modifiedMarquee={modifiedMarquee}
-          dropTargets={dropTargets}
           nodeTypes={nodeTypes}
           displayNodes={displayNodes}
           displayEdges={displayEdges}
@@ -368,7 +374,6 @@ export function CanvasWorkspaceContent(props: Props) {
           targetAt={targetAt}
           isRelationshipDrag={isRelationshipDrag}
           validTarget={validTarget}
-          groupMembers={groupMembers}
           relation={relation}
           relationshipPreview={relationshipPreview}
           setRelationshipPreview={setRelationshipPreview}
@@ -376,7 +381,6 @@ export function CanvasWorkspaceContent(props: Props) {
           target={target}
           run={run}
           paste={paste}
-          resolveSetDropTarget={resolveSetDropTarget}
           dragTargetRaf={dragTargetRaf}
           pendingDragNode={pendingDragNode}
           reloadForData={reloadForData}
@@ -392,7 +396,6 @@ export function CanvasWorkspaceContent(props: Props) {
           setMenu={setMenu}
           setHoveredNodeId={setHoveredNodeId}
           handlePreview={handlePreview}
-          canCreateSet={canCreateSet}
           actionById={actionById}
           runDockAction={runDockAction}
           perfHud={perfHud}
@@ -413,6 +416,9 @@ export function CanvasWorkspaceContent(props: Props) {
             open={inspectorOpen}
             path={repo.path}
             data={data}
+            graphOrder={
+              boardModel.mode === 'legacy' ? undefined : boardModel.graphOrder
+            }
             selection={selection}
             change={reload}
             go={goDetail}
@@ -425,10 +431,18 @@ export function CanvasWorkspaceContent(props: Props) {
             restoreEnabled={
               actionById.get('restore-from-trash')?.enabled ?? false
             }
+            canMutateRelationships={() =>
+              boardModel.owner.allows('relationship')
+            }
           />
         </ShelfPanel>
       </div>
       <CanvasToolbar
+        mode={boardModel.mode}
+        ready={ready && boardModel.mode !== 'legacy'}
+        onModeChange={(mode) => {
+          void boardModel.transitionMode(mode).catch(report)
+        }}
         repo={repo}
         repoOpenRequest={repoOpenRequest}
         focusCanvas={focusCanvas}
@@ -475,6 +489,11 @@ export function CanvasWorkspaceContent(props: Props) {
         previewInfoOpen={previewInfoOpen}
         setPreviewInfoOpen={setPreviewInfoOpen}
         data={data}
+        canvasImageIds={
+          boardModel.mode === 'legacy'
+            ? undefined
+            : displayNodes.map((node) => Number(node.id))
+        }
         renditionGeneration={renditionGeneration}
         onRenditionsInvalidated={onRenditionsInvalidated}
         compressIds={compressIds}

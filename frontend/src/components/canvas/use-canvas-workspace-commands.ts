@@ -39,6 +39,7 @@ interface Props {
     alignHorizontal: () => Promise<void>
     alignVertical: () => Promise<void>
     toggleFocusMode: () => void
+    cameraIntent?: { version(): number; reserve(): number }
   }
   selectionActions: {
     selectAssets: (ids: number[]) => void
@@ -46,7 +47,6 @@ interface Props {
     setExpanded: React.Dispatch<React.SetStateAction<number | null>>
     expanded: number | null
     selectedIds: () => number[]
-    canCreateSet: boolean
     handlePreview: (node: Node) => void
     handleLocate: (node: Node) => void
     undoActions: ReturnType<typeof useUndoActions>
@@ -139,6 +139,8 @@ export function useCanvasWorkspaceCommands(props: Props) {
   })
   const preview = useCanvasPreview({
     data,
+    mode: boardModel.mode,
+    graphOrder: boardModel.graphOrder,
     repoPath: repo.path,
     previewOrigin: workspaceState.previewOrigin,
     previewFolderOrder: workspaceState.previewFolderOrder,

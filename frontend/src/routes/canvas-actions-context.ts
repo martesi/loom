@@ -5,6 +5,7 @@ import type {
   ImageInfo,
   RelationshipInfo,
 } from '../../bindings/loom/internal/service'
+import type { CanvasBoardOwner } from '../components/canvas/canvas-board-owner'
 import type { AssetLayout } from '../lib/asset-views'
 import type { Selection } from '../lib/selection'
 
@@ -21,6 +22,7 @@ export interface RevealRequest {
 }
 
 export interface CanvasActionsContext {
+  owner: CanvasBoardOwner
   repoPath: string
   importInput: { current: HTMLInputElement | null }
   assetsOpen: boolean
@@ -43,6 +45,7 @@ export interface CanvasActionsContext {
   setNavigatorModeRequest: Dispatch<SetStateAction<NavigatorModeRequest | null>>
   setSearchFocusRequest: Dispatch<SetStateAction<number>>
   displayNodes: Node[]
+  cameraIntent?: { version(): number; reserve(): number }
   canFitSelection: boolean
   canArrangeSelection: boolean
   fitAll: () => Promise<void>
@@ -56,8 +59,6 @@ export interface CanvasActionsContext {
   selectAssets: (ids: number[]) => void
   setSelection: Dispatch<SetStateAction<Selection>>
   data: CanvasData
-  canCreateSet: boolean
-  createSet: () => Promise<void>
   alignHorizontal: () => Promise<void>
   alignVertical: () => Promise<void>
   selectedIds: () => number[]

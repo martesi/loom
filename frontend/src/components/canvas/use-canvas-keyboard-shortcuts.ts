@@ -76,6 +76,7 @@ export function useCanvasKeyboardShortcuts(props: Props) {
       if (event.key === 'Escape') {
         // Settings owns the first Escape during the popup exit transition.
         if (current.settingsSection) return
+        if (document.querySelector('[role="dialog"]')) return
         if (current.menu) {
           current.setMenu(null)
           event.preventDefault()
@@ -128,6 +129,14 @@ export function useCanvasKeyboardShortcuts(props: Props) {
         return
       }
       if (!action) return
+      if (
+        action.id === 'remove-selected-relationships' &&
+        (!targetElement?.closest(
+          '[data-canvas-surface] .react-flow, [data-canvas-surface]:focus'
+        ) ||
+          isInteractiveTarget)
+      )
+        return
       event.preventDefault()
       if (action.id === 'show-commands') current.openPalette(false)
       else void current.executeAction(action)

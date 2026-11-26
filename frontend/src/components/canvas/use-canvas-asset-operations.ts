@@ -1,16 +1,18 @@
 import type { ReactFlowInstance } from '@xyflow/react'
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
-import {
-  GroupService,
-  ImageService,
-} from '../../../bindings/loom/internal/service'
+import { useEffect, useRef } from 'react'
+import { ImageService } from '../../../bindings/loom/internal/service'
 import { readMedia } from '../../lib/clipboard'
-import type { Selection } from '../../lib/selection'
+import { type Selection, sameSelection } from '../../lib/selection'
+import type { CanvasBoardOwner } from './canvas-board-owner'
+import type { useCanvasCamera } from './use-canvas-camera'
 import type { RevealRequest } from './use-canvas-workspace-state'
 
 interface Props {
   repoPath: string
+  owner: CanvasBoardOwner
   flow: ReactFlowInstance
+  camera?: ReturnType<typeof useCanvasCamera>
   selection: Selection
   setSelection: Dispatch<SetStateAction<Selection>>
   selectedIds: () => number[]
@@ -20,7 +22,6 @@ interface Props {
   selectAssets: (ids: number[]) => void
   setReveal: Dispatch<SetStateAction<RevealRequest | null>>
   center: () => { x: number; y: number }
-  canCreateSet: boolean
   purgeIds: number[] | null
   trashIds: number[] | null
   setPurgeIds: Dispatch<SetStateAction<number[] | null>>
@@ -34,7 +35,9 @@ interface Props {
 
 export function useCanvasAssetOperations({
   repoPath,
+  owner,
   flow,
+  camera,
   selection,
   setSelection,
   selectedIds,
@@ -44,7 +47,6 @@ export function useCanvasAssetOperations({
   selectAssets,
   setReveal,
   center,
-  canCreateSet,
   purgeIds,
   trashIds,
   setPurgeIds,
@@ -55,22 +57,53 @@ export function useCanvasAssetOperations({
   setRecentActionIds,
   setError,
 }: Props) {
-  async function createSet() {
-    if (!canCreateSet) return
-    const ids = selection.ids
-    const created = await GroupService.CreateGroup(repoPath, '', '', ids)
-    if (!created) return
-    await reload()
-    // Keep the new semantic set selected after its metadata reloads.
-    setSelection({ surface: 'canvas', ids, edges: [], group: created.id })
+  const purgeOrigin = useRef<Selection['surface'] | null>(null)
+  const navigationActive = useRef(true)
+  const navigation = useRef({ generation: 0, owner, repoPath, selection })
+  const previous = navigation.current
+  if (
+    previous.owner !== owner ||
+    previous.repoPath !== repoPath ||
+    !sameSelection(previous.selection, selection)
+  ) {
+    navigation.current = {
+      generation: previous.generation + 1,
+      owner,
+      repoPath,
+      selection,
+    }
   }
-
+  useEffect(() => {
+    navigationActive.current = true
+    return () => {
+      navigationActive.current = false
+      navigation.current.generation++
+    }
+  }, [])
+  // A retained callback must keep the revision from the render that created it.
+  const modeRevision = owner.getModeRevision()
   async function go(id: number, folder = false) {
+    const cameraVersion = camera?.camera.version()
+    const isOwnerCurrent = () =>
+      navigationActive.current &&
+      navigation.current.owner === owner &&
+      navigation.current.repoPath === repoPath &&
+      owner.isActive?.() !== false &&
+      owner.getModeRevision() === modeRevision
+    if (!isOwnerCurrent()) return
+    const request = ++navigation.current.generation
+    const isCurrent = () =>
+      navigation.current.generation === request && isOwnerCurrent()
     const image = await ImageService.GetImage(repoPath, id)
-    if (!image) return
-    if (folder || !image.placed) {
+    if (!isCurrent() || !image) return
+    const mode = owner.getMode()
+    const node = mode === 'legacy' ? undefined : flow.getNode(String(id))
+    if (!isCurrent()) return
+    if (folder || (mode === 'legacy' ? !image.placed : !node)) {
       openAssets()
+      if (!isCurrent()) return
       selectAssets([id])
+      if (!isCurrent()) return
       setReveal({
         id,
         folder: folder
@@ -83,11 +116,21 @@ export function useCanvasAssetOperations({
       })
       return
     }
-    setExpanded(image.groupId || null)
+    setExpanded(null)
+    if (!isCurrent()) return
     setSelection({ surface: 'canvas', ids: [id], edges: [], group: null })
-    await flow.setCenter(image.canvasX + 75, image.canvasY + 55, {
-      zoom: flow.getZoom(),
-    })
+    if (!isCurrent() || (camera && camera.camera.version() !== cameraVersion))
+      return
+    const zoom = flow.getZoom()
+    if (!isCurrent()) return
+    const x = node
+      ? node.position.x + (node.measured?.width ?? node.width ?? 150) / 2
+      : image.canvasX + 75
+    const y = node
+      ? node.position.y + (node.measured?.height ?? node.height ?? 110) / 2
+      : image.canvasY + 55
+    if (camera) await camera.center(x, y)
+    else await flow.setCenter(x, y, { zoom })
   }
 
   async function paste(
@@ -96,15 +139,18 @@ export function useCanvasAssetOperations({
   ) {
     const point = center()
     const assets = media ?? (await readMedia())
-    const canvas = surface === 'canvas'
-    const ids = await ImageService.ImportMedia(
-      repoPath,
-      assets,
-      canvas,
-      point.x,
-      point.y
-    )
-    await reload()
+    const { ids, canvas } = await owner.execute(async () => {
+      const canvas = surface === 'canvas' && owner.allows('canvas-drop')
+      const ids = await ImageService.ImportMedia(
+        repoPath,
+        assets,
+        canvas,
+        point.x,
+        point.y
+      )
+      await reload()
+      return { ids, canvas }
+    })
     setSelection({
       surface: canvas ? 'canvas' : 'assets',
       ids: ids ?? [],
@@ -124,16 +170,21 @@ export function useCanvasAssetOperations({
   async function remove(purge: boolean) {
     const ids = selectedIds()
     if (purge) {
-      if (ids.length) setPurgeIds(ids)
+      if (owner.getMode() !== 'legacy' && selection.surface !== 'assets') return
+      if (ids.length) {
+        purgeOrigin.current = selection.surface
+        setPurgeIds(ids)
+      }
       return
     }
     if (selection.surface === 'assets') {
       confirmTrash(ids)
       return
     }
-    await ImageService.UnplaceImages(repoPath, ids)
-    for (const id of selection.edges)
-      await ImageService.UnlinkSource(repoPath, id)
+    if (selection.edges.length) {
+      if (!owner.allows('relationship')) return
+      await ImageService.UnlinkSources(repoPath, selection.edges)
+    } else return
     setSelection({ ...selection, ids: [], edges: [], group: null })
     await reload()
   }
@@ -185,12 +236,20 @@ export function useCanvasAssetOperations({
 
   async function confirmPurge() {
     if (!purgeIds?.length || lifecyclePendingRef.current) return
+    if (owner.getMode() !== 'legacy' && purgeOrigin.current !== 'assets') return
     lifecyclePendingRef.current = true
     setLifecyclePending(true)
-    await ImageService.PurgeImages(repoPath, purgeIds)
+    const purged = await owner.execute(async () => {
+      if (owner.getMode() !== 'legacy' && purgeOrigin.current !== 'assets')
+        return false
+      await ImageService.PurgeImages(repoPath, purgeIds)
+      await reload()
+      return true
+    })
+    if (!purged) return
+    purgeOrigin.current = null
     setPurgeIds(null)
     setSelection({ ...selection, ids: [], edges: [], group: null })
-    await reload()
     completeLifecycleAction()
   }
 
@@ -204,7 +263,6 @@ export function useCanvasAssetOperations({
   }
 
   return {
-    createSet,
     go,
     paste,
     importMedia,

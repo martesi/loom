@@ -6,7 +6,7 @@ import path from 'node:path'
 // fetch until the Inspector closes) match that ID. Deriving it from the
 // generated bindings keeps the tests pinned to the generated contract instead
 // of copies of magic numbers that silently stop matching after regeneration.
-function runtimeMethodID(bindingFile: string, exportedName: string) {
+export function runtimeMethodID(bindingFile: string, exportedName: string) {
   const source = readFileSync(
     path.resolve(
       import.meta.dirname,
@@ -29,6 +29,10 @@ function runtimeMethodID(bindingFile: string, exportedName: string) {
 }
 
 export const getImageMethodID = runtimeMethodID('imageservice.ts', 'GetImage')
+export const reverseRelationshipMethodID = runtimeMethodID(
+  'imageservice.ts',
+  'ReverseRelationship'
+)
 export const setViewportMethodID = runtimeMethodID(
   'imageservice.ts',
   'SetViewport'

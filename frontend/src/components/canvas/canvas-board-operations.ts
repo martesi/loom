@@ -1,35 +1,20 @@
+import { t } from '@lingui/core/macro'
 import type { Edge, Node, ReactFlowInstance } from '@xyflow/react'
-import type { CanvasData } from '../../../bindings/loom/internal/service'
+import type {
+  CanvasData,
+  GeometryUpdate,
+} from '../../../bindings/loom/internal/service'
 import { ImageService } from '../../../bindings/loom/internal/service'
 import { computeSubgraphLayout, placeCluster } from '../../lib/layout'
 
 const RELATION_DRAG_THRESHOLD = 5
 
 export function targetAt(x: number, y: number): string | null {
-  const group = [
-    ...document.querySelectorAll<HTMLElement>('.react-flow__node-group'),
-  ].find((node) => {
-    const bounds = node.getBoundingClientRect()
-    return (
-      x >= bounds.left &&
-      x <= bounds.right &&
-      y >= bounds.top &&
-      y <= bounds.bottom
-    )
-  })
-  if (group)
-    return (
-      group
-        .closest<HTMLElement>('.react-flow__node')
-        ?.getAttribute('data-id') ?? null
-    )
   const nodes = document
     .elementsFromPoint(x, y)
     .map((element) => element.closest<HTMLElement>('.react-flow__node'))
     .filter((node): node is HTMLElement => node !== null)
-  const target =
-    nodes.find((node) => node.classList.contains('react-flow__node-group')) ??
-    nodes[0]
+  const target = nodes[0]
   return target?.getAttribute('data-id') ?? null
 }
 
@@ -54,18 +39,35 @@ export function validateRelationshipTarget(
   source: number,
   id: string,
   data: CanvasData,
-  groupMembers: (id: number) => number[]
+  _groupMembers: (id: number) => number[]
 ) {
-  const targets = id.startsWith('set-')
-    ? groupMembers(Number(id.slice(4)))
-    : [Number(id)]
+  const targets = [Number(id)]
+  const available = new Set(
+    (data.images ?? [])
+      .filter((image) => !image.trashed && !image.missing)
+      .map((image) => image.id)
+  )
+  if (
+    !available.has(source) ||
+    !targets.length ||
+    targets.some((target) => !available.has(target))
+  )
+    return { valid: false, reason: t`An image is unavailable` }
   if (targets.includes(source))
     return {
       valid: false,
-      reason: id.startsWith('set-')
-        ? 'A set cannot contain its source image'
-        : 'An image cannot be related to itself',
+      reason: t`An image cannot be related to itself`,
     }
+  if (
+    targets.every((target) =>
+      (data.relationships ?? []).some(
+        (relationship) =>
+          relationship.sourceImageId === source &&
+          relationship.derivedImageId === target
+      )
+    )
+  )
+    return { valid: false, reason: t`This relationship already exists` }
   const cyclic = targets.some((target) => {
     const seen = new Set<number>()
     const stack = [target]
@@ -84,7 +86,7 @@ export function validateRelationshipTarget(
     return false
   })
   return cyclic
-    ? { valid: false, reason: 'This relationship would create a cycle' }
+    ? { valid: false, reason: t`This relationship would create a cycle` }
     : { valid: true, reason: undefined }
 }
 
@@ -129,35 +131,43 @@ export async function arrangeCanvas(
           { x: position.x + minX, y: position.y + minY },
         ])
       )
-  const updates = [...placed].flatMap(([id, position]) => {
-    const node = nodes.find((candidate) => candidate.id === id)
-    if (!node) return []
-    if (node.type !== 'group') return [{ imageId: Number(id), ...position }]
-    const group = (data.groups ?? []).find((item) => `set-${item.id}` === id)
-    if (!group) return []
-    const dx = position.x - node.position.x
-    const dy = position.y - node.position.y
-    return (data.images ?? [])
-      .filter(
-        (image) => (group.memberIds ?? []).includes(image.id) && image.placed
-      )
-      .map((image) => ({
-        imageId: image.id,
-        x: image.canvasX + dx,
-        y: image.canvasY + dy,
-      }))
-  })
-  await ImageService.SetPositions(repoPath, [
+  const updates = [...placed].map(([id, position]) => ({
+    imageId: Number(id),
+    ...position,
+  }))
+  const uniqueUpdates = [
     ...new Map(updates.map((update) => [update.imageId, update])).values(),
-  ])
+  ]
+  await ImageService.SetGeometry(
+    repoPath,
+    arrangeGeometryUpdates(uniqueUpdates, data)
+  )
   await reload()
+}
+
+export function arrangeGeometryUpdates(
+  updates: { imageId: number; x: number; y: number }[],
+  data: CanvasData
+): GeometryUpdate[] {
+  const images = new Map((data.images ?? []).map((image) => [image.id, image]))
+  return updates.map((update) => {
+    const image = images.get(update.imageId)
+    if (!image)
+      throw new Error(`Missing image ${update.imageId} during arrange`)
+    const hasSize = image.canvasW > 0 && image.canvasH > 0
+    return {
+      ...update,
+      w: hasSize ? image.canvasW : null,
+      h: hasSize ? image.canvasH : null,
+    }
+  })
 }
 
 export async function alignCanvas(
   axis: 'horizontal' | 'vertical',
   repoPath: string,
   nodes: Node[],
-  data: CanvasData,
+  _data: CanvasData,
   reload: () => Promise<void>
 ) {
   const selected = nodes.filter((node) => node.selected)
@@ -167,29 +177,11 @@ export async function alignCanvas(
     selected.reduce((sum, node) => sum + node.position[coordinate], 0) /
       selected.length
   )
-  const updates = selected.flatMap((node) => {
-    if (node.type !== 'group')
-      return [
-        {
-          imageId: Number(node.id),
-          x: axis === 'vertical' ? average : node.position.x,
-          y: axis === 'horizontal' ? average : node.position.y,
-        },
-      ]
-    const group = (data.groups ?? []).find(
-      (item) => `set-${item.id}` === node.id
-    )
-    if (!group) return []
-    const members = (data.images ?? []).filter(
-      (image) => (group.memberIds ?? []).includes(image.id) && image.placed
-    )
-    const delta = average - node.position[coordinate]
-    return members.map((image) => ({
-      imageId: image.id,
-      x: axis === 'vertical' ? image.canvasX + delta : image.canvasX,
-      y: axis === 'horizontal' ? image.canvasY + delta : image.canvasY,
-    }))
-  })
+  const updates = selected.map((node) => ({
+    imageId: Number(node.id),
+    x: axis === 'vertical' ? average : node.position.x,
+    y: axis === 'horizontal' ? average : node.position.y,
+  }))
   await ImageService.SetPositions(repoPath, [
     ...new Map(updates.map((update) => [update.imageId, update])).values(),
   ])
@@ -205,35 +197,4 @@ export function canvasCenter(
     x: (bounds?.left ?? 0) + (bounds?.width ?? 800) / 2,
     y: (bounds?.top ?? 0) + (bounds?.height ?? 600) / 2,
   })
-}
-
-export async function fitCanvas(
-  flow: ReactFlowInstance,
-  repoPath: string,
-  nodes?: Node[]
-) {
-  await flow.fitView(nodes ? { nodes, padding: 0.2 } : { padding: 0.2 })
-  await ImageService.SetViewport(repoPath, flow.getViewport())
-}
-
-export async function resetCanvasZoom(
-  flow: ReactFlowInstance,
-  host: { current: HTMLDivElement | null },
-  repoPath: string
-) {
-  const center = canvasCenter(flow, host)
-  await flow.setCenter(center.x, center.y, { zoom: 1 })
-  await ImageService.SetViewport(repoPath, flow.getViewport())
-}
-
-export async function zoomCanvas(
-  flow: ReactFlowInstance,
-  repoPath: string,
-  factor: number
-) {
-  await flow.setViewport({
-    ...flow.getViewport(),
-    zoom: Math.max(0.05, Math.min(4, flow.getZoom() * factor)),
-  })
-  await ImageService.SetViewport(repoPath, flow.getViewport())
 }

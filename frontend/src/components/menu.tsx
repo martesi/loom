@@ -16,22 +16,24 @@ interface PositionedMenuProps {
   items: MenuAction[]
   onClose: () => void
   width?: number
+  restoreFocusOnSelect?: boolean
+  restoreFocusOnPointerSelect?: boolean
 }
 
-// A small hand-rolled dropdown positioned at a fixed viewport point —
-// backs both the canvas node right-click menu (mockup section 5) and the
-// list view's row context menu. Deliberately not built on a generic
-// anchor-to-trigger menu primitive, since both call sites open it from an
-// arbitrary click point (contextmenu event / a "..." button) rather than a
-// DOM-adjacent trigger.
+// Canvas context menus open at a viewport point rather than at an anchor.
 export function PositionedMenu({
   x,
   y,
   items,
   onClose,
   width = 224,
+  restoreFocusOnSelect = true,
+  restoreFocusOnPointerSelect = true,
 }: PositionedMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
+  const restoreFocusRef = useRef(true)
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
   // Deliberately no window 'contextmenu' listener here: right-clicking
   // elsewhere already opens (or moves) a menu through its own contextmenu
   // handler, which sets this component's x/y/items directly — a second
@@ -39,22 +41,43 @@ export function PositionedMenu({
   // handler (window sits outside the React root in the bubble chain), so
   // it would immediately null out the very state the click just set.
   useEffect(() => {
+    const menu = menuRef.current
+    const previousFocus =
+      document.activeElement instanceof HTMLElement ||
+      document.activeElement instanceof SVGElement
+        ? document.activeElement
+        : null
+    restoreFocusRef.current = true
+    menu
+      ?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')
+      ?.focus()
     const onPointerDown = (event: PointerEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) onClose()
+      if (!menu?.contains(event.target as Node)) {
+        restoreFocusRef.current = false
+        closeRef.current()
+      }
     }
-    // Kept alongside the menu's own onKeyDown handler: when the menu opens,
-    // focus can still sit outside it (e.g. after a canvas right-click), so
-    // this covers Escape for that case.
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') closeRef.current()
+      if (e.key === 'Tab' && menu?.contains(document.activeElement)) {
+        restoreFocusRef.current = false
+        closeRef.current()
+      }
     }
     window.addEventListener('pointerdown', onPointerDown)
     window.addEventListener('keydown', onKey)
     return () => {
       window.removeEventListener('pointerdown', onPointerDown)
       window.removeEventListener('keydown', onKey)
+      if (
+        restoreFocusRef.current &&
+        previousFocus?.isConnected &&
+        (menu?.contains(document.activeElement) ||
+          document.activeElement === document.body)
+      )
+        previousFocus.focus()
     }
-  }, [onClose])
+  }, [])
 
   const clampedX = Math.min(x, window.innerWidth - width - 8)
   const clampedY = Math.min(y, window.innerHeight - items.length * 36 - 16)
@@ -67,10 +90,33 @@ export function PositionedMenu({
       style={{ left: Math.max(clampedX, 8), top: Math.max(clampedY, 8), width }}
       onClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => {
-        // Close before stopping propagation: the stopPropagation below keeps
-        // the window-level Escape listener from seeing keydown events that
-        // originate inside the menu (e.g. when an item has focus).
-        if (e.key === 'Escape') onClose()
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          onClose()
+        }
+        if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
+          e.preventDefault()
+          const buttons = [
+            ...(menuRef.current?.querySelectorAll<HTMLButtonElement>(
+              '[role="menuitem"]:not(:disabled)'
+            ) ?? []),
+          ]
+          const index = buttons.findIndex(
+            (button) => button === document.activeElement
+          )
+          const next =
+            e.key === 'Home'
+              ? 0
+              : e.key === 'End'
+                ? buttons.length - 1
+                : (index + (e.key === 'ArrowDown' ? 1 : -1) + buttons.length) %
+                  buttons.length
+          buttons[next]?.focus()
+        }
+        if (e.key === 'Tab') {
+          closeRef.current()
+          return
+        }
         e.stopPropagation()
       }}
     >
@@ -79,9 +125,16 @@ export function PositionedMenu({
           {item.separatorBefore && <div className="my-1 h-px bg-black/6" />}
           <button
             type="button"
+            role="menuitem"
+            tabIndex={-1}
             disabled={item.disabled}
-            onClick={() => {
+            onClick={(event) => {
               if (item.disabled) return
+              if (
+                !restoreFocusOnSelect ||
+                (event.detail > 0 && !restoreFocusOnPointerSelect)
+              )
+                restoreFocusRef.current = false
               item.onSelect()
               onClose()
             }}
