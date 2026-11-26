@@ -19,6 +19,8 @@ type Repo struct {
 	DB   *sql.DB
 }
 
+type MigrationInspection = db.MigrationInspection
+
 // Bootstrap opens the repo rooted at rootPath, creating its .loom/ folder
 // and running migrations if this is the first time this folder has been
 // opened. Safe to call repeatedly on an already-bootstrapped repo.
@@ -62,6 +64,30 @@ func OpenExistingReadOnly(rootPath string) (*Repo, error) {
 		return nil, err
 	}
 	return &Repo{Path: rootPath, DB: conn}, nil
+}
+
+// OpenExisting opens an already-migrated repository for writes without
+// creating it or applying migrations. Mutation callers must hold admission.
+func OpenExisting(rootPath string) (*Repo, error) {
+	rootPath = canonicalRepoPath(rootPath)
+	dbPath := filepath.Join(rootPath, loomDirName, "db.sqlite")
+	info, err := os.Stat(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("repository database is unavailable: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("repository database is not a regular file")
+	}
+	conn, err := db.OpenExisting(dbPath)
+	if err != nil {
+		return nil, err
+	}
+	return &Repo{Path: rootPath, DB: conn}, nil
+}
+
+func InspectRepositoryMigrations(rootPath string) (db.MigrationInspection, error) {
+	rootPath = canonicalRepoPath(rootPath)
+	return db.InspectMigrations(filepath.Join(rootPath, loomDirName, "db.sqlite"))
 }
 
 func (r *Repo) Close() error {

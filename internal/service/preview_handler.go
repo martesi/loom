@@ -74,13 +74,17 @@ func ServePreview(w http.ResponseWriter, r *http.Request) {
 }
 
 func ServePreviewWithProcessor(w http.ResponseWriter, r *http.Request, processor media.Processor) {
+	servePreviewWithGate(w, r, processor, nil)
+}
+
+func servePreviewWithGate(w http.ResponseWriter, r *http.Request, processor media.Processor, gate *renditionGate) {
 	tier, err := strconv.Atoi(r.URL.Query().Get("w"))
 	if err != nil || (tier != 640 && tier != 1280 && tier != 2048) {
 		w.Header().Set("Cache-Control", "no-store")
 		http.Error(w, "invalid preview width", http.StatusBadRequest)
 		return
 	}
-	serveRendition(w, r, processor, tier, "", 0)
+	serveRenditionWithGate(w, r, processor, tier, "", 0, gate)
 }
 
 func serveRendition(w http.ResponseWriter, r *http.Request, processor media.Processor, forcedTier int, forcedRepo string, forcedID int64) {

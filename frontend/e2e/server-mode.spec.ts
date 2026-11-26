@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises'
+import { legacyServiceCall } from './legacy-service'
 import { expect, test } from './test-fixtures'
 import {
   enterFixtureAttemptFolder,
@@ -49,6 +50,10 @@ test('direct openRepo bootstraps a canvas and naked canvas route redirects', asy
   browser,
 }) => {
   const directPath = await fixturePath('direct-fixtures')
+  // The openRepo query is an existing-repository handoff. Prepare the isolated
+  // fixture through the folder-open endpoint first; OpenRecent is read-only
+  // with respect to repository creation and must not bootstrap a missing DB.
+  await legacyServiceCall(page, 'reposervice.ts', 'OpenFolderAt', [directPath])
   await page.goto(`/?openRepo=${encodeURIComponent(directPath)}`)
   await expect(page).toHaveURL(/\/canvas$/)
   await expect(page.getByRole('heading', { name: 'Canvas' })).toBeVisible()

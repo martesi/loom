@@ -29,9 +29,9 @@ func main() {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch {
 			case service.IsPreviewRequest(r.URL.Path):
-				service.ServePreview(w, r)
+				service.ServePreviewBindingProfile(w, r)
 			case service.IsThumbRequest(r.URL.Path):
-				service.ServeThumb(w, r)
+				service.ServeThumbBindingProfile(w, r)
 			case service.IsFullRequest(r.URL.Path):
 				service.ServeFull(w, r)
 			default:
@@ -47,17 +47,7 @@ func main() {
 	app := application.New(application.Options{
 		Name:        "Loom",
 		Description: "Local-first image derivation manager",
-		Services: []application.Service{
-			application.NewService(&service.RepoService{}),
-			application.NewService(&service.ImageService{}),
-			application.NewService(&service.MediaService{}),
-			application.NewService(&service.TagService{}),
-			application.NewService(&service.PromptService{}),
-			application.NewService(&service.LibraryService{}),
-			application.NewService(&service.UndoService{}),
-			application.NewService(&service.SystemService{}),
-			application.NewService(&service.SettingsService{}),
-		},
+		Services:    service.WailsServices(),
 		Assets: application.AssetOptions{
 			Handler:    application.AssetFileServerFS(assets),
 			Middleware: assetMiddleware,

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/url"
+	"os"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -68,6 +69,97 @@ func Open(path string) (*sql.DB, error) {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 	return conn, nil
+}
+
+// OpenExisting opens a writable database without creating it or applying
+// migrations. Callers must inspect migration state first and admit any write.
+func OpenExisting(path string) (*sql.DB, error) {
+	dsnURL := url.URL{Scheme: "file", Path: filepath.ToSlash(path)}
+	dsnURL.RawQuery = "_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+	conn, err := sql.Open("sqlite", dsnURL.String())
+	if err != nil {
+		return nil, fmt.Errorf("open existing sqlite: %w", err)
+	}
+	conn.SetMaxOpenConns(1)
+	if err := conn.Ping(); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("open existing sqlite: %w", err)
+	}
+	if err := verifyMigrated(conn); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("repository schema is not current: %w", err)
+	}
+	return conn, nil
+}
+
+type MigrationInspection struct {
+	DatabaseExists bool     `json:"databaseExists"`
+	Applied        []string `json:"applied"`
+	Pending        []string `json:"pending"`
+}
+
+// InspectMigrations reads the schema ledger without creating directories,
+// changing journal settings, or applying migrations.
+func InspectMigrations(path string) (MigrationInspection, error) {
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return MigrationInspection{}, nil
+	}
+	if err != nil {
+		return MigrationInspection{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return MigrationInspection{}, fmt.Errorf("database path is not a regular file")
+	}
+	dsnURL := url.URL{Scheme: "file", Path: filepath.ToSlash(path)}
+	dsnURL.RawQuery = "mode=ro&_pragma=busy_timeout(5000)"
+	conn, err := sql.Open("sqlite", dsnURL.String())
+	if err != nil {
+		return MigrationInspection{}, fmt.Errorf("open migration inspection read-only: %w", err)
+	}
+	defer conn.Close()
+	if err := conn.Ping(); err != nil {
+		return MigrationInspection{}, fmt.Errorf("inspect existing database: %w", err)
+	}
+	status := MigrationInspection{DatabaseExists: true}
+	var ledgerExists bool
+	if err := conn.QueryRow(`SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations')`).Scan(&ledgerExists); err != nil {
+		return MigrationInspection{}, err
+	}
+	appliedSet := make(map[string]struct{})
+	if ledgerExists {
+		rows, err := conn.Query(`SELECT version FROM schema_migrations`)
+		if err != nil {
+			return MigrationInspection{}, err
+		}
+		for rows.Next() {
+			var version string
+			if err := rows.Scan(&version); err != nil {
+				rows.Close()
+				return MigrationInspection{}, err
+			}
+			appliedSet[version] = struct{}{}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return MigrationInspection{}, err
+		}
+		if err := rows.Close(); err != nil {
+			return MigrationInspection{}, err
+		}
+	}
+	entries, err := fs.ReadDir(migrationsFS, "migrations")
+	if err != nil {
+		return MigrationInspection{}, err
+	}
+	for _, entry := range entries {
+		if _, ok := appliedSet[entry.Name()]; ok {
+			status.Applied = append(status.Applied, entry.Name())
+		} else {
+			status.Pending = append(status.Pending, entry.Name())
+		}
+	}
+	return status, nil
 }
 
 // OpenExistingReadOnly opens an existing database without creating the file,

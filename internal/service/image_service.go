@@ -201,7 +201,23 @@ func (s *ImageService) DiscoverCanvas(repoPath string) error {
 	}
 	defer unlock()
 	defer repo.Close()
+	return s.discoverCanvasRepo(repo)
+}
 
+// discoverCanvasExisting performs discovery against a repository whose schema
+// is already current. Admission facades use this after explicit migration.
+func (s *ImageService) discoverCanvasExisting(repoPath string) error {
+	unlock := store.LockRepoOperations(repoPath)
+	defer unlock()
+	repo, err := store.OpenExisting(repoPath)
+	if err != nil {
+		return err
+	}
+	defer repo.Close()
+	return s.discoverCanvasRepo(repo)
+}
+
+func (s *ImageService) discoverCanvasRepo(repo *store.Repo) error {
 	if err := s.purgeExpiredTrash(repo); err != nil {
 		return err
 	}

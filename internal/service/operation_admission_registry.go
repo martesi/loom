@@ -1,5 +1,7 @@
 package service
 
+import "loom/internal/store"
+
 func (registry *admissionRegistry) rootLocked(canonical string) *admissionRoot {
 	entry := registry.roots[canonical]
 	if entry == nil {
@@ -29,6 +31,27 @@ func (registry *admissionRegistry) reopenIfUnfencedLocked(root string, entry *ad
 		}
 	}
 	entry.gateClosed = false
+	return nil
+}
+
+func (registry *admissionRegistry) ValidateToken(token admissionToken) error {
+	canonical, err := store.CanonicalRepoOperationRoot(token.root)
+	if err != nil || canonical != token.root {
+		return errAdmissionInvalid
+	}
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+	entry := registry.roots[canonical]
+	if entry == nil {
+		return errAdmissionNotFound
+	}
+	record := entry.records[token.id]
+	if record == nil {
+		return errAdmissionNotFound
+	}
+	if token.epoch != entry.epoch || !sameAdmissionToken(record.token, token) {
+		return errAdmissionMismatch
+	}
 	return nil
 }
 

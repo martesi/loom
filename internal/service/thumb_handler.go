@@ -175,6 +175,10 @@ func ServeThumb(w http.ResponseWriter, r *http.Request) {
 }
 
 func ServeThumbWithProcessor(w http.ResponseWriter, r *http.Request, processor media.Processor) {
+	serveThumbWithGate(w, r, processor, nil)
+}
+
+func serveThumbWithGate(w http.ResponseWriter, r *http.Request, processor media.Processor, gate *renditionGate) {
 	rest := strings.TrimPrefix(r.URL.Path, thumbURLPrefix)
 	parts := strings.SplitN(rest, "/", 2)
 	if len(parts) != 2 {
@@ -193,7 +197,7 @@ func ServeThumbWithProcessor(w http.ResponseWriter, r *http.Request, processor m
 		return
 	}
 
-	serveRendition(w, r, processor, 320, string(repoPathBytes), imageID)
+	serveRenditionWithGate(w, r, processor, 320, string(repoPathBytes), imageID, gate)
 }
 
 // ServeFull serves an image's actual full-resolution file off disk, keyed

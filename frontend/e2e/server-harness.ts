@@ -32,6 +32,7 @@ const fixtureRootFile = path.join(runDir, 'fixture-root.json')
 const buildLockFile = path.join(cacheDir, 'build.lock')
 const serverCount = Math.max(1, Number(process.env.E2E_WORKERS ?? '1'))
 const basePort = Number(process.env.E2E_PORT ?? '4173')
+const bindingProfile = process.env.LOOM_E2E_BINDING_PROFILE ?? 'production'
 let activeBuildCommand: ChildProcess | undefined
 let activeBuildTermination: Promise<void> | undefined
 
@@ -274,6 +275,7 @@ const fixtureRepos = [
   // Dedicated fixtures for Shelves
   { name: 'shelves-fixtures', files: ['shelf-alpha.png', 'shelf-beta.png'] },
   { name: 'preview-fixtures', files: ['preview-alpha.png'] },
+  { name: 'admission-create-fixtures', files: ['admission-alpha.png'] },
   {
     name: 'shelves-inspector-fixtures',
     files: ['shelf-alpha.png', 'shelf-beta.png'],
@@ -396,7 +398,7 @@ async function readBuildState(): Promise<BuildState | null> {
 
 async function buildServer(binaryPath: string) {
   const [key, state] = await Promise.all([
-    computeBuildKey(repoDir),
+    computeBuildKey(repoDir).then((value) => `${value}:${bindingProfile}`),
     readBuildState(),
   ])
   const cached =
@@ -421,26 +423,34 @@ async function buildServer(binaryPath: string) {
     return
   }
 
-  await run(
-    'wails3',
-    [
-      'generate',
-      'bindings',
-      '-f',
-      '-tags server,production',
-      '-clean=true',
-      '-ts',
-      '-i',
-    ],
-    repoDir
-  )
-  await run('bun', ['run', 'build'], frontendDir)
+  const tags =
+    bindingProfile === 'admissiontest'
+      ? 'server,production,admissiontest'
+      : 'server,production'
+  if (bindingProfile === 'production') {
+    await run(
+      'wails3',
+      [
+        'generate',
+        'bindings',
+        '-f',
+        `-tags ${tags}`,
+        '-clean=true',
+        '-ts',
+        '-i',
+      ],
+      repoDir
+    )
+    await run('bun', ['run', 'build'], frontendDir)
+  } else if (bindingProfile !== 'admissiontest') {
+    throw new Error(`Unknown Wails binding profile: ${bindingProfile}`)
+  }
   await run(
     'go',
     [
       'build',
       '-tags',
-      'server,production',
+      tags,
       '-trimpath',
       '-buildvcs=false',
       '-ldflags=-w -s',
@@ -526,11 +536,15 @@ async function main() {
   const templateRoot = path.join(tempRoot, 'fixture-templates')
   const binaryPath = path.join(
     tempRoot,
-    process.platform === 'win32' ? 'loom-server.exe' : 'loom-server'
+    process.platform === 'win32'
+      ? `loom-server-${bindingProfile}.exe`
+      : `loom-server-${bindingProfile}`
   )
   const builtBinaryPath = path.join(
     binDir,
-    process.platform === 'win32' ? 'loom-server.exe' : 'loom-server'
+    process.platform === 'win32'
+      ? `loom-server-${bindingProfile}.exe`
+      : `loom-server-${bindingProfile}`
   )
   const configRoots = Array.from({ length: serverCount }, (_, index) =>
     path.join(tempRoot, `config-${index}`)

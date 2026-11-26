@@ -16,6 +16,7 @@
     "i18n:extract": "lingui extract",
     "typecheck:e2e": "tsc -p e2e/tsconfig.json --noEmit",
     "test:e2e": "bun run typecheck:e2e && playwright test",
+    "test:e2e:admission": "bun run typecheck:e2e && playwright test -c playwright.admission.config.ts",
     "benchmark:1k": "bun run typecheck:e2e && playwright test -c playwright.benchmark.config.ts canvas-benchmark",
     "benchmark:drag": "bun run typecheck:e2e && playwright test -c playwright.benchmark.config.ts drag-fps-benchmark",
     "benchmark:pan": "bun run typecheck:e2e && playwright test -c playwright.benchmark.config.ts canvas-pan-benchmark"
