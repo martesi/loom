@@ -159,6 +159,21 @@ func clearDiscardedImportSuppression(repo *store.Repo, path, operation string) {
 	}
 }
 
+func recordImportFileSuppression(repo *store.Repo, path, expectedHash string, owned os.FileInfo, operation string) {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || (owned != nil && !os.SameFile(info, owned)) {
+		return
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || fmt.Sprintf("%x", sha256.Sum256(data)) != expectedHash {
+		return
+	}
+	if _, err := repo.DB.Exec(`INSERT INTO discarded_import_files (file_path, sha256) VALUES (?, ?)
+		ON CONFLICT(file_path) DO UPDATE SET sha256 = excluded.sha256`, path, expectedHash); err != nil {
+		log.Printf("%s: unable to suppress failed import file %q: %v", operation, path, err)
+	}
+}
+
 func collectImportRedoTail(repo *store.Repo) (map[string]string, error) {
 	cursor, err := repo.UndoCursor()
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"loom/internal/media"
 	"loom/internal/store"
@@ -137,18 +138,30 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 	paths := []string{}
 	ownedFiles := map[string]os.FileInfo{}
 	ownedFileHashes := map[string]string{}
+	discoverablePaths := map[string]bool{}
+	unverifiedStatPaths := []string{}
 	committed := false
 	defer func() {
 		if !committed {
+			_ = tx.Rollback()
 			for _, path := range paths {
 				current, err := os.Stat(path)
 				owned := ownedFiles[path]
 				if err == nil && owned != nil && os.SameFile(current, owned) {
 					data, readErr := os.ReadFile(path)
 					if readErr == nil && fmt.Sprintf("%x", sha256.Sum256(data)) == ownedFileHashes[path] {
-						_ = os.Remove(path)
+						remove := s.removeImportRollbackFile
+						if remove == nil {
+							remove = os.Remove
+						}
+						if removeErr := remove(path); discoverablePaths[path] && removeErr != nil && !os.IsNotExist(removeErr) {
+							recordImportFileSuppression(r, path, ownedFileHashes[path], owned, "failed import rollback")
+						}
 					}
 				}
+			}
+			for _, path := range unverifiedStatPaths {
+				recordImportFileSuppression(r, path, fmt.Sprintf("%x", sha256.Sum256(nil)), nil, "failed import stat")
 			}
 		}
 	}()
@@ -169,16 +182,25 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 				candidate = fmt.Sprintf("%s (%d)%s", strings.TrimSuffix(name, ext), n, ext)
 			}
 			dest = filepath.Join(r.Path, candidate)
-			fileInfo, err = writeExclusiveMode(dest, data, 0o644)
+			write := s.writeImportFile
+			if write == nil {
+				write = writeExclusiveMode
+			}
+			fileInfo, err = write(dest, data, 0o644)
 			if os.IsExist(err) {
 				continue
 			}
 			if err != nil {
+				var unverified *unverifiedExclusiveFileError
+				if errors.As(err, &unverified) {
+					unverifiedStatPaths = append(unverifiedStatPaths, dest)
+				}
 				return nil, err
 			}
 			break
 		}
 		paths = append(paths, dest)
+		discoverablePaths[dest] = true
 		ownedFiles[dest] = fileInfo
 		ownedFileHashes[dest] = fmt.Sprintf("%x", sha256.Sum256(data))
 		if s.afterImportFileWrite != nil {

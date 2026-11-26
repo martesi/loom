@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -33,6 +34,11 @@ type exclusiveFile interface {
 	Close() error
 }
 
+type unverifiedExclusiveFileError struct{ cause error }
+
+func (e *unverifiedExclusiveFileError) Error() string { return e.cause.Error() }
+func (e *unverifiedExclusiveFileError) Unwrap() error { return e.cause }
+
 func writeExclusiveMode(path string, data []byte, mode os.FileMode) (os.FileInfo, error) {
 	return writeExclusiveModeUsing(path, data, mode, func(path string, flags int, mode os.FileMode) (exclusiveFile, error) {
 		return os.OpenFile(path, flags, mode)
@@ -50,8 +56,9 @@ func writeExclusiveModeUsing(path string, data []byte, mode os.FileMode, open fu
 		_ = file.Close()
 		if retryErr == nil {
 			removeOwnedFilePrefix(path, retryInfo, data)
+			return nil, statErr
 		}
-		return nil, statErr
+		return nil, &unverifiedExclusiveFileError{cause: errors.Join(statErr, retryErr)}
 	}
 	_, writeErr := file.Write(data)
 	closeErr := file.Close()

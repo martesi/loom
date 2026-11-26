@@ -21,6 +21,8 @@ type ImageService struct {
 	dimensionProbe            func(context.Context, string) (media.Dimensions, error)
 	afterImportFileWrite      func(string)
 	removeDiscardedImportFile func(string) error
+	writeImportFile           func(string, []byte, os.FileMode) (os.FileInfo, error)
+	removeImportRollbackFile  func(string) error
 }
 
 func (s *ImageService) mediaProcessor() media.Processor {

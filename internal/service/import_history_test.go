@@ -15,12 +15,13 @@ import (
 )
 
 type failingExclusiveFile struct {
-	file      *os.File
-	statErr   error
-	writeSize int
-	writeErr  error
-	onStat    func()
-	statCalls int
+	file           *os.File
+	statErr        error
+	statAlwaysFail bool
+	writeSize      int
+	writeErr       error
+	onStat         func()
+	statCalls      int
 }
 
 func (f *failingExclusiveFile) Stat() (os.FileInfo, error) {
@@ -28,7 +29,7 @@ func (f *failingExclusiveFile) Stat() (os.FileInfo, error) {
 	if f.statCalls == 1 && f.onStat != nil {
 		f.onStat()
 	}
-	if f.statErr != nil && f.statCalls == 1 {
+	if f.statErr != nil && (f.statAlwaysFail || f.statCalls == 1) {
 		return nil, f.statErr
 	}
 	return f.file.Stat()
@@ -49,14 +50,16 @@ func (f *failingExclusiveFile) Close() error { return f.file.Close() }
 
 func TestWriteExclusiveModeCleansPartialWritesAndStatFailures(t *testing.T) {
 	for _, tc := range []struct {
-		name      string
-		statErr   error
-		writeSize int
-		replace   bool
+		name                  string
+		statErr               error
+		writeSize             int
+		replace               bool
+		persistentStatFailure bool
 	}{
 		{name: "partial write", writeSize: 3},
 		{name: "stat failure original file", statErr: errors.New("stat failed"), writeSize: 0},
 		{name: "stat failure replacement", statErr: errors.New("stat failed"), writeSize: 0, replace: true},
+		{name: "persistent stat failure", statErr: errors.New("stat failed"), writeSize: 0, persistentStatFailure: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "exclusive.bin")
@@ -67,7 +70,8 @@ func TestWriteExclusiveModeCleansPartialWritesAndStatFailures(t *testing.T) {
 					return nil, err
 				}
 				return &failingExclusiveFile{
-					file: file, statErr: tc.statErr, writeSize: tc.writeSize, writeErr: errors.New("short write"),
+					file: file, statErr: tc.statErr, statAlwaysFail: tc.persistentStatFailure,
+					writeSize: tc.writeSize, writeErr: errors.New("short write"),
 					onStat: func() {
 						if tc.replace {
 							if err := os.Remove(path); err != nil {
@@ -83,14 +87,64 @@ func TestWriteExclusiveModeCleansPartialWritesAndStatFailures(t *testing.T) {
 			if err == nil {
 				t.Fatal("writeExclusiveModeUsing unexpectedly succeeded")
 			}
-			if tc.replace {
+			if tc.replace || tc.persistentStatFailure {
 				if got, err := os.ReadFile(path); err != nil || len(got) != 0 {
-					t.Fatalf("replacement file did not survive stat failure cleanup: bytes=%q err=%v", got, err)
+					t.Fatalf("file did not survive when ownership was unavailable: bytes=%q err=%v", got, err)
 				}
 			} else if _, err := os.Stat(path); !os.IsNotExist(err) {
 				t.Fatalf("failed exclusive write left path behind, stat err=%v", err)
 			}
 		})
+	}
+}
+
+func TestPersistentImportStatFailureIsSuppressedFromDiscovery(t *testing.T) {
+	repoPath := t.TempDir()
+	service := &ImageService{writeImportFile: func(path string, data []byte, mode os.FileMode) (os.FileInfo, error) {
+		return writeExclusiveModeUsing(path, data, mode, func(path string, flags int, mode os.FileMode) (exclusiveFile, error) {
+			file, err := os.OpenFile(path, flags, mode)
+			if err != nil {
+				return nil, err
+			}
+			return &failingExclusiveFile{
+				file: file, statErr: errors.New("persistent stat failure"), statAlwaysFail: true,
+				writeSize: 0, writeErr: errors.New("write must not run"),
+			}, nil
+		})
+	}}
+	_, err := service.ImportMedia(repoPath, []ClipboardMedia{{
+		Name: "stat-orphan.png", Data: base64.StdEncoding.EncodeToString([]byte("never written")),
+	}}, false, 0, 0)
+	if err == nil {
+		t.Fatal("ImportMedia unexpectedly succeeded")
+	}
+	path := filepath.Join(repoPath, "stat-orphan.png")
+	if data, err := os.ReadFile(path); err != nil || len(data) != 0 {
+		t.Fatalf("unverified original file = %q, err=%v", data, err)
+	}
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	var suppressed, images int
+	if err := repo.DB.QueryRow(`SELECT count(*) FROM discarded_import_files WHERE file_path = ?`, path).Scan(&suppressed); err != nil || suppressed != 1 {
+		t.Fatalf("persistent stat-failure suppression = %d, err=%v", suppressed, err)
+	}
+	if err := repo.DB.QueryRow(`SELECT count(*) FROM images WHERE file_path = ?`, path).Scan(&images); err != nil || images != 0 {
+		t.Fatalf("persistent stat-failure image rows before scan = %d, err=%v", images, err)
+	}
+	if _, err := repo.RegisterImages(context.Background()); err != nil {
+		t.Fatalf("register after persistent stat failure: %v", err)
+	}
+	if _, err := repo.ScanAndRegisterImages(context.Background()); err != nil {
+		t.Fatalf("scan after persistent stat failure: %v", err)
+	}
+	if _, err := repo.RefreshFingerprints(context.Background()); err != nil {
+		t.Fatalf("refresh after persistent stat failure: %v", err)
+	}
+	if err := repo.DB.QueryRow(`SELECT count(*) FROM images WHERE file_path = ?`, path).Scan(&images); err != nil || images != 0 {
+		t.Fatalf("persistent stat failure was rediscovered: rows=%d err=%v", images, err)
 	}
 }
 
@@ -803,6 +857,85 @@ func TestImportRollbackPreservesExternallyModifiedOwnedFile(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(repoPath, "first.png"))
 	if err != nil || string(data) != "external in-place edit" {
 		t.Fatalf("external file after rollback = %q, err=%v", data, err)
+	}
+}
+
+func TestImportRollbackRemovalFailureSuppressesFailedBatchButAllowsExternalReplacement(t *testing.T) {
+	repoPath := t.TempDir()
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.DB.Exec(`CREATE TRIGGER fail_second_import BEFORE INSERT ON images WHEN NEW.file_path LIKE '%second.png' BEGIN SELECT RAISE(FAIL, 'injected second insert failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	service := &ImageService{removeImportRollbackFile: func(path string) error {
+		if filepath.Base(path) == "first.png" {
+			return errors.New("simulated rollback remove failure")
+		}
+		return os.Remove(path)
+	}}
+	_, err = service.ImportMedia(repoPath, []ClipboardMedia{
+		{Name: "first.png", Data: base64.StdEncoding.EncodeToString([]byte("failed batch member"))},
+		{Name: "second.png", Data: base64.StdEncoding.EncodeToString([]byte("trigger failure"))},
+	}, false, 0, 0)
+	if err == nil {
+		t.Fatal("ImportMedia unexpectedly succeeded")
+	}
+	firstPath := filepath.Join(repoPath, "first.png")
+	if data, err := os.ReadFile(firstPath); err != nil || string(data) != "failed batch member" {
+		t.Fatalf("retained failed-batch file = %q, err=%v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(repoPath, "second.png")); !os.IsNotExist(err) {
+		t.Fatalf("second failed-batch file remains after rollback, err=%v", err)
+	}
+	repo, err = store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows, suppressions int
+	if err := repo.DB.QueryRow(`SELECT count(*) FROM discarded_import_files WHERE file_path = ?`, firstPath).Scan(&suppressions); err != nil || suppressions != 1 {
+		t.Fatalf("failed-batch suppression = %d, err=%v", suppressions, err)
+	}
+	if err := repo.DB.QueryRow(`SELECT count(*) FROM images WHERE file_path = ?`, firstPath).Scan(&rows); err != nil || rows != 0 {
+		t.Fatalf("failed-batch row before discovery = %d, err=%v", rows, err)
+	}
+	for name, discover := range map[string]func(context.Context) (int, error){
+		"register": repo.RegisterImages,
+		"scan":     repo.ScanAndRegisterImages,
+		"refresh":  repo.RefreshFingerprints,
+	} {
+		if _, err := discover(context.Background()); err != nil {
+			t.Fatalf("%s after failed import: %v", name, err)
+		}
+		if err := repo.DB.QueryRow(`SELECT count(*) FROM images WHERE file_path = ?`, firstPath).Scan(&rows); err != nil || rows != 0 {
+			t.Fatalf("%s registered failed-batch file: rows=%d err=%v", name, rows, err)
+		}
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	external := []byte("genuine external replacement")
+	if err := os.WriteFile(firstPath, external, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.RescanRepository(repoPath); err != nil {
+		t.Fatalf("discover external replacement: %v", err)
+	}
+	data, err := os.ReadFile(firstPath)
+	if err != nil || !bytes.Equal(data, external) {
+		t.Fatalf("external replacement after discovery = %q, err=%v", data, err)
+	}
+	repo, err = store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	if err := repo.DB.QueryRow(`SELECT count(*) FROM images WHERE file_path = ?`, firstPath).Scan(&rows); err != nil || rows != 1 {
+		t.Fatalf("external replacement rows = %d, err=%v", rows, err)
 	}
 }
 
