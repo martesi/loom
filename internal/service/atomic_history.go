@@ -3,6 +3,7 @@ package service
 import (
 	"database/sql"
 	"encoding/json"
+	"log"
 	"os"
 	"strconv"
 
@@ -34,6 +35,11 @@ func replayAtomicHistoryWithCleanup(repo *store.Repo, redo bool, afterWrite func
 			_ = tx.Rollback()
 			for _, file := range createdFiles {
 				recordImportFileSuppression(repo, file.path, file.hash, file.info, "failed history replay")
+				if file.identity != "" {
+					if err := repo.ReleaseImportIdentityAnchors(file.identity); err != nil {
+						log.Printf("failed history replay: unable to release unreferenced import anchor %q: %v", file.identity, err)
+					}
+				}
 			}
 		}
 	}()

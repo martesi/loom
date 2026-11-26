@@ -143,6 +143,7 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 	ownedIdentities := map[string]string{}
 	discoverablePaths := map[string]bool{}
 	rollbackSuppressions := []ownedImportFile{}
+	rollbackPrivateFiles := []ownedImportFile{}
 	committed := false
 	defer func() {
 		if !committed {
@@ -174,6 +175,18 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 			}
 			for _, file := range rollbackSuppressions {
 				recordImportFileSuppression(r, file.path, file.hash, file.info, "failed import write cleanup")
+			}
+			for _, file := range rollbackPrivateFiles {
+				if file.identity == "" {
+					continue
+				}
+				if _, err := removeOwnedImportFileWithHash(file.path, file.identity, file.hash); err != nil {
+					log.Printf("failed import rollback: unable to remove retained staging file %q: %v", file.path, err)
+					continue
+				}
+				if err := r.ReleaseImportIdentityAnchors(file.identity); err != nil {
+					log.Printf("failed import rollback: unable to remove retained staging anchor %q: %v", file.identity, err)
+				}
 			}
 		}
 	}()
@@ -247,8 +260,21 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 		if err := os.MkdirAll(filepath.Dir(stash), 0o755); err != nil {
 			return nil, err
 		}
-		stashInfo, retainedIdentity, err := writeExclusiveWithIdentity(stash, data, s.importFileIdentity)
+		writeRetained := s.writeRetainedImportFile
+		if writeRetained == nil {
+			writeRetained = writeExclusiveWithIdentity
+		}
+		stashInfo, retainedIdentity, err := writeRetained(stash, data, s.importFileIdentity)
 		if err != nil {
+			var cleanupFailure *exclusiveCleanupFailure
+			if errors.As(err, &cleanupFailure) {
+				rollbackPrivateFiles = append(rollbackPrivateFiles, ownedImportFile{
+					path:     cleanupFailure.path,
+					info:     cleanupFailure.info,
+					hash:     cleanupFailure.hash,
+					identity: store.FileIdentityAt(cleanupFailure.path, cleanupFailure.info),
+				})
+			}
 			return nil, err
 		}
 		paths = append(paths, stash)

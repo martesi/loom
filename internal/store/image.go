@@ -140,7 +140,7 @@ func (r *Repo) registerImage(ctx context.Context, path string) (int, error) {
 	var oldMarker, oldFingerprint, importIdentity, importHash sql.NullString
 	var importUndone bool
 	err = r.DB.QueryRow(`SELECT file_size, content_hash, source_fingerprint, import_undone, import_file_identity, import_file_sha256 FROM images WHERE file_path = ?`, path).Scan(&size, &oldMarker, &oldFingerprint, &importUndone, &importIdentity, &importHash)
-	if err == nil && size.Valid && size.Int64 == info.Size() && oldMarker.String == marker && oldFingerprint.Valid && oldFingerprint.String != "" && !importUndone {
+	if err == nil && size.Valid && size.Int64 == info.Size() && oldMarker.String == marker && oldFingerprint.Valid && oldFingerprint.String != "" && !importUndone && (!importIdentity.Valid || importIdentity.String == "") {
 		return 0, nil
 	}
 	if err != nil && err != sql.ErrNoRows {
@@ -152,13 +152,16 @@ func (r *Repo) registerImage(ctx context.Context, path string) (int, error) {
 		return 0, fmt.Errorf("fingerprint %s: %w", path, err)
 	}
 	marker = fmt.Sprintf("stat:%d:%d", stableInfo.Size(), stableInfo.ModTime().UnixNano())
-	if !isNew && importUndone {
+	if !isNew && importUndone && (!importIdentity.Valid || importIdentity.String == "") {
+		return 0, fmt.Errorf("verify undone import file identity for %q", path)
+	}
+	if !isNew && importIdentity.Valid && importIdentity.String != "" {
 		identity := r.identityAt(path, stableInfo)
-		if identity == "" || importIdentity.String == "" {
-			return 0, fmt.Errorf("verify undone import file identity for %q", path)
+		if identity == "" {
+			return 0, fmt.Errorf("verify imported file identity for %q", path)
 		}
 		if identity != importIdentity.String || fingerprint != importHash.String {
-			if _, err := r.DB.Exec(`UPDATE images SET import_undone = 0, import_file_identity = '', import_file_sha256 = '' WHERE file_path = ? AND import_undone = 1`, path); err != nil {
+			if _, err := r.DB.Exec(`UPDATE images SET import_undone = 0, import_file_identity = '', import_file_sha256 = '' WHERE file_path = ? AND import_file_identity = ?`, path, importIdentity.String); err != nil {
 				return 0, err
 			}
 		}
@@ -289,13 +292,16 @@ func (r *Repo) scanAndRegisterImagesWithFingerprint(ctx context.Context, advance
 		if rowErr != nil && rowErr != sql.ErrNoRows {
 			return changed, rowErr
 		}
-		if rowErr == nil && importUndone {
+		if rowErr == nil && importUndone && importIdentity == "" {
+			return changed, fmt.Errorf("verify undone import file identity for %q", item.path)
+		}
+		if rowErr == nil && importIdentity != "" {
 			identity := r.identityAt(item.path, item.info)
-			if identity == "" || importIdentity == "" {
-				return changed, fmt.Errorf("verify undone import file identity for %q", item.path)
+			if identity == "" {
+				return changed, fmt.Errorf("verify imported file identity for %q", item.path)
 			}
 			if identity != importIdentity || item.fingerprint != importHash {
-				if _, err := r.DB.Exec(`UPDATE images SET import_undone = 0, import_file_identity = '', import_file_sha256 = '' WHERE file_path = ? AND import_undone = 1`, item.path); err != nil {
+				if _, err := r.DB.Exec(`UPDATE images SET import_undone = 0, import_file_identity = '', import_file_sha256 = '' WHERE file_path = ? AND import_file_identity = ?`, item.path, importIdentity); err != nil {
 					return changed, err
 				}
 			}

@@ -296,6 +296,33 @@ func applyImportBatchTx(tx *sql.Tx, payload importBatchPayload, created, validat
 	for _, item := range validated {
 		entry, currentPath := item.entry, item.currentPath
 		if !payload.Active {
+			var importIdentity, importHash string
+			if err := tx.QueryRow(`SELECT import_file_identity, import_file_sha256 FROM images WHERE id = ?`, entry.ImageID).Scan(&importIdentity, &importHash); err != nil {
+				return err
+			}
+			if importIdentity == "" || importHash == "" {
+				return fmt.Errorf("imported file %d is detached and cannot be undone", entry.ImageID)
+			}
+			info, err := os.Stat(currentPath)
+			if err == nil {
+				if !info.Mode().IsRegular() {
+					return fmt.Errorf("imported file %d is no longer a regular file", entry.ImageID)
+				}
+				identity := store.FileIdentityAt(currentPath, info)
+				if identity == "" || identity != importIdentity {
+					return fmt.Errorf("imported file %d was replaced and cannot be undone", entry.ImageID)
+				}
+				data, err := os.ReadFile(currentPath)
+				if err != nil {
+					return fmt.Errorf("read imported file %d before undo: %w", entry.ImageID, err)
+				}
+				if fmt.Sprintf("%x", sha256.Sum256(data)) != importHash {
+					return fmt.Errorf("imported file %d changed and cannot be undone", entry.ImageID)
+				}
+				*validate = append(*validate, ownedImportFile{path: currentPath, info: info, hash: importHash, identity: importIdentity})
+			} else if !os.IsNotExist(err) {
+				return fmt.Errorf("inspect imported file %d before undo: %w", entry.ImageID, err)
+			}
 			if _, err := tx.Exec(`UPDATE images SET trashed = 0, import_undone = 1 WHERE id = ?`, entry.ImageID); err != nil {
 				return err
 			}
@@ -338,12 +365,12 @@ func applyImportBatchTx(tx *sql.Tx, payload importBatchPayload, created, validat
 				}
 				return err
 			}
-			*created = append(*created, ownedImportFile{path: activePath, info: info, hash: entry.SHA256})
 			activeInfo = info
 			activeIdentity = store.FileIdentityAt(activePath, info)
 			if activeIdentity == "" {
 				return fmt.Errorf("restored import file %d has no verifiable identity", entry.ImageID)
 			}
+			*created = append(*created, ownedImportFile{path: activePath, info: info, hash: entry.SHA256, identity: activeIdentity})
 			if afterWrite != nil {
 				afterWrite(activePath)
 			}

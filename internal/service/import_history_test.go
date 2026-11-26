@@ -253,6 +253,52 @@ func TestImportRejectsTransientFileIdentityLookupFailure(t *testing.T) {
 	}
 }
 
+func TestRetainedCopyWriteFailureReclaimsVerifiedPrivateStage(t *testing.T) {
+	repoPath := t.TempDir()
+	service := &ImageService{writeRetainedImportFile: func(path string, data []byte, identityAt func(string, os.FileInfo) string) (os.FileInfo, string, error) {
+		return writeExclusiveModeUsingWithIdentity(path, data, 0o600, func(stagePath string, flags int, mode os.FileMode) (exclusiveFile, error) {
+			file, err := os.OpenFile(stagePath, flags, mode)
+			if err != nil {
+				return nil, err
+			}
+			return &failingExclusiveFile{file: file, writeSize: 4, writeErr: errors.New("injected retained-copy partial write")}, nil
+		}, identityAt)
+	}}
+	_, err := service.ImportMedia(repoPath, []ClipboardMedia{{
+		Name: "retained-failure.png", Data: base64.StdEncoding.EncodeToString([]byte("retained payload")),
+	}}, false, 0, 0)
+	if err == nil {
+		t.Fatal("ImportMedia unexpectedly succeeded after retained-copy write failure")
+	}
+	visiblePath := filepath.Join(repoPath, "retained-failure.png")
+	if got, err := os.ReadFile(visiblePath); err != nil || string(got) != "retained payload" {
+		t.Fatalf("visible failed-batch file = %q, err=%v", got, err)
+	}
+	retained, err := filepath.Glob(filepath.Join(repoPath, ".loom", "trash", "import-redo", "*"))
+	if err != nil || len(retained) != 0 {
+		t.Fatalf("retained copies after retained-write failure = %v, err=%v", retained, err)
+	}
+	anchors, err := filepath.Glob(filepath.Join(repoPath, ".loom", ".loom-import-stage-*"))
+	if err != nil || len(anchors) != 1 {
+		t.Fatalf("anchors after retained-write failure = %v, err=%v, want only visible-file suppression anchor", anchors, err)
+	}
+	visibleInfo, err := os.Stat(visiblePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	visibleIdentity := store.FileIdentityAt(visiblePath, visibleInfo)
+	anchorInfo, err := os.Stat(anchors[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := store.FileIdentityAt(anchors[0], anchorInfo); got != visibleIdentity {
+		t.Fatalf("remaining anchor identity = %q, want only visible tombstone identity %q", got, visibleIdentity)
+	}
+	if bytes, err := os.ReadFile(anchors[0]); err != nil || string(bytes) != "retained payload" {
+		t.Fatalf("remaining visible-file anchor bytes = %q, err=%v", bytes, err)
+	}
+}
+
 func TestImportWriteFailureLeavesPartialBytesHiddenAndAllowsExternalChange(t *testing.T) {
 	repoPath := t.TempDir()
 	service := &ImageService{writeImportFile: func(path string, data []byte, mode os.FileMode) (os.FileInfo, error) {
@@ -742,6 +788,93 @@ func TestRedoRejectsSameBytesRetainedReplacementBeforeReplay(t *testing.T) {
 	image, err := repo.GetImageByID(ids[0])
 	if err != nil || !image.ImportUndone {
 		t.Fatalf("image after rejected redo = %+v err=%v", image, err)
+	}
+}
+
+func TestRedoReleasesNewAnchorAfterSameBytesExternalReplacement(t *testing.T) {
+	repoPath := t.TempDir()
+	captured := []byte("restored file replaced with identical bytes")
+	ids, err := (&ImageService{}).ImportMedia(repoPath, []ClipboardMedia{{Name: "redo-replacement.png", Data: base64.StdEncoding.EncodeToString(captured)}}, false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(repoPath, "redo-replacement.png")
+	if _, err := (&UndoService{}).Undo(repoPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	var restoredIdentity string
+	var restoredPath string
+	service := &UndoService{afterImportRedoFileWrite: func(writtenPath string) {
+		// A missing imported path is restored to an available sibling path.
+		// Publish a same-bytes external replacement at that path before commit.
+		restoredPath = writtenPath
+		info, err := os.Stat(writtenPath)
+		if err != nil {
+			t.Errorf("stat restored file: %v", err)
+			return
+		}
+		restoredIdentity = store.FileIdentityAt(restoredPath, info)
+		replacement := writtenPath + ".external"
+		if err := os.WriteFile(replacement, captured, 0o600); err != nil {
+			t.Errorf("write same-bytes replacement: %v", err)
+			return
+		}
+		if err := os.Remove(writtenPath); err != nil {
+			t.Errorf("remove restored file: %v", err)
+			return
+		}
+		if err := os.Rename(replacement, writtenPath); err != nil {
+			t.Errorf("publish same-bytes replacement: %v", err)
+		}
+	}}
+	result, err := service.Redo(repoPath)
+	if err != nil || result.Applied || result.Error == "" {
+		t.Fatalf("redo after same-bytes post-write replacement = %+v, err=%v", result, err)
+	}
+	if restoredIdentity == "" {
+		t.Fatal("redo did not create a verifiable file before replacement")
+	}
+	if restoredPath == "" {
+		t.Fatal("redo did not create a restored path")
+	}
+	if got, err := os.ReadFile(restoredPath); err != nil || !bytes.Equal(got, captured) {
+		t.Fatalf("external replacement after failed redo = %q, err=%v", got, err)
+	}
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	image, err := repo.GetImageByID(ids[0])
+	if err != nil || !image.ImportUndone {
+		t.Fatalf("image after failed redo = %+v, err=%v", image, err)
+	}
+	var suppressions int
+	if err := repo.DB.QueryRow(`SELECT COUNT(*) FROM discarded_import_files WHERE file_path = ?`, restoredPath).Scan(&suppressions); err != nil || suppressions != 0 {
+		t.Fatalf("same-bytes replacement suppression count = %d, err=%v", suppressions, err)
+	}
+	anchors, err := filepath.Glob(filepath.Join(repoPath, ".loom", ".loom-import-stage-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, anchor := range anchors {
+		info, err := os.Stat(anchor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if store.FileIdentityAt(anchor, info) == restoredIdentity {
+			t.Fatalf("failed redo left an unreferenced anchor for %q: %s", restoredIdentity, anchor)
+		}
+	}
+	if _, err := repo.ScanAndRegisterImages(context.Background()); err != nil {
+		t.Fatalf("discover same-bytes replacement after failed redo: %v", err)
+	}
+	var discovered int
+	if err := repo.DB.QueryRow(`SELECT COUNT(*) FROM images WHERE file_path = ? AND import_undone = 0`, restoredPath).Scan(&discovered); err != nil || discovered != 1 {
+		t.Fatalf("same-bytes replacement discovered rows = %d, err=%v", discovered, err)
 	}
 }
 
@@ -2294,6 +2427,101 @@ func TestRedoTailDiscardReclaimsResourcesAfterRescanExposesReplacement(t *testin
 				if store.FileIdentityAt(anchor, info) == entry.FileIdentity {
 					t.Fatalf("obsolete import identity anchor remains: %s", anchor)
 				}
+			}
+		})
+	}
+}
+
+func TestDiscoveryDetachesActiveImportOwnershipFromSameBytesReplacement(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		discover func(*store.Repo) (int, error)
+	}{
+		{name: "normal discovery", discover: func(repo *store.Repo) (int, error) { return repo.RegisterImages(context.Background()) }},
+		{name: "explicit rescan", discover: func(repo *store.Repo) (int, error) { return repo.ScanAndRegisterImages(context.Background()) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repoPath := t.TempDir()
+			captured := []byte("same bytes, external inode")
+			ids, err := (&ImageService{}).ImportMedia(repoPath, []ClipboardMedia{{Name: "active-replacement.png", Data: base64.StdEncoding.EncodeToString(captured)}}, false, 0, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			repo, err := store.Bootstrap(repoPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var path, originalIdentity string
+			if err := repo.DB.QueryRow(`SELECT file_path, import_file_identity FROM images WHERE id = ?`, ids[0]).Scan(&path, &originalIdentity); err != nil {
+				repo.Close()
+				t.Fatal(err)
+			}
+			if err := repo.Close(); err != nil {
+				t.Fatal(err)
+			}
+			originalInfo, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			replacement := path + ".external"
+			if err := os.WriteFile(replacement, captured, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chtimes(replacement, originalInfo.ModTime(), originalInfo.ModTime()); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(replacement, path); err != nil {
+				t.Fatal(err)
+			}
+			replacementInfo, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := store.FileIdentityAt(path, replacementInfo); got == "" || got == originalIdentity {
+				t.Fatalf("replacement identity %q, original identity %q", got, originalIdentity)
+			}
+			if replacementInfo.Size() != originalInfo.Size() || !replacementInfo.ModTime().Equal(originalInfo.ModTime()) {
+				t.Fatalf("replacement stat differs: original=%v replacement=%v", originalInfo, replacementInfo)
+			}
+			repo, err = store.Bootstrap(repoPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tc.discover(repo); err != nil {
+				repo.Close()
+				t.Fatal(err)
+			}
+			var importUndone bool
+			var identity, hash string
+			if err := repo.DB.QueryRow(`SELECT import_undone, import_file_identity, import_file_sha256 FROM images WHERE id = ?`, ids[0]).Scan(&importUndone, &identity, &hash); err != nil {
+				repo.Close()
+				t.Fatal(err)
+			}
+			if importUndone || identity != "" || hash != "" {
+				repo.Close()
+				t.Fatalf("discovery kept import ownership: undone=%v identity=%q hash=%q", importUndone, identity, hash)
+			}
+			if err := repo.Close(); err != nil {
+				t.Fatal(err)
+			}
+			result, err := (&UndoService{}).Undo(repoPath)
+			if err != nil || result.Applied || result.Error == "" {
+				t.Fatalf("undo after replacement discovery = %+v, err=%v", result, err)
+			}
+			if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, captured) {
+				t.Fatalf("external replacement after failed undo = %q, err=%v", got, err)
+			}
+			repo, err = store.Bootstrap(repoPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer repo.Close()
+			image, err := repo.GetImageByID(ids[0])
+			if err != nil || image.ImportUndone || image.Trashed {
+				t.Fatalf("image after failed undo = %+v, err=%v", image, err)
 			}
 		})
 	}
