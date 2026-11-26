@@ -2,12 +2,18 @@ import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import { useEffect, useRef } from 'react'
 import { type CanvasAction, shortcutMatches } from '../../lib/action-catalog'
 import { emptySelection, type Selection } from '../../lib/selection'
-import type { CanvasMenuState } from './use-canvas-workspace-state'
+import type {
+  CanvasConnectionTool,
+  CanvasMenuState,
+} from './use-canvas-workspace-state'
 
 interface KeyboardState {
   assetsOpen: boolean
   assetsPinned: boolean
   closeAssets: () => void
+  connectionTool: CanvasConnectionTool
+  setConnectionTool: Dispatch<SetStateAction<CanvasConnectionTool>>
+  setConnectionAnchorId: Dispatch<SetStateAction<number | null>>
   closeInspector: () => void
   compressIds: number[] | null
   executeAction: (action: CanvasAction) => Promise<unknown>
@@ -88,6 +94,13 @@ export function useCanvasKeyboardShortcuts(props: Props) {
           return
         }
         if (document.querySelector('[role="menu"]')) return
+        if (current.connectionTool) {
+          current.setConnectionTool(null)
+          current.setConnectionAnchorId(null)
+          event.preventDefault()
+          event.stopPropagation()
+          return
+        }
         if (current.inspectorOpen && !current.inspectorPinned)
           current.closeInspector()
         else if (current.assetsOpen && !current.assetsPinned)

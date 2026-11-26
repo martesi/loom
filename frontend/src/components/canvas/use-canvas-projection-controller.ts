@@ -40,9 +40,10 @@ interface Props {
   report: (error: unknown) => void
   cancelPointerGesture?: () => void
   reconcileSelection: (nodes: readonly Node[], edges: readonly Edge[]) => void
+  startInView?: boolean
 }
 
-/** Internal only: legacy remains active until the full mode mutation policy exists. */
+/** The public route opts into View; internal consumers can still exercise legacy behavior. */
 export function useCanvasProjectionController(props: Props) {
   const current = useRef(props)
   current.current = props
@@ -187,7 +188,23 @@ export function useCanvasProjectionController(props: Props) {
     history: UndoResult[]
   ) {
     source.current = { board, graph }
-    if (!state.current) return false
+    if (!state.current && !current.current.startInView) return false
+    if (!state.current) {
+      const viewport = current.current.flow?.getViewport() ?? {
+        x: 0,
+        y: 0,
+        zoom: 1,
+      }
+      const initial = createCanvasProjection({
+        ...graph,
+        geometry: (board.snapshot.images ?? []).map((item) => item.geometry),
+        viewport,
+        viewportSize: size(),
+      })
+      current.current.owner.setMode('view')
+      publish(initial)
+      return true
+    }
     const before = capture(state.current)
     let next = reconcileCanvasProjection(before, {
       ...graph,

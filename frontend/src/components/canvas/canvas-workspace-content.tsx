@@ -2,6 +2,7 @@ import { t } from '@lingui/core/macro'
 import { Trans } from '@lingui/react/macro'
 import type { Edge, Node, ReactFlowInstance } from '@xyflow/react'
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
+import { useEffect } from 'react'
 import type {
   CanvasData,
   ImageInfo,
@@ -151,6 +152,10 @@ export function CanvasWorkspaceContent(props: Props) {
     reveal,
     setReveal,
     relation,
+    connectionTool,
+    setConnectionTool,
+    connectionAnchorId,
+    setConnectionAnchorId,
     pendingDragNode,
     dragTargetRaf,
     zoomRaf,
@@ -174,8 +179,43 @@ export function CanvasWorkspaceContent(props: Props) {
   } = boardModel
   const { paste, importMedia, finishTrash, confirmPurge } = assetOperations
 
-  const validTarget = (source: number, id: string) =>
-    validateRelationshipTarget(source, id, data, groupMembers)
+  useEffect(() => {
+    if (
+      !connectionTool ||
+      (boardModel.mode === 'edit' &&
+        (connectionTool === 'reverse-relationship' ||
+          (connectionAnchorId !== null &&
+            data.images?.some(
+              (image) =>
+                image.id === connectionAnchorId &&
+                !image.trashed &&
+                !image.missing
+            ))))
+    )
+      return
+    setConnectionTool(null)
+    setConnectionAnchorId(null)
+  }, [
+    boardModel.mode,
+    connectionAnchorId,
+    connectionTool,
+    data.images,
+    setConnectionAnchorId,
+    setConnectionTool,
+  ])
+
+  const validTarget = (
+    source: number,
+    id: string,
+    excludedRelationshipId?: number
+  ) =>
+    validateRelationshipTarget(
+      source,
+      id,
+      data,
+      groupMembers,
+      excludedRelationshipId
+    )
   const arrange = (nodeIds?: string[]) =>
     boardModel.owner.getMode() === 'edit'
       ? nodeIds
@@ -341,6 +381,11 @@ export function CanvasWorkspaceContent(props: Props) {
           repoPath={repo.path}
           owner={boardModel.owner}
           mode={boardModel.mode}
+          connectionTool={connectionTool}
+          setConnectionTool={setConnectionTool}
+          connectionAnchorId={connectionAnchorId}
+          setConnectionAnchorId={setConnectionAnchorId}
+          transitionMode={boardModel.transitionMode}
           flow={flow}
           data={data}
           setNodes={setNodes}
@@ -444,6 +489,13 @@ export function CanvasWorkspaceContent(props: Props) {
         onImportFiles={(files) => {
           void filesToMedia(files).then(importMedia).catch(report)
         }}
+        mode={boardModel.mode}
+        unpairedCount={countUnpaired(data)}
+        onModeChange={(mode) => {
+          setConnectionTool(null)
+          setConnectionAnchorId(null)
+          void boardModel.transitionMode(mode).catch(report)
+        }}
       />
       <CanvasOverlays
         repoPath={repo.path}
@@ -498,4 +550,16 @@ export function CanvasWorkspaceContent(props: Props) {
       />
     </div>
   )
+}
+
+function countUnpaired(data: CanvasData) {
+  const paired = new Set(
+    (data.relationships ?? []).flatMap((relationship) => [
+      relationship.sourceImageId,
+      relationship.derivedImageId,
+    ])
+  )
+  return (data.images ?? []).filter(
+    (image) => !image.trashed && !paired.has(image.id)
+  ).length
 }

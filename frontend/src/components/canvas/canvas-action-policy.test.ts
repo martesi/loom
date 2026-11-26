@@ -102,6 +102,9 @@ const expectedCapabilities: Record<
     'align-vertical',
   ],
   relationship: [
+    'connect-derivative',
+    'connect-source',
+    'reverse-relationship-tool',
     'remove-selected-relationships',
     'reverse-relationship',
     'remove-relationship',

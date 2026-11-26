@@ -1,4 +1,4 @@
-import type { ReactFlowInstance } from '@xyflow/react'
+import type { ReactFlowInstance, XYPosition } from '@xyflow/react'
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import { useEffect, useRef } from 'react'
 import { ImageService } from '../../../bindings/loom/internal/service'
@@ -133,9 +133,10 @@ export function useCanvasAssetOperations({
 
   async function paste(
     media?: Awaited<ReturnType<typeof readMedia>>,
-    surface = selection.surface
+    surface = selection.surface,
+    dropPosition?: XYPosition
   ) {
-    const point = center()
+    const point = dropPosition ?? center()
     const assets = media ?? (await readMedia())
     const { ids, canvas } = await owner.execute(async () => {
       const canvas = surface === 'canvas' && owner.allows('canvas-drop')

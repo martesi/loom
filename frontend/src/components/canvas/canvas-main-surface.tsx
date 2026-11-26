@@ -5,20 +5,24 @@ import type {
   NodeTypes,
   ReactFlowInstance,
   Viewport,
+  XYPosition,
 } from '@xyflow/react'
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import type { CanvasData } from '../../../bindings/loom/internal/service'
 import { ImageService } from '../../../bindings/loom/internal/service'
 import type { CanvasAction } from '../../lib/action-catalog'
-import { parseAssetDragPayload } from '../../lib/asset-drag-payload'
-import { filesToMedia, type readMedia } from '../../lib/clipboard'
+import type { readMedia } from '../../lib/clipboard'
 import type { Selection } from '../../lib/selection'
 import { type MenuAction, PositionedMenu } from '../menu'
 import type { CanvasBoardOwner } from './canvas-board-owner'
+import { CanvasConnectionToolStatus } from './canvas-connection-tool-status'
 import { CanvasDock } from './canvas-dock'
 import { CanvasFlow } from './canvas-flow'
 import type { CanvasInternalMode } from './canvas-mode-policy'
 import { PerfHud } from './perf-hud'
+import { useCanvasConnectionTool } from './use-canvas-connection-tool'
+import { useCanvasDropHandlers } from './use-canvas-drop-handlers'
+import type { CanvasConnectionTool } from './use-canvas-workspace-state'
 
 interface MenuState {
   kind: 'pane' | 'node' | 'selection' | 'edge'
@@ -47,6 +51,11 @@ interface Props {
   repoPath: string
   owner: CanvasBoardOwner
   mode: CanvasInternalMode
+  connectionTool: CanvasConnectionTool
+  setConnectionTool: Dispatch<SetStateAction<CanvasConnectionTool>>
+  connectionAnchorId: number | null
+  setConnectionAnchorId: Dispatch<SetStateAction<number | null>>
+  transitionMode: (mode: 'view' | 'edit') => Promise<void>
   flow: ReactFlowInstance
   data: CanvasData
   setNodes: Dispatch<SetStateAction<Node[]>>
@@ -75,7 +84,8 @@ interface Props {
   ) => boolean
   validTarget: (
     source: number,
-    id: string
+    id: string,
+    excludedRelationshipId?: number
   ) => { valid: boolean; reason?: string }
   relation: MutableRefObject<{ source: number; x: number; y: number } | null>
   relationshipPreview: RelationshipPreview | null
@@ -85,7 +95,8 @@ interface Props {
   run: (action: () => Promise<unknown>) => void
   paste: (
     media?: Awaited<ReturnType<typeof readMedia>>,
-    surface?: Selection['surface']
+    surface?: Selection['surface'],
+    dropPosition?: XYPosition
   ) => Promise<void>
   dragTargetRaf: MutableRefObject<number>
   pendingDragNode: MutableRefObject<Node | null>
@@ -114,6 +125,11 @@ export function CanvasMainSurface(props: Props) {
     repoPath,
     owner,
     mode,
+    connectionTool,
+    setConnectionTool,
+    connectionAnchorId,
+    setConnectionAnchorId,
+    transitionMode,
     flow,
     data,
     setNodes,
@@ -165,6 +181,33 @@ export function CanvasMainSurface(props: Props) {
     perfHud,
     setPerfHud,
   } = props
+  const connectionEvents = useCanvasConnectionTool({
+    tool: connectionTool,
+    anchorId: connectionAnchorId,
+    mode,
+    owner,
+    repoPath,
+    data,
+    host,
+    targetAt,
+    validTarget,
+    run,
+    setError,
+    setPreview: setRelationshipPreview,
+    updateTarget,
+  })
+  const dropHandlers = useCanvasDropHandlers({
+    repoPath,
+    owner,
+    flow,
+    paste,
+    reloadForData,
+    report,
+    assetsPinned,
+    closeAssets,
+    host,
+    setSelection,
+  })
   return (
     <main
       ref={host}
@@ -173,6 +216,7 @@ export function CanvasMainSurface(props: Props) {
       tabIndex={-1}
       className="absolute inset-0 min-w-0 outline-none"
       onClickCapture={(event) => {
+        if (connectionEvents.onClickCapture(event)) return
         if (
           owner.allows('relationship') &&
           (event.ctrlKey || event.metaKey) &&
@@ -183,6 +227,7 @@ export function CanvasMainSurface(props: Props) {
         }
       }}
       onPointerDownCapture={(event) => {
+        if (connectionEvents.onPointerDownCapture(event)) return
         if (!owner.allows('relationship')) return
         const id = targetAt(event.clientX, event.clientY)
         if ((event.ctrlKey || event.metaKey) && id) {
@@ -196,11 +241,13 @@ export function CanvasMainSurface(props: Props) {
         }
       }}
       onPointerCancel={() => {
+        connectionEvents.onPointerCancel()
         relation.current = null
         setRelationshipPreview(null)
         updateTarget(null)
       }}
       onPointerMove={(event) => {
+        if (connectionEvents.onPointerMove(event)) return
         const drag = relation.current
         if (!drag) return
         if (!isRelationshipDrag(drag, event.clientX, event.clientY)) {
@@ -231,6 +278,7 @@ export function CanvasMainSurface(props: Props) {
         )
       }}
       onPointerUpCapture={(event) => {
+        if (connectionEvents.onPointerUpCapture(event)) return
         const drag = relation.current
         if (!drag) return
         event.stopPropagation()
@@ -271,67 +319,13 @@ export function CanvasMainSurface(props: Props) {
           setError(result.reason ?? t`Cannot create this relationship`)
         }
       }}
-      onDragOver={(e) => {
-        e.preventDefault()
-        e.dataTransfer.dropEffect = 'copy'
-      }}
-      onDrop={(e) => {
-        e.preventDefault()
-        const raw = e.dataTransfer.getData('application/x-loom-assets')
-        if (raw) {
-          if (!owner.allows('canvas-drop')) return
-          const payload = parseAssetDragPayload(raw)
-          if (!payload) {
-            report(new Error('Invalid asset drag'))
-            return
-          }
-          if (payload.repoPath !== repoPath) {
-            report(new Error('This asset drag belongs to another repository'))
-            return
-          }
-          {
-            const uniqueIds = [...new Set(payload.ids)]
-            const p = flow.screenToFlowPosition({
-              x: e.clientX,
-              y: e.clientY,
-            })
-            void (async () => {
-              const images = await Promise.all(
-                uniqueIds.map((id) => ImageService.GetImage(repoPath, id))
-              )
-              if (
-                images.some((image) => !image || image.missing || image.trashed)
-              )
-                throw new Error(
-                  'Missing or trashed assets cannot be placed. Refine the selection and try again.'
-                )
-              const placed = await owner.execute(async () => {
-                if (!owner.allows('canvas-drop')) return false
-                await ImageService.PlaceImages(repoPath, uniqueIds, p.x, p.y, 0)
-                await reloadForData()
-                return true
-              })
-              if (!placed) return
-              if (!assetsPinned) {
-                closeAssets(false)
-                requestAnimationFrame(() => host.current?.focus())
-              }
-              setSelection({
-                surface: 'canvas',
-                ids: uniqueIds,
-                edges: [],
-                group: null,
-              })
-            })().catch(report)
-          }
-        } else
-          void filesToMedia(Array.from(e.dataTransfer.files))
-            .then((media) => paste(media, 'canvas'))
-            .catch(report)
-      }}
+      onDragOver={dropHandlers.onDragOver}
+      onDrop={dropHandlers.onDrop}
     >
       <CanvasFlow
         mode={mode}
+        connectionTool={connectionTool}
+        transitionMode={transitionMode}
         updateProjectionViewport={updateProjectionViewport}
         repoPath={repoPath}
         owner={owner}
@@ -393,14 +387,40 @@ export function CanvasMainSurface(props: Props) {
           />
         </svg>
       )}
+      {mode === 'edit' && connectionTool && (
+        <CanvasConnectionToolStatus
+          tool={connectionTool}
+          anchorName={
+            connectionTool === 'reverse-relationship'
+              ? undefined
+              : (data.images?.find((image) => image.id === connectionAnchorId)
+                  ?.fileName ??
+                connectionAnchorId ??
+                undefined)
+          }
+          onExit={() => {
+            connectionEvents.cancel()
+            setConnectionTool(null)
+            setConnectionAnchorId(null)
+          }}
+        />
+      )}
       {target && (
         <div
           role="status"
           className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 rounded-md border border-black/10 bg-card/95 px-3 py-1.5 text-xs font-medium text-ink shadow-sm"
         >
-          {target.valid
-            ? t`Release to create relationship`
-            : (target.reason ?? t`Cannot create this relationship`)}
+          {connectionTool
+            ? connectionTool === 'reverse-relationship'
+              ? target.valid
+                ? t`Click to reverse relationship`
+                : (target.reason ?? t`Cannot reverse this relationship`)
+              : target.valid
+                ? t`Click to create relationship`
+                : (target.reason ?? t`Cannot create this relationship`)
+            : target.valid
+              ? t`Release to create relationship`
+              : (target.reason ?? t`Cannot create this relationship`)}
         </div>
       )}
       {menu && menuItems.length > 0 && (
@@ -416,13 +436,18 @@ export function CanvasMainSurface(props: Props) {
       {!focusCanvas && (
         <CanvasDock
           mode={
-            selectedCanvasNodeIds.length > 1
-              ? 'multiple'
-              : selectedCanvasNodeIds.length === 1
-                ? 'single'
-                : 'idle'
+            mode === 'view' && selectedCanvasNodeIds.length > 1
+              ? 'idle'
+              : selectedCanvasNodeIds.length > 1
+                ? 'multiple'
+                : selectedCanvasNodeIds.length === 1
+                  ? 'single'
+                  : 'idle'
           }
           selectionCount={selectedCanvasNodeIds.length}
+          canvasMode={mode}
+          connectionTool={connectionTool}
+          canConnect={connectionAnchorId !== null}
           canFitAll={displayNodes.length > 0}
           canFitSelection={selectedCanvasNodeIds.length > 0}
           canAutoArrange={
@@ -442,6 +467,11 @@ export function CanvasMainSurface(props: Props) {
             autoArrange: actionById.get('auto-arrange-active')?.shortcut ?? '',
             inspect: actionById.get('toggle-inspector')?.shortcut ?? '',
             unplace: actionById.get('unplace-selection')?.shortcut ?? '',
+            connectDerivative:
+              actionById.get('connect-derivative')?.shortcut ?? '',
+            connectSource: actionById.get('connect-source')?.shortcut ?? '',
+            reverseRelationship:
+              actionById.get('reverse-relationship-tool')?.shortcut ?? '',
           }}
           onAction={runDockAction}
         />

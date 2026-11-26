@@ -101,13 +101,29 @@ export function reconcileCanvasProjection(
         : []
     })
     const added = input.nodes.filter((node) => !previous.has(node.id))
+    const persisted = geometryMap(input.geometry)
+    const explicitlyPositioned = added.flatMap((node) => {
+      const geometry = persisted.get(Number(node.id))
+      return geometry?.x === null || geometry?.y === null || !geometry
+        ? []
+        : [{ ...node, position: { x: geometry.x, y: geometry.y } }]
+    })
+    const explicitlyPositionedIds = new Set(
+      explicitlyPositioned.map((node) => node.id)
+    )
+    const toStage = added.filter(
+      (node) => !explicitlyPositionedIds.has(node.id)
+    )
     const staged = stageNodes(
-      added,
-      existing.map(nodeBox),
+      toStage,
+      [...existing, ...explicitlyPositioned].map(nodeBox),
       center(state.editViewport, state.viewportSize)
     )
     const byId = new Map(
-      [...existing, ...staged].map((node) => [node.id, node])
+      [...existing, ...explicitlyPositioned, ...staged].map((node) => [
+        node.id,
+        node,
+      ])
     )
     editNodes = input.nodes.map((node) => {
       const result = byId.get(node.id)

@@ -39,13 +39,17 @@ export function validateRelationshipTarget(
   source: number,
   id: string,
   data: CanvasData,
-  _groupMembers: (id: number) => number[]
+  _groupMembers: (id: number) => number[],
+  excludedRelationshipId?: number
 ) {
   const targets = [Number(id)]
   const available = new Set(
     (data.images ?? [])
       .filter((image) => !image.trashed && !image.missing)
       .map((image) => image.id)
+  )
+  const relationships = (data.relationships ?? []).filter(
+    (relationship) => relationship.id !== excludedRelationshipId
   )
   if (
     !available.has(source) ||
@@ -60,7 +64,7 @@ export function validateRelationshipTarget(
     }
   if (
     targets.every((target) =>
-      (data.relationships ?? []).some(
+      relationships.some(
         (relationship) =>
           relationship.sourceImageId === source &&
           relationship.derivedImageId === target
@@ -78,7 +82,7 @@ export function validateRelationshipTarget(
       if (seen.has(next)) continue
       seen.add(next)
       stack.push(
-        ...(data.relationships ?? [])
+        ...relationships
           .filter((relationship) => relationship.sourceImageId === next)
           .map((relationship) => relationship.derivedImageId)
       )

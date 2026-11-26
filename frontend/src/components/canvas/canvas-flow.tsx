@@ -23,6 +23,7 @@ import { emptySelection, type Selection } from '../../lib/selection'
 import type { CanvasBoardOwner } from './canvas-board-owner'
 import type { CanvasInternalMode } from './canvas-mode-policy'
 import { useCanvasBoardDrag } from './use-canvas-board-drag'
+import type { CanvasConnectionTool } from './use-canvas-workspace-state'
 
 interface MenuState {
   kind: 'pane' | 'node' | 'selection' | 'edge'
@@ -51,6 +52,8 @@ interface Props {
   repoPath: string
   owner: CanvasBoardOwner
   mode: CanvasInternalMode
+  connectionTool: CanvasConnectionTool
+  transitionMode: (mode: 'view' | 'edit') => Promise<void>
   data: CanvasData
   selectionRef: MutableRefObject<Selection>
   displayNodes: Node[]
@@ -91,6 +94,8 @@ export function CanvasFlow(props: Props) {
     repoPath,
     owner,
     mode,
+    connectionTool,
+    transitionMode,
     data,
     selectionRef,
     displayNodes,
@@ -131,12 +136,29 @@ export function CanvasFlow(props: Props) {
               <Trans>Start with an asset</Trans>
             </h2>
             <p className="mt-1 text-xs leading-relaxed text-ink-muted">
-              {(data.images ?? []).length ? (
-                <Trans>Drag an asset from Assets onto the canvas.</Trans>
+              {mode === 'view' ? (
+                <Trans>
+                  View shows images with relationships. Switch to Edit to stage
+                  and connect assets.
+                </Trans>
+              ) : (data.images ?? []).length ? (
+                <Trans>
+                  Open Assets to stage images, then connect related images.
+                </Trans>
               ) : (
                 <Trans>Import media or drop files onto the canvas.</Trans>
               )}
             </p>
+            {mode === 'view' && (
+              <button
+                type="button"
+                data-testid="empty-canvas-edit"
+                onClick={() => void transitionMode('edit')}
+                className="pointer-events-auto mt-3 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground focus-visible:ring-2 focus-visible:ring-primary/40"
+              >
+                <Trans>Edit unpaired images</Trans>
+              </button>
+            )}
             <div className="mt-4 grid gap-2 text-xs text-ink-muted">
               <p>
                 <Trans>
@@ -178,7 +200,7 @@ export function CanvasFlow(props: Props) {
         deleteKeyCode={null}
         selectionKeyCode="Shift"
         multiSelectionKeyCode="Shift"
-        selectionOnDrag={!space}
+        selectionOnDrag={!space && !connectionTool}
         selectionMode={SelectionMode.Partial}
         panOnScroll={!space}
         zoomOnScroll={space}
@@ -197,7 +219,7 @@ export function CanvasFlow(props: Props) {
         }}
         panOnDrag={space ? [0, 1, 2] : [1, 2]}
         panActivationKeyCode={null}
-        nodesDraggable={!space && mode !== 'view'}
+        nodesDraggable={!space && mode !== 'view' && !connectionTool}
         onNodesChange={(changes) => {
           if (!owner.allows('geometry'))
             changes = changes.filter(
@@ -244,6 +266,7 @@ export function CanvasFlow(props: Props) {
             })
         }}
         onPaneClick={() => {
+          if (connectionTool) return
           setSelection(emptySelection)
           setExpanded(null)
           if (inspectorOpen && !inspectorPinned) {
@@ -252,6 +275,7 @@ export function CanvasFlow(props: Props) {
           }
         }}
         onNodeClick={(event, node) => {
+          if (connectionTool) return
           if (!(event.shiftKey || event.ctrlKey || event.metaKey))
             setSelection({
               surface: 'canvas',
@@ -261,7 +285,7 @@ export function CanvasFlow(props: Props) {
             })
         }}
         onNodeDoubleClick={(_, node) => {
-          if (node.type === 'image') handlePreview(node)
+          if (!connectionTool && node.type === 'image') handlePreview(node)
         }}
         onNodeMouseEnter={(_, node) => setHoveredNodeId(node.id)}
         onNodeMouseLeave={() => setHoveredNodeId(null)}
@@ -292,15 +316,18 @@ export function CanvasFlow(props: Props) {
           })
         }}
         onEdgeClick={(event) => {
+          if (connectionTool) return
           if (event.currentTarget instanceof SVGElement)
             event.currentTarget.focus()
         }}
         onPaneContextMenu={(event) => {
           event.preventDefault()
+          if (connectionTool) return
           setMenu({ kind: 'pane', x: event.clientX, y: event.clientY })
         }}
         onEdgeContextMenu={(event, edge) => {
           event.preventDefault()
+          if (connectionTool) return
           const edgeId = Number(edge.id)
           setSelection((current) => ({
             surface: 'canvas',
@@ -321,6 +348,7 @@ export function CanvasFlow(props: Props) {
         }}
         onNodeContextMenu={(event, node) => {
           event.preventDefault()
+          if (connectionTool) return
           const isSelected = isCanvasNodeSelected(node)
           if (isSelected && selectedCanvasNodeIds.length > 1) {
             setMenu({
@@ -346,6 +374,7 @@ export function CanvasFlow(props: Props) {
         onSelectionContextMenu={(event) => {
           event.preventDefault()
           event.stopPropagation()
+          if (connectionTool) return
           setMenu({
             kind: 'selection',
             x: event.clientX,

@@ -5,6 +5,7 @@ import type { Dispatch, RefObject, SetStateAction } from 'react'
 import type { RepoInfo } from '../../../bindings/loom/internal/service'
 import { cn } from '../../lib/utils'
 import { Tooltip } from '../ui/tooltip'
+import type { CanvasInternalMode } from './canvas-mode-policy'
 import { RepoSelect } from './repo-select'
 
 interface Props {
@@ -22,6 +23,9 @@ interface Props {
   executeActionById: (id: string) => void
   toggleFocusMode: () => void
   onImportFiles: (files: File[]) => void
+  mode: CanvasInternalMode
+  unpairedCount: number
+  onModeChange: (mode: 'view' | 'edit') => void
 }
 
 export function CanvasToolbar({
@@ -39,6 +43,9 @@ export function CanvasToolbar({
   executeActionById,
   toggleFocusMode,
   onImportFiles,
+  mode,
+  unpairedCount,
+  onModeChange,
 }: Props) {
   return (
     <>
@@ -57,6 +64,40 @@ export function CanvasToolbar({
           <Trans>Canvas</Trans>
         </h1>
         <RepoSelect repo={repo} openRequest={repoOpenRequest} />
+        <fieldset className="inline-flex items-center rounded-full bg-muted/70 p-0.5">
+          <legend className="sr-only">
+            <Trans>Canvas mode</Trans>
+          </legend>
+          <button
+            type="button"
+            aria-pressed={mode === 'view' || mode === 'legacy'}
+            data-testid="canvas-mode-view"
+            onClick={() => onModeChange('view')}
+            className={cn(
+              'h-8 rounded-full px-3 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/40',
+              mode === 'view' || mode === 'legacy'
+                ? 'bg-card text-ink shadow-sm'
+                : 'text-ink-muted hover:text-ink'
+            )}
+          >
+            <Trans>View</Trans>
+          </button>
+          <button
+            type="button"
+            aria-pressed={mode === 'edit'}
+            data-testid="canvas-mode-edit"
+            onClick={() => onModeChange('edit')}
+            className={cn(
+              'h-8 rounded-full px-3 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/40',
+              mode === 'edit'
+                ? 'bg-card text-ink shadow-sm'
+                : 'text-ink-muted hover:text-ink'
+            )}
+          >
+            <Trans>Edit</Trans>
+            {unpairedCount > 0 && ` · ${unpairedCount}`}
+          </button>
+        </fieldset>
         <Tooltip
           label={t`Show commands`}
           shortcut={actionShortcut('show-commands')}

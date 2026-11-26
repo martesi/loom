@@ -6,6 +6,7 @@ import type {
   RelationshipInfo,
 } from '../../bindings/loom/internal/service'
 import type { CanvasBoardOwner } from '../components/canvas/canvas-board-owner'
+import type { CanvasConnectionTool } from '../components/canvas/use-canvas-workspace-state'
 import type { AssetLayout } from '../lib/asset-views'
 import type { Selection } from '../lib/selection'
 
@@ -23,6 +24,10 @@ export interface RevealRequest {
 
 export interface CanvasActionsContext {
   owner: CanvasBoardOwner
+  connectionTool: CanvasConnectionTool
+  setConnectionTool: Dispatch<SetStateAction<CanvasConnectionTool>>
+  connectionAnchorId: number | null
+  setConnectionAnchorId: Dispatch<SetStateAction<number | null>>
   repoPath: string
   importInput: { current: HTMLInputElement | null }
   assetsOpen: boolean

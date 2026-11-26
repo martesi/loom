@@ -180,6 +180,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   callbacks.current = { report, run, selectAssets }
   const boardModel = useCanvasBoardModel({
     data,
+    startInView: true,
     owner: boardOwner,
     renditionGeneration,
     callbacks,

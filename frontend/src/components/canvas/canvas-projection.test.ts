@@ -239,6 +239,17 @@ describe('canvas projection', () => {
     }
   })
 
+  it('keeps an explicitly positioned import at its drop coordinates', () => {
+    const existing = makeNode('1')
+    const state = enterEdit(createCanvasProjection(input([existing], [])))
+    const imported = makeNode('2')
+    const next = reconcileCanvasProjection(state, {
+      ...input([existing, imported], []),
+      geometry: [{ imageId: 2, x: 1060, y: 620, w: 100, h: 60 }],
+    })
+    expect(at(next.editNodes, '2')).toEqual({ x: 1060, y: 620 })
+  })
+
   it('retains resized Edit geometry when metadata and nodes change', () => {
     const original = { ...makeNode('1'), height: 80 }
     let state = enterEdit(createCanvasProjection(input([original], [])))

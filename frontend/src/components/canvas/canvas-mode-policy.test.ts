@@ -39,6 +39,9 @@ describe('internal Canvas capability policy', () => {
       'remove-selected-relationships',
       'reverse-relationship',
       'remove-relationship',
+      'connect-derivative',
+      'connect-source',
+      'reverse-relationship-tool',
     ]) {
       expect(allowsCanvasAction('view', id)).toBe(false)
       expect(allowsCanvasAction('edit', id)).toBe(

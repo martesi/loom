@@ -22,6 +22,9 @@ export function canvasAssetActions(
     canNavigateRelationship,
     relationshipActions,
     canRemoveRelationship,
+    connectionTool,
+    setConnectionTool,
+    setConnectionAnchorId,
     paste,
     undoActions,
     repoPath,
@@ -149,6 +152,67 @@ export function canvasAssetActions(
       execute: () => {
         const relationship = relationshipActions[0]
         if (relationship) return go(relationship.derivedImageId)
+      },
+    },
+    {
+      id: 'connect-derivative',
+      customizable: true,
+      label: t`Connect to derivative`,
+      description: t`Link the selected image to clicked derivatives`,
+      category: t`Relationships`,
+      aliases: [t`D`, t`create derivative link`],
+      shortcut: 'D',
+      context: t`One selected image`,
+      enabled: selection.surface === 'canvas' && selection.ids.length === 1,
+      disabledReason: t`Select one Canvas image first`,
+      execute: () => {
+        if (connectionTool === 'connect-derivative') {
+          setConnectionTool(null)
+          setConnectionAnchorId(null)
+          return
+        }
+        setConnectionAnchorId(selection.ids[0] ?? null)
+        setConnectionTool('connect-derivative')
+      },
+    },
+    {
+      id: 'connect-source',
+      customizable: true,
+      label: t`Connect to source`,
+      description: t`Link clicked sources to the selected image`,
+      category: t`Relationships`,
+      aliases: [t`S`, t`create source link`],
+      shortcut: 'S',
+      context: t`One selected image`,
+      enabled: selection.surface === 'canvas' && selection.ids.length === 1,
+      disabledReason: t`Select one Canvas image first`,
+      execute: () => {
+        if (connectionTool === 'connect-source') {
+          setConnectionTool(null)
+          setConnectionAnchorId(null)
+          return
+        }
+        setConnectionAnchorId(selection.ids[0] ?? null)
+        setConnectionTool('connect-source')
+      },
+    },
+    {
+      id: 'reverse-relationship-tool',
+      customizable: true,
+      label: t`Reverse relationship tool`,
+      description: t`Click a relationship to reverse its direction`,
+      category: t`Relationships`,
+      aliases: [t`R`, t`reverse edge mode`],
+      shortcut: 'R',
+      context: t`Canvas relationship`,
+      enabled: true,
+      execute: () => {
+        setConnectionAnchorId(null)
+        setConnectionTool(
+          connectionTool === 'reverse-relationship'
+            ? null
+            : 'reverse-relationship'
+        )
       },
     },
     {

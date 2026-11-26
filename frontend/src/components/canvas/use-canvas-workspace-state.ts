@@ -26,6 +26,12 @@ export interface CanvasMenuState {
   keyboard?: boolean
 }
 
+export type CanvasConnectionTool =
+  | 'connect-derivative'
+  | 'connect-source'
+  | 'reverse-relationship'
+  | null
+
 export interface RevealRequest {
   id: number
   folder: string | null
@@ -233,6 +239,11 @@ export function useCanvasWorkspaceState(selection: Selection) {
   const [relationshipPreview, setRelationshipPreview] =
     useState<RelationshipPreview | null>(null)
   const [target, setTarget] = useState<DropTarget | null>(null)
+  const [connectionTool, setConnectionTool] =
+    useState<CanvasConnectionTool>(null)
+  const [connectionAnchorId, setConnectionAnchorId] = useState<number | null>(
+    null
+  )
   const targetRef = useRef(target)
   const updateTarget = useCallback((next: DropTarget | null) => {
     const current = targetRef.current
@@ -345,5 +356,9 @@ export function useCanvasWorkspaceState(selection: Selection) {
     setRelationshipPreview,
     target,
     updateTarget,
+    connectionTool,
+    setConnectionTool,
+    connectionAnchorId,
+    setConnectionAnchorId,
   }
 }

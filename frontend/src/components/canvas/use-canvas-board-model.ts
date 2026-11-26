@@ -44,6 +44,7 @@ interface Props {
   host: { current: HTMLDivElement | null }
   flow?: CanvasProjectionViewport
   cancelPointerGesture?: () => void
+  startInView?: boolean
 }
 
 export function useCanvasBoardModel({
@@ -61,6 +62,7 @@ export function useCanvasBoardModel({
   host,
   flow,
   cancelPointerGesture,
+  startInView,
 }: Props) {
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null)
   const previousDisplayNodes = useRef(new Map<string, Node>())
@@ -108,6 +110,7 @@ export function useCanvasBoardModel({
     report: callbacks.current.report,
     cancelPointerGesture,
     reconcileSelection,
+    startInView,
   })
   const projectionRef = useRef(projection)
   projectionRef.current = projection
