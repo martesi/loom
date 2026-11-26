@@ -85,7 +85,8 @@ interface Props {
   run: (action: () => Promise<unknown>) => void
   paste: (
     media?: Awaited<ReturnType<typeof readMedia>>,
-    surface?: Selection['surface']
+    surface?: Selection['surface'],
+    dropPoint?: { x: number; y: number }
   ) => Promise<void>
   dragTargetRaf: MutableRefObject<number>
   pendingDragNode: MutableRefObject<Node | null>

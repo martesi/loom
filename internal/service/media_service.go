@@ -343,6 +343,9 @@ func purgeImages(r *store.Repo, ids []int64) error {
 		}
 		images = append(images, img)
 	}
+	if err := rejectPurgeWithRetainedRelationships(r, images); err != nil {
+		return err
+	}
 	for _, img := range images {
 		rel, err := filepath.Rel(r.Path, img.FilePath)
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
@@ -373,6 +376,27 @@ func purgeImages(r *store.Repo, ids []int64) error {
 	}
 	_, err := r.DB.Exec("DELETE FROM groups WHERE NOT EXISTS (SELECT 1 FROM images WHERE group_id = groups.id)")
 	return err
+}
+
+func rejectPurgeWithRetainedRelationships(r *store.Repo, images []store.Image) error {
+	for _, img := range images {
+		var linked bool
+		err := r.DB.QueryRow(`SELECT EXISTS(
+			SELECT 1 FROM relationships rel
+			WHERE (rel.source_image_id = ? AND EXISTS (
+				SELECT 1 FROM import_recovery ir WHERE ir.image_id = rel.derived_image_id AND ir.retained = 1
+			)) OR (rel.derived_image_id = ? AND EXISTS (
+				SELECT 1 FROM import_recovery ir WHERE ir.image_id = rel.source_image_id AND ir.retained = 1
+			))
+		)`, img.ID, img.ID).Scan(&linked)
+		if err != nil {
+			return fmt.Errorf("check purge links for image %d: %w", img.ID, err)
+		}
+		if linked {
+			return fmt.Errorf("cannot purge image %d while it is linked to a retained import; recover the import first", img.ID)
+		}
+	}
+	return nil
 }
 
 func availableMediaPath(path string) string {

@@ -21,6 +21,7 @@ import type { Selection } from '../../lib/selection'
 import { Button } from '../ui/button'
 import { AssetGallery } from './asset-gallery'
 import { AssetList } from './asset-list'
+import { ImportRecoveryPanel } from './import-recovery-panel'
 import {
   type AssetContextMenuState,
   LibraryContextMenu,
@@ -394,6 +395,7 @@ export const LibraryPanel = memo(function LibraryPanel({
         onFolderChange={setFolder}
         onDropInto={dropInto}
       />
+      <ImportRecoveryPanel path={path} refresh={refresh} onRecovered={change} />
       <div className="px-2 pb-1 text-[11px] text-ink-subtle">
         <span>
           {plural(sortedRows.length, { one: '# asset', other: '# assets' })}

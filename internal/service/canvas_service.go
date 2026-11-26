@@ -1,6 +1,7 @@
 package service
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"loom/internal/store"
@@ -60,23 +61,42 @@ func (s *ImageService) PlaceImages(repoPath string, ids []int64, x, y float64, g
 	}
 	defer unlock()
 	defer r.Close()
+	if err := r.PrepareOperationLog(); err != nil {
+		return err
+	}
 	tx, err := r.DB.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	for i, id := range uniqueImageIDs(ids) {
-		result, err := tx.Exec(`UPDATE images SET canvas_x = COALESCE(canvas_x, ?), canvas_y = COALESCE(canvas_y, ?) WHERE id = ? AND trashed = 0`, x+float64(i%6)*190, y+float64(i/6)*160, id)
-		if err != nil {
+	if _, err := tx.Exec(`UPDATE operation_log SET seq=seq WHERE 0`); err != nil {
+		return err
+	}
+	uniqueIDs := uniqueImageIDs(ids)
+	before := make([]GeometryUpdate, 0, len(uniqueIDs))
+	after := make([]GeometryUpdate, 0, len(uniqueIDs))
+	for i, id := range uniqueIDs {
+		if err := requirePlaceableImage(tx, id); err != nil {
 			return err
 		}
-		n, err := result.RowsAffected()
+		previous, err := geometryTx(tx, id)
 		if err != nil {
+			return fmt.Errorf("asset %d is unavailable: %w", id, err)
+		}
+		if previous.X != nil && previous.Y != nil {
+			continue
+		}
+		next := previous
+		px, py := x+float64(i%6)*190, y+float64(i/6)*160
+		next.X, next.Y = &px, &py
+		if _, err := tx.Exec(`UPDATE images SET canvas_x=?,canvas_y=? WHERE id=? AND trashed=0`, px, py, id); err != nil {
 			return err
 		}
-		if n != 1 {
-			return fmt.Errorf("asset %d is unavailable", id)
-		}
+		before = append(before, previous)
+		after = append(after, next)
+	}
+	if err := recordGeometryBatch(r, tx, before, after); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
@@ -87,17 +107,63 @@ func (s *ImageService) UnplaceImages(repoPath string, ids []int64) error {
 	}
 	defer unlock()
 	defer r.Close()
+	if err := r.PrepareOperationLog(); err != nil {
+		return err
+	}
 	tx, err := r.DB.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	for _, id := range uniqueImageIDs(ids) {
-		if _, err := tx.Exec("UPDATE images SET canvas_x = NULL, canvas_y = NULL WHERE id = ?", id); err != nil {
+	if _, err := tx.Exec(`UPDATE operation_log SET seq=seq WHERE 0`); err != nil {
+		return err
+	}
+	uniqueIDs := uniqueImageIDs(ids)
+	before := make([]GeometryUpdate, 0, len(uniqueIDs))
+	after := make([]GeometryUpdate, 0, len(uniqueIDs))
+	for _, id := range uniqueIDs {
+		if err := requirePlaceableImage(tx, id); err != nil {
 			return err
 		}
+		previous, err := geometryTx(tx, id)
+		if err != nil {
+			return fmt.Errorf("asset %d is unavailable: %w", id, err)
+		}
+		if previous.X == nil && previous.Y == nil {
+			continue
+		}
+		next := previous
+		next.X, next.Y = nil, nil
+		if _, err := tx.Exec("UPDATE images SET canvas_x=NULL,canvas_y=NULL WHERE id=? AND trashed=0", id); err != nil {
+			return err
+		}
+		before = append(before, previous)
+		after = append(after, next)
+	}
+	if err := recordGeometryBatch(r, tx, before, after); err != nil {
+		return err
 	}
 	return tx.Commit()
+}
+
+func requirePlaceableImage(tx *sql.Tx, id int64) error {
+	var available bool
+	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images i WHERE i.id=? AND i.trashed=0 AND NOT EXISTS (SELECT 1 FROM import_recovery ir WHERE ir.image_id=i.id AND ir.retained=1))`, id).Scan(&available); err != nil {
+		return err
+	}
+	if !available {
+		return fmt.Errorf("asset %d is unavailable", id)
+	}
+	return nil
+}
+
+func recordGeometryBatch(repo *store.Repo, tx *sql.Tx, before, after []GeometryUpdate) error {
+	if len(before) == 0 {
+		return nil
+	}
+	return graphRecord(repo, tx, stepGeometry,
+		step(stepGeometry, geometryPayload{Entries: after}),
+		step(stepGeometry, geometryPayload{Entries: before}))
 }
 func (s *GroupService) UpdateMetadata(repoPath string, id int64, name, kind string) error {
 	r, err := store.Bootstrap(repoPath)

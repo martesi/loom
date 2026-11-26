@@ -299,6 +299,16 @@ func (s *ImageService) ListPendingImportBatches(repoPath string) ([]PendingImpor
 // RecoverPendingImportBatch explicitly finalizes one verified interrupted batch
 // as a single undoable import. It refuses to discard an existing redo branch.
 func (s *ImageService) RecoverPendingImportBatch(repoPath, batchID string) ([]int64, error) {
+	return s.recoverPendingImportBatch(repoPath, batchID, false)
+}
+
+// RecoverPendingImportBatchAndReplaceRedo requires explicit caller confirmation
+// before it discards a stored redo tail while finalizing the pending batch.
+func (s *ImageService) RecoverPendingImportBatchAndReplaceRedo(repoPath, batchID string) ([]int64, error) {
+	return s.recoverPendingImportBatch(repoPath, batchID, true)
+}
+
+func (s *ImageService) recoverPendingImportBatch(repoPath, batchID string, replaceRedo bool) ([]int64, error) {
 	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return nil, err
@@ -308,5 +318,5 @@ func (s *ImageService) RecoverPendingImportBatch(repoPath, batchID string) ([]in
 	if err := repo.PrepareOperationLog(); err != nil {
 		return nil, err
 	}
-	return finalizeImportBatch(repo, batchID, true)
+	return finalizeImportBatch(repo, batchID, !replaceRedo)
 }

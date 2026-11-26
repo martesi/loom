@@ -105,6 +105,8 @@ type RecoverableImport struct {
 	FilePath    string `json:"filePath"`
 	Fingerprint string `json:"fingerprint"`
 	Trusted     bool   `json:"trusted"`
+	FilePresent bool   `json:"filePresent"`
+	Verified    bool   `json:"verified"`
 }
 
 func (s *ImageService) ListRecoverableImports(repoPath string) ([]RecoverableImport, error) {
@@ -124,6 +126,13 @@ func (s *ImageService) ListRecoverableImports(repoPath string) ([]RecoverableImp
 		if err := rows.Scan(&item.ImageID, &item.FilePath, &item.Fingerprint, &item.Trusted); err != nil {
 			return nil, err
 		}
+		if item.Trusted {
+			if info, err := os.Lstat(item.FilePath); err == nil && info.Mode().IsRegular() {
+				item.FilePresent = true
+				fingerprint, _, err := store.FingerprintFile(context.Background(), item.FilePath)
+				item.Verified = err == nil && fingerprint == item.Fingerprint
+			}
+		}
 		imports = append(imports, item)
 	}
 	return imports, rows.Err()
@@ -132,6 +141,16 @@ func (s *ImageService) ListRecoverableImports(repoPath string) ([]RecoverableImp
 // RecoverImport explicitly makes a retained import active after redo history
 // was truncated. It never copies, moves, reimports, or deletes the source.
 func (s *ImageService) RecoverImport(repoPath string, imageID int64) error {
+	return s.recoverImport(repoPath, imageID, false)
+}
+
+// RecoverImportAndReplaceRedo explicitly discards the persisted redo tail as
+// part of the same transaction as recovery. Call only after user confirmation.
+func (s *ImageService) RecoverImportAndReplaceRedo(repoPath string, imageID int64) error {
+	return s.recoverImport(repoPath, imageID, true)
+}
+
+func (s *ImageService) recoverImport(repoPath string, imageID int64, replaceRedo bool) error {
 	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return err
@@ -149,8 +168,10 @@ func (s *ImageService) RecoverImport(repoPath string, imageID int64) error {
 	if _, err := tx.Exec(`UPDATE operation_log SET seq = seq WHERE 0`); err != nil {
 		return err
 	}
-	if err := requireNoRedoTail(tx); err != nil {
-		return err
+	if !replaceRedo {
+		if err := requireNoRedoTail(tx); err != nil {
+			return err
+		}
 	}
 	var path, expected, sourceFingerprint string
 	var retained, trusted bool

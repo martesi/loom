@@ -88,6 +88,67 @@ func TestBatchImportUndoRedoRetainsFilesIdentityAndGeometry(t *testing.T) {
 	}
 }
 
+func TestPlaceImagesAfterImportIsOneUndoableGeometryOperation(t *testing.T) {
+	root := t.TempDir()
+	service := &ImageService{}
+	ids, err := service.ImportMedia(root, []ClipboardMedia{{Name: "placed-later.png", Data: "cGxhY2Vk"}}, false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.PlaceImages(root, ids, 340, -80, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.PlaceImages(root, ids, 10, 10, 0); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := store.Bootstrap(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	assertImportHistory(t, repo, 2, 1)
+	var geometryOps int
+	if err := repo.DB.QueryRow(`SELECT COUNT(*) FROM operation_log WHERE kind='set_geometry'`).Scan(&geometryOps); err != nil || geometryOps != 1 {
+		t.Fatalf("placement did not create exactly one geometry entry: count=%d err=%v", geometryOps, err)
+	}
+	if result, err := (&UndoService{}).Undo(root); err != nil || !result.Applied {
+		t.Fatalf("undo placement: %+v err=%v", result, err)
+	}
+	image, err := repo.GetImageByID(ids[0])
+	if err != nil || image.HasCanvasPos {
+		t.Fatalf("undo placement did not restore unplaced geometry: image=%+v err=%v", image, err)
+	}
+	if result, err := (&UndoService{}).Undo(root); err != nil || !result.Applied {
+		t.Fatalf("undo import after placement: %+v err=%v", result, err)
+	}
+	if _, err := repo.GetImageByID(ids[0]); err == nil {
+		t.Fatal("undo import left active image row")
+	}
+	if _, err := os.Stat(filepath.Join(root, "placed-later.png")); err != nil {
+		t.Fatalf("undo import removed source file: %v", err)
+	}
+	for _, want := range []struct {
+		cursor int64
+		placed bool
+	}{{1, false}, {2, true}} {
+		result, err := (&UndoService{}).Redo(root)
+		if err != nil || !result.Applied {
+			t.Fatalf("redo cursor %d: %+v err=%v", want.cursor, result, err)
+		}
+		assertImportHistory(t, repo, want.cursor, 1)
+		if want.cursor == 1 {
+			image, err = repo.GetImageByID(ids[0])
+			if err != nil || image.HasCanvasPos != want.placed {
+				t.Fatalf("redo import geometry: image=%+v err=%v", image, err)
+			}
+		}
+	}
+	image, err = repo.GetImageByID(ids[0])
+	if err != nil || !image.HasCanvasPos || image.CanvasX != 340 || image.CanvasY != -80 {
+		t.Fatalf("redo placement did not restore drop geometry: image=%+v err=%v", image, err)
+	}
+}
+
 func TestImportRedoRejectsMissingOrModifiedFilesAtomically(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -259,6 +320,31 @@ func TestRecoverImportDoesNotDiscardRedoBranch(t *testing.T) {
 	}
 }
 
+func TestRecoveryCanReplaceRedoOnlyThroughExplicitAPI(t *testing.T) {
+	root := t.TempDir()
+	service := &ImageService{}
+	ids, err := service.ImportMedia(root, []ClipboardMedia{{Name: "explicit.png", Data: "ZXhwbGljaXQ="}}, false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := (&UndoService{}).Undo(root); err != nil || !result.Applied {
+		t.Fatalf("undo: %+v err=%v", result, err)
+	}
+	if err := service.RecoverImportAndReplaceRedo(root, ids[0]); err != nil {
+		t.Fatalf("explicit recovery: %v", err)
+	}
+	state, err := (&UndoService{}).State(root)
+	if err != nil || state.CanRedo || !state.CanUndo {
+		t.Fatalf("explicit replacement history state: %+v err=%v", state, err)
+	}
+	if result, err := (&UndoService{}).Undo(root); err != nil || !result.Applied {
+		t.Fatalf("recovery was not undoable: %+v err=%v", result, err)
+	}
+	if _, err := service.GetImage(root, ids[0]); err == nil {
+		t.Fatal("undoing explicit recovery did not retain image")
+	}
+}
+
 func TestPendingImportRecoveryDoesNotDiscardRedoBranch(t *testing.T) {
 	root := t.TempDir()
 	service := &ImageService{}
@@ -375,6 +461,55 @@ func TestGraphCycleValidationIncludesLegacyRetainedEdges(t *testing.T) {
 	}
 	if err := (&ImageService{}).LinkSource(root, ids[2], ids[0]); err == nil {
 		t.Fatal("link accepted retained endpoint")
+	}
+}
+
+func TestPurgeFencesBatchBeforeDeletingFileLinkedToRetainedImport(t *testing.T) {
+	root := t.TempDir()
+	ids, err := (&ImageService{}).ImportMedia(root, []ClipboardMedia{
+		{Name: "purge-source.png", Data: "c291cmNl"},
+		{Name: "purge-retained.png", Data: "cmV0YWluZWQ="},
+		{Name: "purge-other.png", Data: "b3RoZXI="},
+	}, false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := store.Bootstrap(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.DB.Exec(`INSERT INTO relationships(source_image_id,derived_image_id) VALUES (?,?)`, ids[0], ids[1]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.DB.Exec(`UPDATE import_recovery SET retained=1 WHERE image_id=?`, ids[1]); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "purge-source.png")
+	if err := (&ImageService{}).PurgeImages(root, []int64{ids[2], ids[0]}); err == nil || !strings.Contains(err.Error(), "retained import") {
+		t.Fatalf("unsafe purge was not fenced: %v", err)
+	}
+	for _, path := range []string{path, filepath.Join(root, "purge-other.png")} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("fenced batch purge deleted %s: %v", path, err)
+		}
+	}
+	repo, err = store.Bootstrap(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	var images, relationships int
+	if err := repo.DB.QueryRow(`SELECT count(*) FROM images`).Scan(&images); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DB.QueryRow(`SELECT count(*) FROM relationships`).Scan(&relationships); err != nil {
+		t.Fatal(err)
+	}
+	if images != 3 || relationships != 1 {
+		t.Fatalf("fenced purge changed database: images=%d relationships=%d", images, relationships)
 	}
 }
 
