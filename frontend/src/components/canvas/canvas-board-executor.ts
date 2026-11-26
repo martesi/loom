@@ -4,15 +4,10 @@ import type {
   CanvasUserOperationRequest,
 } from './canvas-operation'
 
-export interface CanvasSubmitOptions {
-  onReserved?: () => void
-}
-
 export interface CanvasBoardExecutor {
   submit<T>(
     request: CanvasUserOperationRequest,
-    action: (context: CanvasOperationContext) => Promise<T>,
-    options?: CanvasSubmitOptions
+    action: (context: CanvasOperationContext) => Promise<T>
   ): Promise<CanvasOperationOutcome<T>>
   getSnapshot(): object | null
   stageHistory(result: UndoResult): void

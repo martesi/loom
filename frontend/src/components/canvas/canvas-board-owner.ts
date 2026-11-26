@@ -6,10 +6,7 @@ import {
   type LayoutSnapshot,
   type UndoResult,
 } from '../../../bindings/loom/internal/service'
-import type {
-  CanvasBoardExecutor,
-  CanvasSubmitOptions,
-} from './canvas-board-executor'
+import type { CanvasBoardExecutor } from './canvas-board-executor'
 import type { DragGesture, ResizeGesture } from './canvas-board-gestures'
 import {
   allowsCanvasCapability,
@@ -42,8 +39,7 @@ export interface CanvasBoardOwner extends CanvasBoardExecutor {
   isLayoutPending(): boolean
   submit<T>(
     request: CanvasUserOperationRequest,
-    action: (context: CanvasOperationContext) => Promise<T>,
-    options?: CanvasSubmitOptions
+    action: (context: CanvasOperationContext) => Promise<T>
   ): Promise<CanvasOperationOutcome<T>>
   beginModeTransition(target?: CanvasInternalMode): number
   cancelModeTransition(revision: number): void
@@ -199,8 +195,7 @@ export function createCanvasBoardOwner(
   }
   function submit<T>(
     request: CanvasUserOperationRequest,
-    action: (context: CanvasOperationContext) => Promise<T>,
-    options: CanvasSubmitOptions = {}
+    action: (context: CanvasOperationContext) => Promise<T>
   ) {
     if (request.kind === 'mutation' || request.kind === 'history')
       owner.cancelGesture()
@@ -211,7 +206,6 @@ export function createCanvasBoardOwner(
       request,
       action
     )
-    options.onReserved?.()
     return result
   }
   owner = {

@@ -138,36 +138,40 @@ export function useCanvasAssetOperations({
     surface = selection.surface
   ) {
     const point = center()
-    let prepared: Promise<Media> | null = null
+    const board = owner.getSnapshot()
+    const lifetime = owner.getLifetimeRevision()
+    const source = media
+      ? typeof media === 'function'
+        ? media()
+        : Promise.resolve(media)
+      : readMedia()
+    const preparation = await source.then(
+      (assets) => ({ status: 'success' as const, assets }),
+      (error: unknown) => ({ status: 'failed' as const, error })
+    )
+    if (
+      owner.isActive?.() === false ||
+      owner.getLifetimeRevision() !== lifetime
+    )
+      return
+    if (preparation.status === 'failed') throw preparation.error
     const outcome = await owner.submit(
       {
         kind: 'mutation',
         capability: 'lifecycle',
-        board: owner.getSnapshot(),
+        board,
       },
       async (context) => {
-        const source = prepared
-        if (!source) throw new Error('Clipboard preparation did not start.')
-        const assets = await context.prepare(() => source)
         const canvas = surface === 'canvas' && owner.getMode() !== 'view'
         const ids = await canvasEffects.importMedia(
           context,
           repoPath,
-          assets,
+          preparation.assets,
           canvas,
           point.x,
           point.y
         )
         return { ids, canvas }
-      },
-      {
-        onReserved: () => {
-          prepared = media
-            ? typeof media === 'function'
-              ? media()
-              : Promise.resolve(media)
-            : readMedia()
-        },
       }
     )
     if (outcome.status === 'cancelled') return

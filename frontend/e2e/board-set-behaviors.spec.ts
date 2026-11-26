@@ -1,14 +1,37 @@
+import { readdir } from 'node:fs/promises'
 import type { Locator, Page } from '@playwright/test'
+import type {
+  CanvasData,
+  UndoState,
+} from '../bindings/loom/internal/service/models'
+import { runtimeMethodID } from './bindings'
+import { legacyServiceCall } from './legacy-service'
 import { expect, test } from './test-fixtures'
 import {
   asset,
   autoArrangeCanvas,
+  fixturePath,
   imageNodes,
   nodeBox,
   openAssetsShelf,
   openFixtureRepo,
   placeAssets,
 } from './test-helpers'
+
+const importMediaMethodID = runtimeMethodID('imageservice.ts', 'ImportMedia')
+const loadCanvasMethodID = runtimeMethodID('imageservice.ts', 'LoadCanvas')
+const getLayoutSnapshotMethodID = runtimeMethodID(
+  'imageservice.ts',
+  'GetLayoutSnapshot'
+)
+
+function waitForRuntimeCall(page: Page, methodID: string) {
+  return page.waitForResponse(
+    (response) =>
+      response.url().includes('/wails/runtime') &&
+      response.request().postData()?.includes(`"methodID":${methodID}`) === true
+  )
+}
 
 async function dragBy(page: Page, locator: Locator, dx: number, dy: number) {
   const box = await nodeBox(locator)
@@ -95,7 +118,22 @@ test('file drop and canvas clipboard paste create placed assets and errors are d
   void clipboardAccess
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
   await openFixtureRepo(page, 'media-fixtures')
+  let importCalls = 0
+  let reconciliationLoads = 0
+  page.on('request', (request) => {
+    if (!request.url().includes('/wails/runtime')) return
+    const body = request.postData() ?? ''
+    if (body.includes(`"methodID":${importMediaMethodID}`)) importCalls++
+    if (
+      body.includes(`"methodID":${loadCanvasMethodID}`) ||
+      body.includes(`"methodID":${getLayoutSnapshotMethodID}`)
+    )
+      reconciliationLoads++
+  })
 
+  const dropImport = waitForRuntimeCall(page, importMediaMethodID)
+  const dropLoad = waitForRuntimeCall(page, loadCanvasMethodID)
+  const dropSnapshot = waitForRuntimeCall(page, getLayoutSnapshotMethodID)
   await page.evaluate(() => {
     const encoded =
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
@@ -117,6 +155,7 @@ test('file drop and canvas clipboard paste create placed assets and errors are d
       })
     )
   })
+  await Promise.all([dropImport, dropLoad, dropSnapshot])
 
   await expect(asset(page, 'dropped.png')).toBeVisible()
   await expect(imageNodes(page)).toHaveCount(1)
@@ -132,7 +171,11 @@ test('file drop and canvas clipboard paste create placed assets and errors are d
       })
     )
   })
+  const firstPasteImport = waitForRuntimeCall(page, importMediaMethodID)
+  const firstPasteLoad = waitForRuntimeCall(page, loadCanvasMethodID)
+  const firstPasteSnapshot = waitForRuntimeCall(page, getLayoutSnapshotMethodID)
   await page.keyboard.press('Control+v')
+  await Promise.all([firstPasteImport, firstPasteLoad, firstPasteSnapshot])
   await expect(imageNodes(page)).toHaveCount(2)
 
   const sourceAsset = asset(page, 'media-alpha.png')
@@ -150,13 +193,52 @@ test('file drop and canvas clipboard paste create placed assets and errors are d
   await expect
     .poll(() => page.evaluate(() => navigator.clipboard.readText()))
     .toContain('canvas-paste.png')
+  const secondPasteImport = waitForRuntimeCall(page, importMediaMethodID)
+  const secondPasteLoad = waitForRuntimeCall(page, loadCanvasMethodID)
+  const secondPasteSnapshot = waitForRuntimeCall(
+    page,
+    getLayoutSnapshotMethodID
+  )
   await page.keyboard.press('Control+v')
+  await Promise.all([secondPasteImport, secondPasteLoad, secondPasteSnapshot])
   await expect(asset(page, 'canvas-paste.png')).toBeVisible()
 
+  const repoPath = await fixturePath('media-fixtures')
+  const repositoryBefore = await legacyServiceCall<CanvasData | null>(
+    page,
+    'imageservice.ts',
+    'LoadCanvas',
+    [repoPath]
+  )
+  const historyBefore = await legacyServiceCall<UndoState | null>(
+    page,
+    'undoservice.ts',
+    'State',
+    [repoPath]
+  )
+  const filesBefore = (await readdir(repoPath)).sort()
+  const importsBeforeInvalidPaste = importCalls
+  const reloadsBeforeInvalidPaste = reconciliationLoads
   await page.evaluate(() => navigator.clipboard.writeText('not Loom media'))
   await page.keyboard.press('Control+v')
   const pasteError = page.getByRole('alert')
   await expect(pasteError).toContainText('Clipboard contains no media files')
   await pasteError.getByRole('button', { name: 'Dismiss' }).click()
   await expect(pasteError).toHaveCount(0)
+  expect(importCalls).toBe(importsBeforeInvalidPaste)
+  expect(reconciliationLoads).toBe(reloadsBeforeInvalidPaste)
+  expect(
+    await legacyServiceCall<CanvasData | null>(
+      page,
+      'imageservice.ts',
+      'LoadCanvas',
+      [repoPath]
+    )
+  ).toEqual(repositoryBefore)
+  expect(
+    await legacyServiceCall<UndoState | null>(page, 'undoservice.ts', 'State', [
+      repoPath,
+    ])
+  ).toEqual(historyBefore)
+  expect((await readdir(repoPath)).sort()).toEqual(filesBefore)
 })

@@ -8,15 +8,17 @@ export interface Capabilities {
   isServerMode: boolean
 }
 
-// Defaults to native desktop until the real value loads (root.tsx fetches
-// it once at mount), so native-only UI doesn't flash away and back on
-// every page load.
+// Defaults to native desktop until the root route resolves the runtime mode.
 let current: Capabilities = { isServerMode: false }
 const listeners = new Set<() => void>()
 
 export function setCapabilities(capabilities: Capabilities) {
   current = capabilities
   for (const listener of listeners) listener()
+}
+
+export function getCapabilities() {
+  return current
 }
 
 function subscribe(listener: () => void) {

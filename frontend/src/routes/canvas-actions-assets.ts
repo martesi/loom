@@ -1,5 +1,8 @@
 import { t } from '@lingui/core/macro'
-import { canvasEffects } from '../components/canvas/canvas-operation-effects'
+import {
+  canvasEffects,
+  runCanvasEffectBatch,
+} from '../components/canvas/canvas-operation-effects'
 import type { CanvasAction } from '../lib/action-catalog'
 import { copyMedia } from '../lib/clipboard'
 import type { CanvasActionsContext } from './canvas-actions-context'
@@ -111,16 +114,14 @@ export function canvasAssetActions(
             capability: 'lifecycle',
             board: context.owner.getSnapshot(),
           },
-          (operation) =>
-            Promise.all(
-              selectedImageRecords
-                .filter((image) => image.trashed)
-                .map((image) =>
-                  operation.effect(() =>
-                    canvasEffects.restoreImage(operation, repoPath, image.id)
-                  )
-                )
-            ).then(() => undefined)
+          async (operation) => {
+            const ids = selectedImageRecords
+              .filter((image) => image.trashed)
+              .map((image) => image.id)
+            await runCanvasEffectBatch('restore', ids, (id) =>
+              canvasEffects.restoreImage(operation, repoPath, id)
+            )
+          }
         ),
     },
     {

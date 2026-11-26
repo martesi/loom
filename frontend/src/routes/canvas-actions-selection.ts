@@ -1,5 +1,8 @@
 import { t } from '@lingui/core/macro'
-import { canvasEffects } from '../components/canvas/canvas-operation-effects'
+import {
+  canvasEffects,
+  runCanvasEffectBatch,
+} from '../components/canvas/canvas-operation-effects'
 import type { CanvasAction } from '../lib/action-catalog'
 import { emptySelection } from '../lib/selection'
 import type { CanvasActionsContext } from './canvas-actions-context'
@@ -174,12 +177,12 @@ export function canvasSelectionActions(
             capability: 'metadata',
             board: context.owner.getSnapshot(),
           },
-          (operation) =>
-            Promise.all(
-              selectedIds().map((id) =>
-                canvasEffects.setArchived(operation, repoPath, id, true)
-              )
-            ).then(() => undefined)
+          async (operation) => {
+            const ids = selectedIds()
+            await runCanvasEffectBatch('archive', ids, (id) =>
+              canvasEffects.setArchived(operation, repoPath, id, true)
+            )
+          }
         ),
     },
     {
@@ -198,12 +201,12 @@ export function canvasSelectionActions(
             capability: 'metadata',
             board: context.owner.getSnapshot(),
           },
-          (operation) =>
-            Promise.all(
-              selectedIds().map((id) =>
-                canvasEffects.setArchived(operation, repoPath, id, false)
-              )
-            ).then(() => undefined)
+          async (operation) => {
+            const ids = selectedIds()
+            await runCanvasEffectBatch('unarchive', ids, (id) =>
+              canvasEffects.setArchived(operation, repoPath, id, false)
+            )
+          }
         ),
     },
   ]

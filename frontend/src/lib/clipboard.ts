@@ -1,8 +1,8 @@
 import {
   type ClipboardMedia,
   ImageService,
-  SystemService,
 } from '../../bindings/loom/internal/service'
+import { getCapabilities } from './capabilities-store'
 import { normalizePayload } from './clipboard-payload'
 
 const MIME = 'application/x-loom-media'
@@ -11,7 +11,7 @@ export async function copyMedia(
   ids: number[],
   converted: boolean
 ) {
-  if (!(await SystemService.IsServerMode()))
+  if (!getCapabilities().isServerMode)
     return ImageService.CopyNative(path, ids, converted)
   const media = await ImageService.CopyMedia(path, ids, converted)
   if (!media?.length) return
@@ -39,7 +39,7 @@ export async function filesToMedia(files: File[]): Promise<ClipboardMedia[]> {
   )
 }
 export async function readMedia(): Promise<ClipboardMedia[]> {
-  if (!(await SystemService.IsServerMode()))
+  if (!getCapabilities().isServerMode)
     return (await ImageService.ReadNative()) ?? []
   const items = await navigator.clipboard.read()
   for (const item of items) {

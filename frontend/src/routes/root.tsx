@@ -25,14 +25,6 @@ function applyPreferences(preferences: Preferences) {
 }
 
 function Root() {
-  // Fetched once per page load and cached in capabilities-store — every
-  // route reads it from there rather than re-querying.
-  useEffect(() => {
-    SystemService.IsServerMode().then((isServerMode) => {
-      setCapabilities({ isServerMode })
-    })
-  }, [])
-
   useEffect(() => {
     const result = readPreferences()
     let preferences = result.value
@@ -71,6 +63,16 @@ function Root() {
   )
 }
 
+let capabilitiesPromise: Promise<void> | null = null
+
+function loadCapabilities() {
+  capabilitiesPromise ??= SystemService.IsServerMode().then((isServerMode) => {
+    setCapabilities({ isServerMode })
+  })
+  return capabilitiesPromise
+}
+
 export const rootRoute = createRootRoute({
+  beforeLoad: loadCapabilities,
   component: Root,
 })

@@ -155,3 +155,39 @@ export const canvasEffects = {
     ids: number[]
   ) => context.effect(() => ImageService.UnlinkSources(path, ids)),
 }
+
+export function settleCanvasEffectBatch<T>(
+  effects: readonly (() => Promise<T>)[]
+): Promise<PromiseSettledResult<T>[]> {
+  return Promise.allSettled(
+    effects.map((effect) => Promise.resolve().then(effect))
+  )
+}
+
+export async function runCanvasEffectBatch(
+  operation: string,
+  ids: number[],
+  effect: (id: number) => Promise<void>
+) {
+  const results = await settleCanvasEffectBatch(
+    ids.map((id) => () => effect(id))
+  )
+  const failures = results.flatMap((result, index) =>
+    result.status === 'rejected'
+      ? [{ id: ids[index], cause: result.reason }]
+      : []
+  )
+  if (!failures.length) return
+  for (const failure of failures)
+    console.error(`canvas ${operation} failed`, {
+      assetId: failure.id,
+      cause: failure.cause,
+    })
+  const details = failures.map(
+    ({ id, cause }) =>
+      `Asset ${id}: ${cause instanceof Error ? cause.message : String(cause)}`
+  )
+  throw new Error(
+    `${operation} may be incomplete: ${failures.length} of ${ids.length} assets failed. Other changes may have succeeded. The current repository state was refreshed. ${details.join('; ')}`
+  )
+}
