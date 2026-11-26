@@ -135,6 +135,7 @@ const fixtureRepos = [
   { name: 'menu-mac-fixtures', files: ['menu-alpha.png', 'menu-beta.png'] },
   { name: 'filename-fixtures', files: ['hover-target.png'] },
   { name: 'clipboard-fixtures', files: ['hover-target.png'] },
+  { name: 'import-empty-fixtures', files: [] },
   {
     name: 'set-fixtures',
     files: ['set-alpha.png', 'set-beta.png', 'set-gamma.png'],

@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 
 	"loom/internal/store"
 )
@@ -162,12 +163,32 @@ func recordOp(repo *store.Repo, kind string, forward, inverse OpStep) error {
 	if err != nil {
 		return err
 	}
-	if err := repo.RecordOperation(kind, string(fwd), string(inv)); err != nil {
+	if err := repo.PrepareOperationLog(); err != nil {
+		if rollbackErr := applyStep(repo, inverse); rollbackErr != nil {
+			return fmt.Errorf("operation history cleanup preparation failed: %w; compensating rollback failed: %v", err, rollbackErr)
+		}
+		return fmt.Errorf("operation history cleanup preparation failed: %w (mutation rolled back)", err)
+	}
+	tx, err := repo.DB.Begin()
+	if err != nil {
+		if rollbackErr := applyStep(repo, inverse); rollbackErr != nil {
+			return fmt.Errorf("operation log transaction failed: %w; compensating rollback failed: %v", err, rollbackErr)
+		}
+		return fmt.Errorf("operation log transaction failed: %w (mutation rolled back)", err)
+	}
+	discarded, err := recordOperationInTx(repo, tx, kind, string(fwd), string(inv))
+	if err == nil {
+		err = tx.Commit()
+	} else {
+		_ = tx.Rollback()
+	}
+	if err != nil {
 		if rollbackErr := applyStep(repo, inverse); rollbackErr != nil {
 			return fmt.Errorf("operation log append failed: %w; compensating rollback failed: %v", err, rollbackErr)
 		}
 		return fmt.Errorf("operation log append failed: %w (mutation rolled back)", err)
 	}
+	cleanupDiscardedImportRedoBestEffort(repo, discarded, fmt.Sprintf("record operation %s", kind))
 	return nil
 }
 
@@ -507,7 +528,10 @@ func applyStep(repo *store.Repo, s OpStep) error {
 // recorded), the cursor does not move and the failure reason is returned
 // for the frontend to surface (e.g. as a toast) rather than silently
 // dropped.
-type UndoService struct{}
+type UndoService struct {
+	afterImportRedoFileWrite func(string)
+	writeImportRedoFile      func(string, []byte) (os.FileInfo, error)
+}
 
 type UndoResult struct {
 	Applied bool   `json:"applied"`
@@ -557,7 +581,7 @@ func (s *UndoService) replay(repoPath string, redo bool) (*UndoResult, error) {
 	defer unlock()
 	defer repo.Close()
 
-	handled, op, geometry, err := replayAtomicHistory(repo, redo)
+	handled, op, geometry, err := replayAtomicHistoryWithCleanup(repo, redo, s.afterImportRedoFileWrite, s.writeImportRedoFile)
 	if err != nil {
 		if op == nil {
 			return nil, err

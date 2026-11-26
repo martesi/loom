@@ -113,7 +113,7 @@ func TestReplayWaitsForIndependentWriter(t *testing.T) {
 				if err := applyGeometryTx(tx, []GeometryUpdate{g}); err != nil {
 					t.Fatal(err)
 				}
-				if err := graphRecord(repo, tx, stepGeometry, step(stepGeometry, geometryPayload{[]GeometryUpdate{g}}), step(stepGeometry, geometryPayload{[]GeometryUpdate{{ImageID: ids[1]}}})); err != nil {
+				if _, err := graphRecord(repo, tx, stepGeometry, step(stepGeometry, geometryPayload{[]GeometryUpdate{g}}), step(stepGeometry, geometryPayload{[]GeometryUpdate{{ImageID: ids[1]}}})); err != nil {
 					t.Fatal(err)
 				}
 			} else {
@@ -130,7 +130,7 @@ func TestReplayWaitsForIndependentWriter(t *testing.T) {
 					t.Fatal(err)
 				}
 				p := graphPayload{Relationships: []store.Relationship{r}}
-				if err := graphRecord(repo, tx, stepGraphInsert, step(stepGraphInsert, p), step(stepGraphDelete, p)); err != nil {
+				if _, err := graphRecord(repo, tx, stepGraphInsert, step(stepGraphInsert, p), step(stepGraphDelete, p)); err != nil {
 					t.Fatal(err)
 				}
 			}

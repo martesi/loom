@@ -42,7 +42,7 @@ func validateGeometry(g GeometryUpdate) error {
 
 func geometryTx(tx *sql.Tx, id int64) (GeometryUpdate, error) {
 	g := GeometryUpdate{ImageID: id}
-	err := tx.QueryRow(`SELECT canvas_x, canvas_y, canvas_w, canvas_h FROM images WHERE id = ? AND trashed = 0`, id).Scan(&g.X, &g.Y, &g.W, &g.H)
+	err := tx.QueryRow(`SELECT canvas_x, canvas_y, canvas_w, canvas_h FROM images WHERE id = ? AND trashed = 0 AND import_undone = 0`, id).Scan(&g.X, &g.Y, &g.W, &g.H)
 	return g, err
 }
 
@@ -98,10 +98,15 @@ func (s *ImageService) SetGeometry(path string, updates []GeometryUpdate) error 
 	if err := applyGeometryTx(tx, updates); err != nil {
 		return err
 	}
-	if err := graphRecord(repo, tx, stepGeometry, step(stepGeometry, geometryPayload{updates}), step(stepGeometry, geometryPayload{before})); err != nil {
+	discarded, err := graphRecord(repo, tx, stepGeometry, step(stepGeometry, geometryPayload{updates}), step(stepGeometry, geometryPayload{before}))
+	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	cleanupDiscardedImportRedoBestEffort(repo, discarded, "record geometry mutation")
+	return nil
 }
 
 func replayGeometry(repo *store.Repo, raw json.RawMessage) error {

@@ -3,13 +3,23 @@ package service
 import (
 	"database/sql"
 	"encoding/json"
+	"log"
+	"os"
 	"strconv"
 
 	"loom/internal/store"
 )
 
 // Selection, replay and cursor update share one SQLite writer transaction.
-func replayAtomicHistory(repo *store.Repo, redo bool) (bool, *store.Operation, []GeometryUpdate, error) {
+func replayAtomicHistory(repo *store.Repo, redo bool, afterImportFileWrite ...func(string)) (bool, *store.Operation, []GeometryUpdate, error) {
+	var afterWrite func(string)
+	if len(afterImportFileWrite) > 0 {
+		afterWrite = afterImportFileWrite[0]
+	}
+	return replayAtomicHistoryWithCleanup(repo, redo, afterWrite, nil)
+}
+
+func replayAtomicHistoryWithCleanup(repo *store.Repo, redo bool, afterWrite func(string), writeFile func(string, []byte) (os.FileInfo, error)) (bool, *store.Operation, []GeometryUpdate, error) {
 	if err := repo.PrepareOperationLog(); err != nil {
 		return true, nil, nil, err
 	}
@@ -17,7 +27,22 @@ func replayAtomicHistory(repo *store.Repo, redo bool) (bool, *store.Operation, [
 	if err != nil {
 		return true, nil, nil, err
 	}
-	defer tx.Rollback()
+	committed := false
+	var createdFiles []ownedImportFile
+	var filesToValidate []ownedImportFile
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+			for _, file := range createdFiles {
+				recordImportFileSuppression(repo, file.path, file.hash, file.info, "failed history replay")
+				if file.identity != "" {
+					if err := repo.ReleaseImportIdentityAnchors(file.identity); err != nil {
+						log.Printf("failed history replay: unable to release unreferenced import anchor %q: %v", file.identity, err)
+					}
+				}
+			}
+		}
+	}()
 	// A deferred SQLite transaction must obtain the writer lock before any
 	// reads, otherwise a second connection can commit between selection and
 	// the first write (or cause a stale WAL snapshot upgrade to fail).
@@ -47,6 +72,32 @@ func replayAtomicHistory(repo *store.Repo, redo bool) (bool, *store.Operation, [
 	switch s.Kind {
 	case stepGeometry, stepPositions, stepSizes:
 		ids, err = applyHistoryGeometryTx(tx, s)
+	case stepImportBatch:
+		var payload importBatchPayload
+		if err = json.Unmarshal(s.Payload, &payload); err == nil {
+			err = applyImportBatchTx(tx, payload, &createdFiles, &filesToValidate, afterWrite, writeFile)
+			if err == nil {
+				identities := make(map[int64]string, len(payload.Entries))
+				for i := range payload.Entries {
+					var identity string
+					if scanErr := tx.QueryRow(`SELECT import_file_identity FROM images WHERE id = ?`, payload.Entries[i].ImageID).Scan(&identity); scanErr != nil {
+						err = scanErr
+						break
+					}
+					identities[payload.Entries[i].ImageID] = identity
+				}
+				if err == nil {
+					var forward, inverse string
+					forward, err = updateImportHistoryIdentities(op.Forward, identities)
+					if err == nil {
+						inverse, err = updateImportHistoryIdentities(op.Inverse, identities)
+					}
+					if err == nil {
+						_, err = tx.Exec(`UPDATE operation_log SET forward = ?, inverse = ? WHERE seq = ?`, forward, inverse, op.Seq)
+					}
+				}
+			}
+		}
 	case stepGraphInsert, stepGraphDelete, stepGraphReverse:
 		var p graphPayload
 		if err = json.Unmarshal(s.Payload, &p); err == nil {
@@ -70,9 +121,15 @@ func replayAtomicHistory(repo *store.Repo, redo bool) (bool, *store.Operation, [
 	if err != nil {
 		return true, op, nil, err
 	}
+	for _, file := range filesToValidate {
+		if err := verifyOwnedImportFile(file); err != nil {
+			return true, op, nil, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return true, op, nil, err
 	}
+	committed = true
 	return true, op, geometry, nil
 }
 

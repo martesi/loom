@@ -62,7 +62,7 @@ func (s *ImageService) PlaceImages(repoPath string, ids []int64, x, y float64) e
 	}
 	defer tx.Rollback()
 	for i, id := range uniqueImageIDs(ids) {
-		result, err := tx.Exec(`UPDATE images SET canvas_x = COALESCE(canvas_x, ?), canvas_y = COALESCE(canvas_y, ?) WHERE id = ? AND trashed = 0`, x+float64(i%6)*190, y+float64(i/6)*160, id)
+		result, err := tx.Exec(`UPDATE images SET canvas_x = COALESCE(canvas_x, ?), canvas_y = COALESCE(canvas_y, ?) WHERE id = ? AND trashed = 0 AND import_undone = 0`, x+float64(i%6)*190, y+float64(i/6)*160, id)
 		if err != nil {
 			return err
 		}

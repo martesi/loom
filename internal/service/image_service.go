@@ -16,9 +16,20 @@ import (
 )
 
 type ImageService struct {
-	Media          media.Processor
-	now            func() time.Time
-	dimensionProbe func(context.Context, string) (media.Dimensions, error)
+	Media                   media.Processor
+	now                     func() time.Time
+	dimensionProbe          func(context.Context, string) (media.Dimensions, error)
+	afterImportFileWrite    func(string)
+	writeImportFile         func(string, []byte, os.FileMode) (os.FileInfo, error)
+	writeRetainedImportFile func(string, []byte, func(string, os.FileInfo) string) (os.FileInfo, string, error)
+	fileIdentityAt          func(string, os.FileInfo) string
+}
+
+func (s *ImageService) importFileIdentity(path string, info os.FileInfo) string {
+	if s.fileIdentityAt != nil {
+		return s.fileIdentityAt(path, info)
+	}
+	return store.FileIdentityAt(path, info)
 }
 
 func (s *ImageService) mediaProcessor() media.Processor {
@@ -544,10 +555,10 @@ func (s *ImageService) linkSourceToGroup(repoPath string, sourceID, groupID int6
 	var newLinks []store.Relationship
 	for _, derivedID := range memberIDs {
 		var sourceExists, targetExists int
-		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images WHERE id = ? AND trashed = 0)`, sourceID).Scan(&sourceExists); err != nil {
+		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images WHERE id = ? AND trashed = 0 AND import_undone = 0)`, sourceID).Scan(&sourceExists); err != nil {
 			return fmt.Errorf("check relationship source: %w", err)
 		}
-		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images WHERE id = ? AND trashed = 0)`, derivedID).Scan(&targetExists); err != nil {
+		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images WHERE id = ? AND trashed = 0 AND import_undone = 0)`, derivedID).Scan(&targetExists); err != nil {
 			return fmt.Errorf("check group member: %w", err)
 		}
 		if sourceExists == 0 || targetExists == 0 {
@@ -590,6 +601,7 @@ func (s *ImageService) linkSourceToGroup(repoPath string, sourceID, groupID int6
 			newLinks = append(newLinks, rel)
 		}
 	}
+	var discarded discardedImportRedo
 	if len(newLinks) > 0 {
 		fwd, err := json.Marshal(step(stepGraphInsert, graphPayload{Relationships: newLinks}))
 		if err != nil {
@@ -599,13 +611,15 @@ func (s *ImageService) linkSourceToGroup(repoPath string, sourceID, groupID int6
 		if err != nil {
 			return fmt.Errorf("encode grouped relationship inverse: %w", err)
 		}
-		if err := repo.RecordOperationInTx(tx, stepLinks, string(fwd), string(inv)); err != nil {
+		discarded, err = recordOperationInTx(repo, tx, stepLinks, string(fwd), string(inv))
+		if err != nil {
 			return fmt.Errorf("record grouped relationship history: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit grouped relationship transaction: %w", err)
 	}
+	cleanupDiscardedImportRedoBestEffort(repo, discarded, "record grouped relationship mutation")
 	return nil
 }
 

@@ -26,6 +26,7 @@ type Image struct {
 	SourceRevision    int64
 	Archived          bool
 	Trashed           bool
+	ImportUndone      bool
 	CanvasX           float64
 	CanvasY           float64
 	HasCanvasPos      bool
@@ -110,11 +111,36 @@ func (r *Repo) registerImage(ctx context.Context, path string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	var discardedHash, discardedIdentity string
+	err = r.DB.QueryRow(`SELECT sha256, file_identity FROM discarded_import_files WHERE file_path = ?`, path).Scan(&discardedHash, &discardedIdentity)
+	if err != nil && err != sql.ErrNoRows {
+		return 0, err
+	}
+	if err == nil {
+		fingerprint, stableInfo, err := fingerprintFile(ctx, path)
+		if err != nil {
+			return 0, err
+		}
+		identity := r.identityAt(path, stableInfo)
+		if identity == "" || discardedIdentity == "" {
+			return 0, fmt.Errorf("verify discarded import file identity for %q", path)
+		}
+		if identity == discardedIdentity && fingerprint == discardedHash {
+			return 0, nil
+		}
+		if _, err := r.DB.Exec(`DELETE FROM discarded_import_files WHERE file_path = ?`, path); err != nil {
+			return 0, err
+		}
+		if err := r.ReleaseImportIdentityAnchors(discardedIdentity); err != nil {
+			return 0, err
+		}
+	}
 	marker := fmt.Sprintf("stat:%d:%d", info.Size(), info.ModTime().UnixNano())
 	var size sql.NullInt64
-	var oldMarker, oldFingerprint sql.NullString
-	err = r.DB.QueryRow(`SELECT file_size, content_hash, source_fingerprint FROM images WHERE file_path = ?`, path).Scan(&size, &oldMarker, &oldFingerprint)
-	if err == nil && size.Valid && size.Int64 == info.Size() && oldMarker.String == marker && oldFingerprint.Valid && oldFingerprint.String != "" {
+	var oldMarker, oldFingerprint, importIdentity, importHash sql.NullString
+	var importUndone bool
+	err = r.DB.QueryRow(`SELECT file_size, content_hash, source_fingerprint, import_undone, import_file_identity, import_file_sha256 FROM images WHERE file_path = ?`, path).Scan(&size, &oldMarker, &oldFingerprint, &importUndone, &importIdentity, &importHash)
+	if err == nil && size.Valid && size.Int64 == info.Size() && oldMarker.String == marker && oldFingerprint.Valid && oldFingerprint.String != "" && !importUndone && (!importIdentity.Valid || importIdentity.String == "") {
 		return 0, nil
 	}
 	if err != nil && err != sql.ErrNoRows {
@@ -126,6 +152,20 @@ func (r *Repo) registerImage(ctx context.Context, path string) (int, error) {
 		return 0, fmt.Errorf("fingerprint %s: %w", path, err)
 	}
 	marker = fmt.Sprintf("stat:%d:%d", stableInfo.Size(), stableInfo.ModTime().UnixNano())
+	if !isNew && importUndone && (!importIdentity.Valid || importIdentity.String == "") {
+		return 0, fmt.Errorf("verify undone import file identity for %q", path)
+	}
+	if !isNew && importIdentity.Valid && importIdentity.String != "" {
+		identity := r.identityAt(path, stableInfo)
+		if identity == "" {
+			return 0, fmt.Errorf("verify imported file identity for %q", path)
+		}
+		if identity != importIdentity.String || fingerprint != importHash.String {
+			if _, err := r.DB.Exec(`UPDATE images SET import_undone = 0, import_file_identity = '', import_file_sha256 = '' WHERE file_path = ? AND import_file_identity = ?`, path, importIdentity.String); err != nil {
+				return 0, err
+			}
+		}
+	}
 	if isNew {
 		res, err := r.DB.Exec(`INSERT OR IGNORE INTO images (file_path, file_size, content_hash, source_fingerprint, source_revision) VALUES (?, ?, ?, ?, 1)`, path, stableInfo.Size(), marker, fingerprint)
 		if err != nil {
@@ -225,6 +265,46 @@ func (r *Repo) scanAndRegisterImagesWithFingerprint(ctx context.Context, advance
 		}
 		if item.err != nil {
 			return changed, fmt.Errorf("fingerprint %s: %w", item.path, item.err)
+		}
+		var discardedHash, discardedIdentity string
+		err := r.DB.QueryRow(`SELECT sha256, file_identity FROM discarded_import_files WHERE file_path = ?`, item.path).Scan(&discardedHash, &discardedIdentity)
+		if err != nil && err != sql.ErrNoRows {
+			return changed, err
+		}
+		if err == nil {
+			identity := r.identityAt(item.path, item.info)
+			if identity == "" || discardedIdentity == "" {
+				return changed, fmt.Errorf("verify discarded import file identity for %q", item.path)
+			}
+			if identity == discardedIdentity && item.fingerprint == discardedHash {
+				continue
+			}
+			if _, err := r.DB.Exec(`DELETE FROM discarded_import_files WHERE file_path = ?`, item.path); err != nil {
+				return changed, err
+			}
+			if err := r.ReleaseImportIdentityAnchors(discardedIdentity); err != nil {
+				return changed, err
+			}
+		}
+		var importUndone bool
+		var importIdentity, importHash string
+		rowErr := r.DB.QueryRow(`SELECT import_undone, import_file_identity, import_file_sha256 FROM images WHERE file_path = ?`, item.path).Scan(&importUndone, &importIdentity, &importHash)
+		if rowErr != nil && rowErr != sql.ErrNoRows {
+			return changed, rowErr
+		}
+		if rowErr == nil && importUndone && importIdentity == "" {
+			return changed, fmt.Errorf("verify undone import file identity for %q", item.path)
+		}
+		if rowErr == nil && importIdentity != "" {
+			identity := r.identityAt(item.path, item.info)
+			if identity == "" {
+				return changed, fmt.Errorf("verify imported file identity for %q", item.path)
+			}
+			if identity != importIdentity || item.fingerprint != importHash {
+				if _, err := r.DB.Exec(`UPDATE images SET import_undone = 0, import_file_identity = '', import_file_sha256 = '' WHERE file_path = ? AND import_file_identity = ?`, item.path, importIdentity); err != nil {
+					return changed, err
+				}
+			}
 		}
 		statMarker := fmt.Sprintf("stat:%d:%d", item.info.Size(), item.info.ModTime().UnixNano())
 		res, err := r.DB.Exec(`INSERT OR IGNORE INTO images (file_path, file_size, content_hash, source_fingerprint, source_revision) VALUES (?, ?, ?, ?, 1)`, item.path, item.info.Size(), statMarker, item.fingerprint)
@@ -434,7 +514,7 @@ func (r *Repo) imagesByFilePaths(paths []string) ([]Image, error) {
 		placeholders[i] = "?"
 		args[i] = p
 	}
-	query := `SELECT ` + imageSelectCols + ` FROM images WHERE file_path IN (` +
+	query := `SELECT ` + imageSelectCols + ` FROM images WHERE import_undone = 0 AND file_path IN (` +
 		strings.Join(placeholders, ",") + `)`
 	rows, err := r.DB.Query(query, args...)
 	if err != nil {
@@ -455,10 +535,10 @@ func (r *Repo) imagesByFilePaths(paths []string) ([]Image, error) {
 
 const imageSelectCols = `
 	images.id, file_path, COALESCE(thumb_path, ''), COALESCE(width, 0),
-	COALESCE(height, 0), COALESCE(file_size, 0), archived, trashed, canvas_x, canvas_y,
+	COALESCE(height, 0), COALESCE(file_size, 0), archived, CASE WHEN trashed != 0 OR import_undone != 0 THEN 1 ELSE 0 END, canvas_x, canvas_y,
 	canvas_w, canvas_h,
 	COALESCE((SELECT p.text FROM prompts p WHERE p.id = images.prompt_id), ''),
-	COALESCE(group_id, 0), created_at, COALESCE(source_fingerprint, ''), source_revision`
+	COALESCE(group_id, 0), created_at, COALESCE(source_fingerprint, ''), source_revision, import_undone`
 
 func scanImage(scanner interface {
 	Scan(dest ...any) error
@@ -466,7 +546,7 @@ func scanImage(scanner interface {
 	var img Image
 	var cx, cy, cw, ch sql.NullFloat64
 	err := scanner.Scan(&img.ID, &img.FilePath, &img.ThumbPath, &img.Width, &img.Height,
-		&img.FileSize, &img.Archived, &img.Trashed, &cx, &cy, &cw, &ch, &img.PromptText, &img.GroupID, &img.CreatedAt, &img.SourceFingerprint, &img.SourceRevision)
+		&img.FileSize, &img.Archived, &img.Trashed, &cx, &cy, &cw, &ch, &img.PromptText, &img.GroupID, &img.CreatedAt, &img.SourceFingerprint, &img.SourceRevision, &img.ImportUndone)
 	if err != nil {
 		return img, err
 	}
@@ -481,7 +561,7 @@ func scanImage(scanner interface {
 
 // ListImages returns all non-trashed images.
 func (r *Repo) ListImages() ([]Image, error) {
-	rows, err := r.DB.Query(`SELECT ` + imageSelectCols + ` FROM images WHERE trashed = 0 ORDER BY id`)
+	rows, err := r.DB.Query(`SELECT ` + imageSelectCols + ` FROM images WHERE trashed = 0 AND import_undone = 0 ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -514,7 +594,7 @@ func (r *Repo) ListRelationships() ([]Relationship, error) {
 		FROM relationships rel
 		JOIN images s ON s.id = rel.source_image_id
 		JOIN images d ON d.id = rel.derived_image_id
-		WHERE s.trashed = 0 AND d.trashed = 0 ORDER BY rel.pairing_order, rel.id`)
+		WHERE s.trashed = 0 AND d.trashed = 0 AND s.import_undone = 0 AND d.import_undone = 0 ORDER BY rel.pairing_order, rel.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -617,6 +697,13 @@ func (r *Repo) SetArchived(imageID int64, archived bool) error {
 // SetTrashed call never leaves the filesystem and DB pointing at different
 // realities.
 func (r *Repo) SetTrashed(imageID int64, trashed bool) error {
+	var importUndone bool
+	if err := r.DB.QueryRow(`SELECT import_undone FROM images WHERE id = ?`, imageID).Scan(&importUndone); err != nil {
+		return err
+	}
+	if importUndone {
+		return fmt.Errorf("asset %d is hidden by import undo", imageID)
+	}
 	curPath, err := r.GetFilePath(imageID)
 	if err != nil {
 		return err
@@ -955,7 +1042,7 @@ func (r *Repo) ListImagesByIDs(ids []int64) ([]Image, error) {
 		placeholders[i] = "?"
 		args[i] = id
 	}
-	query := `SELECT ` + imageSelectCols + ` FROM images WHERE trashed = 0 AND id IN (` +
+	query := `SELECT ` + imageSelectCols + ` FROM images WHERE trashed = 0 AND import_undone = 0 AND id IN (` +
 		strings.Join(placeholders, ",") + `)`
 	rows, err := r.DB.Query(query, args...)
 	if err != nil {

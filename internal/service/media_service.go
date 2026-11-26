@@ -1,9 +1,13 @@
 package service
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"loom/internal/media"
 	"loom/internal/store"
 	"os"
@@ -124,29 +128,79 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 	}
 	defer unlock()
 	defer r.Close()
+	if err := r.PrepareOperationLog(); err != nil {
+		return nil, err
+	}
 	tx, err := r.DB.Begin()
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
 	paths := []string{}
+	filesToValidate := []ownedImportFile{}
+	ownedFiles := map[string]os.FileInfo{}
+	ownedFileHashes := map[string]string{}
+	ownedIdentities := map[string]string{}
+	discoverablePaths := map[string]bool{}
+	rollbackSuppressions := []ownedImportFile{}
+	rollbackPrivateFiles := []ownedImportFile{}
 	committed := false
 	defer func() {
 		if !committed {
+			_ = tx.Rollback()
 			for _, path := range paths {
-				os.Remove(path)
+				owned := ownedFiles[path]
+				if discoverablePaths[path] && owned != nil {
+					// Keep the file. An unlink by path could race with an external
+					// replacement; the identity-bound tombstone hides only these bytes.
+					recordImportFileSuppression(r, path, ownedFileHashes[path], owned, "failed import rollback")
+					if identity := ownedIdentities[path]; identity != "" {
+						if err := r.ReleaseImportIdentityAnchors(identity); err != nil {
+							log.Printf("failed import rollback: unable to release unreferenced import anchor %q: %v", identity, err)
+						}
+					}
+					continue
+				}
+				identity := ownedIdentities[path]
+				if identity == "" {
+					continue
+				}
+				if _, err := removeOwnedImportFileWithHash(path, identity, ownedFileHashes[path]); err != nil {
+					log.Printf("failed import rollback: unable to remove retained import %q: %v", path, err)
+					continue
+				}
+				if err := r.ReleaseImportIdentityAnchors(identity); err != nil {
+					log.Printf("failed import rollback: unable to remove retained import anchor %q: %v", identity, err)
+				}
+			}
+			for _, file := range rollbackSuppressions {
+				recordImportFileSuppression(r, file.path, file.hash, file.info, "failed import write cleanup")
+			}
+			for _, file := range rollbackPrivateFiles {
+				if file.identity == "" {
+					continue
+				}
+				if _, err := removeOwnedImportFileWithHash(file.path, file.identity, file.hash); err != nil {
+					log.Printf("failed import rollback: unable to remove retained staging file %q: %v", file.path, err)
+					continue
+				}
+				if err := r.ReleaseImportIdentityAnchors(file.identity); err != nil {
+					log.Printf("failed import rollback: unable to remove retained staging anchor %q: %v", file.identity, err)
+				}
 			}
 		}
 	}()
 	ids := make([]int64, 0, len(media))
+	entries := make([]importHistoryEntry, 0, len(media))
 	for i, item := range media {
 		name := filepath.Base(strings.ReplaceAll(item.Name, "\\", "/"))
 		data, err := base64.StdEncoding.DecodeString(item.Data)
 		if err != nil {
 			return nil, fmt.Errorf("decode media: %w", err)
 		}
-		var file *os.File
 		var dest string
+		var fileInfo os.FileInfo
+		var fileIdentity string
 		for n := 0; ; n++ {
 			candidate := name
 			if n > 0 {
@@ -154,30 +208,46 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 				candidate = fmt.Sprintf("%s (%d)%s", strings.TrimSuffix(name, ext), n, ext)
 			}
 			dest = filepath.Join(r.Path, candidate)
-			file, err = os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+			write := s.writeImportFile
+			if write == nil {
+				fileInfo, fileIdentity, err = writeExclusiveModeWithIdentity(dest, data, 0o644, s.importFileIdentity)
+			} else {
+				fileInfo, err = write(dest, data, 0o644)
+			}
 			if os.IsExist(err) {
 				continue
 			}
 			if err != nil {
+				var cleanupFailure *exclusiveCleanupFailure
+				if errors.As(err, &cleanupFailure) {
+					rollbackSuppressions = append(rollbackSuppressions, ownedImportFile{path: cleanupFailure.path, info: cleanupFailure.info, hash: cleanupFailure.hash})
+				}
 				return nil, err
 			}
 			break
 		}
 		paths = append(paths, dest)
-		_, writeErr := file.Write(data)
-		closeErr := file.Close()
-		if writeErr != nil {
-			return nil, writeErr
+		discoverablePaths[dest] = true
+		ownedFiles[dest] = fileInfo
+		ownedFileHashes[dest] = fmt.Sprintf("%x", sha256.Sum256(data))
+		if fileIdentity == "" {
+			fileIdentity = s.importFileIdentity(dest, fileInfo)
 		}
-		if closeErr != nil {
-			return nil, closeErr
+		ownedIdentities[dest] = fileIdentity
+		if s.afterImportFileWrite != nil {
+			s.afterImportFileWrite(dest)
 		}
 		var cx, cy any
 		if place {
 			cx = x + float64(i%6)*190
 			cy = y + float64(i/6)*160
 		}
-		result, err := tx.Exec("INSERT INTO images(file_path,canvas_x,canvas_y) VALUES (?,?,?)", dest, cx, cy)
+		if fileIdentity == "" {
+			return nil, fmt.Errorf("imported file %q has no verifiable identity", dest)
+		}
+		filesToValidate = append(filesToValidate, ownedImportFile{path: dest, info: fileInfo, hash: ownedFileHashes[dest], identity: fileIdentity})
+		fileHash := fmt.Sprintf("%x", sha256.Sum256(data))
+		result, err := tx.Exec("INSERT INTO images(file_path,canvas_x,canvas_y,import_file_identity,import_file_sha256) VALUES (?,?,?,?,?)", dest, cx, cy, fileIdentity, fileHash)
 		if err != nil {
 			return nil, err
 		}
@@ -186,11 +256,59 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 			return nil, err
 		}
 		ids = append(ids, id)
+		stash := filepath.Join(r.Path, ".loom", "trash", "import-redo", fmt.Sprintf("%d-%d-%s", time.Now().UnixNano(), id, filepath.Base(dest)))
+		if err := os.MkdirAll(filepath.Dir(stash), 0o755); err != nil {
+			return nil, err
+		}
+		writeRetained := s.writeRetainedImportFile
+		if writeRetained == nil {
+			writeRetained = writeExclusiveWithIdentity
+		}
+		stashInfo, retainedIdentity, err := writeRetained(stash, data, s.importFileIdentity)
+		if err != nil {
+			var cleanupFailure *exclusiveCleanupFailure
+			if errors.As(err, &cleanupFailure) {
+				rollbackPrivateFiles = append(rollbackPrivateFiles, ownedImportFile{
+					path:     cleanupFailure.path,
+					info:     cleanupFailure.info,
+					hash:     cleanupFailure.hash,
+					identity: store.FileIdentityAt(cleanupFailure.path, cleanupFailure.info),
+				})
+			}
+			return nil, err
+		}
+		paths = append(paths, stash)
+		ownedFiles[stash] = stashInfo
+		ownedFileHashes[stash] = fmt.Sprintf("%x", sha256.Sum256(data))
+		ownedIdentities[stash] = retainedIdentity
+		if retainedIdentity == "" {
+			return nil, fmt.Errorf("retained import file %q has no verifiable identity", stash)
+		}
+		filesToValidate = append(filesToValidate, ownedImportFile{path: stash, info: stashInfo, hash: fileHash, identity: retainedIdentity})
+		entries = append(entries, importHistoryEntry{ImageID: id, RetainedPath: stash, SHA256: fileHash, FileIdentity: fileIdentity, FileIdentities: []string{fileIdentity}, RetainedIdentity: retainedIdentity})
+	}
+	forward, err := json.Marshal(step(stepImportBatch, importBatchPayload{Entries: entries, Active: true}))
+	if err != nil {
+		return nil, err
+	}
+	inverse, err := json.Marshal(step(stepImportBatch, importBatchPayload{Entries: entries, Active: false}))
+	if err != nil {
+		return nil, err
+	}
+	discarded, err := recordOperationInTx(r, tx, "import_batch", string(forward), string(inverse))
+	if err != nil {
+		return nil, err
+	}
+	for _, file := range filesToValidate {
+		if err := verifyOwnedImportFile(file); err != nil {
+			return nil, fmt.Errorf("validate imported file before commit: %w", err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	committed = true
+	cleanupDiscardedImportRedoBestEffort(r, discarded, "discarded import history")
 	return ids, nil
 }
 
@@ -296,7 +414,7 @@ func purgeExpiredTrash(r *store.Repo, now time.Time) error {
 	cutoff := now.Add(-trashRetention).UTC().Format("2006-01-02T15:04:05.000Z")
 	rows, err := r.DB.Query(`
 		SELECT id FROM images
-		WHERE trashed = 1 AND trashed_at IS NOT NULL AND trashed_at <= ?`, cutoff)
+		WHERE trashed = 1 AND import_undone = 0 AND trashed_at IS NOT NULL AND trashed_at <= ?`, cutoff)
 	if err != nil {
 		return err
 	}
@@ -363,6 +481,7 @@ func validateClipboardMedia(items []ClipboardMedia) error {
 
 func purgeImages(r *store.Repo, ids []int64) error {
 	images := make([]store.Image, 0, len(ids))
+	var importIdentities []string
 	for _, id := range uniqueImageIDs(ids) {
 		img, err := r.GetImageByID(id)
 		if err == sql.ErrNoRows {
@@ -374,13 +493,27 @@ func purgeImages(r *store.Repo, ids []int64) error {
 		images = append(images, img)
 	}
 	for _, img := range images {
+		if img.ImportUndone {
+			return fmt.Errorf("asset %d is hidden by import undo", img.ID)
+		}
 		rel, err := filepath.Rel(r.Path, img.FilePath)
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return fmt.Errorf("asset is outside repository")
 		}
 	}
 	for _, img := range images {
-		if err := os.Remove(img.FilePath); err != nil && !os.IsNotExist(err) {
+		var importIdentity, importHash sql.NullString
+		if err := r.DB.QueryRow(`SELECT import_file_identity, import_file_sha256 FROM images WHERE id = ?`, img.ID).Scan(&importIdentity, &importHash); err != nil {
+			return err
+		}
+		if importIdentity.String != "" || importHash.String != "" {
+			if importIdentity.Valid && importIdentity.String != "" {
+				importIdentities = append(importIdentities, importIdentity.String)
+				if _, err := removeOwnedImportFile(img.FilePath, importIdentity.String); err != nil {
+					return fmt.Errorf("purge %s: %w", filepath.Base(img.FilePath), err)
+				}
+			}
+		} else if err := os.Remove(img.FilePath); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("purge %s: %w", filepath.Base(img.FilePath), err)
 		}
 		if img.ThumbPath != "" {
@@ -401,7 +534,17 @@ func purgeImages(r *store.Repo, ids []int64) error {
 			return deleteErr
 		}
 	}
-	_, err := r.DB.Exec("DELETE FROM groups WHERE NOT EXISTS (SELECT 1 FROM images WHERE group_id = groups.id)")
+	purgedIDs := make([]int64, 0, len(images))
+	for _, img := range images {
+		purgedIDs = append(purgedIDs, img.ID)
+	}
+	discarded, err := forgetPurgedImportHistory(r, purgedIDs)
+	if err != nil {
+		return err
+	}
+	discarded.released = append(discarded.released, importIdentities...)
+	cleanupDiscardedImportRedoBestEffort(r, discarded, "purge import history")
+	_, err = r.DB.Exec("DELETE FROM groups WHERE NOT EXISTS (SELECT 1 FROM images WHERE group_id = groups.id)")
 	return err
 }
 

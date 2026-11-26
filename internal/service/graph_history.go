@@ -19,16 +19,16 @@ type graphPayload struct {
 	Relationships []store.Relationship `json:"relationships"`
 }
 
-func graphRecord(repo *store.Repo, tx *sql.Tx, kind string, forward, inverse OpStep) error {
+func graphRecord(repo *store.Repo, tx *sql.Tx, kind string, forward, inverse OpStep) (discardedImportRedo, error) {
 	f, err := json.Marshal(forward)
 	if err != nil {
-		return err
+		return discardedImportRedo{}, err
 	}
 	i, err := json.Marshal(inverse)
 	if err != nil {
-		return err
+		return discardedImportRedo{}, err
 	}
-	return repo.RecordOperationInTx(tx, kind, string(f), string(i))
+	return recordOperationInTx(repo, tx, kind, string(f), string(i))
 }
 
 func validateRelationship(tx *sql.Tx, source, derived, excluded int64) error {
@@ -36,7 +36,7 @@ func validateRelationship(tx *sql.Tx, source, derived, excluded int64) error {
 		return fmt.Errorf("cannot link an image to itself")
 	}
 	var n int
-	if err := tx.QueryRow(`SELECT count(*) FROM images WHERE id IN (?, ?) AND trashed = 0`, source, derived).Scan(&n); err != nil {
+	if err := tx.QueryRow(`SELECT count(*) FROM images WHERE id IN (?, ?) AND trashed = 0 AND import_undone = 0`, source, derived).Scan(&n); err != nil {
 		return err
 	}
 	if n != 2 {
@@ -118,10 +118,15 @@ func (s *ImageService) createRelationship(path string, source, derived int64) er
 		return err
 	}
 	p := graphPayload{Relationships: []store.Relationship{r}}
-	if err := graphRecord(repo, tx, stepGraphInsert, step(stepGraphInsert, p), step(stepGraphDelete, p)); err != nil {
+	discarded, err := graphRecord(repo, tx, stepGraphInsert, step(stepGraphInsert, p), step(stepGraphDelete, p))
+	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.cleanupDiscardedImportRedo(repo, discarded, "record graph mutation")
+	return nil
 }
 
 // UnlinkSources removes all requested edges as one undoable operation.
@@ -154,10 +159,15 @@ func (s *ImageService) UnlinkSources(path string, ids []int64) error {
 	if err := applyGraphTx(tx, stepGraphDelete, p); err != nil {
 		return err
 	}
-	if err := graphRecord(repo, tx, stepGraphDelete, step(stepGraphDelete, p), step(stepGraphInsert, p)); err != nil {
+	discarded, err := graphRecord(repo, tx, stepGraphDelete, step(stepGraphDelete, p), step(stepGraphInsert, p))
+	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	cleanupDiscardedImportRedoBestEffort(repo, discarded, "record graph mutation")
+	return nil
 }
 
 // ReverseRelationship reverses one edge without changing its identity or order.
@@ -189,10 +199,15 @@ func (s *ImageService) ReverseRelationship(path string, id int64) error {
 	}
 	reversed := r
 	reversed.SourceImageID, reversed.DerivedImageID = r.DerivedImageID, r.SourceImageID
-	if err := graphRecord(repo, tx, stepGraphReverse, step(stepGraphReverse, p), step(stepGraphReverse, graphPayload{Relationships: []store.Relationship{reversed}})); err != nil {
+	discarded, err := graphRecord(repo, tx, stepGraphReverse, step(stepGraphReverse, p), step(stepGraphReverse, graphPayload{Relationships: []store.Relationship{reversed}}))
+	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	cleanupDiscardedImportRedoBestEffort(repo, discarded, "record graph mutation")
+	return nil
 }
 
 func applyGraphTx(tx *sql.Tx, kind string, p graphPayload) error {

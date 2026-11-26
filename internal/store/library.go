@@ -17,13 +17,13 @@ func (r *Repo) ListImagesFiltered(q LibraryQuery) ([]Image, error) {
 
 	switch q.Status {
 	case "archived":
-		conditions = append(conditions, "trashed = 0 AND archived = 1")
+		conditions = append(conditions, "trashed = 0 AND import_undone = 0 AND archived = 1")
 	case "trashed":
-		conditions = append(conditions, "trashed = 1")
+		conditions = append(conditions, "trashed = 1 AND import_undone = 0")
 	case "all":
-		// no filter
+		conditions = append(conditions, "import_undone = 0")
 	default:
-		conditions = append(conditions, "trashed = 0 AND archived = 0")
+		conditions = append(conditions, "trashed = 0 AND import_undone = 0 AND archived = 0")
 	}
 
 	switch q.Placement {

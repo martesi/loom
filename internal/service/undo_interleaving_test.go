@@ -30,7 +30,7 @@ func TestStaleAtomicReplayDoesNotRewindNewerOperation(t *testing.T) {
 	if _, err := tx.Exec(`UPDATE images SET canvas_x = 42 WHERE id = ?`, ids[1]); err != nil {
 		t.Fatal(err)
 	}
-	if err := graphRecord(other, tx, "newer", step(stepGeometry, geometryPayload{}), step(stepGeometry, geometryPayload{})); err != nil {
+	if _, err := graphRecord(other, tx, "newer", step(stepGeometry, geometryPayload{}), step(stepGeometry, geometryPayload{})); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {

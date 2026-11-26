@@ -14,8 +14,16 @@ import (
 const loomDirName = ".loom"
 
 type Repo struct {
-	Path string
-	DB   *sql.DB
+	Path           string
+	DB             *sql.DB
+	fileIdentityAt func(string, os.FileInfo) string
+}
+
+func (r *Repo) identityAt(path string, info os.FileInfo) string {
+	if r.fileIdentityAt != nil {
+		return r.fileIdentityAt(path, info)
+	}
+	return FileIdentityAt(path, info)
 }
 
 // Bootstrap opens the repo rooted at rootPath, creating its .loom/ folder
@@ -48,7 +56,7 @@ func (r *Repo) Name() string {
 
 func (r *Repo) ImageCount() (int, error) {
 	var count int
-	err := r.DB.QueryRow(`SELECT COUNT(*) FROM images WHERE trashed = 0`).Scan(&count)
+	err := r.DB.QueryRow(`SELECT COUNT(*) FROM images WHERE trashed = 0 AND import_undone = 0`).Scan(&count)
 	return count, err
 }
 
