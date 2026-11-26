@@ -136,6 +136,7 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 	}
 	defer tx.Rollback()
 	paths := []string{}
+	publishedFiles := []ownedImportFile{}
 	ownedFiles := map[string]os.FileInfo{}
 	ownedFileHashes := map[string]string{}
 	discoverablePaths := map[string]bool{}
@@ -195,6 +196,7 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 		discoverablePaths[dest] = true
 		ownedFiles[dest] = fileInfo
 		ownedFileHashes[dest] = fmt.Sprintf("%x", sha256.Sum256(data))
+		publishedFiles = append(publishedFiles, ownedImportFile{path: dest, info: fileInfo, hash: ownedFileHashes[dest]})
 		if s.afterImportFileWrite != nil {
 			s.afterImportFileWrite(dest)
 		}
@@ -238,6 +240,11 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 	discarded, err := recordOperationInTx(r, tx, "import_batch", string(forward), string(inverse))
 	if err != nil {
 		return nil, err
+	}
+	for _, file := range publishedFiles {
+		if err := verifyOwnedImportFile(file); err != nil {
+			return nil, fmt.Errorf("validate imported file before commit: %w", err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err

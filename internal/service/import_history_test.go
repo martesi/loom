@@ -1525,6 +1525,76 @@ func TestImportRollbackPreservesExternallyModifiedOwnedFile(t *testing.T) {
 	}
 }
 
+func TestInitialImportRejectsFilesChangedDuringBatch(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		replace  bool
+		newBytes []byte
+	}{
+		{name: "replacement", replace: true, newBytes: []byte("external replacement")},
+		{name: "in-place modification", newBytes: []byte("external in-place edit")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repoPath := t.TempDir()
+			firstPath := filepath.Join(repoPath, "batch-first.png")
+			service := &ImageService{afterImportFileWrite: func(path string) {
+				if filepath.Base(path) != "batch-second.png" {
+					return
+				}
+				if tc.replace {
+					replacement := firstPath + ".external"
+					if err := os.WriteFile(replacement, tc.newBytes, 0o600); err != nil {
+						t.Errorf("write external replacement: %v", err)
+						return
+					}
+					if err := os.Remove(firstPath); err != nil {
+						t.Errorf("remove first published file: %v", err)
+						return
+					}
+					if err := os.Rename(replacement, firstPath); err != nil {
+						t.Errorf("publish external replacement: %v", err)
+					}
+					return
+				}
+				if err := os.WriteFile(firstPath, tc.newBytes, 0o600); err != nil {
+					t.Errorf("modify first published file in place: %v", err)
+				}
+			}}
+			_, err := service.ImportMedia(repoPath, []ClipboardMedia{
+				{Name: "batch-first.png", Data: base64.StdEncoding.EncodeToString([]byte("captured first bytes"))},
+				{Name: "batch-second.png", Data: base64.StdEncoding.EncodeToString([]byte("captured second bytes"))},
+			}, false, 0, 0)
+			if err == nil {
+				t.Fatal("ImportMedia committed a batch after a member changed")
+			}
+			if got, err := os.ReadFile(firstPath); err != nil || !bytes.Equal(got, tc.newBytes) {
+				t.Fatalf("external file after rejected import = %q err=%v", got, err)
+			}
+			repo, err := store.Bootstrap(repoPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer repo.Close()
+			var imports, rows, suppressions int
+			if err := repo.DB.QueryRow(`SELECT count(*) FROM operation_log WHERE kind = 'import_batch'`).Scan(&imports); err != nil || imports != 0 {
+				t.Fatalf("committed import operations = %d err=%v", imports, err)
+			}
+			if err := repo.DB.QueryRow(`SELECT count(*) FROM images WHERE file_path = ?`, firstPath).Scan(&rows); err != nil || rows != 0 {
+				t.Fatalf("rolled-back import rows before discovery = %d err=%v", rows, err)
+			}
+			if err := repo.DB.QueryRow(`SELECT count(*) FROM discarded_import_files WHERE file_path = ?`, firstPath).Scan(&suppressions); err != nil || suppressions != 0 {
+				t.Fatalf("changed file suppression count = %d err=%v", suppressions, err)
+			}
+			if _, err := repo.RegisterImages(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if err := repo.DB.QueryRow(`SELECT count(*) FROM images WHERE file_path = ?`, firstPath).Scan(&rows); err != nil || rows != 1 {
+				t.Fatalf("external file discovery rows = %d err=%v", rows, err)
+			}
+		})
+	}
+}
+
 func TestImportRollbackSuppressionAllowsExternalReplacement(t *testing.T) {
 	repoPath := t.TempDir()
 	repo, err := store.Bootstrap(repoPath)
