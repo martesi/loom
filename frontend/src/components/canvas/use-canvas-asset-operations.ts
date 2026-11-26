@@ -133,9 +133,10 @@ export function useCanvasAssetOperations({
 
   async function paste(
     media?: Awaited<ReturnType<typeof readMedia>>,
-    surface = selection.surface
+    surface = selection.surface,
+    dropPoint?: { x: number; y: number }
   ) {
-    const point = center()
+    const point = dropPoint ?? center()
     const assets = media ?? (await readMedia())
     const { ids, canvas } = await owner.execute(async () => {
       const canvas = surface === 'canvas' && owner.allows('canvas-drop')

@@ -135,6 +135,20 @@ func migrate(conn *sql.DB) error {
 			tx.Rollback()
 			return fmt.Errorf("apply %s: %w", name, err)
 		}
+		if name == "0013_import_recovery_trust.sql" {
+			hasLegacyColumn, err := hasImageColumn(tx, "history_retained")
+			if err != nil {
+				tx.Rollback()
+				return fmt.Errorf("inspect legacy retained imports: %w", err)
+			}
+			if hasLegacyColumn {
+				if _, err := tx.Exec(`INSERT OR IGNORE INTO import_recovery(image_id,file_path,fingerprint,retained,trusted)
+					SELECT id,file_path,'',1,0 FROM images WHERE history_retained=1`); err != nil {
+					tx.Rollback()
+					return fmt.Errorf("preserve legacy retained imports: %w", err)
+				}
+			}
+		}
 		if _, err := tx.Exec(`INSERT INTO schema_migrations (version) VALUES (?)`, name); err != nil {
 			tx.Rollback()
 			return err
@@ -144,4 +158,24 @@ func migrate(conn *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+func hasImageColumn(tx *sql.Tx, column string) (bool, error) {
+	rows, err := tx.Query(`PRAGMA table_info(images)`)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, kind string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &kind, &notNull, &defaultValue, &primaryKey); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }

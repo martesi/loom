@@ -109,6 +109,27 @@ it('rechecks mode after a delayed paste and imports without Canvas geometry in V
   })
 })
 
+it('imports a dropped file batch at the flow-space drop point in Edit', async () => {
+  const owner = createCanvasBoardOwner('/repo')
+  owner.setMode('edit')
+  const imported = spyOn(ImageService, 'ImportMedia').mockResolvedValue([
+    4,
+    5,
+  ] as never)
+  const props = {
+    owner,
+    repoPath: '/repo',
+    selection: { surface: 'canvas', ids: [], edges: [], group: null },
+    center: () => ({ x: 100, y: 200 }),
+    reload: async () => {},
+    setSelection: mock(),
+    setReveal: mock(),
+  } as unknown as Parameters<typeof useCanvasAssetOperations>[0]
+  const { result } = renderHook(() => useCanvasAssetOperations(props))
+  await act(async () => result.current.paste([], 'canvas', { x: -30, y: 90 }))
+  expect(imported).toHaveBeenCalledWith('/repo', [], true, -30, 90)
+})
+
 it('does not unlink or open purge from a Canvas selection in View', async () => {
   const owner = createCanvasBoardOwner('/repo')
   owner.setMode('view')

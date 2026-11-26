@@ -29,6 +29,10 @@ func TestBatchImportUndoRedoRetainsFilesIdentityAndGeometry(t *testing.T) {
 	}
 	defer repo.Close()
 	assertImportHistory(t, repo, 1, 1)
+	beforeUndo, err := (&ImageService{}).GetLayoutSnapshot(root)
+	if err != nil || len(beforeUndo.Images) != 2 {
+		t.Fatalf("active import layout snapshot: %+v err=%v", beforeUndo, err)
+	}
 	for i, id := range ids {
 		image, err := repo.GetImageByID(id)
 		if err != nil || image.CanvasX != 20+float64(i)*190 || image.CanvasY != 30 || image.SourceFingerprint == "" {
@@ -41,6 +45,10 @@ func TestBatchImportUndoRedoRetainsFilesIdentityAndGeometry(t *testing.T) {
 		t.Fatalf("undo: result=%+v err=%v", result, err)
 	}
 	assertImportHistory(t, repo, 0, 1)
+	afterUndo, err := (&ImageService{}).GetLayoutSnapshot(root)
+	if err != nil || len(afterUndo.Images) != 0 || afterUndo.Revision == beforeUndo.Revision {
+		t.Fatalf("retained imports were not hidden/revisioned: before=%+v after=%+v err=%v", beforeUndo, afterUndo, err)
+	}
 	if images, err := repo.ListImages(); err != nil || len(images) != 0 {
 		t.Fatalf("retained imports leaked into active catalog: images=%v err=%v", images, err)
 	}
@@ -68,6 +76,10 @@ func TestBatchImportUndoRedoRetainsFilesIdentityAndGeometry(t *testing.T) {
 		t.Fatalf("redo: result=%+v err=%v", result, err)
 	}
 	assertImportHistory(t, repo, 1, 1)
+	afterRedo, err := (&ImageService{}).GetLayoutSnapshot(root)
+	if err != nil || len(afterRedo.Images) != 2 || afterRedo.Revision == afterUndo.Revision {
+		t.Fatalf("redone imports were not projected/revisioned: after=%+v err=%v", afterRedo, err)
+	}
 	for i, id := range ids {
 		image, err := repo.GetImageByID(id)
 		if err != nil || image.ID != id || image.CanvasX != 20+float64(i)*190 {
@@ -83,6 +95,12 @@ func TestImportRedoRejectsMissingOrModifiedFilesAtomically(t *testing.T) {
 	}{
 		{name: "missing", mutate: os.Remove},
 		{name: "modified", mutate: func(path string) error { return os.WriteFile(path, []byte("replacement"), 0o644) }},
+		{name: "replaced", mutate: func(path string) error {
+			if err := os.Rename(path, path+".user-backup"); err != nil {
+				return err
+			}
+			return os.WriteFile(path, []byte("replacement inode"), 0o644)
+		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -104,6 +122,13 @@ func TestImportRedoRejectsMissingOrModifiedFilesAtomically(t *testing.T) {
 			result, err := (&UndoService{}).Redo(root)
 			if err != nil || result.Applied || !strings.Contains(result.Error, "imported image") {
 				t.Fatalf("unsafe redo accepted: %+v err=%v", result, err)
+			}
+			if test.name == "replaced" {
+				for _, path := range []string{filepath.Join(root, "second.png"), filepath.Join(root, "second.png.user-backup")} {
+					if _, err := os.Stat(path); err != nil {
+						t.Fatalf("failed redo changed a replacement file: %s: %v", path, err)
+					}
+				}
 			}
 			repo, err := store.Bootstrap(root)
 			if err != nil {
@@ -204,6 +229,152 @@ func TestTruncatedImportRedoRemainsExplicitlyRecoverable(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "kept.png")); err != nil {
 		t.Fatalf("recovery changed the original file: %v", err)
+	}
+}
+
+func TestRecoverImportDoesNotDiscardRedoBranch(t *testing.T) {
+	root := t.TempDir()
+	service := &ImageService{}
+	ids, err := service.ImportMedia(root, []ClipboardMedia{{Name: "kept.png", Data: "a2VwdA=="}}, false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := (&UndoService{}).Undo(root); err != nil || !result.Applied {
+		t.Fatalf("undo: %+v %v", result, err)
+	}
+	state, err := (&UndoService{}).State(root)
+	if err != nil || !state.CanRedo {
+		t.Fatalf("redo not available before recovery: %+v err=%v", state, err)
+	}
+	if err := service.RecoverImport(root, ids[0]); err == nil {
+		t.Fatal("recovery silently discarded redo")
+	}
+	state, err = (&UndoService{}).State(root)
+	if err != nil || !state.CanRedo {
+		t.Fatalf("failed recovery changed redo state: %+v err=%v", state, err)
+	}
+	result, err := (&UndoService{}).Redo(root)
+	if err != nil || !result.Applied {
+		t.Fatalf("redo after refused recovery: %+v err=%v", result, err)
+	}
+}
+
+func TestPendingImportRecoveryDoesNotDiscardRedoBranch(t *testing.T) {
+	root := t.TempDir()
+	service := &ImageService{}
+	if _, err := service.ImportMedia(root, []ClipboardMedia{{Name: "history.png", Data: "aGlzdG9yeQ=="}}, false, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := (&UndoService{}).Undo(root); err != nil || !result.Applied {
+		t.Fatalf("undo: %+v err=%v", result, err)
+	}
+	repo, err := store.Bootstrap(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := prepareImportItems([]ClipboardMedia{{Name: "interrupted.png", Data: "aW50ZXJydXB0ZWQ="}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	batchID, paths, err := reserveImportPaths(repo, items, false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := createReservedFiles(items, paths); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.RecoverPendingImportBatch(root, batchID); err == nil {
+		t.Fatal("pending recovery silently discarded redo")
+	}
+	state, err := (&UndoService{}).State(root)
+	if err != nil || !state.CanRedo {
+		t.Fatalf("pending recovery changed redo state: %+v err=%v", state, err)
+	}
+	if batches, err := service.ListPendingImportBatches(root); err != nil || len(batches) != 1 || batches[0].ID != batchID {
+		t.Fatalf("failed recovery discarded pending evidence: %+v err=%v", batches, err)
+	}
+	if result, err := (&UndoService{}).Redo(root); err != nil || !result.Applied {
+		t.Fatalf("redo after refused pending recovery: %+v err=%v", result, err)
+	}
+}
+
+func TestRetainedImportBlocksStaleAssetAndGraphMutations(t *testing.T) {
+	root := t.TempDir()
+	service := &ImageService{}
+	ids, err := service.ImportMedia(root, []ClipboardMedia{
+		{Name: "retained.png", Data: "cmV0YWluZWQ="},
+		{Name: "active.png", Data: "YWN0aXZl"},
+	}, false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := (&UndoService{}).Undo(root); err != nil || !result.Applied {
+		t.Fatalf("undo batch: %+v err=%v", result, err)
+	}
+	retainedPath := filepath.Join(root, "retained.png")
+	if err := service.SetGeometry(root, []GeometryUpdate{rect(ids[0], 10, 20, 200, 100)}); err == nil {
+		t.Fatal("SetGeometry accepted retained ID")
+	}
+	if err := service.LinkSource(root, ids[0], ids[1]); err == nil {
+		t.Fatal("LinkSource accepted retained endpoint")
+	}
+	if _, err := (&TagService{}).AddTag(root, ids[0], "stale"); err == nil {
+		t.Fatal("AddTag accepted retained ID")
+	}
+	if err := service.UnplaceImages(root, []int64{ids[0]}); err == nil {
+		t.Fatal("UnplaceImages accepted retained ID")
+	}
+	if err := service.PurgeImages(root, []int64{ids[0]}); err == nil {
+		t.Fatal("PurgeImages accepted retained ID")
+	}
+	if _, err := os.Stat(retainedPath); err != nil {
+		t.Fatalf("stale purge removed retained media: %v", err)
+	}
+	repo, err := store.Bootstrap(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	if err := repo.SetCanvasPosition(ids[0], 90, 100); err == nil {
+		t.Fatal("store position write accepted retained ID")
+	}
+	var edgeCount int
+	if err := repo.DB.QueryRow(`SELECT count(*) FROM relationships`).Scan(&edgeCount); err != nil || edgeCount != 0 {
+		t.Fatalf("retained endpoint leaked an edge: count=%d err=%v", edgeCount, err)
+	}
+}
+
+func TestGraphCycleValidationIncludesLegacyRetainedEdges(t *testing.T) {
+	root := t.TempDir()
+	ids, err := (&ImageService{}).ImportMedia(root, []ClipboardMedia{
+		{Name: "cycle-a.png", Data: "YQ=="},
+		{Name: "cycle-b.png", Data: "Yg=="},
+		{Name: "cycle-hidden.png", Data: "Yw=="},
+	}, false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := store.Bootstrap(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.DB.Exec(`INSERT INTO relationships(source_image_id,derived_image_id) VALUES (?,?),(?,?)`, ids[1], ids[2], ids[2], ids[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.DB.Exec(`UPDATE import_recovery SET retained=1 WHERE image_id=?`, ids[2]); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&ImageService{}).LinkSource(root, ids[0], ids[1]); err == nil || !strings.Contains(err.Error(), "cycle") {
+		t.Fatalf("link ignored hidden retained edge in cycle validation: %v", err)
+	}
+	if err := (&ImageService{}).LinkSource(root, ids[2], ids[0]); err == nil {
+		t.Fatal("link accepted retained endpoint")
 	}
 }
 

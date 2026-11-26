@@ -8,6 +8,9 @@ import (
 	"loom/internal/store"
 )
 
+// Tests terminate a subprocess at transaction boundaries to verify replay recovery.
+var importHistoryReplayCrashHook func(string)
+
 // Selection, replay and cursor update share one SQLite writer transaction.
 func replayAtomicHistory(repo *store.Repo, redo bool) (bool, *store.Operation, []GeometryUpdate, error) {
 	if err := repo.PrepareOperationLog(); err != nil {
@@ -72,8 +75,14 @@ func replayAtomicHistory(repo *store.Repo, redo bool) (bool, *store.Operation, [
 	if err != nil {
 		return true, op, nil, err
 	}
+	if s.Kind == stepImportMedia && importHistoryReplayCrashHook != nil {
+		importHistoryReplayCrashHook("before-commit")
+	}
 	if err := tx.Commit(); err != nil {
 		return true, op, nil, err
+	}
+	if s.Kind == stepImportMedia && importHistoryReplayCrashHook != nil {
+		importHistoryReplayCrashHook("after-commit")
 	}
 	return true, op, geometry, nil
 }

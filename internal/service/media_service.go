@@ -1,7 +1,6 @@
 package service
 
 import (
-	"context"
 	"database/sql"
 	"encoding/base64"
 	"fmt"
@@ -117,7 +116,8 @@ func (s *ImageService) CopyMedia(repoPath string, ids []int64, converted bool) (
 
 // ImportMedia always creates fresh files and identities, with no copied metadata.
 func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, place bool, x, y float64) (resultIDs []int64, resultErr error) {
-	if err := validateClipboardMedia(media); err != nil {
+	items, err := prepareImportItems(media)
+	if err != nil {
 		return nil, err
 	}
 	if place && (math.IsNaN(x) || math.IsInf(x, 0) || math.IsNaN(y) || math.IsInf(y, 0)) {
@@ -132,102 +132,34 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 	if err := r.PrepareOperationLog(); err != nil {
 		return nil, err
 	}
-	tx, err := r.DB.Begin()
+	batchID, paths, err := reserveImportPaths(r, items, place, x, y)
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
-	// Reserve database paths under a writer lock before creating files, so
-	// absent files belonging to existing rows are not recreated by an import.
-	if _, err := tx.Exec(`UPDATE operation_log SET seq = seq WHERE 0`); err != nil {
-		return nil, fmt.Errorf("lock import transaction: %w", err)
-	}
-	paths := []string{}
-	committed := false
+	finalized := false
 	defer func() {
-		if !committed && resultErr != nil && len(paths) > 0 {
-			// A pathname can be replaced after creation. Without an anchored,
-			// identity-safe cleanup primitive, unlinking it can delete someone
-			// else's file. Leave these paths for explicit inspection instead.
-			resultErr = fmt.Errorf("%w; created paths were not removed and may be externally discovered: %s", resultErr, strings.Join(paths, ", "))
+		if !finalized && resultErr != nil {
+			pathList := make([]string, 0, len(paths))
+			for _, path := range paths {
+				pathList = append(pathList, path.Path)
+			}
+			resultErr = fmt.Errorf("%w; pending import batch %s is durably reserved for explicit recovery: %s", resultErr, batchID, strings.Join(pathList, ", "))
 		}
 	}()
-	ids := make([]int64, 0, len(media))
-	history := make([]importHistoryEntry, 0, len(media))
-	for i, item := range media {
-		name := filepath.Base(strings.ReplaceAll(item.Name, "\\", "/"))
-		data, err := base64.StdEncoding.DecodeString(item.Data)
-		if err != nil {
-			return nil, fmt.Errorf("decode media: %w", err)
-		}
-		var file *os.File
-		var dest string
-		for n := 0; ; n++ {
-			candidate := name
-			if n > 0 {
-				ext := filepath.Ext(name)
-				candidate = fmt.Sprintf("%s (%d)%s", strings.TrimSuffix(name, ext), n, ext)
-			}
-			dest = filepath.Join(r.Path, candidate)
-			var reserved bool
-			if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images WHERE file_path = ?)`, dest).Scan(&reserved); err != nil {
-				return nil, fmt.Errorf("check import path reservation: %w", err)
-			}
-			if reserved {
-				continue
-			}
-			file, err = os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-			if os.IsExist(err) {
-				continue
-			}
-			if err != nil {
-				return nil, err
-			}
-			break
-		}
-		paths = append(paths, dest)
-		_, writeErr := file.Write(data)
-		closeErr := file.Close()
-		if writeErr != nil {
-			return nil, writeErr
-		}
-		if closeErr != nil {
-			return nil, closeErr
-		}
-		fingerprint, fileInfo, err := store.FingerprintFile(context.Background(), dest)
-		if err != nil {
-			return nil, fmt.Errorf("verify newly imported file %s: %w", dest, err)
-		}
-		var cx, cy any
-		entry := importHistoryEntry{Path: dest, Fingerprint: fingerprint}
-		if place {
-			px, py := x+float64(i%6)*190, y+float64(i/6)*160
-			cx, cy = px, py
-			entry.X, entry.Y = &px, &py
-		}
-		marker := fmt.Sprintf("stat:%d:%d", fileInfo.Size(), fileInfo.ModTime().UnixNano())
-		result, err := tx.Exec(`INSERT INTO images(file_path,canvas_x,canvas_y,file_size,content_hash,source_fingerprint,source_revision) VALUES (?,?,?,?,?,?,1)`, dest, cx, cy, fileInfo.Size(), marker, fingerprint)
-		if err != nil {
-			return nil, err
-		}
-		id, err := result.LastInsertId()
-		if err != nil {
-			return nil, err
-		}
-		entry.ID = id
-		ids = append(ids, id)
-		history = append(history, entry)
-		if _, err := tx.Exec(`INSERT INTO import_recovery(image_id,file_path,fingerprint) VALUES (?,?,?)`, id, dest, fingerprint); err != nil {
-			return nil, fmt.Errorf("record import recovery for %s: %w", dest, err)
-		}
+	if importIntentCrashHook != nil {
+		importIntentCrashHook("intent")
 	}
-	if err := recordImportHistory(r, tx, history); err != nil {
-		return nil, fmt.Errorf("record import history: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
+	if err := createReservedFiles(items, paths); err != nil {
 		return nil, err
 	}
-	committed = true
+	if importIntentCrashHook != nil {
+		importIntentCrashHook("files")
+	}
+	ids, err := finalizeImportBatch(r, batchID, false)
+	if err != nil {
+		return nil, err
+	}
+	finalized = true
 	return ids, nil
 }
 
@@ -333,7 +265,8 @@ func purgeExpiredTrash(r *store.Repo, now time.Time) error {
 	cutoff := now.Add(-trashRetention).UTC().Format("2006-01-02T15:04:05.000Z")
 	rows, err := r.DB.Query(`
 		SELECT id FROM images
-		WHERE trashed = 1 AND trashed_at IS NOT NULL AND trashed_at <= ?`, cutoff)
+		WHERE trashed = 1 AND trashed_at IS NOT NULL AND trashed_at <= ?
+		AND NOT EXISTS (SELECT 1 FROM import_recovery WHERE image_id = images.id AND retained = 1)`, cutoff)
 	if err != nil {
 		return err
 	}

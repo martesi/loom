@@ -51,7 +51,7 @@ func (s *ImageService) GetLayoutSnapshot(path string) (*LayoutSnapshot, error) {
 	if snapshot.Revision, err = layoutRevision(tx); err != nil {
 		return nil, err
 	}
-	rows, err := tx.Query(`SELECT id, COALESCE(width, 0), COALESCE(height, 0), canvas_x, canvas_y, canvas_w, canvas_h FROM images WHERE trashed = 0 ORDER BY id`)
+	rows, err := tx.Query(`SELECT id, COALESCE(width, 0), COALESCE(height, 0), canvas_x, canvas_y, canvas_w, canvas_h FROM images WHERE trashed = 0 AND NOT EXISTS (SELECT 1 FROM import_recovery ir WHERE ir.image_id = images.id AND ir.retained = 1) ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +73,10 @@ func (s *ImageService) GetLayoutSnapshot(path string) (*LayoutSnapshot, error) {
 	}
 	rows, err = tx.Query(`SELECT r.id, r.source_image_id, r.derived_image_id, r.pairing_order, r.created_at
 		FROM relationships r JOIN images s ON s.id = r.source_image_id JOIN images d ON d.id = r.derived_image_id
-		WHERE s.trashed = 0 AND d.trashed = 0 ORDER BY r.pairing_order, r.id`)
+		WHERE s.trashed = 0 AND d.trashed = 0
+		AND NOT EXISTS (SELECT 1 FROM import_recovery ir WHERE ir.image_id = s.id AND ir.retained = 1)
+		AND NOT EXISTS (SELECT 1 FROM import_recovery ir WHERE ir.image_id = d.id AND ir.retained = 1)
+		ORDER BY r.pairing_order, r.id`)
 	if err != nil {
 		return nil, err
 	}

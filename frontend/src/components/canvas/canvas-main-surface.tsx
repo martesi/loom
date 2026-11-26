@@ -324,10 +324,15 @@ export function CanvasMainSurface(props: Props) {
               })
             })().catch(report)
           }
-        } else
+        } else {
+          const point = flow.screenToFlowPosition({
+            x: e.clientX,
+            y: e.clientY,
+          })
           void filesToMedia(Array.from(e.dataTransfer.files))
-            .then((media) => paste(media, 'canvas'))
+            .then((media) => paste(media, 'canvas', point))
             .catch(report)
+        }
       }}
     >
       <CanvasFlow
