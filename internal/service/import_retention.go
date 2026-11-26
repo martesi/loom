@@ -134,7 +134,7 @@ func cleanupDiscardedImportRedoBestEffortAfterCheck(repo *store.Repo, discarded 
 		if err != nil {
 			continue
 		}
-		if store.FileIdentity(info) != file.identity || fmt.Sprintf("%x", sha256.Sum256(data)) != file.hash {
+		if store.FileIdentityAt(file.path, info) != file.identity || fmt.Sprintf("%x", sha256.Sum256(data)) != file.hash {
 			clearDiscardedImportSuppression(repo, file.path, operation)
 			continue
 		}
@@ -155,7 +155,7 @@ func clearDiscardedImportSuppression(repo *store.Repo, path, operation string) {
 }
 
 func recordImportFileSuppression(repo *store.Repo, path, expectedHash string, owned os.FileInfo, operation string) {
-	if owned == nil || store.FileIdentity(owned) == "" {
+	if owned == nil || store.FileIdentityAt(path, owned) == "" {
 		return
 	}
 	info, err := os.Stat(path)
@@ -166,8 +166,8 @@ func recordImportFileSuppression(repo *store.Repo, path, expectedHash string, ow
 	if err != nil || fmt.Sprintf("%x", sha256.Sum256(data)) != expectedHash {
 		return
 	}
-	identity := store.FileIdentity(info)
-	if identity == "" || store.FileIdentity(owned) != identity {
+	identity := store.FileIdentityAt(path, info)
+	if identity == "" || store.FileIdentityAt(path, owned) != identity {
 		return
 	}
 	if _, err := repo.DB.Exec(`INSERT INTO discarded_import_files (file_path, sha256, file_identity) VALUES (?, ?, ?)

@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"os"
 	"reflect"
 )
 
@@ -50,4 +51,22 @@ func FileIdentity(info interface{ Sys() any }) string {
 		return ""
 	}
 	return fmt.Sprintf("%x:%x", device, inode)
+}
+
+// FileIdentityAt returns a durable identity for info using path when the OS
+// does not expose the file ID through FileInfo.Sys(). The path must refer to
+// the same file described by info; otherwise the function returns an empty ID.
+func FileIdentityAt(path string, info os.FileInfo) string {
+	if info == nil {
+		return ""
+	}
+	if identity := platformFileIdentityAt(path, info); identity != "" {
+		return identity
+	}
+	return FileIdentity(info)
+}
+
+func windowsFileIdentityParts(volume, fileIndexHigh, fileIndexLow uint32) string {
+	index := uint64(fileIndexHigh)<<32 | uint64(fileIndexLow)
+	return fmt.Sprintf("%x:%x", volume, index)
 }

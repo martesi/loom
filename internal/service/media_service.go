@@ -136,7 +136,7 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 	}
 	defer tx.Rollback()
 	paths := []string{}
-	publishedFiles := []ownedImportFile{}
+	filesToValidate := []ownedImportFile{}
 	ownedFiles := map[string]os.FileInfo{}
 	ownedFileHashes := map[string]string{}
 	discoverablePaths := map[string]bool{}
@@ -196,7 +196,7 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 		discoverablePaths[dest] = true
 		ownedFiles[dest] = fileInfo
 		ownedFileHashes[dest] = fmt.Sprintf("%x", sha256.Sum256(data))
-		publishedFiles = append(publishedFiles, ownedImportFile{path: dest, info: fileInfo, hash: ownedFileHashes[dest]})
+		filesToValidate = append(filesToValidate, ownedImportFile{path: dest, info: fileInfo, hash: ownedFileHashes[dest]})
 		if s.afterImportFileWrite != nil {
 			s.afterImportFileWrite(dest)
 		}
@@ -205,7 +205,7 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 			cx = x + float64(i%6)*190
 			cy = y + float64(i/6)*160
 		}
-		fileIdentity := store.FileIdentity(fileInfo)
+		fileIdentity := store.FileIdentityAt(dest, fileInfo)
 		fileHash := fmt.Sprintf("%x", sha256.Sum256(data))
 		result, err := tx.Exec("INSERT INTO images(file_path,canvas_x,canvas_y,import_file_identity,import_file_sha256) VALUES (?,?,?,?,?)", dest, cx, cy, fileIdentity, fileHash)
 		if err != nil {
@@ -227,7 +227,8 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 		paths = append(paths, stash)
 		ownedFiles[stash] = stashInfo
 		ownedFileHashes[stash] = fmt.Sprintf("%x", sha256.Sum256(data))
-		entries = append(entries, importHistoryEntry{ImageID: id, RetainedPath: stash, SHA256: fileHash, FileIdentity: fileIdentity, RetainedIdentity: store.FileIdentity(stashInfo)})
+		filesToValidate = append(filesToValidate, ownedImportFile{path: stash, info: stashInfo, hash: fileHash})
+		entries = append(entries, importHistoryEntry{ImageID: id, RetainedPath: stash, SHA256: fileHash, FileIdentity: fileIdentity, RetainedIdentity: store.FileIdentityAt(stash, stashInfo)})
 	}
 	forward, err := json.Marshal(step(stepImportBatch, importBatchPayload{Entries: entries, Active: true}))
 	if err != nil {
@@ -241,7 +242,7 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 	if err != nil {
 		return nil, err
 	}
-	for _, file := range publishedFiles {
+	for _, file := range filesToValidate {
 		if err := verifyOwnedImportFile(file); err != nil {
 			return nil, fmt.Errorf("validate imported file before commit: %w", err)
 		}

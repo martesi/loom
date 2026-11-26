@@ -121,7 +121,7 @@ func (r *Repo) registerImage(ctx context.Context, path string) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		if discardedIdentity != "" && FileIdentity(stableInfo) == discardedIdentity && fingerprint == discardedHash {
+		if discardedIdentity != "" && FileIdentityAt(path, stableInfo) == discardedIdentity && fingerprint == discardedHash {
 			return 0, nil
 		}
 		if _, err := r.DB.Exec(`DELETE FROM discarded_import_files WHERE file_path = ?`, path); err != nil {
@@ -145,7 +145,7 @@ func (r *Repo) registerImage(ctx context.Context, path string) (int, error) {
 		return 0, fmt.Errorf("fingerprint %s: %w", path, err)
 	}
 	marker = fmt.Sprintf("stat:%d:%d", stableInfo.Size(), stableInfo.ModTime().UnixNano())
-	if !isNew && importUndone && (importIdentity.String == "" || FileIdentity(stableInfo) != importIdentity.String || fingerprint != importHash.String) {
+	if !isNew && importUndone && (importIdentity.String == "" || FileIdentityAt(path, stableInfo) != importIdentity.String || fingerprint != importHash.String) {
 		if _, err := r.DB.Exec(`UPDATE images SET import_undone = 0 WHERE file_path = ? AND import_undone = 1`, path); err != nil {
 			return 0, err
 		}
@@ -256,7 +256,7 @@ func (r *Repo) scanAndRegisterImagesWithFingerprint(ctx context.Context, advance
 			return changed, err
 		}
 		if err == nil {
-			if discardedIdentity != "" && FileIdentity(item.info) == discardedIdentity && item.fingerprint == discardedHash {
+			if discardedIdentity != "" && FileIdentityAt(item.path, item.info) == discardedIdentity && item.fingerprint == discardedHash {
 				continue
 			}
 			if _, err := r.DB.Exec(`DELETE FROM discarded_import_files WHERE file_path = ?`, item.path); err != nil {
@@ -269,7 +269,7 @@ func (r *Repo) scanAndRegisterImagesWithFingerprint(ctx context.Context, advance
 		if rowErr != nil && rowErr != sql.ErrNoRows {
 			return changed, rowErr
 		}
-		if rowErr == nil && importUndone && (importIdentity == "" || FileIdentity(item.info) != importIdentity || item.fingerprint != importHash) {
+		if rowErr == nil && importUndone && (importIdentity == "" || FileIdentityAt(item.path, item.info) != importIdentity || item.fingerprint != importHash) {
 			if _, err := r.DB.Exec(`UPDATE images SET import_undone = 0 WHERE file_path = ? AND import_undone = 1`, item.path); err != nil {
 				return changed, err
 			}

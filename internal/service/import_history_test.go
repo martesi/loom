@@ -224,7 +224,7 @@ func TestImportOwnerAnchorPreventsFileIdentityReuse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity := store.FileIdentity(originalInfo)
+	identity := store.FileIdentityAt(path, originalInfo)
 	if identity == "" {
 		t.Skip("platform does not expose stable device/inode identity")
 	}
@@ -249,8 +249,8 @@ func TestImportOwnerAnchorPreventsFileIdentityReuse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if os.SameFile(anchorInfo, replacementInfo) || store.FileIdentity(replacementInfo) == store.FileIdentity(anchorInfo) {
-		t.Fatalf("replacement reused identity while owner anchor remained: original=%q replacement=%q", store.FileIdentity(anchorInfo), store.FileIdentity(replacementInfo))
+	if os.SameFile(anchorInfo, replacementInfo) || store.FileIdentityAt(path, replacementInfo) == store.FileIdentityAt(anchors[0], anchorInfo) {
+		t.Fatalf("replacement reused identity while owner anchor remained: original=%q replacement=%q", store.FileIdentityAt(anchors[0], anchorInfo), store.FileIdentityAt(path, replacementInfo))
 	}
 }
 
@@ -687,7 +687,7 @@ func TestDiscardedRedoDoesNotDeleteSameHashExternalReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if store.FileIdentity(oldInfo) == "" || store.FileIdentity(newInfo) == "" || store.FileIdentity(oldInfo) == store.FileIdentity(newInfo) {
+	if store.FileIdentityAt(path, oldInfo) == "" || store.FileIdentityAt(replacement, newInfo) == "" || store.FileIdentityAt(path, oldInfo) == store.FileIdentityAt(replacement, newInfo) {
 		t.Skip("platform does not expose distinct durable file identities")
 	}
 	if err := os.Rename(replacement, path); err != nil {
@@ -702,7 +702,7 @@ func TestDiscardedRedoDoesNotDeleteSameHashExternalReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if store.FileIdentity(retainedInfo) == payload.Entries[0].RetainedIdentity {
+	if store.FileIdentityAt(retainedReplacement, retainedInfo) == payload.Entries[0].RetainedIdentity {
 		t.Skip("platform did not allocate a distinct retained-file identity")
 	}
 	if err := os.Rename(retainedReplacement, retainedPath); err != nil {
@@ -751,7 +751,7 @@ func TestReplacementAfterCleanupOwnershipCheckIsNeverUnlinked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity := store.FileIdentity(info)
+	identity := store.FileIdentityAt(path, info)
 	if identity == "" {
 		t.Skip("platform does not expose stable file identity")
 	}
@@ -1590,6 +1590,76 @@ func TestInitialImportRejectsFilesChangedDuringBatch(t *testing.T) {
 			}
 			if err := repo.DB.QueryRow(`SELECT count(*) FROM images WHERE file_path = ?`, firstPath).Scan(&rows); err != nil || rows != 1 {
 				t.Fatalf("external file discovery rows = %d err=%v", rows, err)
+			}
+		})
+	}
+}
+
+func TestInitialImportRejectsChangedRetainedCopiesDuringBatch(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		replace  bool
+		newBytes []byte
+	}{
+		{name: "replacement", replace: true, newBytes: []byte("external retained replacement")},
+		{name: "in-place modification", newBytes: []byte("external retained edit")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repoPath := t.TempDir()
+			var changedRetainedPath string
+			service := &ImageService{afterImportFileWrite: func(path string) {
+				if filepath.Base(path) != "retained-second.png" {
+					return
+				}
+				matches, err := filepath.Glob(filepath.Join(repoPath, ".loom", "trash", "import-redo", "*-retained-first.png"))
+				if err != nil || len(matches) != 1 {
+					t.Errorf("find first retained copy: paths=%v err=%v", matches, err)
+					return
+				}
+				changedRetainedPath = matches[0]
+				if tc.replace {
+					replacement := changedRetainedPath + ".external"
+					if err := os.WriteFile(replacement, tc.newBytes, 0o600); err != nil {
+						t.Errorf("write retained replacement: %v", err)
+						return
+					}
+					if err := os.Remove(changedRetainedPath); err != nil {
+						t.Errorf("remove retained copy: %v", err)
+						return
+					}
+					if err := os.Rename(replacement, changedRetainedPath); err != nil {
+						t.Errorf("publish retained replacement: %v", err)
+					}
+					return
+				}
+				if err := os.WriteFile(changedRetainedPath, tc.newBytes, 0o600); err != nil {
+					t.Errorf("modify retained copy in place: %v", err)
+				}
+			}}
+			_, err := service.ImportMedia(repoPath, []ClipboardMedia{
+				{Name: "retained-first.png", Data: base64.StdEncoding.EncodeToString([]byte("captured retained bytes"))},
+				{Name: "retained-second.png", Data: base64.StdEncoding.EncodeToString([]byte("second batch member"))},
+			}, false, 0, 0)
+			if err == nil {
+				t.Fatal("ImportMedia committed after a retained copy changed")
+			}
+			if changedRetainedPath == "" {
+				t.Fatal("first retained copy was not found during second item import")
+			}
+			if got, err := os.ReadFile(changedRetainedPath); err != nil || !bytes.Equal(got, tc.newBytes) {
+				t.Fatalf("external retained file after rollback = %q err=%v", got, err)
+			}
+			repo, err := store.Bootstrap(repoPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer repo.Close()
+			var operations, images int
+			if err := repo.DB.QueryRow(`SELECT count(*) FROM operation_log WHERE kind = 'import_batch'`).Scan(&operations); err != nil || operations != 0 {
+				t.Fatalf("committed import operations = %d err=%v", operations, err)
+			}
+			if err := repo.DB.QueryRow(`SELECT count(*) FROM images WHERE file_path IN (?, ?)`, filepath.Join(repoPath, "retained-first.png"), filepath.Join(repoPath, "retained-second.png")).Scan(&images); err != nil || images != 0 {
+				t.Fatalf("rolled-back import image rows = %d err=%v", images, err)
 			}
 		})
 	}
