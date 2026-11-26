@@ -39,18 +39,23 @@ test('a pasted batch in an empty Edit canvas is one recoverable undo', async ({
   await expect(nodes).toHaveCount(0)
   for (let index = 0; index < paths.length; index++)
     expect(await readFile(paths[index])).toEqual(bytes[index])
+  const replacement = Buffer.from('external replacement after undo')
+  await writeFile(paths[0], replacement)
   await page.keyboard.press('ControlOrMeta+Shift+z')
-  await expect(nodes).toHaveCount(2)
-  expect(
-    await nodes.evaluateAll((elements) =>
-      elements.map((node) => node.getAttribute('data-id')).sort()
-    )
-  ).toEqual(ids)
+  await expect(nodes).toHaveCount(3)
+  const redoneIds = await nodes.evaluateAll((elements) =>
+    elements.map((node) => node.getAttribute('data-id'))
+  )
+  for (const id of ids) expect(redoneIds).toContain(id)
+  const restored = await fixturePath('import-empty-fixtures', 'batch-a (redo 1).png')
+  expect(await readFile(paths[0])).toEqual(replacement)
+  expect(await readFile(restored)).toEqual(bytes[0])
+  expect(await readFile(paths[1])).toEqual(bytes[1])
   await page.getByTestId('canvas-mode-view').click()
   await expect(nodes).toHaveCount(0)
 })
 
-test('an explicit file drop imports one batch and preserves unrelated files', async ({
+test('an explicit file drop preserves a pre-existing colliding media file through history', async ({
   page,
 }) => {
   await openFixtureRepo(page, 'import-empty-fixtures', { drawers: 'closed' })
@@ -59,8 +64,9 @@ test('an explicit file drop imports one batch and preserves unrelated files', as
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
     'base64'
   )
-  const unrelated = await fixturePath('import-empty-fixtures', 'unrelated.txt')
-  await writeFile(unrelated, 'keep this file')
+  const collision = await fixturePath('import-empty-fixtures', 'drop-a.png')
+  const collisionBytes = Buffer.from('pre-existing collision file')
+  await writeFile(collision, collisionBytes)
   const nodes = imageNodes(page)
   await page.locator('.react-flow__pane').dispatchEvent('drop', {
     dataTransfer: await page.evaluateHandle((bytes) => {
@@ -71,27 +77,31 @@ test('an explicit file drop imports one batch and preserves unrelated files', as
       return transfer
     }, [...data]),
   })
-  await expect(nodes).toHaveCount(2)
+  await expect(nodes).toHaveCount(3)
   const ids = await nodes.evaluateAll((elements) =>
     elements.map((node) => node.getAttribute('data-id')).sort()
   )
   const paths = await Promise.all(
-    ['drop-a.png', 'drop-b.png'].map((name) =>
+    ['drop-a (1).png', 'drop-b.png'].map((name) =>
       fixturePath('import-empty-fixtures', name)
     )
   )
   const bytes = await Promise.all(paths.map((path) => readFile(path)))
+  expect(await readFile(collision)).toEqual(collisionBytes)
+  expect(await readFile(paths[0])).toEqual(bytes[0])
   await page.keyboard.press('ControlOrMeta+z')
-  await expect(nodes).toHaveCount(0)
+  await expect(nodes).toHaveCount(1)
   expect(await Promise.all(paths.map((path) => readFile(path)))).toEqual(bytes)
+  expect(await readFile(collision)).toEqual(collisionBytes)
   await page.keyboard.press('ControlOrMeta+Shift+z')
-  await expect(nodes).toHaveCount(2)
+  await expect(nodes).toHaveCount(3)
   expect(
     await nodes.evaluateAll((elements) =>
       elements.map((node) => node.getAttribute('data-id')).sort()
     )
   ).toEqual(ids)
-  expect(await readFile(unrelated, 'utf8')).toBe('keep this file')
+  expect(await readFile(collision)).toEqual(collisionBytes)
+  expect(await readFile(paths[0])).toEqual(bytes[0])
   await page.getByTestId('canvas-mode-view').click()
   await expect(nodes).toHaveCount(0)
 })

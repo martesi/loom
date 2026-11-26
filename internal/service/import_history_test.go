@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -62,9 +63,9 @@ func TestWriteExclusiveModeCleansPartialWritesAndStatFailures(t *testing.T) {
 		{name: "persistent stat failure", statErr: errors.New("stat failed"), writeSize: 0, persistentStatFailure: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "exclusive.bin")
+			destination := filepath.Join(t.TempDir(), "exclusive.bin")
 			data := []byte("payload")
-			_, err := writeExclusiveModeUsing(path, data, 0o600, func(path string, flags int, mode os.FileMode) (exclusiveFile, error) {
+			_, err := writeExclusiveModeUsing(destination, data, 0o600, func(path string, flags int, mode os.FileMode) (exclusiveFile, error) {
 				file, err := os.OpenFile(path, flags, mode)
 				if err != nil {
 					return nil, err
@@ -74,10 +75,7 @@ func TestWriteExclusiveModeCleansPartialWritesAndStatFailures(t *testing.T) {
 					writeSize: tc.writeSize, writeErr: errors.New("short write"),
 					onStat: func() {
 						if tc.replace {
-							if err := os.Remove(path); err != nil {
-								t.Fatal(err)
-							}
-							if err := os.WriteFile(path, nil, 0o600); err != nil {
+							if err := os.WriteFile(destination, nil, 0o600); err != nil {
 								t.Fatal(err)
 							}
 						}
@@ -87,11 +85,11 @@ func TestWriteExclusiveModeCleansPartialWritesAndStatFailures(t *testing.T) {
 			if err == nil {
 				t.Fatal("writeExclusiveModeUsing unexpectedly succeeded")
 			}
-			if tc.replace || tc.persistentStatFailure {
-				if got, err := os.ReadFile(path); err != nil || len(got) != 0 {
+			if tc.replace {
+				if got, err := os.ReadFile(destination); err != nil || len(got) != 0 {
 					t.Fatalf("file did not survive when ownership was unavailable: bytes=%q err=%v", got, err)
 				}
-			} else if _, err := os.Stat(path); !os.IsNotExist(err) {
+			} else if _, err := os.Stat(destination); !os.IsNotExist(err) {
 				t.Fatalf("failed exclusive write left path behind, stat err=%v", err)
 			}
 		})
@@ -119,8 +117,8 @@ func TestPersistentImportStatFailureIsSuppressedFromDiscovery(t *testing.T) {
 		t.Fatal("ImportMedia unexpectedly succeeded")
 	}
 	path := filepath.Join(repoPath, "stat-orphan.png")
-	if data, err := os.ReadFile(path); err != nil || len(data) != 0 {
-		t.Fatalf("unverified original file = %q, err=%v", data, err)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("stat failure created visible destination, err=%v", err)
 	}
 	repo, err := store.Bootstrap(repoPath)
 	if err != nil {
@@ -128,8 +126,8 @@ func TestPersistentImportStatFailureIsSuppressedFromDiscovery(t *testing.T) {
 	}
 	defer repo.Close()
 	var suppressed, images int
-	if err := repo.DB.QueryRow(`SELECT count(*) FROM discarded_import_files WHERE file_path = ?`, path).Scan(&suppressed); err != nil || suppressed != 1 {
-		t.Fatalf("persistent stat-failure suppression = %d, err=%v", suppressed, err)
+	if err := repo.DB.QueryRow(`SELECT count(*) FROM discarded_import_files`).Scan(&suppressed); err != nil || suppressed != 1 {
+		t.Fatalf("persistent stat-failure staging suppression = %d, err=%v", suppressed, err)
 	}
 	if err := repo.DB.QueryRow(`SELECT count(*) FROM images WHERE file_path = ?`, path).Scan(&images); err != nil || images != 0 {
 		t.Fatalf("persistent stat-failure image rows before scan = %d, err=%v", images, err)
@@ -145,6 +143,73 @@ func TestPersistentImportStatFailureIsSuppressedFromDiscovery(t *testing.T) {
 	}
 	if err := repo.DB.QueryRow(`SELECT count(*) FROM images WHERE file_path = ?`, path).Scan(&images); err != nil || images != 0 {
 		t.Fatalf("persistent stat failure was rediscovered: rows=%d err=%v", images, err)
+	}
+}
+
+func TestImportWriteCleanupFailureSuppressesPartialBytesAndAllowsExternalChange(t *testing.T) {
+	repoPath := t.TempDir()
+	service := &ImageService{writeImportFile: func(path string, data []byte, mode os.FileMode) (os.FileInfo, error) {
+		return writeExclusiveModeUsing(path, data, mode, func(path string, flags int, mode os.FileMode) (exclusiveFile, error) {
+			file, err := os.OpenFile(path, flags, mode)
+			if err != nil {
+				return nil, err
+			}
+			return &failingExclusiveFile{file: file, writeSize: 4, writeErr: errors.New("injected partial write")}, nil
+		}, func(string) error { return errors.New("injected prefix cleanup failure") })
+	}}
+	_, err := service.ImportMedia(repoPath, []ClipboardMedia{{
+		Name: "partial-import.png", Data: base64.StdEncoding.EncodeToString([]byte("complete import bytes")),
+	}}, false, 0, 0)
+	if err == nil {
+		t.Fatal("ImportMedia unexpectedly succeeded")
+	}
+	path := filepath.Join(repoPath, "partial-import.png")
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("failed partial write published destination, err=%v", err)
+	}
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	staged, err := filepath.Glob(filepath.Join(repoPath, ".loom", ".loom-import-stage-*"))
+	if err != nil || len(staged) != 1 {
+		t.Fatalf("remaining hidden staging files = %v, err=%v", staged, err)
+	}
+	if data, err := os.ReadFile(staged[0]); err != nil || string(data) != "comp" {
+		t.Fatalf("remaining partial staging bytes = %q, err=%v", data, err)
+	}
+	var suppressed int
+	if err := repo.DB.QueryRow(`SELECT count(*) FROM discarded_import_files WHERE file_path = ? AND sha256 = ?`, staged[0], fmt.Sprintf("%x", sha256.Sum256([]byte("comp")))).Scan(&suppressed); err != nil || suppressed != 1 {
+		t.Fatalf("remaining partial staging suppression = %d, err=%v", suppressed, err)
+	}
+	for name, discover := range map[string]func(context.Context) (int, error){
+		"register": repo.RegisterImages,
+		"scan":     repo.ScanAndRegisterImages,
+		"refresh":  repo.RefreshFingerprints,
+	} {
+		if _, err := discover(context.Background()); err != nil {
+			t.Fatalf("%s after failed partial import: %v", name, err)
+		}
+		var count int
+		if err := repo.DB.QueryRow(`SELECT count(*) FROM images WHERE file_path = ?`, path).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("%s registered partial failed import: count=%d err=%v", name, count, err)
+		}
+	}
+	external := []byte("external replacement")
+	if err := os.WriteFile(path, external, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.ScanAndRegisterImages(context.Background()); err != nil {
+		t.Fatalf("scan external replacement: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(data, external) {
+		t.Fatalf("external replacement changed: bytes=%q err=%v", data, err)
+	}
+	var count int
+	if err := repo.DB.QueryRow(`SELECT count(*) FROM images WHERE file_path = ?`, path).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("external replacement image rows = %d, err=%v", count, err)
 	}
 }
 
@@ -650,13 +715,82 @@ func TestFailedBatchRedoDoesNotWriteAnyReplacementFiles(t *testing.T) {
 	}
 }
 
-func TestFailedBatchRedoRemovesOnlyIntactReplacementFiles(t *testing.T) {
-	for _, modifyFirstReplacement := range []bool{false, true} {
-		name := "intact"
-		if modifyFirstReplacement {
-			name = "externally-modified"
+func TestPersistentRedoStatFailureSuppressesUnverifiedReplacement(t *testing.T) {
+	repoPath := t.TempDir()
+	ids, err := (&ImageService{}).ImportMedia(repoPath, []ClipboardMedia{{
+		Name: "redo-stat.png", Data: base64.StdEncoding.EncodeToString([]byte("retained bytes")),
+	}}, false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&UndoService{}).Undo(repoPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(repoPath, "redo-stat.png")); err != nil {
+		t.Fatal(err)
+	}
+	service := &UndoService{writeImportRedoFile: func(path string, data []byte) (os.FileInfo, error) {
+		return writeExclusiveModeUsing(path, data, 0o600, func(path string, flags int, mode os.FileMode) (exclusiveFile, error) {
+			file, err := os.OpenFile(path, flags, mode)
+			if err != nil {
+				return nil, err
+			}
+			return &failingExclusiveFile{
+				file: file, statErr: errors.New("persistent redo stat failure"), statAlwaysFail: true,
+				writeSize: 0, writeErr: errors.New("write must not run"),
+			}, nil
+		})
+	}}
+	result, err := service.Redo(repoPath)
+	if err != nil || result.Applied || result.Error == "" {
+		t.Fatalf("redo with persistent stat failure = %+v, err=%v", result, err)
+	}
+	path := filepath.Join(repoPath, "redo-stat (redo 1).png")
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("failed redo published an unverified replacement, err=%v", err)
+	}
+	staged, err := filepath.Glob(filepath.Join(repoPath, ".loom", ".loom-import-stage-*"))
+	if err != nil || len(staged) != 1 {
+		t.Fatalf("unverified redo staging files = %v, err=%v", staged, err)
+	}
+	if data, err := os.ReadFile(staged[0]); err != nil || len(data) != 0 {
+		t.Fatalf("unverified redo staging bytes = %q, err=%v", data, err)
+	}
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	for name, discover := range map[string]func(context.Context) (int, error){
+		"register": repo.RegisterImages,
+		"scan":     repo.ScanAndRegisterImages,
+		"refresh":  repo.RefreshFingerprints,
+	} {
+		if _, err := discover(context.Background()); err != nil {
+			t.Fatalf("%s after failed redo: %v", name, err)
 		}
-		t.Run(name, func(t *testing.T) {
+		var rows int
+		if err := repo.DB.QueryRow(`SELECT count(*) FROM images WHERE file_path = ?`, path).Scan(&rows); err != nil || rows != 0 {
+			t.Fatalf("%s registered failed-redo file: rows=%d err=%v", name, rows, err)
+		}
+	}
+	image, err := repo.GetImageByID(ids[0])
+	if err != nil || !image.ImportUndone {
+		t.Fatalf("image after failed redo = %+v err=%v", image, err)
+	}
+}
+
+func TestFailedBatchRedoRemovesOnlyIntactReplacementFiles(t *testing.T) {
+	for _, tc := range []struct {
+		name                 string
+		modifyFirst          bool
+		failFirstFileRemoval bool
+	}{
+		{name: "intact", failFirstFileRemoval: false},
+		{name: "cleanup-failure-intact", failFirstFileRemoval: true},
+		{name: "cleanup-failure-externally-modified", modifyFirst: true, failFirstFileRemoval: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			repoPath := t.TempDir()
 			items := []ClipboardMedia{
 				{Name: "redo-a.png", Data: base64.StdEncoding.EncodeToString([]byte("first"))},
@@ -686,7 +820,15 @@ func TestFailedBatchRedoRemovesOnlyIntactReplacementFiles(t *testing.T) {
 				t.Fatal(err)
 			}
 			service := &UndoService{}
-			if modifyFirstReplacement {
+			if tc.failFirstFileRemoval {
+				service.removeImportRedoRollbackFile = func(path string) error {
+					if filepath.Base(path) == "redo-a (redo 1).png" {
+						return errors.New("injected redo rollback removal failure")
+					}
+					return os.Remove(path)
+				}
+			}
+			if tc.modifyFirst {
 				service.afterImportRedoFileWrite = func(path string) {
 					if filepath.Base(path) == "redo-a (redo 1).png" {
 						if err := os.WriteFile(path, []byte("external replacement edit"), 0o600); err != nil {
@@ -701,10 +843,14 @@ func TestFailedBatchRedoRemovesOnlyIntactReplacementFiles(t *testing.T) {
 			}
 			firstReplacement := filepath.Join(repoPath, "redo-a (redo 1).png")
 			secondReplacement := filepath.Join(repoPath, "redo-b (redo 1).png")
-			if modifyFirstReplacement {
+			if tc.modifyFirst || tc.failFirstFileRemoval {
 				data, err := os.ReadFile(firstReplacement)
-				if err != nil || string(data) != "external replacement edit" {
-					t.Fatalf("modified replacement after rollback = %q, err=%v", data, err)
+				want := "first"
+				if tc.modifyFirst {
+					want = "external replacement edit"
+				}
+				if err != nil || string(data) != want {
+					t.Fatalf("replacement after rollback = %q, want %q, err=%v", data, want, err)
 				}
 			} else if _, err := os.Stat(firstReplacement); !os.IsNotExist(err) {
 				t.Fatalf("intact replacement survived rollback: %v", err)
@@ -721,6 +867,35 @@ func TestFailedBatchRedoRemovesOnlyIntactReplacementFiles(t *testing.T) {
 				image, err := repo.GetImageByID(id)
 				if err != nil || !image.ImportUndone {
 					t.Fatalf("image after failed redo = %+v, err=%v", image, err)
+				}
+			}
+			if err := repo.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if tc.failFirstFileRemoval {
+				if _, err := (&ImageService{}).RescanRepository(repoPath); err != nil {
+					t.Fatalf("discover after failed redo: %v", err)
+				}
+				repo, err = store.Bootstrap(repoPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer repo.Close()
+				var count int
+				if err := repo.DB.QueryRow(`SELECT count(*) FROM images WHERE file_path = ?`, firstReplacement).Scan(&count); err != nil {
+					t.Fatal(err)
+				}
+				if tc.modifyFirst && count != 1 {
+					t.Fatalf("externally changed redo file rows = %d, want 1", count)
+				}
+				if !tc.modifyFirst && count != 0 {
+					t.Fatalf("failed-redo bytes were rediscovered: rows=%d", count)
+				}
+				if tc.modifyFirst {
+					data, err := os.ReadFile(firstReplacement)
+					if err != nil || string(data) != "external replacement edit" {
+						t.Fatalf("external redo replacement changed during discovery: %q err=%v", data, err)
+					}
 				}
 			}
 		})

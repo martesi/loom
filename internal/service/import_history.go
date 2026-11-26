@@ -34,10 +34,23 @@ type exclusiveFile interface {
 	Close() error
 }
 
-type unverifiedExclusiveFileError struct{ cause error }
+type unverifiedExclusiveFileError struct {
+	path  string
+	cause error
+}
 
 func (e *unverifiedExclusiveFileError) Error() string { return e.cause.Error() }
 func (e *unverifiedExclusiveFileError) Unwrap() error { return e.cause }
+
+type exclusiveCleanupFailure struct {
+	path  string
+	info  os.FileInfo
+	hash  string
+	cause error
+}
+
+func (e *exclusiveCleanupFailure) Error() string { return e.cause.Error() }
+func (e *exclusiveCleanupFailure) Unwrap() error { return e.cause }
 
 func writeExclusiveMode(path string, data []byte, mode os.FileMode) (os.FileInfo, error) {
 	return writeExclusiveModeUsing(path, data, mode, func(path string, flags int, mode os.FileMode) (exclusiveFile, error) {
@@ -45,32 +58,90 @@ func writeExclusiveMode(path string, data []byte, mode os.FileMode) (os.FileInfo
 	})
 }
 
-func writeExclusiveModeUsing(path string, data []byte, mode os.FileMode, open func(string, int, os.FileMode) (exclusiveFile, error)) (os.FileInfo, error) {
-	file, err := open(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
-	if err != nil {
-		return nil, err
+func writeExclusiveModeUsing(path string, data []byte, mode os.FileMode, open func(string, int, os.FileMode) (exclusiveFile, error), removeFiles ...func(string) error) (os.FileInfo, error) {
+	remove := os.Remove
+	if len(removeFiles) > 0 && removeFiles[0] != nil {
+		remove = removeFiles[0]
+	}
+	stageDir := exclusiveStageDirectory(path)
+	var stagePath string
+	var file exclusiveFile
+	for {
+		seed, err := os.CreateTemp(stageDir, ".loom-import-stage-*")
+		if err != nil {
+			return nil, err
+		}
+		stagePath = seed.Name()
+		if err := seed.Close(); err != nil {
+			_ = os.Remove(stagePath)
+			return nil, err
+		}
+		if err := os.Remove(stagePath); err != nil {
+			return nil, err
+		}
+		file, err = open(stagePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+		if os.IsExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		break
 	}
 	info, statErr := file.Stat()
 	if statErr != nil {
 		retryInfo, retryErr := file.Stat()
 		_ = file.Close()
 		if retryErr == nil {
-			removeOwnedFilePrefix(path, retryInfo, data)
+			remainingHash, cleanupErr := removeOwnedFilePrefix(stagePath, retryInfo, data, remove)
+			if cleanupErr != nil {
+				return nil, &exclusiveCleanupFailure{path: stagePath, info: retryInfo, hash: remainingHash, cause: errors.Join(statErr, cleanupErr)}
+			}
 			return nil, statErr
 		}
-		return nil, &unverifiedExclusiveFileError{cause: errors.Join(statErr, retryErr)}
+		return nil, &unverifiedExclusiveFileError{path: stagePath, cause: errors.Join(statErr, retryErr)}
 	}
 	_, writeErr := file.Write(data)
 	closeErr := file.Close()
 	if writeErr != nil {
-		removeOwnedFilePrefix(path, info, data)
+		remainingHash, cleanupErr := removeOwnedFilePrefix(stagePath, info, data, remove)
+		if cleanupErr != nil {
+			return nil, &exclusiveCleanupFailure{path: stagePath, info: info, hash: remainingHash, cause: errors.Join(writeErr, cleanupErr)}
+		}
 		return nil, writeErr
 	}
 	if closeErr != nil {
-		removeOwnedFilePrefix(path, info, data)
+		remainingHash, cleanupErr := removeOwnedFilePrefix(stagePath, info, data, remove)
+		if cleanupErr != nil {
+			return nil, &exclusiveCleanupFailure{path: stagePath, info: info, hash: remainingHash, cause: errors.Join(closeErr, cleanupErr)}
+		}
 		return nil, closeErr
 	}
+	if err := os.Link(stagePath, path); err != nil {
+		remainingHash, cleanupErr := removeOwnedFilePrefix(stagePath, info, data, remove)
+		if cleanupErr != nil {
+			return nil, &exclusiveCleanupFailure{path: stagePath, info: info, hash: remainingHash, cause: errors.Join(err, cleanupErr)}
+		}
+		return nil, err
+	}
+	_ = os.Remove(stagePath)
 	return info, nil
+}
+
+func exclusiveStageDirectory(path string) string {
+	for dir := filepath.Dir(path); ; dir = filepath.Dir(dir) {
+		if filepath.Base(dir) == ".loom" {
+			return dir
+		}
+		loomDir := filepath.Join(dir, ".loom")
+		if info, err := os.Stat(loomDir); err == nil && info.IsDir() {
+			return loomDir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return filepath.Dir(path)
+		}
+	}
 }
 
 // applyImportBatchTx retains all active media and changes only the imported
@@ -82,7 +153,7 @@ type ownedImportFile struct {
 	hash string
 }
 
-func applyImportBatchTx(tx *sql.Tx, payload importBatchPayload, created *[]ownedImportFile, afterWrite func(string)) error {
+func applyImportBatchTx(tx *sql.Tx, payload importBatchPayload, created *[]ownedImportFile, afterWrite func(string), writeFile ...func(string, []byte) (os.FileInfo, error)) error {
 	if len(payload.Entries) == 0 {
 		return fmt.Errorf("import history batch is empty")
 	}
@@ -126,8 +197,16 @@ func applyImportBatchTx(tx *sql.Tx, payload importBatchPayload, created *[]owned
 		if readErr != nil || fmt.Sprintf("%x", sha256.Sum256(current)) != entry.SHA256 {
 			var info os.FileInfo
 			var err error
-			activePath, info, err = writeRetainedImport(currentPath, item.data)
+			activePath, info, err = writeRetainedImport(currentPath, item.data, writeFile...)
 			if err != nil {
+				var cleanupFailure *exclusiveCleanupFailure
+				if errors.As(err, &cleanupFailure) {
+					*created = append(*created, ownedImportFile{path: cleanupFailure.path, info: cleanupFailure.info, hash: cleanupFailure.hash})
+				}
+				var unverifiedFailure *unverifiedExclusiveFileError
+				if errors.As(err, &unverifiedFailure) {
+					*created = append(*created, ownedImportFile{path: unverifiedFailure.path, hash: fmt.Sprintf("%x", sha256.Sum256(nil))})
+				}
 				return err
 			}
 			*created = append(*created, ownedImportFile{path: activePath, info: info, hash: entry.SHA256})
@@ -146,13 +225,17 @@ func applyImportBatchTx(tx *sql.Tx, payload importBatchPayload, created *[]owned
 	return nil
 }
 
-func writeRetainedImport(currentPath string, data []byte) (string, os.FileInfo, error) {
+func writeRetainedImport(currentPath string, data []byte, writeFile ...func(string, []byte) (os.FileInfo, error)) (string, os.FileInfo, error) {
 	dir := filepath.Dir(currentPath)
 	ext := filepath.Ext(currentPath)
 	base := strings.TrimSuffix(filepath.Base(currentPath), ext)
 	for index := 1; ; index++ {
 		candidate := filepath.Join(dir, fmt.Sprintf("%s (redo %d)%s", base, index, ext))
-		if info, err := writeExclusive(candidate, data); err == nil {
+		write := func(path string, bytes []byte) (os.FileInfo, error) { return writeExclusive(path, bytes) }
+		if len(writeFile) > 0 && writeFile[0] != nil {
+			write = writeFile[0]
+		}
+		if info, err := write(candidate, data); err == nil {
 			return candidate, info, nil
 		} else if !os.IsExist(err) {
 			return "", nil, err
@@ -160,23 +243,38 @@ func writeRetainedImport(currentPath string, data []byte) (string, os.FileInfo, 
 	}
 }
 
-func removeOwnedFile(path string, owned os.FileInfo, expectedHash string) {
-	current, err := os.Stat(path)
-	if err == nil && owned != nil && os.SameFile(current, owned) {
-		data, readErr := os.ReadFile(path)
-		if readErr == nil && fmt.Sprintf("%x", sha256.Sum256(data)) == expectedHash {
-			_ = os.Remove(path)
-		}
+func removeOwnedFile(path string, owned os.FileInfo, expectedHash string, removeFiles ...func(string) error) bool {
+	remove := os.Remove
+	if len(removeFiles) > 0 && removeFiles[0] != nil {
+		remove = removeFiles[0]
 	}
+	current, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return true
+	}
+	if err != nil || owned == nil || !os.SameFile(current, owned) {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || fmt.Sprintf("%x", sha256.Sum256(data)) != expectedHash {
+		return false
+	}
+	err = remove(path)
+	return err == nil || os.IsNotExist(err)
 }
 
-func removeOwnedFilePrefix(path string, owned os.FileInfo, data []byte) {
+func removeOwnedFilePrefix(path string, owned os.FileInfo, data []byte, remove func(string) error) (string, error) {
 	current, err := os.Stat(path)
 	if err != nil || owned == nil || !os.SameFile(current, owned) {
-		return
+		return "", nil
 	}
 	onDisk, err := os.ReadFile(path)
-	if err == nil && len(onDisk) <= len(data) && bytes.Equal(onDisk, data[:len(onDisk)]) {
-		_ = os.Remove(path)
+	if err != nil || len(onDisk) > len(data) || !bytes.Equal(onDisk, data[:len(onDisk)]) {
+		return "", nil
 	}
+	err = remove(path)
+	if err == nil || os.IsNotExist(err) {
+		return "", nil
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(onDisk)), err
 }

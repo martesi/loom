@@ -3,6 +3,7 @@ package service
 import (
 	"database/sql"
 	"encoding/json"
+	"os"
 	"strconv"
 
 	"loom/internal/store"
@@ -10,6 +11,14 @@ import (
 
 // Selection, replay and cursor update share one SQLite writer transaction.
 func replayAtomicHistory(repo *store.Repo, redo bool, afterImportFileWrite ...func(string)) (bool, *store.Operation, []GeometryUpdate, error) {
+	var afterWrite func(string)
+	if len(afterImportFileWrite) > 0 {
+		afterWrite = afterImportFileWrite[0]
+	}
+	return replayAtomicHistoryWithCleanup(repo, redo, afterWrite, nil, nil)
+}
+
+func replayAtomicHistoryWithCleanup(repo *store.Repo, redo bool, afterWrite func(string), removeFile func(string) error, writeFile func(string, []byte) (os.FileInfo, error)) (bool, *store.Operation, []GeometryUpdate, error) {
 	if err := repo.PrepareOperationLog(); err != nil {
 		return true, nil, nil, err
 	}
@@ -19,15 +28,13 @@ func replayAtomicHistory(repo *store.Repo, redo bool, afterImportFileWrite ...fu
 	}
 	committed := false
 	var createdFiles []ownedImportFile
-	var afterWrite func(string)
-	if len(afterImportFileWrite) > 0 {
-		afterWrite = afterImportFileWrite[0]
-	}
 	defer func() {
 		if !committed {
 			_ = tx.Rollback()
 			for _, file := range createdFiles {
-				removeOwnedFile(file.path, file.info, file.hash)
+				if !removeOwnedFile(file.path, file.info, file.hash, removeFile) {
+					recordImportFileSuppression(repo, file.path, file.hash, file.info, "failed history replay")
+				}
 			}
 		}
 	}()
@@ -63,7 +70,7 @@ func replayAtomicHistory(repo *store.Repo, redo bool, afterImportFileWrite ...fu
 	case stepImportBatch:
 		var payload importBatchPayload
 		if err = json.Unmarshal(s.Payload, &payload); err == nil {
-			err = applyImportBatchTx(tx, payload, &createdFiles, afterWrite)
+			err = applyImportBatchTx(tx, payload, &createdFiles, afterWrite, writeFile)
 		}
 	case stepGraphInsert, stepGraphDelete, stepGraphReverse:
 		var p graphPayload

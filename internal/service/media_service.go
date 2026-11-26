@@ -140,6 +140,7 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 	ownedFileHashes := map[string]string{}
 	discoverablePaths := map[string]bool{}
 	unverifiedStatPaths := []string{}
+	rollbackSuppressions := []ownedImportFile{}
 	committed := false
 	defer func() {
 		if !committed {
@@ -162,6 +163,9 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 			}
 			for _, path := range unverifiedStatPaths {
 				recordImportFileSuppression(r, path, fmt.Sprintf("%x", sha256.Sum256(nil)), nil, "failed import stat")
+			}
+			for _, file := range rollbackSuppressions {
+				recordImportFileSuppression(r, file.path, file.hash, file.info, "failed import write cleanup")
 			}
 		}
 	}()
@@ -191,9 +195,13 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 				continue
 			}
 			if err != nil {
+				var cleanupFailure *exclusiveCleanupFailure
+				if errors.As(err, &cleanupFailure) {
+					rollbackSuppressions = append(rollbackSuppressions, ownedImportFile{path: cleanupFailure.path, info: cleanupFailure.info, hash: cleanupFailure.hash})
+				}
 				var unverified *unverifiedExclusiveFileError
 				if errors.As(err, &unverified) {
-					unverifiedStatPaths = append(unverifiedStatPaths, dest)
+					unverifiedStatPaths = append(unverifiedStatPaths, unverified.path)
 				}
 				return nil, err
 			}
