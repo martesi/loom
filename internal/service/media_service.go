@@ -266,7 +266,15 @@ func purgeExpiredTrash(r *store.Repo, now time.Time) error {
 	rows, err := r.DB.Query(`
 		SELECT id FROM images
 		WHERE trashed = 1 AND trashed_at IS NOT NULL AND trashed_at <= ?
-		AND NOT EXISTS (SELECT 1 FROM import_recovery WHERE image_id = images.id AND retained = 1)`, cutoff)
+		AND NOT EXISTS (SELECT 1 FROM import_recovery WHERE image_id = images.id AND retained = 1)
+		AND NOT EXISTS (
+			SELECT 1 FROM relationships rel
+			WHERE (rel.source_image_id = images.id AND EXISTS (
+				SELECT 1 FROM import_recovery ir WHERE ir.image_id = rel.derived_image_id AND ir.retained = 1
+			)) OR (rel.derived_image_id = images.id AND EXISTS (
+				SELECT 1 FROM import_recovery ir WHERE ir.image_id = rel.source_image_id AND ir.retained = 1
+			))
+		)`, cutoff)
 	if err != nil {
 		return err
 	}
@@ -379,6 +387,7 @@ func purgeImages(r *store.Repo, ids []int64) error {
 }
 
 func rejectPurgeWithRetainedRelationships(r *store.Repo, images []store.Image) error {
+	var blocked []int64
 	for _, img := range images {
 		var linked bool
 		err := r.DB.QueryRow(`SELECT EXISTS(
@@ -393,8 +402,11 @@ func rejectPurgeWithRetainedRelationships(r *store.Repo, images []store.Image) e
 			return fmt.Errorf("check purge links for image %d: %w", img.ID, err)
 		}
 		if linked {
-			return fmt.Errorf("cannot purge image %d while it is linked to a retained import; recover the import first", img.ID)
+			blocked = append(blocked, img.ID)
 		}
+	}
+	if len(blocked) > 0 {
+		return fmt.Errorf("cannot purge images %v while linked to a retained import; recover the import first", blocked)
 	}
 	return nil
 }
