@@ -130,6 +130,16 @@ func (s *UndoService) ReserveHistoryReplay(repoPath, requestID string, selection
 	if err := rejectForeignRequestIDTx(tx, requestID, "history", repo.Path, parameterHash); err != nil {
 		return nil, err
 	}
+	var reservedID string
+	if pendingErr := tx.QueryRow(`SELECT request_id FROM request_id_registry
+		WHERE family='history' AND repo_path=? AND state='reserved'
+		ORDER BY created_at,request_id LIMIT 1`, repo.Path).Scan(&reservedID); pendingErr != nil && pendingErr != sql.ErrNoRows {
+		return nil, pendingErr
+	}
+	if reservedID != "" {
+		return commitSealedSelection(tx, repo.Path, requestID, selection, parameterHash,
+			"Another history replay is durably reserved. This request is sealed and was not executed: "+reservedID)
+	}
 	var pendingID string
 	if pendingErr := tx.QueryRow(`SELECT request_id FROM history_replay_requests WHERE state='pending' ORDER BY created_at,request_id LIMIT 1`).Scan(&pendingID); pendingErr != nil && pendingErr != sql.ErrNoRows {
 		return nil, pendingErr
@@ -222,9 +232,6 @@ func (s *UndoService) SettleHistoryReplay(repoPath, requestID, direction, select
 	if _, err := tx.Exec(`INSERT INTO request_id_registry(request_id,family,repo_path,direction,parameter_hash,state,result_json,conflict_reason)
 		VALUES(?, 'history', ?, ?, ?, 'sealed', ?, 'settled before any committed reservation')`,
 		requestID, repo.Path, direction, parameterHash, string(resultJSON)); err != nil {
-		return nil, err
-	}
-	if err := bumpHistoryRevisionTx(tx); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -428,9 +435,6 @@ func sealReservedSelection(repo *store.Repo, requestID string, binding historyBi
 	if err != nil || count != 1 {
 		return nil, errors.Join(err, fmt.Errorf("history reservation changed while sealing"))
 	}
-	if err := bumpHistoryRevisionTx(tx); err != nil {
-		return nil, err
-	}
 	if err := tx.Commit(); err != nil {
 		return historyExecutionUnknown(repo.DB, requestID, err)
 	}
@@ -451,9 +455,6 @@ func commitSealedSelection(tx *sql.Tx, repoPath, requestID string, selection His
 		return nil, err
 	}
 	if _, err := tx.Exec(`UPDATE request_id_registry SET result_json=?,conflict_reason=? WHERE request_id=? AND family='history'`, string(resultJSON), reason, requestID); err != nil {
-		return nil, err
-	}
-	if err := bumpHistoryRevisionTx(tx); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {

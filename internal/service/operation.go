@@ -29,6 +29,15 @@ func openOperationRepo(repoPath string) (*store.Repo, func(), error) {
 }
 
 func rejectPendingHistoryReplay(repo *store.Repo) error {
+	var reservedID, kind string
+	err := repo.DB.QueryRow(`SELECT request_id,COALESCE(selected_kind,'history replay') FROM request_id_registry
+		WHERE family='history' AND repo_path=? AND state='reserved' ORDER BY created_at,request_id LIMIT 1`, repo.Path).Scan(&reservedID, &kind)
+	if err == nil {
+		return fmt.Errorf("history replay request %s for %s is reserved; unrelated repository changes are fenced until it is reconciled", reservedID, kind)
+	}
+	if err != sql.ErrNoRows {
+		return err
+	}
 	requestID, kind, err := pendingHistoryReplay(repo)
 	if err == nil {
 		if requestID == "" {

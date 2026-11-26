@@ -18,6 +18,13 @@ func ResolveFilesystemHistoryRecovery(repoPath, requestID, action string) (*Undo
 	}
 	defer unlock()
 	defer repo.Close()
+	collision, err := requestIDHasFamilyCollision(repo.DB, requestID)
+	if err != nil {
+		return nil, err
+	}
+	if collision {
+		return nil, fmt.Errorf("filesystem recovery request %s has a cross-family collision; retry and cancel are disabled until the evidence is inspected manually", requestID)
+	}
 	ledger, found, err := readFilesystemHistoryLedger(repo.DB, requestID)
 	if err != nil {
 		return nil, err
