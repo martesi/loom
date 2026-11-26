@@ -46,6 +46,7 @@ export type CanvasIntentPhase =
   | 'queued'
   | 'dispatched'
   | 'settled'
+  | 'unknown'
   | 'reconciled'
   | 'cancelled'
 
@@ -439,9 +440,9 @@ export function createCanvasBoardOwner(
           return { dispatched: true, value }
         } catch (error) {
           if (pendingWrite) lane.pendingWrites--
-          intent.phase = 'settled'
           lane.needsReconciliation = true
           const uncertain = effectSucceeded ? false : uncertainTransport(error)
+          intent.phase = uncertain ? 'unknown' : 'settled'
           lane.fence = {
             error,
             uncertain,
@@ -460,7 +461,7 @@ export function createCanvasBoardOwner(
             try {
               const reconciled = await owner.refresh()
               if (reconciled) {
-                intent.phase = 'reconciled'
+                if (!lane.fence.uncertain) intent.phase = 'reconciled'
                 if (!lane.fence.uncertain) {
                   lane.needsReconciliation = false
                   lane.fence = null

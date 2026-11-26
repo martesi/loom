@@ -330,12 +330,14 @@ describe('canvas board owner', () => {
           true
         )
       ).rejects.toBe(failure)
+      expect(intent.phase).toBe('unknown')
       expect(owner.getMutationFence()).toMatchObject({
         uncertain: true,
         effect: 'unknown',
         error: failure,
       })
       expect(await owner.retryReconciliation()).toBe(false)
+      expect(intent.phase).toBe('unknown')
       owner.dispose()
     }
   })

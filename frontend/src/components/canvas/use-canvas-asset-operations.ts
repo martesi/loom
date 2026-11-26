@@ -13,6 +13,12 @@ import {
   type CanvasSelectionIntentRef,
   createCanvasSelectionIntentRef,
 } from './canvas-selection-intent'
+import {
+  captureCanvasTrashCompletion,
+  collectCanvasTrashFailures,
+  countCanvasTrashUnknownOutcomes,
+  executeCanvasTrashBatch,
+} from './canvas-trash-outcomes'
 import type { CanvasViewportCommand } from './use-canvas-projection-controller'
 import type { RevealRequest } from './use-canvas-workspace-state'
 
@@ -343,22 +349,32 @@ export function useCanvasAssetOperations({
     const intent = captureIntent('lifecycle')
     lifecyclePendingRef.current = true
     setLifecyclePending(true)
-    const result = await owner.executeIntent(
-      intent.operation,
-      () => isCurrentIntent(intent),
-      () =>
-        Promise.allSettled(
-          ids.map((id) => ImageService.TrashImage(repoPath, id))
-        ),
-      true
+    const completion = await captureCanvasTrashCompletion(
+      owner.executeIntent(
+        intent.operation,
+        () => isCurrentIntent(intent),
+        () => executeCanvasTrashBatch(repoPath, ids),
+        true
+      )
     )
-    if (!result.dispatched || !isCurrentIntent(intent)) return
-    const outcomes = result.value ?? []
-    const failures = outcomes.flatMap((outcome, index) =>
-      outcome.status === 'rejected'
-        ? [{ id: ids[index], cause: outcome.reason }]
-        : []
-    )
+    lifecyclePendingRef.current = false
+    setLifecyclePending(false)
+    const failures = collectCanvasTrashFailures(completion.outcomes)
+    if (completion.status === 'failed') {
+      if (isCurrentIntent(intent)) {
+        setTrashIds(null)
+        const unknownCount = countCanvasTrashUnknownOutcomes(
+          completion.outcomes
+        )
+        setError(
+          unknownCount > 0
+            ? `${unknownCount} of ${ids.length} trash requests have an unknown outcome. Canvas editing remains blocked until the write outcome is authoritatively settled.`
+            : String(completion.error)
+        )
+      }
+      return
+    }
+    if (!completion.result.dispatched || !isCurrentIntent(intent)) return
     setTrashIds(null)
     publishSelectionFromOperation((current) => ({
       ...current,
@@ -366,15 +382,10 @@ export function useCanvasAssetOperations({
       edges: [],
       group: null,
     }))
-    for (const failure of failures)
-      console.error('asset trash failed', {
-        assetId: failure.id,
-        cause: failure.cause,
-      })
     if (failures.length) {
       const details = failures.map(
-        ({ id, cause }) =>
-          `Asset ${id}: ${cause instanceof Error ? cause.message : String(cause)}`
+        ({ id, error }) =>
+          `Asset ${id}: ${error instanceof Error ? error.message : String(error)}`
       )
       setError(
         `${ids.length - failures.length} of ${ids.length} assets moved to Trash. ${details.join('; ')} The current state was refreshed.`
