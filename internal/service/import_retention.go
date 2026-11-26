@@ -82,35 +82,63 @@ func pruneUndoneImportRedoTx(tx *sql.Tx) (discardedImportRedo, error) {
 	if err := rows.Close(); err != nil {
 		return result, err
 	}
-	seen := make(map[int64]bool)
+	type imageHistoryResources struct {
+		entry      importHistoryEntry
+		identities []string
+		seen       map[string]bool
+	}
+	resourcesByID := make(map[int64]*imageHistoryResources)
+	var orderedResources []*imageHistoryResources
+	retainedSeen := make(map[string]bool)
 	for _, entry := range entries {
-		if seen[entry.ImageID] || entry.SHA256 == "" {
-			continue
+		resource := resourcesByID[entry.ImageID]
+		if resource == nil {
+			resource = &imageHistoryResources{entry: entry, seen: make(map[string]bool)}
+			resourcesByID[entry.ImageID] = resource
+			orderedResources = append(orderedResources, resource)
+		} else if resource.entry.SHA256 == "" && entry.SHA256 != "" {
+			resource.entry.SHA256 = entry.SHA256
 		}
-		seen[entry.ImageID] = true
+		for _, identity := range append(entry.FileIdentities, entry.FileIdentity, entry.RetainedIdentity) {
+			if identity != "" && !resource.seen[identity] {
+				resource.identities = append(resource.identities, identity)
+				resource.seen[identity] = true
+			}
+		}
+		if entry.RetainedPath != "" && entry.RetainedIdentity != "" && !retainedSeen[entry.RetainedPath] {
+			result.retained = append(result.retained, discardedImportFile{path: entry.RetainedPath, hash: entry.SHA256, identity: entry.RetainedIdentity})
+			retainedSeen[entry.RetainedPath] = true
+		}
+	}
+	for _, resource := range orderedResources {
+		entry := resource.entry
 		var path, currentIdentity string
-		err := tx.QueryRow(`SELECT file_path, import_file_identity FROM images WHERE id = ? AND import_undone = 1`, entry.ImageID).Scan(&path, &currentIdentity)
+		var importUndone bool
+		err := tx.QueryRow(`SELECT file_path, import_file_identity, import_undone FROM images WHERE id = ?`, entry.ImageID).Scan(&path, &currentIdentity, &importUndone)
 		if err == sql.ErrNoRows {
+			result.released = append(result.released, resource.identities...)
 			continue
 		}
 		if err != nil {
 			return result, err
 		}
+		if !importUndone {
+			for _, identity := range resource.identities {
+				if identity != currentIdentity {
+					result.released = append(result.released, identity)
+				}
+			}
+			continue
+		}
 		identity := currentIdentity
 		if identity == "" {
 			identity = entry.FileIdentity
 		}
-		if entry.RetainedPath != "" && entry.RetainedIdentity != "" {
-			result.retained = append(result.retained, discardedImportFile{path: entry.RetainedPath, hash: entry.SHA256, identity: entry.RetainedIdentity})
-			result.released = append(result.released, entry.RetainedIdentity)
+		if identity == "" && len(entry.FileIdentities) != 0 {
+			identity = entry.FileIdentities[len(entry.FileIdentities)-1]
 		}
-		if identity == "" {
-			// Without a stable ID, keep the bytes and let normal discovery
-			// register the path after its hidden row is removed.
-			if _, err := tx.Exec(`DELETE FROM images WHERE id = ? AND import_undone = 1`, entry.ImageID); err != nil {
-				return result, err
-			}
-			continue
+		if identity == "" || entry.SHA256 == "" {
+			return result, fmt.Errorf("cannot discard undone import %d without a verifiable file identity and hash", entry.ImageID)
 		}
 		if _, err := tx.Exec(`INSERT INTO discarded_import_files (file_path, sha256, file_identity) VALUES (?, ?, ?)
 			ON CONFLICT(file_path) DO UPDATE SET sha256 = excluded.sha256, file_identity = excluded.file_identity`, path, entry.SHA256, identity); err != nil {
@@ -120,6 +148,11 @@ func pruneUndoneImportRedoTx(tx *sql.Tx) (discardedImportRedo, error) {
 			return result, err
 		}
 		result.active = append(result.active, discardedImportFile{path: path, hash: entry.SHA256, identity: identity})
+		for _, ownedIdentity := range resource.identities {
+			if ownedIdentity != identity {
+				result.released = append(result.released, ownedIdentity)
+			}
+		}
 	}
 	return result, nil
 }
@@ -246,9 +279,12 @@ func forgetPurgedImportHistory(repo *store.Repo, ids []int64) (discardedImportRe
 						if entry.RetainedPath != "" && entry.RetainedIdentity != "" {
 							cleanup.retained = append(cleanup.retained, discardedImportFile{path: entry.RetainedPath, hash: entry.SHA256, identity: entry.RetainedIdentity})
 						}
-						cleanup.released = append(cleanup.released, entry.FileIdentity, entry.RetainedIdentity)
+						cleanup.released = append(cleanup.released, entry.FileIdentity)
+						cleanup.released = append(cleanup.released, entry.FileIdentities...)
+						cleanup.released = append(cleanup.released, entry.RetainedIdentity)
 						entry.RetainedPath = ""
 						entry.FileIdentity = ""
+						entry.FileIdentities = nil
 						entry.RetainedIdentity = ""
 						changed = true
 					}

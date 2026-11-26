@@ -295,7 +295,7 @@ func (r *Repo) scanAndRegisterImagesWithFingerprint(ctx context.Context, advance
 				return changed, fmt.Errorf("verify undone import file identity for %q", item.path)
 			}
 			if identity != importIdentity || item.fingerprint != importHash {
-				if _, err := r.DB.Exec(`UPDATE images SET import_undone = 0 WHERE file_path = ? AND import_undone = 1`, item.path); err != nil {
+				if _, err := r.DB.Exec(`UPDATE images SET import_undone = 0, import_file_identity = '', import_file_sha256 = '' WHERE file_path = ? AND import_undone = 1`, item.path); err != nil {
 					return changed, err
 				}
 			}

@@ -70,21 +70,24 @@ func replayAtomicHistoryWithCleanup(repo *store.Repo, redo bool, afterWrite func
 		var payload importBatchPayload
 		if err = json.Unmarshal(s.Payload, &payload); err == nil {
 			err = applyImportBatchTx(tx, payload, &createdFiles, &filesToValidate, afterWrite, writeFile)
-			if err == nil && payload.Active {
+			if err == nil {
+				identities := make(map[int64]string, len(payload.Entries))
 				for i := range payload.Entries {
-					if scanErr := tx.QueryRow(`SELECT import_file_identity FROM images WHERE id = ?`, payload.Entries[i].ImageID).Scan(&payload.Entries[i].FileIdentity); scanErr != nil {
+					var identity string
+					if scanErr := tx.QueryRow(`SELECT import_file_identity FROM images WHERE id = ?`, payload.Entries[i].ImageID).Scan(&identity); scanErr != nil {
 						err = scanErr
 						break
 					}
+					identities[payload.Entries[i].ImageID] = identity
 				}
 				if err == nil {
-					s.Payload, err = json.Marshal(payload)
+					var forward, inverse string
+					forward, err = updateImportHistoryIdentities(op.Forward, identities)
 					if err == nil {
-						var forward []byte
-						forward, err = json.Marshal(s)
-						if err == nil {
-							_, err = tx.Exec(`UPDATE operation_log SET forward = ? WHERE seq = ?`, string(forward), op.Seq)
-						}
+						inverse, err = updateImportHistoryIdentities(op.Inverse, identities)
+					}
+					if err == nil {
+						_, err = tx.Exec(`UPDATE operation_log SET forward = ?, inverse = ? WHERE seq = ?`, forward, inverse, op.Seq)
 					}
 				}
 			}

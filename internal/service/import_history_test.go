@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -2116,6 +2117,275 @@ func TestRedoTailCleanupPreservesExternalRetainedReplacement(t *testing.T) {
 	}
 	if got, err := os.ReadFile(entry.RetainedPath); err != nil || !bytes.Equal(got, captured) {
 		t.Fatalf("external retained replacement after cleanup = %q err=%v", got, err)
+	}
+}
+
+func TestRedoTailDiscardReclaimsResourcesAfterRescanExposesReplacement(t *testing.T) {
+	repoPath := t.TempDir()
+	ids, err := (&ImageService{}).ImportMedia(repoPath, []ClipboardMedia{{Name: "rescanned.png", Data: base64.StdEncoding.EncodeToString([]byte("imported"))}}, false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var forward string
+	if err := repo.DB.QueryRow(`SELECT forward FROM operation_log WHERE kind = 'import_batch'`).Scan(&forward); err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	var step OpStep
+	var payload importBatchPayload
+	if err := json.Unmarshal([]byte(forward), &step); err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(step.Payload, &payload); err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	entry := payload.Entries[0]
+	var path string
+	if err := repo.DB.QueryRow(`SELECT file_path FROM images WHERE id = ?`, ids[0]).Scan(&path); err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&UndoService{}).Undo(repoPath); err != nil {
+		t.Fatal(err)
+	}
+	replacement := path + ".external"
+	if err := os.WriteFile(replacement, []byte("external replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacement, path); err != nil {
+		t.Fatal(err)
+	}
+	repo, err = store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.ScanAndRegisterImages(context.Background()); err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	var undone bool
+	var identity sql.NullString
+	if err := repo.DB.QueryRow(`SELECT import_undone, import_file_identity FROM images WHERE id = ?`, ids[0]).Scan(&undone, &identity); err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	if undone || !identity.Valid || identity.String != "" {
+		repo.Close()
+		t.Fatalf("rescanned external replacement retains import ownership: undone=%v identity=%v", undone, identity)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&ImageService{}).ImportMedia(repoPath, []ClipboardMedia{{Name: "new-branch.png", Data: base64.StdEncoding.EncodeToString([]byte("new branch"))}}, false, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(entry.RetainedPath); !os.IsNotExist(err) {
+		t.Fatalf("retained snapshot after rescan and redo-tail discard: %v", err)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "external replacement" {
+		t.Fatalf("visible external replacement = %q, err=%v", got, err)
+	}
+	anchors, err := filepath.Glob(filepath.Join(repoPath, ".loom", ".loom-import-stage-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, anchor := range anchors {
+		info, err := os.Stat(anchor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if store.FileIdentityAt(anchor, info) == entry.FileIdentity {
+			t.Fatalf("obsolete import identity anchor remains: %s", anchor)
+		}
+	}
+}
+
+func TestRepeatedImportRestoresRetainEveryIdentityForCleanup(t *testing.T) {
+	repoPath := t.TempDir()
+	ids, err := (&ImageService{}).ImportMedia(repoPath, []ClipboardMedia{{Name: "restore-cycles.png", Data: base64.StdEncoding.EncodeToString([]byte("restore bytes"))}}, false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for cycle := 0; cycle < 2; cycle++ {
+		if _, err := (&UndoService{}).Undo(repoPath); err != nil {
+			t.Fatalf("undo cycle %d: %v", cycle+1, err)
+		}
+		repo, err := store.Bootstrap(repoPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var currentPath string
+		if err := repo.DB.QueryRow(`SELECT file_path FROM images WHERE id = ?`, ids[0]).Scan(&currentPath); err != nil {
+			repo.Close()
+			t.Fatal(err)
+		}
+		if err := repo.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(currentPath); err != nil && !os.IsNotExist(err) {
+			t.Fatalf("remove import before redo cycle %d: %v", cycle+1, err)
+		}
+		if _, err := (&UndoService{}).Redo(repoPath); err != nil {
+			t.Fatalf("redo cycle %d: %v", cycle+1, err)
+		}
+	}
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var path string
+	if err := repo.DB.QueryRow(`SELECT file_path FROM images WHERE id = ?`, ids[0]).Scan(&path); err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	var forward string
+	if err := repo.DB.QueryRow(`SELECT forward FROM operation_log WHERE kind = 'import_batch'`).Scan(&forward); err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	var step OpStep
+	var payload importBatchPayload
+	if err := json.Unmarshal([]byte(forward), &step); err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(step.Payload, &payload); err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	identities := payload.Entries[0].FileIdentities
+	if len(identities) < 3 {
+		repo.Close()
+		t.Fatalf("recorded file identities after restore cycles = %v, want all three identities", identities)
+	}
+	for i, identity := range identities {
+		for _, later := range identities[i+1:] {
+			if identity == later {
+				repo.Close()
+				t.Fatalf("duplicate recorded file identity %q in %v", identity, identities)
+			}
+		}
+	}
+	var currentIdentity string
+	if err := repo.DB.QueryRow(`SELECT import_file_identity FROM images WHERE id = ?`, ids[0]).Scan(&currentIdentity); err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	retainedPath := payload.Entries[0].RetainedPath
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&UndoService{}).Undo(repoPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&ImageService{}).ImportMedia(repoPath, []ClipboardMedia{{Name: "discard-cycles.png", Data: base64.StdEncoding.EncodeToString([]byte("new branch"))}}, false, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	for _, identity := range identities {
+		anchors, err := filepath.Glob(filepath.Join(repoPath, ".loom", ".loom-import-stage-*"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, anchor := range anchors {
+			info, err := os.Stat(anchor)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if identity != currentIdentity && store.FileIdentityAt(anchor, info) == identity {
+				t.Errorf("obsolete restore-cycle identity anchor remains for %q: %s", identity, anchor)
+			}
+		}
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("visible import path after redo-tail discard: %v", err)
+	}
+	if _, err := os.Stat(retainedPath); !os.IsNotExist(err) {
+		t.Fatalf("retained snapshot after redo-tail discard: %v", err)
+	}
+}
+
+func TestRedoTailDiscardFailsClosedWhenRecordedIdentityIsUnknown(t *testing.T) {
+	repoPath := t.TempDir()
+	ids, err := (&ImageService{}).ImportMedia(repoPath, []ClipboardMedia{{Name: "unknown-identity.png", Data: base64.StdEncoding.EncodeToString([]byte("unknown identity"))}}, false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var seq int64
+	var forward, inverse string
+	if err := repo.DB.QueryRow(`SELECT seq, forward, inverse FROM operation_log WHERE kind = 'import_batch'`).Scan(&seq, &forward, &inverse); err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	unknownPayload := func(raw string) string {
+		var step OpStep
+		var payload importBatchPayload
+		if err := json.Unmarshal([]byte(raw), &step); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(step.Payload, &payload); err != nil {
+			t.Fatal(err)
+		}
+		for i := range payload.Entries {
+			payload.Entries[i].FileIdentity = ""
+			payload.Entries[i].FileIdentities = nil
+		}
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		step.Payload = encoded
+		updated, err := json.Marshal(step)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(updated)
+	}
+	if _, err := repo.DB.Exec(`UPDATE operation_log SET forward = ?, inverse = ? WHERE seq = ?`, unknownPayload(forward), unknownPayload(inverse), seq); err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	if _, err := repo.DB.Exec(`UPDATE images SET import_undone = 1, import_file_identity = '' WHERE id = ?`, ids[0]); err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	if _, err := repo.DB.Exec(`INSERT INTO settings(scope, key, value) VALUES ('repo', 'undo_cursor', ?) ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value`, fmt.Sprint(seq-1)); err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&ImageService{}).ImportMedia(repoPath, []ClipboardMedia{{Name: "must-not-resurrect.png", Data: base64.StdEncoding.EncodeToString([]byte("new branch"))}}, false, 0, 0); err == nil {
+		t.Fatal("redo-tail discard succeeded without a verifiable recorded identity")
+	}
+	repo, err = store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	var undone bool
+	if err := repo.DB.QueryRow(`SELECT import_undone FROM images WHERE id = ?`, ids[0]).Scan(&undone); err != nil || !undone {
+		t.Fatalf("hidden import state after rejected discard = %v, err=%v", undone, err)
+	}
+	var count int
+	if err := repo.DB.QueryRow(`SELECT COUNT(*) FROM operation_log WHERE kind = 'import_batch'`).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("import history after rejected discard = %d, err=%v", count, err)
 	}
 }
 

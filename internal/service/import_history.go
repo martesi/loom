@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -19,16 +20,60 @@ import (
 const stepImportBatch = "import_batch"
 
 type importHistoryEntry struct {
-	ImageID          int64  `json:"imageId"`
-	RetainedPath     string `json:"retainedPath"`
-	SHA256           string `json:"sha256"`
-	FileIdentity     string `json:"fileIdentity,omitempty"`
-	RetainedIdentity string `json:"retainedIdentity,omitempty"`
+	ImageID          int64    `json:"imageId"`
+	RetainedPath     string   `json:"retainedPath"`
+	SHA256           string   `json:"sha256"`
+	FileIdentity     string   `json:"fileIdentity,omitempty"`
+	FileIdentities   []string `json:"fileIdentities,omitempty"`
+	RetainedIdentity string   `json:"retainedIdentity,omitempty"`
 }
 
 type importBatchPayload struct {
 	Entries []importHistoryEntry `json:"entries"`
 	Active  bool                 `json:"active"`
+}
+
+func updateImportHistoryIdentities(raw string, identities map[int64]string) (string, error) {
+	var step OpStep
+	if err := json.Unmarshal([]byte(raw), &step); err != nil {
+		return "", err
+	}
+	var payload importBatchPayload
+	if err := json.Unmarshal(step.Payload, &payload); err != nil {
+		return "", err
+	}
+	for index := range payload.Entries {
+		entry := &payload.Entries[index]
+		identity := identities[entry.ImageID]
+		if identity == "" {
+			return "", fmt.Errorf("import image %d has no current file identity", entry.ImageID)
+		}
+		entry.FileIdentities = appendImportIdentity(entry.FileIdentities, entry.FileIdentity)
+		entry.FileIdentities = appendImportIdentity(entry.FileIdentities, identity)
+		entry.FileIdentity = identity
+	}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	step.Payload = payloadBytes
+	updated, err := json.Marshal(step)
+	if err != nil {
+		return "", err
+	}
+	return string(updated), nil
+}
+
+func appendImportIdentity(identities []string, identity string) []string {
+	if identity == "" {
+		return identities
+	}
+	for _, existing := range identities {
+		if existing == identity {
+			return identities
+		}
+	}
+	return append(identities, identity)
 }
 
 func writeExclusive(path string, data []byte) (os.FileInfo, error) {

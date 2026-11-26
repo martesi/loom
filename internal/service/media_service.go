@@ -235,7 +235,7 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 			return nil, fmt.Errorf("retained import file %q has no verifiable identity", stash)
 		}
 		filesToValidate = append(filesToValidate, ownedImportFile{path: stash, info: stashInfo, hash: fileHash, identity: retainedIdentity})
-		entries = append(entries, importHistoryEntry{ImageID: id, RetainedPath: stash, SHA256: fileHash, FileIdentity: fileIdentity, RetainedIdentity: retainedIdentity})
+		entries = append(entries, importHistoryEntry{ImageID: id, RetainedPath: stash, SHA256: fileHash, FileIdentity: fileIdentity, FileIdentities: []string{fileIdentity}, RetainedIdentity: retainedIdentity})
 	}
 	forward, err := json.Marshal(step(stepImportBatch, importBatchPayload{Entries: entries, Active: true}))
 	if err != nil {

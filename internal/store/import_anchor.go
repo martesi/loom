@@ -31,44 +31,58 @@ func (r *Repo) ReleaseImportIdentityAnchors(identity string) error {
 		if entry.IsDir() || !strings.HasPrefix(entry.Name(), ".loom-import-stage-") {
 			continue
 		}
-		if err := removeIdentityAnchor(filepath.Join(loomDir, entry.Name()), identity); err != nil {
+		if _, err := RemoveFileByIdentity(filepath.Join(loomDir, entry.Name()), identity); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func removeIdentityAnchor(path, identity string) error {
+// RemoveFileByIdentity removes path only when it still names identity. It
+// atomically moves the entry into a fresh, private quarantine directory before
+// its final identity check. The no-replace rename prevents clobbering entries.
+func RemoveFileByIdentity(path, identity string) (bool, error) {
+	return removeFileByIdentity(path, identity, nil)
+}
+
+func removeFileByIdentity(path, identity string, beforeMove func(string)) (bool, error) {
+	if identity == "" {
+		return false, nil
+	}
 	info, err := os.Lstat(path)
 	if os.IsNotExist(err) {
-		return nil
+		return false, nil
 	}
-	if err != nil || !info.Mode().IsRegular() || FileIdentityAt(path, info) != identity {
-		return err
-	}
-	file, err := os.CreateTemp(filepath.Dir(path), ".loom-import-anchor-release-*")
 	if err != nil {
-		return err
+		return false, err
 	}
-	quarantine := file.Name()
-	if err := file.Close(); err != nil {
-		return err
+	if !info.Mode().IsRegular() || FileIdentityAt(path, info) != identity {
+		return false, nil
 	}
-	if err := os.Remove(quarantine); err != nil {
-		return err
+	quarantineDir, err := os.MkdirTemp(filepath.Dir(path), ".loom-import-cleanup-")
+	if err != nil {
+		return false, err
 	}
-	if err := os.Rename(path, quarantine); err != nil {
-		return err
+	quarantinePath := filepath.Join(quarantineDir, "owned")
+	if beforeMove != nil {
+		beforeMove(quarantinePath)
 	}
-	movedInfo, err := os.Lstat(quarantine)
-	if err == nil && movedInfo.Mode().IsRegular() && FileIdentityAt(quarantine, movedInfo) == identity {
-		return os.Remove(quarantine)
+	if err := renameImportNoReplace(path, quarantinePath); err != nil {
+		_ = os.Remove(quarantineDir)
+		return false, err
 	}
-	if err != nil && !os.IsNotExist(err) {
-		return err
+	quarantinedInfo, err := os.Lstat(quarantinePath)
+	if err != nil {
+		return false, fmt.Errorf("inspect quarantined import file: %w", err)
 	}
-	if err := os.Link(quarantine, path); err != nil {
-		return fmt.Errorf("preserve replaced import anchor at %q: %w", quarantine, err)
+	if !quarantinedInfo.Mode().IsRegular() || FileIdentityAt(quarantinePath, quarantinedInfo) != identity {
+		if err := renameImportNoReplace(quarantinePath, path); err != nil {
+			return false, fmt.Errorf("preserve replaced import file at %q: %w", quarantinePath, err)
+		}
+		return false, os.Remove(quarantineDir)
 	}
-	return os.Remove(quarantine)
+	if err := os.Remove(quarantinePath); err != nil {
+		return false, err
+	}
+	return true, os.Remove(quarantineDir)
 }

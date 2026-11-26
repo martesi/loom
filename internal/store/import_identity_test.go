@@ -45,6 +45,78 @@ func TestScanPreservesUndoneImportWhenIdentityUnavailable(t *testing.T) {
 	}
 }
 
+func TestRemoveFileByIdentityPreservesReplacementPublishedBeforeQuarantine(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "owned.png")
+	owned := []byte("owned bytes")
+	external := []byte("external replacement")
+	if err := os.WriteFile(path, owned, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := FileIdentityAt(path, info)
+	if identity == "" {
+		t.Skip("platform does not expose stable file identity")
+	}
+	removed, err := removeFileByIdentity(path, identity, func(string) {
+		replacement := path + ".external"
+		if err := os.WriteFile(replacement, external, 0o600); err != nil {
+			t.Errorf("write external replacement: %v", err)
+			return
+		}
+		if err := os.Remove(path); err != nil {
+			t.Errorf("remove original before replacement: %v", err)
+			return
+		}
+		if err := os.Rename(replacement, path); err != nil {
+			t.Errorf("publish external replacement: %v", err)
+		}
+	})
+	if err != nil || removed {
+		t.Fatalf("remove replaced file = removed %v, err %v", removed, err)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != string(external) {
+		t.Fatalf("external replacement = %q, err %v", got, err)
+	}
+}
+
+func TestRemoveFileByIdentityDoesNotOverwriteQuarantineEntry(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "owned.png")
+	owned := []byte("owned bytes")
+	external := []byte("external quarantine entry")
+	if err := os.WriteFile(path, owned, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := FileIdentityAt(path, info)
+	if identity == "" {
+		t.Skip("platform does not expose stable file identity")
+	}
+	quarantinePath := ""
+	removed, err := removeFileByIdentity(path, identity, func(quarantine string) {
+		quarantinePath = quarantine
+		if err := os.WriteFile(quarantine, external, 0o600); err != nil {
+			t.Errorf("create competing quarantine entry: %v", err)
+		}
+	})
+	if err == nil || removed {
+		t.Fatalf("remove with occupied quarantine destination = removed %v, err %v", removed, err)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != string(owned) {
+		t.Fatalf("original file after exclusive-rename failure = %q, err %v", got, err)
+	}
+	if got, err := os.ReadFile(quarantinePath); err != nil || string(got) != string(external) {
+		t.Fatalf("competing quarantine entry = %q, err %v", got, err)
+	}
+}
+
 func identityTestRepo(t *testing.T, name string) (*Repo, string, string, string) {
 	t.Helper()
 	repoPath := t.TempDir()
