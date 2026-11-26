@@ -30,6 +30,7 @@ var videoRenditionDeadline = 30 * time.Second
 var newRenditionRequestContext = context.WithTimeout
 var newRenditionWorkContext = context.WithTimeout
 var beforeRenditionPublication func()
+var afterRenditionCacheMaintenance func()
 var previewSlots = make(chan struct{}, 2)
 var renditionAdmissions = make(chan struct{}, 8)
 var previewLocks = struct {
@@ -83,6 +84,12 @@ func ServePreviewWithProcessor(w http.ResponseWriter, r *http.Request, processor
 }
 
 func serveRendition(w http.ResponseWriter, r *http.Request, processor media.Processor, forcedTier int, forcedRepo string, forcedID int64) {
+	serveRenditionWithGate(w, r, processor, forcedTier, forcedRepo, forcedID, nil)
+}
+
+// serveRenditionWithGate is the private integration seam for admission. Public
+// handlers remain unchanged until every Wails mutation path is converted.
+func serveRenditionWithGate(w http.ResponseWriter, r *http.Request, processor media.Processor, forcedTier int, forcedRepo string, forcedID int64, gate *renditionGate) {
 	w.Header().Set("Cache-Control", "no-store")
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
@@ -127,8 +134,18 @@ func serveRendition(w http.ResponseWriter, r *http.Request, processor media.Proc
 		return
 	}
 	if r.URL.Query().Get("cacheOnly") == "1" {
-		serveCachedRenditionOnly(w, r, repoPath, id, tier)
+		serveCachedRenditionOnlyWithGate(w, r, repoPath, id, tier, gate != nil)
 		return
+	}
+	var gateLease *renditionGateLease
+	if gate != nil {
+		gateLease, err = gate.Admit(repoPath)
+		if err != nil {
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "rendition service busy", http.StatusServiceUnavailable)
+			return
+		}
+		defer gateLease.Release()
 	}
 	repo, err := store.OpenExistingReadOnly(repoPath)
 	if err != nil {
@@ -209,11 +226,18 @@ func serveRendition(w http.ResponseWriter, r *http.Request, processor media.Proc
 
 		workCtx, workCancel := newRenditionWorkContext(context.Background(), deadline)
 		finishWork := lease.Transfer(workCancel)
+		finishGateWork := func() {}
+		if gateLease != nil {
+			gateLease.SetCancel(workCancel)
+			finishGateWork = gateLease.Transfer()
+			gateLease = nil
+		}
 		generated := make(chan generationResult, 1)
 		go func() {
 			file, status, generateErr := generateRendition(workCtx, repo.Path, id, tier, video, source, cacheDir, processor)
 			workCancel()
 			finishWork()
+			finishGateWork()
 			generated <- generationResult{file: file, status: status, err: generateErr}
 		}()
 		var resultFile *os.File
@@ -274,7 +298,20 @@ func serveCachedRenditionOnly(
 	id int64,
 	tier int,
 ) {
-	fenceRenditionRepository(repoPath)
+	serveCachedRenditionOnlyWithGate(w, r, repoPath, id, tier, false)
+}
+
+func serveCachedRenditionOnlyWithGate(
+	w http.ResponseWriter,
+	r *http.Request,
+	repoPath string,
+	id int64,
+	tier int,
+	readOnly bool,
+) {
+	if !readOnly {
+		fenceRenditionRepository(repoPath)
+	}
 	unlock := store.LockRepoOperations(repoPath)
 	defer unlock()
 	repo, err := store.OpenExistingReadOnly(repoPath)
@@ -420,6 +457,9 @@ func generateRendition(ctx context.Context, repoPath string, id int64, tier int,
 	prunePreviewRevisions(cacheDir, id, previewRevision(source.path, source.size, source.modTime, source.revision))
 	prunePreviewCache(cacheDir, time.Now())
 	previewCacheFiles.Unlock()
+	if afterRenditionCacheMaintenance != nil {
+		afterRenditionCacheMaintenance()
+	}
 	file, err := os.Open(cachePath)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
