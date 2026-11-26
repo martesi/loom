@@ -604,10 +604,14 @@ it('rejects a delayed wheel end after a mode change and identifies a new gesture
     )
     result.current.onFlowReady()
   })
+  await waitFor(() => expect(flow.setViewport).toHaveBeenCalledTimes(1))
   const oldWheel = new WheelEvent('wheel')
   let oldToken: ReturnType<typeof result.current.beginUserViewportIntent>
   act(() => {
     oldToken = result.current.beginUserViewportIntent(oldWheel)
+    expect(
+      result.current.getViewportOrigin(new Event('mousemove'))
+    ).toMatchObject({ origin: 'user', token: oldToken })
     result.current.updateViewport(
       { x: 12, y: 24, zoom: 1.2 },
       'user',
@@ -617,6 +621,9 @@ it('rejects a delayed wheel end after a mode change and identifies a new gesture
   })
   await act(async () => result.current.transitionMode('edit'))
   expect(result.current.getViewportOrigin(oldWheel).origin).toBe('stale')
+  expect(result.current.getViewportOrigin(new Event('mousemove')).origin).toBe(
+    'external'
+  )
   const newWheel = new WheelEvent('wheel')
   let newToken: ReturnType<typeof result.current.beginUserViewportIntent>
   act(() => {

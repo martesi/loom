@@ -509,6 +509,15 @@ export function useCanvasProjectionController(props: Props) {
     if (activeViewportTask.current)
       return { origin: activeViewportTask.current.origin }
     if (viewportCommandOrigin.current !== null) return { origin: 'command' }
+    // XYFlow can emit eventless move-end callbacks for commands. Only a concrete
+    // DOM event may inherit the active pointer gesture's token.
+    if (event instanceof Event && userViewportGesture.current) {
+      const token = currentViewportIntent.current
+      if (token)
+        return isViewportIntentCurrent(token)
+          ? { origin: 'user', token }
+          : { origin: 'stale', token }
+    }
     return { origin: 'external' }
   }
   function beginViewportCommand(): CanvasViewportCommand {
