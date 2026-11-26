@@ -81,8 +81,8 @@ export function AssetViewControls(props: Props) {
             <option key={view.id} value={view.id}>
               {view.id === 'default-recent'
                 ? t`Recent`
-                : view.id === 'default-unplaced'
-                  ? t`Unplaced`
+                : view.id === 'default-unpaired'
+                  ? t`Unpaired`
                   : view.name}
             </option>
           ))}

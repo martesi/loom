@@ -20,6 +20,7 @@ type LibraryRow struct {
 	PromptText string   `json:"promptText"`
 	Tags       []string `json:"tags"`
 	Placed     bool     `json:"placed"`
+	Paired     bool     `json:"paired"`
 	CreatedAt  string   `json:"createdAt"`
 	Archived   bool     `json:"archived"`
 	Trashed    bool     `json:"trashed"`
@@ -58,6 +59,16 @@ func (s *LibraryService) ListImages(repoPath string, query LibraryQuery) ([]Libr
 		return nil, err
 	}
 
+	relationships, err := repo.ListRelationships()
+	if err != nil {
+		return nil, err
+	}
+	paired := make(map[int64]bool, len(relationships)*2)
+	for _, relationship := range relationships {
+		paired[relationship.SourceImageID] = true
+		paired[relationship.DerivedImageID] = true
+	}
+
 	rows := make([]LibraryRow, len(images))
 	for i, img := range images {
 		tagNames := make([]string, 0, len(tagsByImage[img.ID]))
@@ -76,6 +87,7 @@ func (s *LibraryService) ListImages(repoPath string, query LibraryQuery) ([]Libr
 			PromptText: img.PromptText,
 			Tags:       tagNames,
 			Placed:     img.HasCanvasPos,
+			Paired:     paired[img.ID],
 			CreatedAt:  img.CreatedAt,
 			Archived:   img.Archived,
 			Trashed:    img.Trashed,

@@ -43,8 +43,8 @@ interface Props {
   onFiltersOpenChange: (update: (open: boolean) => boolean) => void
   status: string
   onStatusChange: (value: string) => void
-  placement: string
-  onPlacementChange: (value: string) => void
+  pairing: string
+  onPairingChange: (value: string) => void
   tagId: number
   onTagChange: (value: number) => void
   tags: { id: number; name: string }[]
@@ -86,8 +86,8 @@ export function LibraryFilterControls(props: Props) {
     onFiltersOpenChange,
     status,
     onStatusChange,
-    placement,
-    onPlacementChange,
+    pairing,
+    onPairingChange,
     tagId,
     onTagChange,
     tags,
@@ -169,18 +169,18 @@ export function LibraryFilterControls(props: Props) {
               </select>
               <select
                 className={fieldClass}
-                aria-label={t`Placement`}
-                value={placement}
-                onChange={(e) => onPlacementChange(e.target.value)}
+                aria-label={t`Relationship`}
+                value={pairing}
+                onChange={(e) => onPairingChange(e.target.value)}
               >
                 <option value="">
-                  <Trans>All placements</Trans>
+                  <Trans>All relationships</Trans>
                 </option>
-                <option value="placed">
-                  <Trans>placed</Trans>
+                <option value="paired">
+                  <Trans>paired</Trans>
                 </option>
-                <option value="unplaced">
-                  <Trans>unplaced</Trans>
+                <option value="unpaired">
+                  <Trans>unpaired</Trans>
                 </option>
               </select>
               <select
@@ -237,19 +237,19 @@ export function LibraryFilterControls(props: Props) {
                   ×
                 </Button>
               )}
-              {placement && (
+              {pairing && (
                 <Button
                   type="button"
-                  aria-label={t`Remove placement filter: ${placement}`}
-                  onClick={() => onPlacementChange('')}
+                  aria-label={t`Remove relationship filter: ${pairing}`}
+                  onClick={() => onPairingChange('')}
                   variant="ghost"
                   size="sm"
                   className="h-auto rounded-full bg-primary-soft px-2 py-1 text-[11px] text-ink"
                 >
-                  {placement === 'placed' ? (
-                    <Trans>Placed</Trans>
+                  {pairing === 'paired' ? (
+                    <Trans>Paired</Trans>
                   ) : (
-                    <Trans>Unplaced</Trans>
+                    <Trans>Unpaired</Trans>
                   )}{' '}
                   ×
                 </Button>
@@ -271,7 +271,7 @@ export function LibraryFilterControls(props: Props) {
                 onClick={() => {
                   onSearchChange('')
                   onStatusChange('active')
-                  onPlacementChange('')
+                  onPairingChange('')
                   onTagChange(0)
                 }}
                 variant="ghost"
