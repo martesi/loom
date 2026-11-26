@@ -30,7 +30,7 @@ function setup() {
         relationships: [],
       }) as never
   )
-  const undo = spyOn(UndoService, 'Undo').mockImplementation(
+  const undo = spyOn(UndoService, 'UndoWithRequest').mockImplementation(
     () => Promise.resolve({ applied: false, error: '' }) as never
   )
   return { undo, owner: createCanvasBoardOwner('/repo') }

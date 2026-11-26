@@ -129,8 +129,14 @@ func (r *Repo) CommitOperation(tx *sql.Tx, previousCursor int64) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	capUndoSessionBoundaryValue(r.Path, previousCursor)
+	r.ConfirmCommittedOperation(previousCursor)
 	return nil
+}
+
+// ConfirmCommittedOperation applies the session boundary only after a receipt
+// proves that a transaction committed despite an uncertain Commit error.
+func (r *Repo) ConfirmCommittedOperation(previousCursor int64) {
+	capUndoSessionBoundaryValue(r.Path, previousCursor)
 }
 
 // PrepareOperationLog primes the process-local undo boundary before a caller

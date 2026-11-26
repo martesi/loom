@@ -6,6 +6,19 @@ import "loom/internal/store"
 // the database. Every undo-aware mutation keeps this lock until its state
 // change and operation-log append (or compensation) have both completed.
 func openOperationRepo(repoPath string) (*store.Repo, func(), error) {
+	repo, unlock, err := openOperationRepoRaw(repoPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := recoverReplacementJournals(repo); err != nil {
+		repo.Close()
+		unlock()
+		return nil, nil, err
+	}
+	return repo, unlock, nil
+}
+
+func openOperationRepoRaw(repoPath string) (*store.Repo, func(), error) {
 	unlock := store.LockRepoOperations(repoPath)
 	repo, err := store.Bootstrap(repoPath)
 	if err != nil {

@@ -300,14 +300,19 @@ test('replacement discovery preserves import undo and redo history', async ({
     ]
   )
   expect(imageID).toBeGreaterThan(0)
-  await legacyServiceCall<void>(page, 'imageservice.ts', 'ReplaceMedia', [
+  const replacementResult = await legacyServiceCall<{
+    applied: boolean
+    pendingRecovery: boolean
+  }>(page, 'imageservice.ts', 'ReplaceMedia', [
     repoPath,
     imageID,
     {
       name: 'e2e-replacement.png',
       data: Buffer.from('replacement').toString('base64'),
     },
+    'live-backend-replacement-e2e',
   ])
+  expect(replacementResult?.applied).toBe(true)
   await legacyServiceCall(page, 'imageservice.ts', 'LoadCanvas', [repoPath])
   await page.reload()
   await openAssetsShelf(page)

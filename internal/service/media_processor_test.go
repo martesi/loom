@@ -166,11 +166,12 @@ func TestReplaceMediaPreservesIdentityAndUndoRedo(t *testing.T) {
 	}
 
 	images := &ImageService{}
-	if err := images.ReplaceMedia(repoPath, imageID, ClipboardMedia{
+	replacementResult, err := images.ReplaceMedia(repoPath, imageID, ClipboardMedia{
 		Name: "asset.avif",
 		Data: base64.StdEncoding.EncodeToString([]byte("compressed")),
-	}); err != nil {
-		t.Fatal(err)
+	}, "media-processor-replacement")
+	if err != nil || replacementResult == nil || !replacementResult.Applied {
+		t.Fatalf("replace media: result=%+v err=%v", replacementResult, err)
 	}
 
 	repo, err = store.Bootstrap(repoPath)

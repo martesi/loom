@@ -1,4 +1,4 @@
-import { afterEach, expect, it, mock, spyOn } from 'bun:test'
+import { afterEach, beforeEach, expect, it, mock, spyOn } from 'bun:test'
 import {
   act,
   cleanup,
@@ -23,6 +23,12 @@ const { ImportRecoveryPanel } = await import('./import-recovery-panel')
 afterEach(() => {
   cleanup()
   mock.restore()
+})
+
+beforeEach(() => {
+  spyOn(ImageService, 'ListPendingReplacementRecoveries').mockResolvedValue(
+    [] as never
+  )
 })
 
 it('resolves only selected verified items and confirms safe reservation release', async () => {

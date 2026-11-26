@@ -131,6 +131,13 @@ func serveRendition(w http.ResponseWriter, r *http.Request, processor media.Proc
 		return
 	}
 	defer repo.Close()
+	unlockOperations := store.LockRepoOperations(repo.Path)
+	recoveryErr := recoverReplacementJournals(repo)
+	unlockOperations()
+	if recoveryErr != nil {
+		http.Error(w, recoveryErr.Error(), http.StatusConflict)
+		return
+	}
 
 	deadline := stillRenditionDeadline
 	if store.IsVideoFile(mustImagePath(repo, id)) {
@@ -157,6 +164,15 @@ func serveRendition(w http.ResponseWriter, r *http.Request, processor media.Proc
 		return
 	}
 	defer lease.Release()
+	pendingReplacement, err := pendingReplacementForImage(repo, id)
+	if err != nil {
+		http.Error(w, "cannot inspect replacement recovery state", http.StatusInternalServerError)
+		return
+	}
+	if pendingReplacement != nil {
+		http.Error(w, pendingReplacementResult(*pendingReplacement, "Preview is blocked until replacement recovery is resolved.").Message, http.StatusConflict)
+		return
+	}
 
 	cacheDir := filepath.Join(repo.Path, ".loom", "thumbs")
 	for range 1 {

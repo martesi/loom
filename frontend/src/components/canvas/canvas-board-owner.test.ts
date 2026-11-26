@@ -183,10 +183,10 @@ describe('canvas board owner', () => {
     spyOn(ImageService, 'GetViewport').mockImplementation(
       () => Promise.resolve(null) as never
     )
-    const undo = spyOn(UndoService, 'Undo').mockImplementation(
+    const undo = spyOn(UndoService, 'UndoWithRequest').mockImplementation(
       () => Promise.resolve({ applied: true, error: '' }) as never
     )
-    const redo = spyOn(UndoService, 'Redo').mockImplementation(
+    const redo = spyOn(UndoService, 'RedoWithRequest').mockImplementation(
       () => Promise.resolve({ applied: true, error: '' }) as never
     )
     const { result } = renderHook(() => useBoard('/repo'), { wrapper })
@@ -319,7 +319,7 @@ describe('canvas board owner', () => {
       ImageService,
       'SetGeometryFromDisplayAtRevision'
     ).mockImplementation(() => Promise.resolve() as never)
-    const redo = spyOn(UndoService, 'Redo').mockImplementation(
+    const redo = spyOn(UndoService, 'RedoWithRequest').mockImplementation(
       () => Promise.resolve({ applied: false, error: '' }) as never
     )
     const { result } = renderHook(() => useBoard('/repo'), { wrapper })
@@ -371,7 +371,7 @@ describe('canvas board owner', () => {
       () => Promise.resolve(null) as never
     )
     const log = spyOn(console, 'error').mockImplementation(() => {})
-    const undo = spyOn(UndoService, 'Undo').mockImplementation(
+    const undo = spyOn(UndoService, 'UndoWithRequest').mockImplementation(
       () => Promise.resolve({ applied: false, error: '' }) as never
     )
     const { result } = renderHook(() => useBoard('/repo'), { wrapper })
@@ -399,10 +399,10 @@ describe('canvas board owner', () => {
     spyOn(ImageService, 'GetViewport').mockImplementation(
       () => Promise.resolve(null) as never
     )
-    spyOn(UndoService, 'Undo').mockImplementation(
+    spyOn(UndoService, 'UndoWithRequest').mockImplementation(
       () => Promise.resolve({ applied: true, error: '' }) as never
     )
-    const redo = spyOn(UndoService, 'Redo').mockImplementation(
+    const redo = spyOn(UndoService, 'RedoWithRequest').mockImplementation(
       () => Promise.resolve({ applied: false, error: '' }) as never
     )
     const { result } = renderHook(() => useBoard('/repo'), { wrapper })
@@ -432,7 +432,7 @@ describe('canvas board owner', () => {
     spyOn(ImageService, 'GetViewport').mockImplementation(
       () => Promise.resolve(null) as never
     )
-    spyOn(UndoService, 'Undo').mockImplementation(
+    spyOn(UndoService, 'UndoWithRequest').mockImplementation(
       () =>
         Promise.resolve({ applied: false, error: 'asset was purged' }) as never
     )
@@ -446,7 +446,7 @@ describe('canvas board owner', () => {
   })
 
   it('awaits callbacks without an executor and preserves callback rejection', async () => {
-    spyOn(UndoService, 'Undo').mockImplementation(
+    spyOn(UndoService, 'UndoWithRequest').mockImplementation(
       () => Promise.resolve({ applied: true, error: '' }) as never
     )
     const change = deferred<void>()

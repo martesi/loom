@@ -7,6 +7,7 @@ import {
   type PendingImportBatch,
   type PendingImportResolutionRequest,
   type RecoverableImport,
+  type ReplacementResult,
   type RetainedImportResolutionRequest,
   type RetainedImportResolutionResult,
 } from '../../../bindings/loom/internal/service'
@@ -27,6 +28,9 @@ export function ImportRecoveryPanel({ path, refresh, onRecovered }: Props) {
   const [open, setOpen] = useState(false)
   const [pending, setPending] = useState<PendingImportBatch[]>([])
   const [retained, setRetained] = useState<RecoverableImport[]>([])
+  const [pendingReplacements, setPendingReplacements] = useState<
+    ReplacementResult[]
+  >([])
   const [loading, setLoading] = useState(false)
   const [working, setWorking] = useState<string | null>(null)
   const [error, setError] = useState('')
@@ -61,11 +65,13 @@ export function ImportRecoveryPanel({ path, refresh, onRecovered }: Props) {
     void Promise.all([
       ImageService.ListPendingImportBatches(path),
       ImageService.ListRecoverableImports(path),
+      ImageService.ListPendingReplacementRecoveries(path),
     ])
-      .then(([batches, imports]) => {
+      .then(([batches, imports, replacements]) => {
         if (cancelled) return
         setPending(batches ?? [])
         setRetained(imports ?? [])
+        setPendingReplacements(replacements ?? [])
         setLoading(false)
       })
       .catch((cause: unknown) => {
@@ -82,9 +88,11 @@ export function ImportRecoveryPanel({ path, refresh, onRecovered }: Props) {
     return Promise.all([
       ImageService.ListPendingImportBatches(path),
       ImageService.ListRecoverableImports(path),
-    ]).then(([batches, imports]) => {
+      ImageService.ListPendingReplacementRecoveries(path),
+    ]).then(([batches, imports, replacements]) => {
       setPending(batches ?? [])
       setRetained(imports ?? [])
+      setPendingReplacements(replacements ?? [])
     })
   }
 
@@ -294,7 +302,7 @@ export function ImportRecoveryPanel({ path, refresh, onRecovered }: Props) {
     recoverRetained(request)
   }
 
-  const count = pending.length + retained.length
+  const count = pending.length + retained.length + pendingReplacements.length
 
   return (
     <div data-testid="import-recovery-panel">
@@ -496,6 +504,7 @@ export function ImportRecoveryPanel({ path, refresh, onRecovered }: Props) {
             <ImportRecoverySections
               pending={pending}
               retained={retained}
+              replacementRecoveries={pendingReplacements}
               selectedItems={selectedItems}
               releasedItems={releasedItems}
               releaseConfirmationBatch={releaseConfirmation?.batchID ?? null}

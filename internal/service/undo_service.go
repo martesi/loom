@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"loom/internal/store"
@@ -373,7 +374,7 @@ func applyStep(repo *store.Repo, s OpStep) error {
 		} else if !ok {
 			return purgedErr(p.ImageID)
 		}
-		_, _, err := repo.MoveFile(p.ImageID, p.NewPath)
+		_, _, err := repo.MoveFileExact(p.ImageID, p.NewPath)
 		return err
 
 	case stepRepresentation:
@@ -515,9 +516,12 @@ func applyStep(repo *store.Repo, s OpStep) error {
 type UndoService struct{}
 
 type UndoResult struct {
-	Applied bool   `json:"applied"`
-	Kind    string `json:"kind,omitempty"`
-	Error   string `json:"error,omitempty"`
+	Applied         bool   `json:"applied"`
+	Kind            string `json:"kind,omitempty"`
+	Error           string `json:"error,omitempty"`
+	PendingRecovery bool   `json:"pendingRecovery,omitempty"`
+	RequestID       string `json:"requestId,omitempty"`
+	Phase           string `json:"phase,omitempty"`
 	// Geometry contains complete committed rectangles for geometry history only.
 	Geometry []GeometryUpdate `json:"geometry,omitempty"`
 }
@@ -547,20 +551,66 @@ func (s *UndoService) State(repoPath string) (*UndoState, error) {
 }
 
 func (s *UndoService) Undo(repoPath string) (*UndoResult, error) {
-	return s.replay(repoPath, false)
+	requestID, err := newReplacementRequestID()
+	if err != nil {
+		return nil, err
+	}
+	return s.replay(repoPath, false, requestID)
 }
 
 func (s *UndoService) Redo(repoPath string) (*UndoResult, error) {
-	return s.replay(repoPath, true)
+	requestID, err := newReplacementRequestID()
+	if err != nil {
+		return nil, err
+	}
+	return s.replay(repoPath, true, requestID)
 }
 
-func (s *UndoService) replay(repoPath string, redo bool) (*UndoResult, error) {
-	repo, unlock, err := openOperationRepo(repoPath)
+func (s *UndoService) UndoWithRequest(repoPath, requestID string) (*UndoResult, error) {
+	return s.replay(repoPath, false, requestID)
+}
+
+func (s *UndoService) RedoWithRequest(repoPath, requestID string) (*UndoResult, error) {
+	return s.replay(repoPath, true, requestID)
+}
+
+func (s *UndoService) replay(repoPath string, redo bool, requestID string) (*UndoResult, error) {
+	if requestID == "" || len(requestID) > 128 {
+		return nil, fmt.Errorf("history replay request ID is required")
+	}
+	repo, unlock, err := openOperationRepoRaw(repoPath)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
 	defer repo.Close()
+	requestHash := replacementReplayRequestHash(repo.Path, redo, nil)
+	if receipt, found, err := readReplacementReceipt(repo, requestID, requestHash); found || err != nil {
+		if err != nil {
+			return nil, err
+		}
+		if receipt.PendingRecovery {
+			if err := recoverReplacementJournals(repo); err != nil {
+				var pending *replacementRecoveryError
+				if errors.As(err, &pending) {
+					receipt.Message = pending.Error()
+				}
+				return replacementResultToUndo(receipt), nil
+			}
+			receipt, _, err = readReplacementReceipt(repo, requestID, requestHash)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return replacementResultToUndo(receipt), nil
+	}
+	if err := recoverReplacementJournals(repo); err != nil {
+		var pending *replacementRecoveryError
+		if errors.As(err, &pending) {
+			return &UndoResult{PendingRecovery: true, RequestID: pending.Journal.RequestID, Phase: pending.Journal.Phase, Error: pending.Error()}, nil
+		}
+		return nil, err
+	}
 
 	handled, op, geometry, err := replayAtomicHistory(repo, redo)
 	if err != nil {
@@ -574,6 +624,13 @@ func (s *UndoService) replay(repoPath string, redo bool) (*UndoResult, error) {
 	}
 	if handled {
 		return &UndoResult{Applied: true, Kind: op.Kind, Geometry: geometry}, nil
+	}
+	if op.Kind == stepRepresentation {
+		result, err := beginReplacementHistoryReplay(repo, op, redo, requestID)
+		if err != nil {
+			return &UndoResult{Applied: false, Kind: op.Kind, Error: err.Error()}, nil
+		}
+		return replacementResultToUndo(result), nil
 	}
 	// The remaining legacy steps perform filesystem work or own nested store
 	// transactions. Their selection, replay and cursor are not cross-process
@@ -593,4 +650,14 @@ func (s *UndoService) replay(repoPath string, redo bool) (*UndoResult, error) {
 		return nil, err
 	}
 	return &UndoResult{Applied: true, Kind: op.Kind}, nil
+}
+
+func replacementResultToUndo(result *ReplacementResult) *UndoResult {
+	if result == nil {
+		return &UndoResult{Applied: false}
+	}
+	return &UndoResult{
+		Applied: result.Applied, Kind: result.Kind, Error: result.Message,
+		PendingRecovery: result.PendingRecovery, RequestID: result.RequestID, Phase: result.Phase,
+	}
 }

@@ -4,12 +4,14 @@ import {
   ImportResolutionStatus,
   type PendingImportBatch,
   type RecoverableImport,
+  type ReplacementResult,
 } from '../../../bindings/loom/internal/service'
 import { Button } from '../ui/button'
 
 interface Props {
   pending: PendingImportBatch[]
   retained: RecoverableImport[]
+  replacementRecoveries: ReplacementResult[]
   selectedItems: Record<string, number[]>
   releasedItems: Record<string, number[]>
   releaseConfirmationBatch: string | null
@@ -27,6 +29,7 @@ interface Props {
 export function ImportRecoverySections({
   pending,
   retained,
+  replacementRecoveries,
   selectedItems,
   releasedItems,
   releaseConfirmationBatch,
@@ -42,6 +45,61 @@ export function ImportRecoverySections({
 }: Props) {
   return (
     <>
+      {replacementRecoveries.length > 0 && (
+        <section
+          className="mt-3 grid gap-2 rounded border border-warning/40 p-3"
+          data-testid="pending-replacement-recoveries"
+        >
+          <h3 className="text-sm font-semibold">
+            <Trans>Replacement recovery needs attention</Trans>
+          </h3>
+          {replacementRecoveries.map((replacement) => (
+            <div
+              key={replacement.requestId}
+              data-testid="pending-replacement-recovery"
+              className="grid gap-1 break-all text-xs"
+            >
+              <span>{replacement.message}</span>
+              <span className="text-ink-subtle">
+                <Trans>Request ID</Trans>: {replacement.requestId};{' '}
+                <Trans>Phase</Trans>: {replacement.phase || 'unknown'}
+              </span>
+              <dl className="grid gap-1 text-ink-subtle">
+                <EvidenceLine
+                  label={<Trans>Current path</Trans>}
+                  value={replacement.currentPath || '—'}
+                />
+                <EvidenceLine
+                  label={<Trans>Outgoing stash</Trans>}
+                  value={replacement.outgoingPath || '—'}
+                />
+                <EvidenceLine
+                  label={<Trans>Incoming stash</Trans>}
+                  value={replacement.incomingPath || '—'}
+                />
+                <EvidenceLine
+                  label={<Trans>Target path</Trans>}
+                  value={replacement.activePath || '—'}
+                />
+                <EvidenceLine
+                  label={<Trans>Current fingerprint</Trans>}
+                  value={replacement.currentFingerprint || '—'}
+                />
+                <EvidenceLine
+                  label={<Trans>Incoming fingerprint</Trans>}
+                  value={replacement.incomingFingerprint || '—'}
+                />
+              </dl>
+            </div>
+          ))}
+          <p className="text-xs text-ink-subtle">
+            <Trans>
+              Loom preserves ambiguous files and blocks related changes until
+              the journal can be verified. Do not move or edit these paths.
+            </Trans>
+          </p>
+        </section>
+      )}
       <section className="mt-5 grid gap-3">
         <h3 className="text-sm font-semibold">
           <Trans>Interrupted imports</Trans>

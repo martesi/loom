@@ -2,8 +2,10 @@ import { t } from '@lingui/core/macro'
 import { Plural, Trans } from '@lingui/react/macro'
 import { useEffect, useRef, useState } from 'react'
 import {
+  type ClipboardMedia,
   ImageService,
   MediaService,
+  type ReplacementResult,
   SettingsService,
 } from '../../bindings/loom/internal/service'
 
@@ -34,6 +36,12 @@ export function CompressionDialog({
   const [settingsLoaded, setSettingsLoaded] = useState(false)
   const [summary, setSummary] = useState('')
   const [error, setError] = useState('')
+  const [replacementAttempts, setReplacementAttempts] = useState<
+    Record<number, { requestID: string; media: ClipboardMedia }>
+  >({})
+  const [pendingReplacements, setPendingReplacements] = useState<
+    ReplacementResult[]
+  >([])
   const closeRef = useRef(onClose)
   closeRef.current = onClose
   const runningRef = useRef(running)
@@ -92,6 +100,7 @@ export function CompressionDialog({
     setRunning(true)
     setSummary('')
     setError('')
+    setPendingReplacements([])
     let compressed = 0
     const failures: string[] = []
 
@@ -106,15 +115,47 @@ export function CompressionDialog({
 
       for (const id of assetIds) {
         try {
-          const media = await MediaService.Transcode(path, id, {
-            targetExt: format === 'jpeg' ? '.jpg' : `.${format}`,
-            quality,
-            maxWidth: positiveInt(maxWidth) ?? 0,
-            maxHeight: positiveInt(maxHeight) ?? 0,
-          })
+          let replacement = replacementAttempts[id]
+          const media =
+            replacement?.media ??
+            (await MediaService.Transcode(path, id, {
+              targetExt: format === 'jpeg' ? '.jpg' : `.${format}`,
+              quality,
+              maxWidth: positiveInt(maxWidth) ?? 0,
+              maxHeight: positiveInt(maxHeight) ?? 0,
+            }))
           if (!media) throw new Error(t`Media transcode returned no result`)
           if (mode === 'replace') {
-            await ImageService.ReplaceMedia(path, id, media)
+            replacement ??= { requestID: crypto.randomUUID(), media }
+            setReplacementAttempts((current) => ({
+              ...current,
+              [id]: replacement,
+            }))
+            const result = await ImageService.ReplaceMedia(
+              path,
+              id,
+              media,
+              replacement.requestID
+            )
+            if (!result) throw new Error(t`Replacement returned no result`)
+            if (result.pendingRecovery) {
+              setPendingReplacements((current) => [
+                ...current.filter((item) => item.imageId !== id),
+                result,
+              ])
+              failures.push(
+                result.message || t`Replacement recovery is pending`
+              )
+              continue
+            }
+            setReplacementAttempts((current) => {
+              const next = { ...current }
+              delete next[id]
+              return next
+            })
+            setPendingReplacements((current) =>
+              current.filter((item) => item.imageId !== id)
+            )
           } else {
             await ImageService.ImportMedia(path, [media], false, 0, 0)
           }
@@ -269,6 +310,56 @@ export function CompressionDialog({
               {error}
             </pre>
           )}
+          {pendingReplacements.map((replacement) => (
+            <div
+              key={replacement.requestId}
+              role="alert"
+              data-testid="pending-replacement-recovery"
+              className="grid gap-1 rounded border border-warning/40 p-3 text-sm"
+            >
+              <strong>
+                <Trans>Replacement recovery needs attention</Trans>
+              </strong>
+              <span>{replacement.message}</span>
+              <span className="break-all text-xs text-ink-subtle">
+                <Trans>Request ID</Trans>: {replacement.requestId};{' '}
+                <Trans>Phase</Trans>: {replacement.phase || 'unknown'}
+              </span>
+              <dl className="grid gap-1 break-all text-xs text-ink-subtle">
+                <EvidenceRow
+                  label={t`Current path`}
+                  value={replacement.currentPath}
+                />
+                <EvidenceRow
+                  label={t`Outgoing stash`}
+                  value={replacement.outgoingPath}
+                />
+                <EvidenceRow
+                  label={t`Incoming stash`}
+                  value={replacement.incomingPath}
+                />
+                <EvidenceRow
+                  label={t`Target path`}
+                  value={replacement.activePath}
+                />
+                <EvidenceRow
+                  label={t`Current fingerprint`}
+                  value={replacement.currentFingerprint}
+                />
+                <EvidenceRow
+                  label={t`Incoming fingerprint`}
+                  value={replacement.incomingFingerprint}
+                />
+              </dl>
+              <span className="text-xs text-ink-subtle">
+                <Trans>
+                  Loom will not overwrite, delete, or compensate files
+                  automatically. Retry with the same request or inspect these
+                  paths before taking other action.
+                </Trans>
+              </span>
+            </div>
+          ))}
           <button
             type="button"
             className="h-9 rounded-sm bg-primary px-3 font-semibold text-white disabled:opacity-40"
@@ -286,6 +377,15 @@ export function CompressionDialog({
 function positiveInt(value: string) {
   const parsed = Number(value)
   return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined
+}
+
+function EvidenceRow({ label, value }: { label: string; value?: string }) {
+  return (
+    <div>
+      <dt className="inline font-semibold">{label}: </dt>
+      <dd className="inline">{value || '—'}</dd>
+    </div>
+  )
 }
 
 function isImageFormat(value: string): value is ImageFormat {

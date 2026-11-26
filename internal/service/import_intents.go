@@ -95,7 +95,9 @@ func reserveImportPaths(repo *store.Repo, items []preparedImport, place bool, x,
 		for suffix := 0; ; suffix++ {
 			candidate := suffixedPath(base, suffix)
 			var reserved bool
-			if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images WHERE file_path = ?) OR EXISTS(SELECT 1 FROM import_intents WHERE file_path = ?)`, candidate, candidate).Scan(&reserved); err != nil {
+			if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images WHERE file_path = ?)
+				OR EXISTS(SELECT 1 FROM import_intents WHERE file_path = ?)
+				OR EXISTS(SELECT 1 FROM replacement_path_reservations WHERE path = ?)`, candidate, candidate, candidate).Scan(&reserved); err != nil {
 				return "", nil, err
 			}
 			if reserved {

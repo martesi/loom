@@ -106,8 +106,12 @@ func (r *Repo) registerImage(ctx context.Context, path string) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
+	discoveryGeneration, err := r.discoveryGeneration()
+	if err != nil {
+		return 0, err
+	}
 	var retained bool
-	err := r.DB.QueryRowContext(ctx, `SELECT retained FROM import_recovery WHERE file_path = ?`, path).Scan(&retained)
+	err = r.DB.QueryRowContext(ctx, `SELECT retained FROM import_recovery WHERE file_path = ?`, path).Scan(&retained)
 	if err == nil && retained {
 		return 0, nil
 	}
@@ -115,7 +119,8 @@ func (r *Repo) registerImage(ctx context.Context, path string) (int, error) {
 		return 0, err
 	}
 	var pending bool
-	if err := r.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM import_intents WHERE file_path = ?)`, path).Scan(&pending); err != nil {
+	if err := r.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM import_intents WHERE file_path = ?)
+		OR EXISTS(SELECT 1 FROM replacement_path_reservations WHERE path = ?)`, path, path).Scan(&pending); err != nil {
 		return 0, err
 	}
 	if pending {
@@ -143,14 +148,16 @@ func (r *Repo) registerImage(ctx context.Context, path string) (int, error) {
 	marker = fmt.Sprintf("stat:%d:%d", stableInfo.Size(), stableInfo.ModTime().UnixNano())
 	if isNew {
 		res, err := r.DB.Exec(`INSERT OR IGNORE INTO images (file_path, file_size, content_hash, source_fingerprint, source_revision)
-			SELECT ?, ?, ?, ?, 1 WHERE NOT EXISTS (SELECT 1 FROM import_intents WHERE file_path = ?)`, path, stableInfo.Size(), marker, fingerprint, path)
+			SELECT ?, ?, ?, ?, 1 WHERE NOT EXISTS (SELECT 1 FROM import_intents WHERE file_path = ?)
+			AND NOT EXISTS (SELECT 1 FROM replacement_path_reservations WHERE path = ?)
+			AND COALESCE((SELECT value FROM settings WHERE scope='repo' AND key='discovery_generation'),'0') = ?`, path, stableInfo.Size(), marker, fingerprint, path, path, discoveryGeneration)
 		if err != nil {
 			return 0, err
 		}
 		n, err := res.RowsAffected()
 		return int(n), err
 	}
-	res, err := r.DB.Exec(`UPDATE images SET file_size = ?, width = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN NULL ELSE width END, height = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN NULL ELSE height END, content_hash = ?, source_revision = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN source_revision + 1 WHEN source_revision = 0 THEN 1 ELSE source_revision END, source_fingerprint = ? WHERE file_path = ? AND NOT EXISTS (SELECT 1 FROM import_recovery ir WHERE ir.image_id = images.id AND ir.retained = 1) AND NOT EXISTS (SELECT 1 FROM import_intents WHERE file_path = images.file_path)`, stableInfo.Size(), fingerprint, fingerprint, marker, fingerprint, fingerprint, path)
+	res, err := r.DB.Exec(`UPDATE images SET file_size = ?, width = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN NULL ELSE width END, height = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN NULL ELSE height END, content_hash = ?, source_revision = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN source_revision + 1 WHEN source_revision = 0 THEN 1 ELSE source_revision END, source_fingerprint = ? WHERE file_path = ? AND NOT EXISTS (SELECT 1 FROM import_recovery ir WHERE ir.image_id = images.id AND ir.retained = 1) AND NOT EXISTS (SELECT 1 FROM import_intents WHERE file_path = images.file_path) AND NOT EXISTS (SELECT 1 FROM replacement_path_reservations WHERE path = images.file_path) AND COALESCE((SELECT value FROM settings WHERE scope='repo' AND key='discovery_generation'),'0') = ?`, stableInfo.Size(), fingerprint, fingerprint, marker, fingerprint, fingerprint, path, discoveryGeneration)
 	if err != nil {
 		return 0, err
 	}
@@ -162,6 +169,10 @@ func (r *Repo) registerImage(ctx context.Context, path string) (int, error) {
 // created before source fingerprints existed. It does not detect replacements
 // for already-initialized rows and does not advance the source revision.
 func (r *Repo) EnsureSourceFingerprint(ctx context.Context, imageID int64) (Image, error) {
+	discoveryGeneration, err := r.discoveryGeneration()
+	if err != nil {
+		return Image{}, err
+	}
 	image, err := r.GetImageByID(imageID)
 	if err != nil || image.SourceFingerprint != "" {
 		return image, err
@@ -178,7 +189,7 @@ func (r *Repo) EnsureSourceFingerprint(ctx context.Context, imageID int64) (Imag
 		return image, fmt.Errorf("fingerprint %s: %w", image.FilePath, err)
 	}
 	marker := fmt.Sprintf("stat:%d:%d", stableInfo.Size(), stableInfo.ModTime().UnixNano())
-	if _, err := r.DB.Exec(`UPDATE images SET file_size = ?, width = NULL, height = NULL, content_hash = ?, source_fingerprint = ?, source_revision = CASE WHEN source_revision = 0 THEN 1 ELSE source_revision END WHERE id = ? AND file_path = ? AND (source_fingerprint IS NULL OR source_fingerprint = '')`, stableInfo.Size(), marker, fingerprint, imageID, image.FilePath); err != nil {
+	if _, err := r.DB.Exec(`UPDATE images SET file_size = ?, width = NULL, height = NULL, content_hash = ?, source_fingerprint = ?, source_revision = CASE WHEN source_revision = 0 THEN 1 ELSE source_revision END WHERE id = ? AND file_path = ? AND (source_fingerprint IS NULL OR source_fingerprint = '') AND NOT EXISTS (SELECT 1 FROM replacement_path_reservations WHERE path = images.file_path) AND COALESCE((SELECT value FROM settings WHERE scope='repo' AND key='discovery_generation'),'0') = ?`, stableInfo.Size(), marker, fingerprint, imageID, image.FilePath, discoveryGeneration); err != nil {
 		return image, err
 	}
 	image, err = r.GetImageByID(imageID)
@@ -195,6 +206,10 @@ func (r *Repo) scanAndRegisterImages(ctx context.Context, advanceRevision bool) 
 }
 
 func (r *Repo) scanAndRegisterImagesWithFingerprint(ctx context.Context, advanceRevision bool, fingerprint func(context.Context, string) (string, os.FileInfo, error)) (int, error) {
+	discoveryGeneration, err := r.discoveryGeneration()
+	if err != nil {
+		return 0, err
+	}
 	found, err := r.mediaFiles(ctx)
 	if err != nil {
 		return 0, err
@@ -244,7 +259,9 @@ func (r *Repo) scanAndRegisterImagesWithFingerprint(ctx context.Context, advance
 		}
 		statMarker := fmt.Sprintf("stat:%d:%d", item.info.Size(), item.info.ModTime().UnixNano())
 		res, err := r.DB.Exec(`INSERT OR IGNORE INTO images (file_path, file_size, content_hash, source_fingerprint, source_revision)
-			SELECT ?, ?, ?, ?, 1 WHERE NOT EXISTS (SELECT 1 FROM import_intents WHERE file_path = ?)`, item.path, item.info.Size(), statMarker, item.fingerprint, item.path)
+			SELECT ?, ?, ?, ?, 1 WHERE NOT EXISTS (SELECT 1 FROM import_intents WHERE file_path = ?)
+			AND NOT EXISTS (SELECT 1 FROM replacement_path_reservations WHERE path = ?)
+			AND COALESCE((SELECT value FROM settings WHERE scope='repo' AND key='discovery_generation'),'0') = ?`, item.path, item.info.Size(), statMarker, item.fingerprint, item.path, item.path, discoveryGeneration)
 		if err != nil {
 			return changed, err
 		}
@@ -260,7 +277,7 @@ func (r *Repo) scanAndRegisterImagesWithFingerprint(ctx context.Context, advance
 		if advanceRevision {
 			increment = 1
 		}
-		res, err = r.DB.Exec(`UPDATE images SET file_size = ?, width = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN NULL ELSE width END, height = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN NULL ELSE height END, content_hash = ?, source_revision = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN source_revision + ? WHEN source_revision = 0 THEN 1 ELSE source_revision END, source_fingerprint = ? WHERE file_path = ? AND NOT EXISTS (SELECT 1 FROM import_recovery ir WHERE ir.image_id = images.id AND ir.retained = 1) AND NOT EXISTS (SELECT 1 FROM import_intents WHERE file_path = images.file_path) AND (file_size IS NOT ? OR COALESCE(content_hash, '') != ? OR source_fingerprint IS NOT ? OR source_revision = 0)`, item.info.Size(), item.fingerprint, item.fingerprint, statMarker, item.fingerprint, increment, item.fingerprint, item.path, item.info.Size(), statMarker, item.fingerprint)
+		res, err = r.DB.Exec(`UPDATE images SET file_size = ?, width = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN NULL ELSE width END, height = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN NULL ELSE height END, content_hash = ?, source_revision = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN source_revision + ? WHEN source_revision = 0 THEN 1 ELSE source_revision END, source_fingerprint = ? WHERE file_path = ? AND NOT EXISTS (SELECT 1 FROM import_recovery ir WHERE ir.image_id = images.id AND ir.retained = 1) AND NOT EXISTS (SELECT 1 FROM import_intents WHERE file_path = images.file_path) AND NOT EXISTS (SELECT 1 FROM replacement_path_reservations WHERE path = images.file_path) AND COALESCE((SELECT value FROM settings WHERE scope='repo' AND key='discovery_generation'),'0') = ? AND (file_size IS NOT ? OR COALESCE(content_hash, '') != ? OR source_fingerprint IS NOT ? OR source_revision = 0)`, item.info.Size(), item.fingerprint, item.fingerprint, statMarker, item.fingerprint, increment, item.fingerprint, item.path, discoveryGeneration, item.info.Size(), statMarker, item.fingerprint)
 		if err != nil {
 			return changed, err
 		}
@@ -277,7 +294,9 @@ func (r *Repo) scanAndRegisterImagesWithFingerprint(ctx context.Context, advance
 }
 
 func (r *Repo) mediaFiles(ctx context.Context) ([]string, error) {
-	rows, err := r.DB.QueryContext(ctx, `SELECT file_path FROM import_recovery WHERE retained = 1 UNION SELECT file_path FROM import_intents`)
+	rows, err := r.DB.QueryContext(ctx, `SELECT file_path FROM import_recovery WHERE retained = 1
+		UNION SELECT file_path FROM import_intents
+		UNION SELECT path FROM replacement_path_reservations`)
 	if err != nil {
 		return nil, err
 	}
@@ -503,6 +522,15 @@ const imageSelectCols = `
 	COALESCE((SELECT p.text FROM prompts p WHERE p.id = images.prompt_id), ''),
 	COALESCE(group_id, 0), created_at, COALESCE(source_fingerprint, ''), source_revision`
 
+func (r *Repo) discoveryGeneration() (string, error) {
+	var generation string
+	err := r.DB.QueryRow(`SELECT value FROM settings WHERE scope='repo' AND key='discovery_generation'`).Scan(&generation)
+	if err == sql.ErrNoRows {
+		return "0", nil
+	}
+	return generation, err
+}
+
 func scanImage(scanner interface {
 	Scan(dest ...any) error
 }) (Image, error) {
@@ -648,9 +676,15 @@ func (r *Repo) SetTrashed(imageID int64, trashed bool) error {
 			// in practice) — nothing sane to move, just flip the flag.
 			return r.setTrashedFlag(imageID, trashed, curPath)
 		}
-		destPath = uniquePath(filepath.Join(trashRoot, relFromRoot))
+		destPath, err = r.availableMovePath(imageID, filepath.Join(trashRoot, relFromRoot), false)
+		if err != nil {
+			return err
+		}
 	case !trashed && underTrash:
-		destPath = uniquePath(filepath.Join(r.Path, relFromTrash))
+		destPath, err = r.availableMovePath(imageID, filepath.Join(r.Path, relFromTrash), false)
+		if err != nil {
+			return err
+		}
 	default: // !trashed && !underTrash
 		// Already physically outside trash (e.g. a redundant/replayed
 		// restore) — just make sure the flag agrees.
@@ -707,6 +741,16 @@ func (r *Repo) setTrashedFlag(imageID int64, trashed bool, filePath string) erro
 // back) go through this same function — see moveFileStepPayload in
 // undo_service.go, which just swaps which path is old vs new.
 func (r *Repo) MoveFile(imageID int64, newRelPath string) (oldPath, newPath string, err error) {
+	return r.moveFile(imageID, newRelPath, false)
+}
+
+// MoveFileExact replays a persisted destination without inventing a suffix.
+// It fails closed when the original destination is now reserved or occupied.
+func (r *Repo) MoveFileExact(imageID int64, newRelPath string) (oldPath, newPath string, err error) {
+	return r.moveFile(imageID, newRelPath, true)
+}
+
+func (r *Repo) moveFile(imageID int64, newRelPath string, exact bool) (oldPath, newPath string, err error) {
 	oldPath, err = r.GetFilePath(imageID)
 	if err != nil {
 		return "", "", err
@@ -716,7 +760,10 @@ func (r *Repo) MoveFile(imageID int64, newRelPath string) (oldPath, newPath stri
 	if err != nil {
 		return "", "", err
 	}
-	newAbs = uniquePath(newAbs)
+	newAbs, err = r.availableMovePath(imageID, newAbs, exact)
+	if err != nil {
+		return "", "", err
+	}
 
 	if _, statErr := os.Stat(oldPath); statErr != nil {
 		return "", "", fmt.Errorf("source file not found: %w", statErr)
@@ -737,6 +784,53 @@ func (r *Repo) MoveFile(imageID int64, newRelPath string) (oldPath, newPath stri
 		return "", "", err
 	}
 	return oldPath, newAbs, nil
+}
+
+func (r *Repo) availableMovePath(imageID int64, requested string, exact bool) (string, error) {
+	tx, err := r.DB.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE operation_log SET seq=seq WHERE 0`); err != nil {
+		return "", fmt.Errorf("lock move destination selection: %w", err)
+	}
+	for suffix := 0; ; suffix++ {
+		candidate := suffixedFilePath(requested, suffix)
+		var reserved bool
+		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images WHERE file_path=? AND id!=?)
+			OR EXISTS(SELECT 1 FROM import_intents WHERE file_path=?)
+			OR EXISTS(SELECT 1 FROM replacement_path_reservations WHERE path=?)`, candidate, imageID, candidate, candidate).Scan(&reserved); err != nil {
+			return "", err
+		}
+		if reserved {
+			if exact {
+				return "", fmt.Errorf("move destination is reserved or registered: %s", candidate)
+			}
+			continue
+		}
+		if _, err := os.Lstat(candidate); err == nil {
+			if exact {
+				return "", fmt.Errorf("move destination already exists: %s", candidate)
+			}
+			continue
+		} else if !os.IsNotExist(err) {
+			return "", fmt.Errorf("inspect move destination %s: %w", candidate, err)
+		}
+		if err := tx.Commit(); err != nil {
+			return "", err
+		}
+		return candidate, nil
+	}
+}
+
+func suffixedFilePath(path string, suffix int) string {
+	if suffix == 0 {
+		return path
+	}
+	extension := filepath.Ext(path)
+	base := strings.TrimSuffix(path, extension)
+	return fmt.Sprintf("%s (%d)%s", base, suffix, extension)
 }
 
 // SwapRepresentation replaces the active file for an image while keeping the

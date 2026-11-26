@@ -36,7 +36,7 @@ it('passes the complete replay result to the awaited change callback', async () 
       { imageId: 2, x: null, y: null, w: 150, h: 110 },
     ],
   }
-  spyOn(UndoService, 'Undo').mockImplementation(
+  spyOn(UndoService, 'UndoWithRequest').mockImplementation(
     () => Promise.resolve(replay) as never
   )
   const onChange = mock(
@@ -137,7 +137,7 @@ it('replays every batch member, preserves unrelated display, and reconciles sema
       }) as never
   )
   const replay = [rect(1, 1, 2, null, null), rect(2, 40, 50, 150, 110)]
-  spyOn(UndoService, 'Undo')
+  spyOn(UndoService, 'UndoWithRequest')
     .mockImplementationOnce(() => {
       relationships = [
         { id: 9, sourceImageId: 1, derivedImageId: 2, pairingOrder: 1 },
@@ -213,7 +213,7 @@ it('drops null positions from the placement board rather than placing at zero', 
         relationships: [],
       }) as never
   )
-  spyOn(UndoService, 'Undo').mockImplementation(() => {
+  spyOn(UndoService, 'UndoWithRequest').mockImplementation(() => {
     geometry = [rect(1, null, null, null, null), ...initial.slice(1)]
     return Promise.resolve({ applied: true, geometry: [geometry[0]] }) as never
   })
@@ -292,7 +292,7 @@ it('reconciles a superseded replay before a queued geometry commit', async () =>
         relationships: [],
       }) as never
   )
-  spyOn(UndoService, 'Undo').mockImplementation(() => {
+  spyOn(UndoService, 'UndoWithRequest').mockImplementation(() => {
     geometry = [rect(1, 20, 20, 150, 110), ...initial.slice(1)]
     return Promise.resolve({
       applied: true,
@@ -357,7 +357,7 @@ it('drops a failed superseding reconciliation instead of replaying it on a later
         relationships: [],
       }) as never
   )
-  spyOn(UndoService, 'Undo').mockResolvedValue({
+  spyOn(UndoService, 'UndoWithRequest').mockResolvedValue({
     applied: true,
     kind: 'geometry',
     geometry: [rect(1, 20, 20, 150, 110)],
@@ -406,7 +406,7 @@ it('releases a replay waiting on a superseding refresh when disposed', async () 
   spyOn(ImageService, 'LoadCanvas')
     .mockImplementationOnce(() => replayLoad as never)
     .mockImplementationOnce(() => independentLoad as never)
-  spyOn(UndoService, 'Undo').mockResolvedValue({
+  spyOn(UndoService, 'UndoWithRequest').mockResolvedValue({
     applied: true,
     kind: 'geometry',
     geometry: [initial[0]],
@@ -428,7 +428,7 @@ it('releases a replay waiting on a superseding refresh when disposed', async () 
 })
 
 it('does not refresh for no-op or error replay results', async () => {
-  spyOn(UndoService, 'Undo')
+  spyOn(UndoService, 'UndoWithRequest')
     .mockResolvedValueOnce({ applied: false } as never)
     .mockResolvedValueOnce({ applied: true, error: 'Cannot undo' } as never)
   const load = spyOn(ImageService, 'LoadCanvas')
@@ -442,7 +442,7 @@ it('does not refresh for no-op or error replay results', async () => {
 })
 
 it('does not dispatch a queued replay after a repository switch', async () => {
-  const undo = spyOn(UndoService, 'Undo').mockImplementation(
+  const undo = spyOn(UndoService, 'UndoWithRequest').mockImplementation(
     () => Promise.resolve({ applied: true }) as never
   )
   const { result, rerender } = renderHook(({ path }) => useBoard(path), {
@@ -473,7 +473,9 @@ it('ignores an in-flight replay response after a repository switch', async () =>
   const response = new Promise<{ applied: boolean }>((resolve) => {
     release = resolve
   })
-  spyOn(UndoService, 'Undo').mockImplementation(() => response as never)
+  spyOn(UndoService, 'UndoWithRequest').mockImplementation(
+    () => response as never
+  )
   const load = spyOn(ImageService, 'LoadCanvas')
   const { result, rerender } = renderHook(({ path }) => useBoard(path), {
     initialProps: { path: '/one' },

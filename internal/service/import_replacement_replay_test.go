@@ -20,10 +20,11 @@ func TestImportReplacementReplaySurvivesCanvasDiscovery(t *testing.T) {
 	}
 	id := ids[0]
 	originalPath := filepath.Join(root, "source.png")
-	if err := images.ReplaceMedia(root, id, ClipboardMedia{
+	replacement, err := images.ReplaceMedia(root, id, ClipboardMedia{
 		Name: "replacement.png", Data: base64.StdEncoding.EncodeToString([]byte("replacement bytes")),
-	}); err != nil {
-		t.Fatal(err)
+	}, "import-replay-replacement")
+	if err != nil || replacement == nil || !replacement.Applied {
+		t.Fatalf("replace media: result=%+v err=%v", replacement, err)
 	}
 	if _, err := images.LoadCanvas(root); err != nil {
 		t.Fatalf("canvas discovery after replacement: %v", err)
@@ -54,10 +55,11 @@ func TestReplacementRedoRejectsModifiedCurrentFileAtomically(t *testing.T) {
 	}
 	id := ids[0]
 	originalPath := filepath.Join(root, "source.png")
-	if err := images.ReplaceMedia(root, id, ClipboardMedia{
+	replacement, err := images.ReplaceMedia(root, id, ClipboardMedia{
 		Name: "replacement.png", Data: base64.StdEncoding.EncodeToString([]byte("replacement")),
-	}); err != nil {
-		t.Fatal(err)
+	}, "modified-replay-replacement")
+	if err != nil || replacement == nil || !replacement.Applied {
+		t.Fatalf("replace media: result=%+v err=%v", replacement, err)
 	}
 	undo := &UndoService{}
 	result, err := undo.Undo(root)
@@ -85,7 +87,7 @@ func TestReplacementRedoRejectsModifiedCurrentFileAtomically(t *testing.T) {
 	}
 }
 
-func TestReplacementReplayRollsFilesBackWhenDatabaseUpdateFails(t *testing.T) {
+func TestReplacementReplayJournalRollsForwardAfterDatabaseUpdateFailure(t *testing.T) {
 	root := t.TempDir()
 	images := &ImageService{}
 	ids, err := images.ImportMedia(root, []ClipboardMedia{{
@@ -95,10 +97,11 @@ func TestReplacementReplayRollsFilesBackWhenDatabaseUpdateFails(t *testing.T) {
 		t.Fatalf("import: ids=%v err=%v", ids, err)
 	}
 	id := ids[0]
-	if err := images.ReplaceMedia(root, id, ClipboardMedia{
+	replacement, err := images.ReplaceMedia(root, id, ClipboardMedia{
 		Name: "replacement.png", Data: base64.StdEncoding.EncodeToString([]byte("replacement")),
-	}); err != nil {
-		t.Fatal(err)
+	}, "db-fault-replacement")
+	if err != nil || replacement == nil || !replacement.Applied {
+		t.Fatalf("replace media: result=%+v err=%v", replacement, err)
 	}
 	repo, err := store.Bootstrap(root)
 	if err != nil {
@@ -111,20 +114,88 @@ func TestReplacementReplayRollsFilesBackWhenDatabaseUpdateFails(t *testing.T) {
 	if err := repo.Close(); err != nil {
 		t.Fatal(err)
 	}
-	result, err := (&UndoService{}).Undo(root)
-	if err != nil || result.Applied || result.Error == "" {
-		t.Fatalf("database failure should reject undo: result=%+v err=%v", result, err)
+	undo := &UndoService{}
+	result, err := undo.UndoWithRequest(root, "db-fault-undo")
+	if err != nil || result.Applied || !result.PendingRecovery || result.RequestID != "db-fault-undo" {
+		t.Fatalf("database failure should leave an explicit pending journal: result=%+v err=%v", result, err)
 	}
-	assertImportedImageState(t, root, id, filepath.Join(root, "replacement.png"), "replacement", 7, 11)
+	originalPath := filepath.Join(root, "source.png")
+	replacementPath := filepath.Join(root, "replacement.png")
+	if data, err := os.ReadFile(originalPath); err != nil || string(data) != "original" {
+		t.Fatalf("roll-forward target original=%q err=%v", data, err)
+	}
+	if _, err := os.Stat(replacementPath); !os.IsNotExist(err) {
+		t.Fatalf("replacement source should be absent in exact target layout: %v", err)
+	}
 	repo, err = store.Bootstrap(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repo.Close()
-	state, err := (&UndoService{}).State(root)
-	if err != nil || !state.CanUndo || state.CanRedo {
-		t.Fatalf("failed replay moved history cursor: state=%+v err=%v", state, err)
+	image, err := repo.GetImageByID(id)
+	if err != nil || image.FilePath != replacementPath {
+		t.Fatalf("failed transaction changed image row: image=%+v err=%v", image, err)
 	}
+	cursor, err := repo.UndoCursor()
+	if err != nil || cursor != 2 {
+		t.Fatalf("failed transaction changed cursor: cursor=%d err=%v", cursor, err)
+	}
+	if _, err := repo.DB.Exec(`DROP TRIGGER reject_representation_update`); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	result, err = undo.UndoWithRequest(root, "db-fault-undo")
+	if err != nil || !result.Applied || result.PendingRecovery {
+		t.Fatalf("retry should finish the same journal: result=%+v err=%v", result, err)
+	}
+	assertImportedImageState(t, root, id, originalPath, "original", 7, 11)
+	repo, err = store.Bootstrap(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cursor, err = repo.UndoCursor()
+	if err != nil || cursor != 1 {
+		t.Fatalf("recovered transaction did not move history cursor: cursor=%d err=%v", cursor, err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	repo, err = store.Bootstrap(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.DB.Exec(`CREATE TRIGGER reject_redo_representation_update BEFORE UPDATE OF file_path ON images BEGIN SELECT RAISE(ABORT, 'test redo database fault'); END`); err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	redo, err := undo.RedoWithRequest(root, "db-fault-redo")
+	if err != nil || !redo.PendingRecovery {
+		t.Fatalf("redo database failure should leave a pending journal: result=%+v err=%v", redo, err)
+	}
+	assertJournalReplacementRowUnchanged(t, root, id, "source.png", 1)
+	if data, err := os.ReadFile(replacementPath); err != nil || string(data) != "replacement" {
+		t.Fatalf("redo target bytes=%q err=%v", data, err)
+	}
+	repo, err = store.Bootstrap(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.DB.Exec(`DROP TRIGGER reject_redo_representation_update`); err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	redo, err = undo.RedoWithRequest(root, "db-fault-redo")
+	if err != nil || !redo.Applied {
+		t.Fatalf("redo journal retry: result=%+v err=%v", redo, err)
+	}
+	assertImportedImageState(t, root, id, replacementPath, "replacement", 7, 11)
 }
 
 func assertReplayApplied(t *testing.T, result *UndoResult, err error, action string) {

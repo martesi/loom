@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"loom/internal/media"
 	"loom/internal/store"
@@ -50,11 +51,29 @@ func (s *MediaService) Transcode(repoPath string, imageID int64, request MediaTr
 		return nil, fmt.Errorf("unsupported target extension %q", targetExt)
 	}
 
-	r, err := store.Bootstrap(repoPath)
+	r, unlockOperations, err := openOperationRepoRaw(repoPath)
 	if err != nil {
 		return nil, err
 	}
+	if err := recoverReplacementJournals(r); err != nil {
+		r.Close()
+		unlockOperations()
+		return nil, err
+	}
+	releaseImageLock, ok := acquireReplacementImageLock(r.Path, imageID)
+	if !ok {
+		r.Close()
+		unlockOperations()
+		return nil, fmt.Errorf("asset %d is busy in a preview or replacement", imageID)
+	}
+	defer releaseImageLock()
+	unlockOperations()
 	defer r.Close()
+	if pending, err := pendingReplacementForImage(r, imageID); err != nil {
+		return nil, err
+	} else if pending != nil {
+		return nil, fmt.Errorf("%s", pendingReplacementResult(*pending, "Transcode is blocked until replacement recovery is resolved.").Message)
+	}
 	image, err := r.GetImageByID(imageID)
 	if err != nil {
 		return nil, err
@@ -166,92 +185,99 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 
 // ReplaceMedia swaps an asset's stored representation while preserving its
 // identity and retaining both representations for undo/redo.
-func (s *ImageService) ReplaceMedia(repoPath string, imageID int64, item ClipboardMedia) error {
-	r, unlock, err := openOperationRepo(repoPath)
+func (s *ImageService) ReplaceMedia(repoPath string, imageID int64, item ClipboardMedia, requestID string) (*ReplacementResult, error) {
+	if imageID <= 0 || strings.TrimSpace(requestID) == "" || len(requestID) > 128 {
+		return nil, fmt.Errorf("image ID and replacement request ID are required")
+	}
+	r, unlock, err := openOperationRepoRaw(repoPath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer unlock()
 	defer r.Close()
-
-	image, err := r.GetImageByID(imageID)
-	if err != nil {
-		return err
-	}
-	if image.Trashed {
-		return fmt.Errorf("asset %d is trashed", imageID)
-	}
 	name := filepath.Base(strings.ReplaceAll(item.Name, "\\", "/"))
-	if !store.IsMediaFile(name) || store.IsVideoFile(name) {
-		return fmt.Errorf("unsupported replacement media name %q", name)
+	if !store.IsMediaFile(name) || store.IsVideoFile(name) || filepath.Ext(name) == "" {
+		return nil, fmt.Errorf("unsupported replacement media name %q", name)
 	}
-	data, err := base64.StdEncoding.DecodeString(item.Data)
-	if err != nil {
-		return fmt.Errorf("decode replacement media: %w", err)
+	data, err := base64.StdEncoding.Strict().DecodeString(item.Data)
+	if err != nil || len(data) == 0 {
+		return nil, fmt.Errorf("invalid or empty replacement media data")
+	}
+	if len(data) > maxClipboardItemBytes {
+		return nil, fmt.Errorf("replacement media exceeds %d bytes", maxClipboardItemBytes)
+	}
+	requestHash := replacementRequestHash(r.Path, imageID, name, data)
+	if result, found, err := readReplacementReceipt(r, requestID, requestHash); err != nil {
+		return nil, err
+	} else if found && !result.PendingRecovery {
+		return result, nil
+	}
+	journal, err := scanReplacementJournal(r.DB.QueryRow(replacementJournalSelect+` WHERE request_id=? AND completed_at IS NULL`, requestID))
+	if err == nil {
+		if journal.RequestHash != requestHash || journal.ImageID != imageID || journal.Action != "initial" {
+			return nil, fmt.Errorf("replacement request ID was reused with different arguments")
+		}
+		release, ok := acquireReplacementImageLock(r.Path, imageID)
+		if !ok {
+			return pendingReplacementResult(journal, "The image is busy in a preview."), nil
+		}
+		defer release()
+		incomingState, stateErr := replacementPathState(r.Path, journal.IncomingPath)
+		if stateErr != nil {
+			return pendingReplacementResult(journal, stateErr.Error()), nil
+		}
+		if !incomingState.exists && canResumeIncomingCreation(r.Path, journal) {
+			if err := ensureIncomingReplacementFile(r.Path, journal, data); err != nil {
+				return pendingReplacementResult(journal, err.Error()), nil
+			}
+		}
+		return finishReplacementRequest(r, journal)
+	}
+	if err != sql.ErrNoRows {
+		return nil, err
+	}
+	if err := recoverReplacementJournals(r); err != nil {
+		var pending *replacementRecoveryError
+		if errors.As(err, &pending) {
+			return pendingReplacementResult(pending.Journal, pending.Cause.Error()), nil
+		}
+		return nil, err
 	}
 	if err := r.PrepareOperationLog(); err != nil {
-		return err
+		return nil, err
 	}
-	activePath, err := replacementMediaPath(r, image, name)
+	image, err := r.GetImageByID(imageID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-
-	stashDir := filepath.Join(repoPath, ".loom", "trash", "replacements", fmt.Sprint(imageID))
-	if err := os.MkdirAll(stashDir, 0o755); err != nil {
-		return err
+	if image.Trashed {
+		return nil, fmt.Errorf("asset %d is trashed", imageID)
 	}
-	incoming, err := os.CreateTemp(stashDir, "incoming-*"+filepath.Ext(name))
-	if err != nil {
-		return err
+	release, ok := acquireReplacementImageLock(r.Path, imageID)
+	if !ok {
+		return nil, fmt.Errorf("asset %d is busy in a preview", imageID)
 	}
-	incomingPath := incoming.Name()
-	if _, err := incoming.Write(data); err != nil {
-		incoming.Close()
-		os.Remove(incomingPath)
-		return err
-	}
-	if err := incoming.Close(); err != nil {
-		os.Remove(incomingPath)
-		return err
-	}
-
-	outgoing, err := os.CreateTemp(stashDir, "original-*"+filepath.Ext(image.FilePath))
-	if err != nil {
-		os.Remove(incomingPath)
-		return err
-	}
-	outgoingPath := outgoing.Name()
-	outgoing.Close()
-	os.Remove(outgoingPath)
-
+	defer release()
 	currentFingerprint, _, err := store.FingerprintFile(context.Background(), image.FilePath)
 	if err != nil {
-		os.Remove(incomingPath)
-		return fmt.Errorf("fingerprint current representation: %w", err)
+		return nil, fmt.Errorf("fingerprint current representation: %w", err)
 	}
-	incomingFingerprint, _, err := store.FingerprintFile(context.Background(), incomingPath)
+	journal, err = reserveReplacementJournal(r, image, requestID, requestHash, name, data, currentFingerprint)
 	if err != nil {
-		os.Remove(incomingPath)
-		return fmt.Errorf("fingerprint replacement representation: %w", err)
+		return nil, err
 	}
-	forward := representationStepPayload{
-		ImageID: imageID, OutgoingStash: outgoingPath, IncomingPath: incomingPath, ActivePath: activePath,
-		CurrentFingerprint: currentFingerprint, IncomingFingerprint: incomingFingerprint,
+	replacementCrash("after-intent-commit")
+	if err := replacementFault("after-intent-commit"); err != nil {
+		return pendingReplacementResult(journal, err.Error()), nil
 	}
-	inverse := representationStepPayload{
-		ImageID: imageID, OutgoingStash: incomingPath, IncomingPath: outgoingPath, ActivePath: image.FilePath,
-		CurrentFingerprint: incomingFingerprint, IncomingFingerprint: currentFingerprint,
+	if err := ensureIncomingReplacementFile(r.Path, journal, data); err != nil {
+		return pendingReplacementResult(journal, err.Error()), nil
 	}
-	if err := r.SwapRepresentation(imageID, forward.OutgoingStash, forward.IncomingPath, forward.ActivePath, forward.CurrentFingerprint, forward.IncomingFingerprint); err != nil {
-		os.Remove(incomingPath)
-		return err
+	replacementCrash("after-incoming-create")
+	if err := replacementFault("after-incoming-create"); err != nil {
+		return pendingReplacementResult(journal, err.Error()), nil
 	}
-	if err := recordOp(r, stepRepresentation, step(stepRepresentation, forward), step(stepRepresentation, inverse)); err != nil {
-		os.Remove(incomingPath)
-		return err
-	}
-	return nil
+	return finishReplacementRequest(r, journal)
 }
 
 const trashRetention = 30 * 24 * time.Hour
@@ -370,6 +396,9 @@ func purgeImages(r *store.Repo, ids []int64) error {
 	if err := rejectPurgeWithRetainedRelationships(r, images); err != nil {
 		return err
 	}
+	if err := rejectPurgeWithPendingReplacement(r, images); err != nil {
+		return err
+	}
 	for _, img := range images {
 		rel, err := filepath.Rel(r.Path, img.FilePath)
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
@@ -402,6 +431,20 @@ func purgeImages(r *store.Repo, ids []int64) error {
 	return err
 }
 
+func rejectPurgeWithPendingReplacement(r *store.Repo, images []store.Image) error {
+	for _, image := range images {
+		var pending bool
+		if err := r.DB.QueryRow(`SELECT EXISTS(SELECT 1 FROM replacement_replay_journal WHERE image_id=? AND completed_at IS NULL)
+			OR EXISTS(SELECT 1 FROM replacement_path_reservations WHERE path=?)`, image.ID, image.FilePath).Scan(&pending); err != nil {
+			return fmt.Errorf("check replacement recovery fence for image %d: %w", image.ID, err)
+		}
+		if pending {
+			return fmt.Errorf("cannot purge image %d while replacement recovery request is pending", image.ID)
+		}
+	}
+	return nil
+}
+
 func rejectPurgeWithRetainedRelationships(r *store.Repo, images []store.Image) error {
 	var blocked []int64
 	for _, img := range images {
@@ -425,49 +468,4 @@ func rejectPurgeWithRetainedRelationships(r *store.Repo, images []store.Image) e
 		return fmt.Errorf("cannot purge images %v while linked to a retained import; recover the import first", blocked)
 	}
 	return nil
-}
-
-func replacementMediaPath(repo *store.Repo, image store.Image, name string) (string, error) {
-	base := filepath.Join(filepath.Dir(image.FilePath), name)
-	root, err := filepath.Abs(repo.Path)
-	if err != nil {
-		return "", err
-	}
-	base, err = filepath.Abs(base)
-	if err != nil {
-		return "", err
-	}
-	rel, err := filepath.Rel(root, base)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("replacement path is outside repository")
-	}
-	tx, err := repo.DB.Begin()
-	if err != nil {
-		return "", err
-	}
-	defer tx.Rollback()
-	if _, err := tx.Exec(`UPDATE operation_log SET seq=seq WHERE 0`); err != nil {
-		return "", fmt.Errorf("lock replacement path selection: %w", err)
-	}
-	for suffix := 0; ; suffix++ {
-		candidate := suffixedPath(base, suffix)
-		var reserved bool
-		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images WHERE file_path=? AND id!=?) OR EXISTS(SELECT 1 FROM import_intents WHERE file_path=?)`, candidate, image.ID, candidate).Scan(&reserved); err != nil {
-			return "", err
-		}
-		if reserved {
-			continue
-		}
-		if candidate != image.FilePath {
-			if _, err := os.Lstat(candidate); err == nil {
-				continue
-			} else if !os.IsNotExist(err) {
-				return "", fmt.Errorf("inspect replacement path %s: %w", candidate, err)
-			}
-		}
-		if err := tx.Commit(); err != nil {
-			return "", err
-		}
-		return candidate, nil
-	}
 }
