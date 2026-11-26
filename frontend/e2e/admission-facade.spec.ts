@@ -207,6 +207,71 @@ test('admission facade survives lost response and reload, then discovers through
     (await admissionRPC(page, 'Reconcile', [discoverTicket.value])).status
   ).toBe(200)
 
+  const viewportPayload = Buffer.from(
+    JSON.stringify({
+      action: 'set_viewport',
+      viewport: { x: 32, y: -16, zoom: 1.5 },
+    })
+  ).toString('base64')
+  const viewportTicket = await admissionRPC<AdmissionTicket>(page, 'Reserve', [
+    root,
+    randomUUID(),
+    'set_viewport',
+    viewportPayload,
+  ])
+  expect(viewportTicket.status).toBe(200)
+  if (!viewportTicket.value)
+    throw new Error('viewport reservation returned no ticket')
+  const viewportDispatch = await admissionRPC<{ result: string }>(
+    page,
+    'Dispatch',
+    [viewportTicket.value, viewportPayload]
+  )
+  expect(viewportDispatch.status).toBe(200)
+  expect(viewportDispatch.value?.result).toBe('updated')
+  expect(
+    (
+      await admissionRPC(page, 'Dispatch', [
+        viewportTicket.value,
+        viewportPayload,
+      ])
+    ).status
+  ).toBeGreaterThanOrEqual(400)
+  expect(
+    (await admissionRPC(page, 'Reconcile', [viewportTicket.value])).status
+  ).toBe(200)
+
+  const nextViewportPayload = Buffer.from(
+    JSON.stringify({
+      action: 'set_viewport',
+      viewport: { x: 0, y: 0, zoom: 2 },
+    })
+  ).toString('base64')
+  const nextViewportTicket = await admissionRPC<AdmissionTicket>(
+    page,
+    'Reserve',
+    [root, randomUUID(), 'set_viewport', nextViewportPayload]
+  )
+  expect(nextViewportTicket.status).toBe(200)
+  if (!nextViewportTicket.value)
+    throw new Error('next viewport reservation returned no ticket')
+  expect(
+    (
+      await admissionRPC(page, 'Dispatch', [
+        viewportTicket.value,
+        viewportPayload,
+      ])
+    ).status
+  ).toBeGreaterThanOrEqual(400)
+  const nextStatus = await admissionRPC<{ state: string }>(page, 'Status', [
+    root,
+    nextViewportTicket.value.operationId,
+  ])
+  expect(nextStatus.value?.state).toBe('reserved')
+  expect(
+    (await admissionRPC(page, 'Seal', [nextViewportTicket.value])).status
+  ).toBe(200)
+
   // The test binding profile does not bind the old untagged mutation method.
   const untagged = await admissionRPCByID(page, oldDiscoverCanvasMethodID, [
     root,

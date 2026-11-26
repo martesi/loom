@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -100,6 +101,42 @@ func TestInvalidateRenditionsRefreshesSourcesAndRemovesCaches(t *testing.T) {
 	}
 }
 
+func TestRevisionLookupDoesNotInvertRepositoryAndRenditionLocks(t *testing.T) {
+	root := t.TempDir()
+	unlockRepo := store.LockRepoOperations(root)
+	lookupStarted := make(chan struct{})
+	lookupDone := make(chan struct{})
+	go func() {
+		cachedImageRevision(root+"\x00lock-order", func() (int64, error) {
+			close(lookupStarted)
+			unlock := store.LockRepoOperations(root)
+			unlock()
+			return 7, nil
+		})
+		close(lookupDone)
+	}()
+	<-lookupStarted
+
+	writerDone := make(chan struct{})
+	go func() {
+		unlock := lockRenditionRepository(root)
+		unlock()
+		close(writerDone)
+	}()
+	select {
+	case <-writerDone:
+	case <-time.After(time.Second):
+		unlockRepo()
+		t.Fatal("rendition writer waited on a DB lookup holding the inverse lock")
+	}
+	unlockRepo()
+	select {
+	case <-lookupDone:
+	case <-time.After(time.Second):
+		t.Fatal("revision lookup did not finish after releasing repository lock")
+	}
+}
+
 func TestRevisionLookupCannotRepopulateAfterInvalidationClear(t *testing.T) {
 	repoPath := t.TempDir()
 	key := repoPath + "\x00" + "91"
@@ -107,11 +144,15 @@ func TestRevisionLookupCannotRepopulateAfterInvalidationClear(t *testing.T) {
 	lookupStarted := make(chan struct{})
 	allowLookup := make(chan struct{})
 	lookupDone := make(chan int64, 1)
+	var lookups atomic.Int32
 	go func() {
 		lookupDone <- cachedImageRevision(key, func() (int64, error) {
-			close(lookupStarted)
-			<-allowLookup
-			return 1, nil
+			if lookups.Add(1) == 1 {
+				close(lookupStarted)
+				<-allowLookup
+				return 1, nil
+			}
+			return 2, nil
 		})
 	}()
 	<-lookupStarted
@@ -125,22 +166,15 @@ func TestRevisionLookupCannotRepopulateAfterInvalidationClear(t *testing.T) {
 		close(writerDone)
 	}()
 	<-writerStarted
-	// The lookup holds a read lock. TryRLock succeeds while it is the only
-	// holder, but returns false once the clearing writer is queued. Do not
-	// release the lookup until that state proves the writer has reached Lock.
-	deadline := time.Now().Add(2 * time.Second)
-	for renditionRepositoryState.TryRLock() {
-		renditionRepositoryState.RUnlock()
-		if time.Now().After(deadline) {
-			t.Fatal("metadata-clearing writer never queued behind the lookup")
-		}
-		runtime.Gosched()
+	select {
+	case <-writerDone:
+	case <-time.After(time.Second):
+		t.Fatal("metadata-clearing writer blocked behind the database lookup")
 	}
 	close(allowLookup)
-	if got := <-lookupDone; got != 1 {
-		t.Fatalf("first revision = %d, want 1", got)
+	if got := <-lookupDone; got != 2 {
+		t.Fatalf("revision after concurrent clear = %d, want refreshed value 2", got)
 	}
-	<-writerDone
 	if got := cachedImageRevision(key, func() (int64, error) { return 2, nil }); got != 2 {
 		t.Fatalf("revision after clear = %d, want fresh value 2", got)
 	}

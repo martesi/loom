@@ -29,7 +29,7 @@ type AdmissionFacade struct {
 	operations map[string]admissionOperation
 }
 
-type admissionOperation func(canonicalRoot string) admissionOutcome
+type admissionOperation func(canonicalRoot string, payload []byte) admissionOutcome
 
 type AdmissionTicket struct {
 	Root          string `json:"root"`
@@ -66,9 +66,14 @@ type discoverCanvasPayload struct {
 func newAdmissionFacade(registry *admissionRegistry) *AdmissionFacade {
 	facade := &AdmissionFacade{registry: registry, images: &ImageService{}}
 	facade.operations = map[string]admissionOperation{
-		admissionCreateRepository:  facade.createRepository,
-		admissionMigrateRepository: facade.migrateRepository,
-		admissionDiscoverCanvas:    facade.discoverCanvas,
+		admissionCreateRepository:  func(root string, _ []byte) admissionOutcome { return facade.createRepository(root) },
+		admissionMigrateRepository: func(root string, _ []byte) admissionOutcome { return facade.migrateRepository(root) },
+		admissionDiscoverCanvas:    func(root string, _ []byte) admissionOutcome { return facade.discoverCanvas(root) },
+		admissionSetGeometry:       facade.setGeometry,
+		admissionSetPositions:      facade.setPositions,
+		admissionSetViewport:       facade.setViewport,
+		admissionPlaceImages:       facade.placeImages,
+		admissionUnplaceImages:     facade.unplaceImages,
 	}
 	return facade
 }
@@ -105,7 +110,7 @@ func (facade *AdmissionFacade) Dispatch(ticket AdmissionTicket, payload []byte) 
 	if err := validateAdmissionPayload(token.kind, payload); err != nil {
 		return AdmissionResult{}, err
 	}
-	outcome, err := facade.registry.Dispatch(token, payload, func() admissionOutcome { return operation(token.root) })
+	outcome, err := facade.registry.Dispatch(token, payload, func() admissionOutcome { return operation(token.root, payload) })
 	if err != nil {
 		return AdmissionResult{}, err
 	}
@@ -234,7 +239,7 @@ func (facade *AdmissionFacade) validateOperationPrecondition(root, kind string) 
 		if len(status.Pending) == 0 {
 			return errAdmissionNoPendingMigrations
 		}
-	case admissionDiscoverCanvas:
+	case admissionDiscoverCanvas, admissionSetGeometry, admissionSetPositions, admissionSetViewport, admissionPlaceImages, admissionUnplaceImages:
 		if !status.DatabaseExists {
 			return errAdmissionRepositoryMissing
 		}
@@ -282,11 +287,22 @@ func admissionFailure(err error) admissionOutcome {
 }
 
 func validateAdmissionPayload(kind string, payload []byte) error {
+	switch kind {
+	case admissionSetGeometry, admissionSetPositions, admissionSetViewport, admissionPlaceImages, admissionUnplaceImages:
+		return (&AdmissionFacade{}).validateCanvasPayload(kind, payload)
+	}
 	var request discoverCanvasPayload
-	decoder := json.NewDecoder(bytes.NewReader(payload))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil || request.Action != kind {
+	if err := decodeStrictAdmissionJSON(payload, &request); err != nil || request.Action != kind {
 		return errAdmissionInvalid
+	}
+	return nil
+}
+
+func decodeStrictAdmissionJSON(raw []byte, value any) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(value); err != nil {
+		return err
 	}
 	if err := decoder.Decode(new(any)); err != io.EOF {
 		return errAdmissionInvalid

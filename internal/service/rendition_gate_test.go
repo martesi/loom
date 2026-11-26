@@ -105,6 +105,78 @@ func TestAdmissionDrainGatesRealHandlerAndWaitsForIgnoringRenderer(t *testing.T)
 	}
 }
 
+func TestHandlerTimeoutDoesNotFinishIgnoringRendererLease(t *testing.T) {
+	root, id, _ := previewTestAsset(t)
+	url := previewTestURL(t, root, id, 640)
+	gate := newRenditionGate()
+	registry := newAdmissionRegistryWithRenditionGate(gate)
+	processor := &ignoringCancelProcessor{started: make(chan struct{}), finish: make(chan struct{})}
+	previousDeadline := stillRenditionDeadline
+	stillRenditionDeadline = 25 * time.Millisecond
+	t.Cleanup(func() { stillRenditionDeadline = previousDeadline })
+
+	response := httptest.NewRecorder()
+	handlerDone := make(chan struct{})
+	go func() {
+		serveRenditionWithGate(response, httptest.NewRequest(http.MethodGet, url, nil), processor, 0, "", 0, gate)
+		close(handlerDone)
+	}()
+	<-processor.started
+
+	reserveDone := make(chan error, 1)
+	var token admissionToken
+	go func() {
+		var err error
+		token, err = registry.Reserve(root, "timeout-renderer", "replace", []byte("{}"))
+		reserveDone <- err
+	}()
+	waitGateClosed(t, gate, root)
+	select {
+	case <-handlerDone:
+	case <-time.After(time.Second):
+		t.Fatal("request timeout did not release the handler reference")
+	}
+	select {
+	case err := <-reserveDone:
+		t.Fatalf("drain completed while renderer ignored cancellation: %v", err)
+	default:
+	}
+
+	close(processor.finish)
+	if err := <-reserveDone; err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("timed-out handler status=%d body=%q", response.Code, response.Body.String())
+	}
+	if status, err := registry.Status(root, token.id); err != nil || !status.drained {
+		t.Fatalf("status after renderer cleanup = %+v, %v", status, err)
+	}
+	if err := registry.SealIfNotStarted(root, token.id); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRenditionCleanupFailureKeepsGateClosed(t *testing.T) {
+	root, _, _ := previewTestAsset(t)
+	gate := newRenditionGate()
+	lease, err := gate.Admit(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	drainDone := make(chan error, 1)
+	go func() { drainDone <- gate.CloseAndDrain(context.Background(), root) }()
+	waitGateClosed(t, gate, root)
+	failure := errors.New("temporary cache file could not be removed")
+	lease.Finish(failure)
+	if err := <-drainDone; !errors.Is(err, failure) {
+		t.Fatalf("drain error = %v, want cleanup failure", err)
+	}
+	if _, err := gate.Admit(root); !errors.Is(err, errRenditionGateClosed) {
+		t.Fatalf("admission after cleanup failure = %v, want fenced", err)
+	}
+}
+
 func TestAdmissionDrainWaitsThroughRealPublicationAndPruning(t *testing.T) {
 	root, id, _ := previewTestAsset(t)
 	url := previewTestURL(t, root, id, 640)

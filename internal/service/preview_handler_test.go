@@ -233,7 +233,7 @@ func TestCacheOnlyRenditionReadsExistingCacheWithoutRepositoryMutation(t *testin
 	}
 }
 
-func TestCacheOnlyFenceDrainsStartedGenerationBeforeReturning(t *testing.T) {
+func TestCacheOnlyPreviewDoesNotFenceOrCancelRendition(t *testing.T) {
 	repoPath, id, _ := previewTestAsset(t)
 	url := previewTestURL(t, repoPath, id, 640)
 	started := make(chan struct{})
@@ -257,34 +257,31 @@ func TestCacheOnlyFenceDrainsStartedGenerationBeforeReturning(t *testing.T) {
 		ServePreviewWithProcessor(cacheOnly, httptest.NewRequest(http.MethodGet, url+"&cacheOnly=1", nil), processor)
 		close(cacheOnlyDone)
 	}()
-	deadline := time.Now().Add(time.Second)
-	for !renditionRepositoryFenced(repoPath) && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if !renditionRepositoryFenced(repoPath) {
-		t.Fatal("cache-only request did not establish the rendition fence")
-	}
 	select {
 	case <-cacheOnlyDone:
-		t.Fatal("cache-only fence returned before started generation drained")
-	default:
+	case <-time.After(time.Second):
+		t.Fatal("cache-only request waited for active rendition work")
+	}
+	if cacheOnly.Code != http.StatusNoContent {
+		t.Fatalf("cache-only status=%d body=%q, want no-content", cacheOnly.Code, cacheOnly.Body.String())
 	}
 
 	close(allowFinish)
 	<-previewDone
-	<-cacheOnlyDone
-	if preview.Code != http.StatusServiceUnavailable {
-		t.Fatalf("started generation status=%d body=%q, want service unavailable", preview.Code, preview.Body.String())
+	if preview.Code != http.StatusOK {
+		t.Fatalf("started generation status=%d body=%q, want success", preview.Code, preview.Body.String())
 	}
-	if cacheOnly.Code != http.StatusNoContent {
-		t.Fatalf("cache-only status=%d body=%q, want no-content", cacheOnly.Code, cacheOnly.Body.String())
+	ordinary := httptest.NewRecorder()
+	ServePreviewWithProcessor(ordinary, httptest.NewRequest(http.MethodGet, url, nil), processor)
+	if ordinary.Code != http.StatusOK {
+		t.Fatalf("ordinary request after cache-only status=%d body=%q", ordinary.Code, ordinary.Body.String())
 	}
 	matches, err := filepath.Glob(filepath.Join(repoPath, ".loom", "thumbs", fmt.Sprintf("%d-*.webp", id)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(matches) != 0 {
-		t.Fatalf("rendition published after fence drain: %v", matches)
+	if len(matches) != 1 {
+		t.Fatalf("rendition was not published: %v", matches)
 	}
 }
 

@@ -21,7 +21,8 @@ const (
 
 var renditionMetadata = struct {
 	sync.RWMutex
-	revisions map[string]int64
+	revisions  map[string]int64
+	generation uint64
 }{revisions: make(map[string]int64)}
 
 // This lock coordinates persisted revision reads, DB updates, cache clears,
@@ -104,23 +105,35 @@ func persistedImageRevision(repoPath string, imageID int64) int64 {
 }
 
 func cachedImageRevision(key string, lookup func() (int64, error)) int64 {
-	renditionRepositoryState.RLock()
-	defer renditionRepositoryState.RUnlock()
-	renditionMetadata.RLock()
-	revision, ok := renditionMetadata.revisions[key]
-	renditionMetadata.RUnlock()
-	if ok {
-		return revision
+	for {
+		renditionMetadata.RLock()
+		revision, ok := renditionMetadata.revisions[key]
+		generation := renditionMetadata.generation
+		renditionMetadata.RUnlock()
+		if ok {
+			return revision
+		}
+
+		// Do not hold renditionRepositoryState while opening the repo. Database
+		// mutation paths acquire the repo lock before the rendition write lock.
+		// Holding a rendition read lock across lookup inverted that order.
+		loadedRevision, err := lookup()
+		if err != nil {
+			return 0
+		}
+		renditionMetadata.Lock()
+		if renditionMetadata.generation != generation {
+			renditionMetadata.Unlock()
+			continue
+		}
+		if revision, ok := renditionMetadata.revisions[key]; ok {
+			renditionMetadata.Unlock()
+			return revision
+		}
+		renditionMetadata.revisions[key] = loadedRevision
+		renditionMetadata.Unlock()
+		return loadedRevision
 	}
-	loadedRevision, err := lookup()
-	if err != nil {
-		return 0
-	}
-	revision = loadedRevision
-	renditionMetadata.Lock()
-	renditionMetadata.revisions[key] = revision
-	renditionMetadata.Unlock()
-	return revision
 }
 
 func clearRenditionMetadata(repoPath string) {
@@ -138,6 +151,7 @@ func clearRenditionMetadataLocked(repoPath string) {
 			delete(renditionMetadata.revisions, key)
 		}
 	}
+	renditionMetadata.generation++
 	renditionMetadata.Unlock()
 }
 

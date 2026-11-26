@@ -9,6 +9,7 @@ import (
 )
 
 var errRenditionGateClosed = errors.New("rendition cache mutations are fenced")
+var errRenditionCleanup = errors.New("rendition cache cleanup failed")
 
 // renditionGate is a process-local, per-canonical-root admission barrier.
 // Ordinary requests hold a lease through all cache mutation and detached
@@ -23,6 +24,7 @@ type renditionGateRoot struct {
 	active  int
 	changed chan struct{}
 	leases  map[*renditionGateLease]struct{}
+	failure error
 }
 
 type renditionGateLease struct {
@@ -87,7 +89,10 @@ func (gate *renditionGate) CloseAndDrain(ctx context.Context, root string) error
 	}
 	select {
 	case <-drained:
-		return nil
+		gate.mu.Lock()
+		failure := state.failure
+		gate.mu.Unlock()
+		return failure
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -128,11 +133,33 @@ func (lease *renditionGateLease) SetCancel(cancel context.CancelFunc) {
 	lease.gate.mu.Unlock()
 }
 
+// Fork transfers the active rendition slot to a separately-owned worker lease.
+// The worker cancellation registration and closure check share the gate mutex.
+func (lease *renditionGateLease) Fork(cancel context.CancelFunc) (*renditionGateLease, error) {
+	if lease == nil || cancel == nil {
+		return nil, errAdmissionInvalid
+	}
+	gate := lease.gate
+	gate.mu.Lock()
+	defer gate.mu.Unlock()
+	if lease.released || lease.state.closed {
+		return nil, errRenditionGateClosed
+	}
+	worker := &renditionGateLease{gate: gate, root: lease.root, state: lease.state, cancel: cancel}
+	lease.state.active++
+	lease.state.leases[worker] = struct{}{}
+	return worker, nil
+}
+
 func (lease *renditionGateLease) cancelFunc() context.CancelFunc {
 	return lease.cancel
 }
 
 func (lease *renditionGateLease) Release() {
+	lease.Finish(nil)
+}
+
+func (lease *renditionGateLease) Finish(failure error) {
 	if lease == nil {
 		return
 	}
@@ -143,6 +170,9 @@ func (lease *renditionGateLease) Release() {
 	}
 	lease.released = true
 	lease.cancel = nil
+	if failure != nil && lease.state.failure == nil {
+		lease.state.failure = failure
+	}
 	delete(lease.state.leases, lease)
 	lease.state.active--
 	if lease.state.closed && lease.state.active == 0 {

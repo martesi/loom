@@ -170,3 +170,46 @@ func TestAdmissionFacadeReadOnlyInspectAndAdmittedMigration(t *testing.T) {
 		t.Fatalf("discovery after explicit migration = %v", err)
 	}
 }
+
+func TestAdmissionFacadeViewportDispatchRejectsDuplicateAndStaleTickets(t *testing.T) {
+	root := t.TempDir()
+	repo, err := store.Bootstrap(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	facade := newAdmissionFacade(newAdmissionRegistryWithRenditionGate(newRenditionGate()))
+	payload := []byte(`{"action":"set_viewport","viewport":{"x":12,"y":-4,"zoom":1.25}}`)
+	ticket, err := facade.Reserve(root, "viewport-one", admissionSetViewport, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := facade.Dispatch(ticket, payload)
+	if err != nil || result.Result != "updated" || result.RecoveryRequired {
+		t.Fatalf("viewport dispatch = %+v, %v", result, err)
+	}
+	if _, err := facade.Dispatch(ticket, payload); !errors.Is(err, errAdmissionNotReady) {
+		t.Fatalf("duplicate dispatch error = %v", err)
+	}
+	if err := facade.Reconcile(ticket); err != nil {
+		t.Fatal(err)
+	}
+	viewport, err := (&ImageService{}).GetViewport(root)
+	if err != nil || viewport == nil || viewport.X != 12 || viewport.Y != -4 || viewport.Zoom != 1.25 {
+		t.Fatalf("persisted viewport = %+v, %v", viewport, err)
+	}
+
+	nextPayload := []byte(`{"action":"set_viewport","viewport":{"x":0,"y":0,"zoom":2}}`)
+	next, err := facade.Reserve(root, "viewport-two", admissionSetViewport, nextPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := facade.Dispatch(ticket, payload); !errors.Is(err, errAdmissionMismatch) {
+		t.Fatalf("stale prior-epoch ticket error = %v", err)
+	}
+	if status, err := facade.Status(root, next.OperationID); err != nil || status.State != string(admissionReserved) {
+		t.Fatalf("stale ticket altered current reservation: status=%+v err=%v", status, err)
+	}
+}
