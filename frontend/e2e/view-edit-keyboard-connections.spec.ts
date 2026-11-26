@@ -77,7 +77,7 @@ test('D/S/R relationships work with keyboard focus and stay guarded in View', as
   const edgeIds = await edges.evaluateAll((elements) =>
     elements.map((element) => (element as HTMLElement).dataset.id)
   )
-  await expect(edges.first()).toHaveAccessibleName(/Relationship from/)
+  await expect(edges.first()).toHaveAccessibleName(/Edge from.*relationship/)
   await page.keyboard.press('r')
   // Reverse the newest link. It remains acyclic and is a valid target.
   await tabTo(page, `.react-flow__edge[data-id="${edgeIds[2]}"]`)

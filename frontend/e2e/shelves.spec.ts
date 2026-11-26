@@ -323,6 +323,7 @@ test.describe('floating Canvas drawers', () => {
   }) => {
     await page.setViewportSize({ width: 1280, height: 800 })
     await openFixtureRepo(page, 'dock-fixtures', { drawers: 'closed' })
+    await page.getByTestId('canvas-mode-edit').click()
     const assets = page.locator('aside[aria-label="Assets"]')
 
     await page.getByTestId('toggle-assets-shelf').click()
@@ -423,6 +424,7 @@ test.describe('floating Canvas drawers', () => {
   }) => {
     await page.setViewportSize({ width: 1280, height: 800 })
     await openFixtureRepo(page, 'dock-fixtures', { drawers: 'closed' })
+    await page.getByTestId('canvas-mode-edit').click()
     const inspector = page.locator('aside[aria-label="Inspector"]')
 
     await page.getByTestId('toggle-inspector-shelf').click()
