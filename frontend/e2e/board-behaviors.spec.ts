@@ -1,5 +1,5 @@
+import { DatabaseSync } from 'node:sqlite'
 import type { Locator, Page } from '@playwright/test'
-import { legacyServiceCall } from './legacy-service'
 import { expect, test } from './test-fixtures'
 import {
   asset,
@@ -216,10 +216,13 @@ test('Sources navigation selects a visible unplaced source in Edit', async ({
   const sourceID = Number(
     await asset(page, 'relation-alpha.png').getAttribute('data-asset-id')
   )
-  await legacyServiceCall(page, 'imageservice.ts', 'UnplaceImages', [
-    await fixturePath('sources-nav-fixtures'),
-    [sourceID],
-  ])
+  const db = new DatabaseSync(
+    `${await fixturePath('sources-nav-fixtures')}/.loom/db.sqlite`
+  )
+  db.prepare('UPDATE images SET canvas_x=NULL,canvas_y=NULL WHERE id=?').run(
+    sourceID
+  )
+  db.close()
   await page.reload()
   await expect(imageNodes(page)).toHaveCount(2)
   await openAssetsShelf(page)

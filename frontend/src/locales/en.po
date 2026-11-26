@@ -297,6 +297,10 @@ msgstr "All Assets"
 msgid "All placements"
 msgstr "All placements"
 
+#: src/components/canvas/library-filter-controls.tsx
+msgid "All relationships"
+msgstr "All relationships"
+
 #: src/components/canvas/detail-panel-fields.tsx:145
 msgid "All selected assets"
 msgstr "All selected assets"
@@ -1832,6 +1836,10 @@ msgstr "No tags yet"
 msgid "No unplaced assets match. Try All placements."
 msgstr "No unplaced assets match. Try All placements."
 
+#: src/components/canvas/asset-list.tsx
+msgid "No unpaired assets match. Try All relationships."
+msgstr "No unpaired assets match. Try All relationships."
+
 #: src/components/canvas/detail-panel-relations.tsx:99
 msgid "None"
 msgstr "None"
@@ -2025,6 +2033,31 @@ msgstr "Placed"
 #: src/components/canvas/lightbox.tsx:462
 msgid "Placement"
 msgstr "Placement"
+
+#: src/components/canvas/library-filter-controls.tsx
+msgid "Relationship"
+msgstr "Relationship"
+
+#: src/components/canvas/library-filter-controls.tsx
+msgid "Remove relationship filter: {pairing}"
+msgstr "Remove relationship filter: {pairing}"
+
+#: src/components/canvas/library-filter-controls.tsx
+msgid "Paired"
+msgstr "Paired"
+
+#: src/components/canvas/asset-view-controls.tsx
+#: src/components/canvas/library-filter-controls.tsx
+msgid "Unpaired"
+msgstr "Unpaired"
+
+#: src/components/canvas/library-filter-controls.tsx
+msgid "paired"
+msgstr "paired"
+
+#: src/components/canvas/library-filter-controls.tsx
+msgid "unpaired"
+msgstr "unpaired"
 
 #: src/routes/canvas-actions-workspace.ts:173
 msgid "preferences"

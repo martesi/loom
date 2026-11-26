@@ -522,13 +522,49 @@ func (r *Repo) ListRelationships() ([]Relationship, error) {
 
 	var rels []Relationship
 	for rows.Next() {
-		var rel Relationship
-		if err := rows.Scan(&rel.ID, &rel.SourceImageID, &rel.DerivedImageID, &rel.PairingOrder, &rel.CreatedAt); err != nil {
+		rel, err := scanRelationship(rows)
+		if err != nil {
 			return nil, err
 		}
 		rels = append(rels, rel)
 	}
 	return rels, rows.Err()
+}
+
+// ListStoredRelationships returns every persisted edge, including edges with
+// trashed endpoints. Library metadata uses these to preserve provenance.
+func (r *Repo) ListStoredRelationships() ([]Relationship, error) {
+	rows, err := r.DB.Query(`
+		SELECT id, source_image_id, derived_image_id, pairing_order, created_at
+		FROM relationships ORDER BY pairing_order, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var rels []Relationship
+	for rows.Next() {
+		rel, err := scanRelationship(rows)
+		if err != nil {
+			return nil, err
+		}
+		rels = append(rels, rel)
+	}
+	return rels, rows.Err()
+}
+
+func scanRelationship(scanner interface {
+	Scan(dest ...any) error
+}) (Relationship, error) {
+	var rel Relationship
+	var createdAt sql.NullString
+	if err := scanner.Scan(&rel.ID, &rel.SourceImageID, &rel.DerivedImageID, &rel.PairingOrder, &createdAt); err != nil {
+		return rel, err
+	}
+	if createdAt.Valid {
+		rel.CreatedAt = &createdAt.String
+	}
+	return rel, nil
 }
 
 // SetCanvasPosition persists a node's dragged position on the (currently
@@ -833,9 +869,7 @@ func (r *Repo) UnlinkSource(relationshipID int64) error {
 // build an inverse ("re-link the same pair") from just the relationship id
 // the frontend has on hand.
 func (r *Repo) GetRelationship(relationshipID int64) (*Relationship, error) {
-	var rel Relationship
-	err := r.DB.QueryRow(`SELECT id, source_image_id, derived_image_id, pairing_order, created_at FROM relationships WHERE id = ?`, relationshipID).
-		Scan(&rel.ID, &rel.SourceImageID, &rel.DerivedImageID, &rel.PairingOrder, &rel.CreatedAt)
+	rel, err := scanRelationship(r.DB.QueryRow(`SELECT id, source_image_id, derived_image_id, pairing_order, created_at FROM relationships WHERE id = ?`, relationshipID))
 	if err != nil {
 		return nil, err
 	}

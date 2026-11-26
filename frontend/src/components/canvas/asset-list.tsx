@@ -11,7 +11,7 @@ interface Props {
   selected: number[]
   search: string
   status: string
-  placement: string
+  pairing: string
   tagId: number
   mode: string
   loading: boolean
@@ -29,7 +29,7 @@ export function AssetList({
   selected,
   search,
   status,
-  placement,
+  pairing,
   tagId,
   mode,
   loading,
@@ -80,11 +80,11 @@ export function AssetList({
             <Trans>No assets in this folder.</Trans>
           ) : status === 'missing' ? (
             <Trans>No missing assets match this query.</Trans>
-          ) : status === 'trashed' && !search && !placement && !tagId ? (
+          ) : status === 'trashed' && !search && !pairing && !tagId ? (
             <Trans>Trash is empty.</Trans>
-          ) : placement === 'unplaced' ? (
-            <Trans>No unplaced assets match. Try All placements.</Trans>
-          ) : search || status !== 'active' || placement || tagId ? (
+          ) : pairing === 'unpaired' ? (
+            <Trans>No unpaired assets match. Try All relationships.</Trans>
+          ) : search || status !== 'active' || pairing || tagId ? (
             <Trans>No assets match these filters.</Trans>
           ) : (
             <Trans>No assets yet. Import files or rescan the repository.</Trans>

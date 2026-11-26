@@ -76,7 +76,7 @@ export const LibraryPanel = memo(function LibraryPanel({
     [folder, setFolder] = useState(''),
     [search, setSearch] = useState(''),
     [status, setStatus] = useState('active'),
-    [placement, setPlacement] = useState(''),
+    [pairing, setPairing] = useState(''),
     [tagId, setTagId] = useState(0),
     [filtersOpen, setFiltersOpen] = useState(false)
   const [layout, setLayout] = useState<AssetLayout>('list')
@@ -117,7 +117,7 @@ export const LibraryPanel = memo(function LibraryPanel({
     name: views.find((view) => view.id === selectedViewId)?.name ?? '',
     search,
     status: status as AssetView['status'],
-    placement: placement as AssetView['placement'],
+    pairing: pairing as AssetView['pairing'],
     tagId,
     sort,
     layout,
@@ -141,7 +141,7 @@ export const LibraryPanel = memo(function LibraryPanel({
     if (reveal.folder !== null) setFolder(reveal.folder)
     setSearch('')
     setStatus('all')
-    setPlacement('')
+    setPairing('')
     setTagId(0)
     setSelectedViewId('default-recent')
   }, [reveal])
@@ -168,7 +168,9 @@ export const LibraryPanel = memo(function LibraryPanel({
       setLoadError(false)
       const all = await LibraryService.ListImages(path, {
         search: mode === 'folders' ? '' : search,
-        placement: mode === 'folders' ? '' : placement,
+        // Pairing is derived from relationships in LibraryRow, not the legacy
+        // canvas-coordinate placement flag accepted by the backend query.
+        placement: '',
         status:
           mode === 'folders' ? 'all' : status === 'missing' ? 'all' : status,
         tagId: mode === 'folders' ? 0 : tagId,
@@ -215,7 +217,7 @@ export const LibraryPanel = memo(function LibraryPanel({
     folder,
     search,
     status,
-    placement,
+    pairing,
     tagId,
     sort,
     refresh,
@@ -225,7 +227,7 @@ export const LibraryPanel = memo(function LibraryPanel({
   const activeFilterCount =
     Number(Boolean(search)) +
     Number(status !== 'active') +
-    Number(Boolean(placement)) +
+    Number(Boolean(pairing)) +
     Number(tagId > 0)
   const tagName = tags.find((tag) => tag.id === tagId)?.name
   async function moveAssets(ids: number[], targetFolder: string) {
@@ -321,7 +323,7 @@ export const LibraryPanel = memo(function LibraryPanel({
     setMode('all')
     setSearch(view.search)
     setStatus(view.status)
-    setPlacement(view.placement)
+    setPairing(view.pairing)
     setTagId(view.tagId)
     setSort(view.sort)
     setLayout(view.layout)
@@ -382,8 +384,8 @@ export const LibraryPanel = memo(function LibraryPanel({
         onFiltersOpenChange={setFiltersOpen}
         status={status}
         onStatusChange={setStatus}
-        placement={placement}
-        onPlacementChange={setPlacement}
+        pairing={pairing}
+        onPairingChange={setPairing}
         tagId={tagId}
         onTagChange={setTagId}
         tags={tags}
@@ -441,7 +443,7 @@ export const LibraryPanel = memo(function LibraryPanel({
           selected={selected}
           search={search}
           status={status}
-          placement={placement}
+          pairing={pairing}
           tagId={tagId}
           mode={mode}
           loading={loading}

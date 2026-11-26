@@ -349,7 +349,7 @@ export function CanvasMainSurface(props: Props) {
                 )
               const placed = await owner.execute(async () => {
                 if (!owner.allows('canvas-drop')) return false
-                await ImageService.PlaceImages(repoPath, uniqueIds, p.x, p.y, 0)
+                await ImageService.PlaceImages(repoPath, uniqueIds, p.x, p.y)
                 await reloadForData()
                 return true
               })
@@ -508,7 +508,6 @@ export function CanvasMainSurface(props: Props) {
             resetZoom: actionById.get('reset-zoom')?.shortcut ?? '',
             autoArrange: actionById.get('auto-arrange-active')?.shortcut ?? '',
             inspect: actionById.get('toggle-inspector')?.shortcut ?? '',
-            unplace: actionById.get('unplace-selection')?.shortcut ?? '',
           }}
           onAction={runDockAction}
         />

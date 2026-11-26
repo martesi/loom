@@ -34,7 +34,6 @@ export interface CanvasDockProps {
     resetZoom: string
     autoArrange: string
     inspect: string
-    unplace: string
   }
   onAction: (id: string) => void
 }

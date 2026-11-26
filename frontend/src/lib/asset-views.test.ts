@@ -17,7 +17,8 @@ const rows: LibraryRow[] = [
     thumbUrl: '',
     promptText: '',
     tags: [],
-    placed: false,
+    placed: true,
+    paired: false,
     createdAt: '2026-01-01',
     archived: false,
     trashed: false,
@@ -33,7 +34,8 @@ const rows: LibraryRow[] = [
     thumbUrl: '',
     promptText: '',
     tags: [],
-    placed: true,
+    placed: false,
+    paired: true,
     createdAt: '2026-01-02',
     archived: false,
     trashed: false,
@@ -61,7 +63,7 @@ describe('asset views', () => {
       { ...DEFAULT_ASSET_VIEWS[0], name: { value: 'Recent' } },
       { ...DEFAULT_ASSET_VIEWS[0], search: [] },
       { ...DEFAULT_ASSET_VIEWS[0], status: ['active'] },
-      { ...DEFAULT_ASSET_VIEWS[0], placement: ['placed'] },
+      { ...DEFAULT_ASSET_VIEWS[0], pairing: ['paired'] },
       { ...DEFAULT_ASSET_VIEWS[0], sort: ['recent'] },
       { ...DEFAULT_ASSET_VIEWS[0], layout: ['list'] },
     ]
@@ -73,11 +75,17 @@ describe('asset views', () => {
     }
   })
 
-  it('matches placement and sorts by name or recency', () => {
-    const unplaced = DEFAULT_ASSET_VIEWS[1]
-    expect(rows.filter((row) => matchesAssetView(row, unplaced))).toEqual([
+  it('matches relationships, migrates legacy placement views, and sorts', () => {
+    const unpaired = DEFAULT_ASSET_VIEWS[1]
+    expect(rows.filter((row) => matchesAssetView(row, unpaired))).toEqual([
       rows[0],
     ])
+    const legacy = parseAssetViews(
+      JSON.stringify([
+        { ...DEFAULT_ASSET_VIEWS[0], pairing: undefined, placement: 'placed' },
+      ])
+    )
+    expect(legacy[0].pairing).toBe('')
     expect(sortAssetRows(rows, 'name-asc').map((row) => row.fileName)).toEqual([
       'alpha.png',
       'zeta.png',

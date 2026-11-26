@@ -91,7 +91,7 @@ func (r *Repo) ListPrompts() ([]PromptWithUsage, error) {
 // GetImagePromptID reports the prompt currently attached to imageID, or nil
 // if it has none — used by PromptService to capture the prior value as an
 // undo inverse before overwriting it (same "read before write" shape as
-// GroupService.SetCover / GetCanvasPosition).
+// other reversible value updates / GetCanvasPosition).
 func (r *Repo) GetImagePromptID(imageID int64) (*int64, error) {
 	var id sql.NullInt64
 	if err := r.DB.QueryRow(`SELECT prompt_id FROM images WHERE id = ?`, imageID).Scan(&id); err != nil {

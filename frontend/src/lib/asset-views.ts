@@ -9,7 +9,7 @@ export interface AssetView {
   name: string
   search: string
   status: AssetStatus
-  placement: '' | 'placed' | 'unplaced'
+  pairing: '' | 'paired' | 'unpaired'
   tagId: number
   sort: AssetSort
   layout: AssetLayout
@@ -21,17 +21,17 @@ export const DEFAULT_ASSET_VIEWS: AssetView[] = [
     name: 'Recent',
     search: '',
     status: 'active',
-    placement: '',
+    pairing: '',
     tagId: 0,
     sort: 'recent',
     layout: 'list',
   },
   {
-    id: 'default-unplaced',
-    name: 'Unplaced',
+    id: 'default-unpaired',
+    name: 'Unpaired',
     search: '',
     status: 'active',
-    placement: 'unplaced',
+    pairing: 'unpaired',
     tagId: 0,
     sort: 'recent',
     layout: 'gallery',
@@ -57,9 +57,22 @@ export function parseAssetViews(serialized: string): AssetView[] {
   } catch {
     throw new InvalidAssetViewsError()
   }
-  if (!Array.isArray(value) || !value.every(isAssetView))
+  if (!Array.isArray(value)) throw new InvalidAssetViewsError()
+  // Older saved views filtered on canvas coordinates. Those coordinates do
+  // not describe whether an asset has a relationship, so retain the view but
+  // clear that obsolete filter instead of applying the wrong meaning.
+  return value.map((item) => {
+    if (item && typeof item === 'object' && !Array.isArray(item)) {
+      const legacy = item as Record<string, unknown>
+      if (!('pairing' in legacy) && 'placement' in legacy) {
+        const { placement: _placement, ...view } = legacy
+        const migrated = { ...view, pairing: '' }
+        if (isAssetView(migrated)) return migrated
+      }
+    }
+    if (isAssetView(item)) return item
     throw new InvalidAssetViewsError()
-  return value
+  })
 }
 
 export function matchesAssetView(row: LibraryRow, view: AssetView) {
@@ -67,8 +80,8 @@ export function matchesAssetView(row: LibraryRow, view: AssetView) {
   if (view.status === 'archived' && (!row.archived || row.trashed)) return false
   if (view.status === 'trashed' && !row.trashed) return false
   if (view.status === 'active' && (row.archived || row.trashed)) return false
-  if (view.placement === 'placed' && !row.placed) return false
-  if (view.placement === 'unplaced' && row.placed) return false
+  if (view.pairing === 'paired' && !row.paired) return false
+  if (view.pairing === 'unpaired' && row.paired) return false
   return true
 }
 
@@ -91,7 +104,7 @@ function isAssetView(value: unknown): value is AssetView {
     typeof view.name !== 'string' ||
     typeof view.search !== 'string' ||
     typeof view.status !== 'string' ||
-    typeof view.placement !== 'string' ||
+    typeof view.pairing !== 'string' ||
     typeof view.sort !== 'string' ||
     typeof view.layout !== 'string'
   )
@@ -99,7 +112,7 @@ function isAssetView(value: unknown): value is AssetView {
 
   return (
     ['active', 'all', 'archived', 'trashed', 'missing'].includes(view.status) &&
-    ['', 'placed', 'unplaced'].includes(view.placement) &&
+    ['', 'paired', 'unpaired'].includes(view.pairing) &&
     Number.isSafeInteger(view.tagId) &&
     ['recent', 'oldest', 'name-asc', 'name-desc'].includes(view.sort) &&
     ['list', 'gallery'].includes(view.layout)

@@ -49,7 +49,7 @@ func (s *PromptService) ListPrompts(repoPath string) ([]PromptInfo, error) {
 
 // attachPrompt is the shared core of AttachPrompt/CreateAndAttachPrompt:
 // read the image's current prompt (for the undo inverse), point it at
-// promptID, and log the step. Mirrors GroupService.SetCover's
+// promptID, and log the step. Mirrors other reversible metadata updates'
 // read-before-write shape.
 func attachPrompt(repo *store.Repo, imageID, promptID int64) error {
 	prev, err := repo.GetImagePromptID(imageID)

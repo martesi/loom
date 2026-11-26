@@ -1,5 +1,5 @@
 import { rm, writeFile } from 'node:fs/promises'
-import { legacyServiceCall } from './legacy-service'
+import { DatabaseSync } from 'node:sqlite'
 import { expect, test } from './test-fixtures'
 import {
   asset,
@@ -17,7 +17,7 @@ const fixturePng = Buffer.from(
   'base64'
 )
 
-test('library selection, search, placement filters, and folder navigation', async ({
+test('library selection, search, relationship filters, and folder navigation', async ({
   page,
 }) => {
   await openFixtureRepo(page, 'library-fixtures')
@@ -48,12 +48,15 @@ test('library selection, search, placement filters, and folder navigation', asyn
   )
   expect(ids).toHaveLength(4)
   await enterEdit(page)
-  // Restore unplaced fixture state after Edit's initial layout commit so the
-  // placement filter still exercises a real mix of placed and unplaced assets.
-  await legacyServiceCall(page, 'imageservice.ts', 'UnplaceImages', [
-    await fixturePath('library-fixtures'),
-    ids,
-  ])
+  // Seed one relationship, independently of canvas position, to prove these
+  // filters use graph relationships rather than placement flags.
+  const db = new DatabaseSync(
+    `${await fixturePath('library-fixtures')}/.loom/db.sqlite`
+  )
+  db.prepare(
+    'INSERT OR IGNORE INTO relationships(source_image_id,derived_image_id) VALUES (?, ?)'
+  ).run(ids[0], ids[1])
+  db.close()
   await page.reload()
   await expect(page.getByTestId('canvas-mode-edit')).toHaveAttribute(
     'aria-pressed',
@@ -66,16 +69,20 @@ test('library selection, search, placement filters, and folder navigation', asyn
   ).toHaveClass(/selected/)
   await openAssetsShelf(page)
   await filters.click()
-  await page.getByRole('combobox', { name: 'Placement' }).selectOption('placed')
-  await expect(assets(page)).toHaveCount(1)
+  await page
+    .getByRole('combobox', { name: 'Relationship' })
+    .selectOption('paired')
+  await expect(assets(page)).toHaveCount(2)
   await expect(asset(page, 'root-alpha.png')).toBeVisible()
+  await expect(asset(page, 'root-beta.png')).toBeVisible()
 
   await page
-    .getByRole('combobox', { name: 'Placement' })
-    .selectOption('unplaced')
-  await expect(assets(page)).toHaveCount(3)
+    .getByRole('combobox', { name: 'Relationship' })
+    .selectOption('unpaired')
+  await expect(assets(page)).toHaveCount(2)
   await expect(asset(page, 'root-alpha.png')).toHaveCount(0)
-  await page.getByRole('combobox', { name: 'Placement' }).selectOption('')
+  await expect(asset(page, 'root-beta.png')).toHaveCount(0)
+  await page.getByRole('combobox', { name: 'Relationship' }).selectOption('')
 
   await page.getByRole('button', { name: 'Folders', exact: true }).click()
   await expect(page.getByRole('button', { name: /nested/ })).toBeVisible()
@@ -111,6 +118,62 @@ test('library selection, search, placement filters, and folder navigation', asyn
   await page.getByRole('button', { name: /nested/ }).click()
   await page.getByRole('button', { name: /deeper/ }).click()
   await expect(asset(page, 'renamed-gamma.png')).toBeVisible()
+})
+
+test('paired filtering keeps relationships for trashed assets and after restore', async ({
+  page,
+}) => {
+  await openFixtureRepo(page, 'library-fixtures')
+  await enterEdit(page)
+  const ids = await assets(page).evaluateAll((rows) =>
+    rows.map((row) => Number(row.getAttribute('data-asset-id')))
+  )
+  const db = new DatabaseSync(
+    `${await fixturePath('library-fixtures')}/.loom/db.sqlite`
+  )
+  db.prepare(
+    'INSERT OR IGNORE INTO relationships(source_image_id,derived_image_id) VALUES (?, ?)'
+  ).run(ids[0], ids[1])
+  db.close()
+  await page.reload()
+  await openAssetsShelf(page)
+
+  await page.getByRole('button', { name: /^Filters/ }).click()
+  const relationship = page.getByRole('combobox', { name: 'Relationship' })
+  const state = page.getByRole('combobox', { name: 'Asset state' })
+  await relationship.selectOption('paired')
+  await expect(assets(page)).toHaveCount(2)
+  await relationship.selectOption('')
+
+  await asset(page, 'root-beta.png').click()
+  await page.getByTestId('toggle-inspector-shelf').click()
+  const inspector = page.getByRole('complementary', { name: 'Inspector' })
+  await expect(inspector).toBeVisible()
+  await inspector.getByRole('button', { name: 'Move to trash' }).click()
+  const trashDialog = page.getByRole('dialog', {
+    name: 'Move 1 asset to trash?',
+  })
+  await trashDialog.getByRole('button', { name: 'Move to trash' }).click()
+
+  await state.selectOption('all')
+  await relationship.selectOption('paired')
+  await expect(assets(page)).toHaveCount(2)
+  await expect(asset(page, 'root-alpha.png')).toBeVisible()
+  await expect(asset(page, 'root-beta.png')).toBeVisible()
+
+  await state.selectOption('trashed')
+  await expect(assets(page)).toHaveCount(1)
+  await expect(asset(page, 'root-beta.png')).toBeVisible()
+  await relationship.selectOption('unpaired')
+  await expect(assets(page)).toHaveCount(0)
+
+  await relationship.selectOption('paired')
+  await asset(page, 'root-beta.png').click()
+  await page.getByRole('button', { name: 'Restore from trash' }).click()
+  await state.selectOption('active')
+  await expect(assets(page)).toHaveCount(2)
+  await expect(asset(page, 'root-alpha.png')).toBeVisible()
+  await expect(asset(page, 'root-beta.png')).toBeVisible()
 })
 
 test('Assets gallery controls and saved views persist and switch from the palette', async ({
@@ -198,7 +261,7 @@ test('Assets gallery controls and saved views persist and switch from the palett
     1
   )
   await expect(
-    savedViews.getByRole('option', { name: 'Unplaced' })
+    savedViews.getByRole('option', { name: 'Unpaired' })
   ).toHaveCount(1)
   await page.getByRole('button', { name: 'List view' }).click()
   await page.getByLabel('Sort assets').selectOption('name-asc')

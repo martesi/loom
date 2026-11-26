@@ -402,7 +402,6 @@ it('rechecks the current mode when a previously enabled action reaches the queue
         resetZoom: '',
         autoArrange: '',
         inspect: '',
-        unplace: '',
       },
       onAction: result.current.runDockAction,
     })
