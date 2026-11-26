@@ -158,7 +158,7 @@ func (r *Repo) registerImage(ctx context.Context, path string) (int, error) {
 			return 0, fmt.Errorf("verify undone import file identity for %q", path)
 		}
 		if identity != importIdentity.String || fingerprint != importHash.String {
-			if _, err := r.DB.Exec(`UPDATE images SET import_undone = 0 WHERE file_path = ? AND import_undone = 1`, path); err != nil {
+			if _, err := r.DB.Exec(`UPDATE images SET import_undone = 0, import_file_identity = '', import_file_sha256 = '' WHERE file_path = ? AND import_undone = 1`, path); err != nil {
 				return 0, err
 			}
 		}

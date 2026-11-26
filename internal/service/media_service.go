@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"loom/internal/media"
 	"loom/internal/store"
 	"os"
@@ -139,6 +140,7 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 	filesToValidate := []ownedImportFile{}
 	ownedFiles := map[string]os.FileInfo{}
 	ownedFileHashes := map[string]string{}
+	ownedIdentities := map[string]string{}
 	discoverablePaths := map[string]bool{}
 	rollbackSuppressions := []ownedImportFile{}
 	committed := false
@@ -151,6 +153,23 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 					// Keep the file. An unlink by path could race with an external
 					// replacement; the identity-bound tombstone hides only these bytes.
 					recordImportFileSuppression(r, path, ownedFileHashes[path], owned, "failed import rollback")
+					if identity := ownedIdentities[path]; identity != "" {
+						if err := r.ReleaseImportIdentityAnchors(identity); err != nil {
+							log.Printf("failed import rollback: unable to release unreferenced import anchor %q: %v", identity, err)
+						}
+					}
+					continue
+				}
+				identity := ownedIdentities[path]
+				if identity == "" {
+					continue
+				}
+				if _, err := removeOwnedImportFileWithHash(path, identity, ownedFileHashes[path]); err != nil {
+					log.Printf("failed import rollback: unable to remove retained import %q: %v", path, err)
+					continue
+				}
+				if err := r.ReleaseImportIdentityAnchors(identity); err != nil {
+					log.Printf("failed import rollback: unable to remove retained import anchor %q: %v", identity, err)
 				}
 			}
 			for _, file := range rollbackSuppressions {
@@ -168,6 +187,7 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 		}
 		var dest string
 		var fileInfo os.FileInfo
+		var fileIdentity string
 		for n := 0; ; n++ {
 			candidate := name
 			if n > 0 {
@@ -177,9 +197,10 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 			dest = filepath.Join(r.Path, candidate)
 			write := s.writeImportFile
 			if write == nil {
-				write = writeExclusiveMode
+				fileInfo, fileIdentity, err = writeExclusiveModeWithIdentity(dest, data, 0o644, s.importFileIdentity)
+			} else {
+				fileInfo, err = write(dest, data, 0o644)
 			}
-			fileInfo, err = write(dest, data, 0o644)
 			if os.IsExist(err) {
 				continue
 			}
@@ -196,6 +217,10 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 		discoverablePaths[dest] = true
 		ownedFiles[dest] = fileInfo
 		ownedFileHashes[dest] = fmt.Sprintf("%x", sha256.Sum256(data))
+		if fileIdentity == "" {
+			fileIdentity = s.importFileIdentity(dest, fileInfo)
+		}
+		ownedIdentities[dest] = fileIdentity
 		if s.afterImportFileWrite != nil {
 			s.afterImportFileWrite(dest)
 		}
@@ -204,7 +229,6 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 			cx = x + float64(i%6)*190
 			cy = y + float64(i/6)*160
 		}
-		fileIdentity := s.importFileIdentity(dest, fileInfo)
 		if fileIdentity == "" {
 			return nil, fmt.Errorf("imported file %q has no verifiable identity", dest)
 		}
@@ -223,14 +247,14 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 		if err := os.MkdirAll(filepath.Dir(stash), 0o755); err != nil {
 			return nil, err
 		}
-		stashInfo, err := writeExclusive(stash, data)
+		stashInfo, retainedIdentity, err := writeExclusiveWithIdentity(stash, data, s.importFileIdentity)
 		if err != nil {
 			return nil, err
 		}
 		paths = append(paths, stash)
 		ownedFiles[stash] = stashInfo
 		ownedFileHashes[stash] = fmt.Sprintf("%x", sha256.Sum256(data))
-		retainedIdentity := s.importFileIdentity(stash, stashInfo)
+		ownedIdentities[stash] = retainedIdentity
 		if retainedIdentity == "" {
 			return nil, fmt.Errorf("retained import file %q has no verifiable identity", stash)
 		}

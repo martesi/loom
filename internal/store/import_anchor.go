@@ -1,6 +1,8 @@
 package store
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -42,10 +44,21 @@ func (r *Repo) ReleaseImportIdentityAnchors(identity string) error {
 // atomically moves the entry into a fresh, private quarantine directory before
 // its final identity check. The no-replace rename prevents clobbering entries.
 func RemoveFileByIdentity(path, identity string) (bool, error) {
-	return removeFileByIdentity(path, identity, nil)
+	return removeFileByIdentityAndHash(path, identity, "", nil)
+}
+
+// RemoveFileByIdentityAndHash removes path only when both its identity and
+// content hash still match. Verification runs after the no-replace move into
+// the private quarantine directory.
+func RemoveFileByIdentityAndHash(path, identity, expectedHash string) (bool, error) {
+	return removeFileByIdentityAndHash(path, identity, expectedHash, nil)
 }
 
 func removeFileByIdentity(path, identity string, beforeMove func(string)) (bool, error) {
+	return removeFileByIdentityAndHash(path, identity, "", beforeMove)
+}
+
+func removeFileByIdentityAndHash(path, identity, expectedHash string, beforeMove func(string)) (bool, error) {
 	if identity == "" {
 		return false, nil
 	}
@@ -80,6 +93,19 @@ func removeFileByIdentity(path, identity string, beforeMove func(string)) (bool,
 			return false, fmt.Errorf("preserve replaced import file at %q: %w", quarantinePath, err)
 		}
 		return false, os.Remove(quarantineDir)
+	}
+	if expectedHash != "" {
+		data, err := os.ReadFile(quarantinePath)
+		if err != nil {
+			return false, fmt.Errorf("read quarantined import file: %w", err)
+		}
+		hash := sha256.Sum256(data)
+		if hex.EncodeToString(hash[:]) != expectedHash {
+			if err := renameImportNoReplace(quarantinePath, path); err != nil {
+				return false, fmt.Errorf("preserve modified import file at %q: %w", quarantinePath, err)
+			}
+			return false, os.Remove(quarantineDir)
+		}
 	}
 	if err := os.Remove(quarantinePath); err != nil {
 		return false, err

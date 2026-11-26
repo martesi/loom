@@ -80,6 +80,10 @@ func writeExclusive(path string, data []byte) (os.FileInfo, error) {
 	return writeExclusiveMode(path, data, 0o600)
 }
 
+func writeExclusiveWithIdentity(path string, data []byte, identityAt func(string, os.FileInfo) string) (os.FileInfo, string, error) {
+	return writeExclusiveModeWithIdentity(path, data, 0o600, identityAt)
+}
+
 type exclusiveFile interface {
 	Stat() (os.FileInfo, error)
 	Write([]byte) (int, error)
@@ -105,16 +109,26 @@ func (e *exclusiveCleanupFailure) Error() string { return e.cause.Error() }
 func (e *exclusiveCleanupFailure) Unwrap() error { return e.cause }
 
 func writeExclusiveMode(path string, data []byte, mode os.FileMode) (os.FileInfo, error) {
-	return writeExclusiveModeUsing(path, data, mode, func(path string, flags int, mode os.FileMode) (exclusiveFile, error) {
+	info, _, err := writeExclusiveModeWithIdentity(path, data, mode, store.FileIdentityAt)
+	return info, err
+}
+
+func writeExclusiveModeWithIdentity(path string, data []byte, mode os.FileMode, identityAt func(string, os.FileInfo) string) (os.FileInfo, string, error) {
+	return writeExclusiveModeUsingWithIdentity(path, data, mode, func(path string, flags int, mode os.FileMode) (exclusiveFile, error) {
 		return os.OpenFile(path, flags, mode)
-	})
+	}, identityAt)
 }
 
 func writeExclusiveModeUsing(path string, data []byte, mode os.FileMode, open func(string, int, os.FileMode) (exclusiveFile, error)) (os.FileInfo, error) {
+	info, _, err := writeExclusiveModeUsingWithIdentity(path, data, mode, open, store.FileIdentityAt)
+	return info, err
+}
+
+func writeExclusiveModeUsingWithIdentity(path string, data []byte, mode os.FileMode, open func(string, int, os.FileMode) (exclusiveFile, error), identityAt func(string, os.FileInfo) string) (os.FileInfo, string, error) {
 	if _, err := os.Lstat(path); err == nil {
-		return nil, os.ErrExist
+		return nil, "", os.ErrExist
 	} else if !os.IsNotExist(err) {
-		return nil, err
+		return nil, "", err
 	}
 	stageDir := exclusiveStageDirectory(path)
 	var stagePath string
@@ -122,7 +136,7 @@ func writeExclusiveModeUsing(path string, data []byte, mode os.FileMode, open fu
 	for {
 		randomName := make([]byte, 16)
 		if _, err := rand.Read(randomName); err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		stagePath = filepath.Join(stageDir, ".loom-import-stage-"+hex.EncodeToString(randomName))
 		var err error
@@ -131,7 +145,7 @@ func writeExclusiveModeUsing(path string, data []byte, mode os.FileMode, open fu
 			continue
 		}
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		break
 	}
@@ -142,51 +156,86 @@ func writeExclusiveModeUsing(path string, data []byte, mode os.FileMode, open fu
 		if retryErr == nil {
 			remainingHash, currentInfo, verified := ownedFilePrefixHash(stagePath, retryInfo, data)
 			if verified {
-				return nil, &exclusiveCleanupFailure{path: stagePath, info: currentInfo, hash: remainingHash, cause: statErr}
+				return nil, "", &exclusiveCleanupFailure{path: stagePath, info: currentInfo, hash: remainingHash, cause: statErr}
 			}
-			return nil, statErr
+			return nil, "", statErr
 		}
-		return nil, &unverifiedExclusiveFileError{path: stagePath, cause: errors.Join(statErr, retryErr)}
+		return nil, "", &unverifiedExclusiveFileError{path: stagePath, cause: errors.Join(statErr, retryErr)}
 	}
 	_, writeErr := file.Write(data)
 	closeErr := file.Close()
 	if writeErr != nil {
 		remainingHash, currentInfo, verified := ownedFilePrefixHash(stagePath, info, data)
 		if verified {
-			return nil, &exclusiveCleanupFailure{path: stagePath, info: currentInfo, hash: remainingHash, cause: writeErr}
+			return nil, "", &exclusiveCleanupFailure{path: stagePath, info: currentInfo, hash: remainingHash, cause: writeErr}
 		}
-		return nil, writeErr
+		return nil, "", writeErr
 	}
 	if closeErr != nil {
 		remainingHash, currentInfo, verified := ownedFilePrefixHash(stagePath, info, data)
 		if verified {
-			return nil, &exclusiveCleanupFailure{path: stagePath, info: currentInfo, hash: remainingHash, cause: closeErr}
+			return nil, "", &exclusiveCleanupFailure{path: stagePath, info: currentInfo, hash: remainingHash, cause: closeErr}
 		}
-		return nil, closeErr
+		return nil, "", closeErr
+	}
+	stageInfo, err := os.Stat(stagePath)
+	if err != nil || !os.SameFile(info, stageInfo) {
+		if err == nil {
+			err = fmt.Errorf("staged import file changed before publication")
+		}
+		return nil, "", err
+	}
+	if identityAt == nil {
+		identityAt = store.FileIdentityAt
+	}
+	identity := identityAt(stagePath, stageInfo)
+	if identity == "" {
+		cleanupErr := cleanupStageImportFile(stagePath, stageInfo)
+		return nil, "", joinImportCleanupError(fmt.Errorf("staged import file %q has no verifiable identity", stagePath), cleanupErr)
 	}
 	if err := os.Link(stagePath, path); err != nil {
-		return nil, err
+		return nil, "", joinImportCleanupError(err, cleanupStageImportFile(stagePath, stageInfo))
 	}
 	// Keep this hidden hard link as an ownership anchor. It pins the inode so
 	// the OS cannot reuse its device/inode identity after the visible path is
 	// deleted or replaced.
 	publishedInfo, err := os.Stat(path)
 	if err == nil {
-		if os.SameFile(info, publishedInfo) {
+		if os.SameFile(info, publishedInfo) && store.FileIdentityAt(path, publishedInfo) == identity {
 			// Return metadata from the staged file handle, not a path stat. On
 			// Windows the handle stat contains the stable file index; the path
 			// stat exposes only Win32FileAttributeData.
-			return info, nil
+			return info, identity, nil
 		}
-		return nil, fmt.Errorf("import destination changed after publication: %s", path)
+		cause := fmt.Errorf("import destination changed after publication: %s", path)
+		return nil, "", cleanupFailedImportPublication(path, stagePath, info, stageInfo, identity, data, cause)
 	}
-	anchorInfo, anchorErr := os.Stat(stagePath)
-	if anchorErr == nil {
-		return nil, &exclusiveCleanupFailure{
-			path: path, info: anchorInfo, hash: fmt.Sprintf("%x", sha256.Sum256(data)), cause: err,
-		}
+	return nil, "", cleanupFailedImportPublication(path, stagePath, info, stageInfo, identity, data, err)
+}
+
+func cleanupStageImportFile(path string, info os.FileInfo) error {
+	identity := store.FileIdentityAt(path, info)
+	if identity == "" {
+		return nil
 	}
-	return nil, &unverifiedExclusiveFileError{path: path, cause: errors.Join(err, anchorErr)}
+	_, err := store.RemoveFileByIdentity(path, identity)
+	return err
+}
+
+func cleanupFailedImportPublication(path, stagePath string, info, stageInfo os.FileInfo, identity string, data []byte, cause error) error {
+	_, visibleErr := store.RemoveFileByIdentity(path, identity)
+	stageErr := cleanupStageImportFile(stagePath, stageInfo)
+	if visibleErr != nil {
+		return &exclusiveCleanupFailure{path: path, info: info, hash: fmt.Sprintf("%x", sha256.Sum256(data)), cause: errors.Join(cause, visibleErr, stageErr)}
+	}
+	return joinImportCleanupError(cause, stageErr)
+}
+
+func joinImportCleanupError(cause, cleanupErr error) error {
+	if cleanupErr == nil {
+		return cause
+	}
+	return errors.Join(cause, cleanupErr)
 }
 
 func exclusiveStageDirectory(path string) string {
