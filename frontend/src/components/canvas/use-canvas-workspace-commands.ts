@@ -23,6 +23,7 @@ interface Props {
   host: MutableRefObject<HTMLDivElement | null>
   data: CanvasData
   selection: Selection
+  selectionIntentRef: import('./canvas-selection-intent').CanvasSelectionIntentRef
   workspaceState: ReturnType<typeof useCanvasWorkspaceState>
   boardModel: ReturnType<typeof useCanvasBoardModel>
   assetOperations: ReturnType<typeof useCanvasAssetOperations>
@@ -58,6 +59,7 @@ export function useCanvasWorkspaceCommands(props: Props) {
     host,
     data,
     selection,
+    selectionIntentRef,
     workspaceState,
     boardModel,
     assetOperations,
@@ -87,6 +89,7 @@ export function useCanvasWorkspaceCommands(props: Props) {
     repoPath: repo.path,
     data,
     selection,
+    selectionIntentRef,
     reload,
     ...selectionActions,
   }

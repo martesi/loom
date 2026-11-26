@@ -26,7 +26,7 @@ it('navigates to live projected nodes and reveals hidden View assets', async () 
   const nodes = new Map([
     ['1', { id: '1', position: { x: 120, y: 240 }, width: 200, height: 100 }],
   ])
-  const setCenter = mock(async () => true)
+  const setViewport = mock(async () => true)
   const setSelection = mock()
   const selectAssets = mock()
   const setReveal = mock()
@@ -36,7 +36,10 @@ it('navigates to live projected nodes and reveals hidden View assets', async () 
     flow: {
       getNode: (id: string) => nodes.get(id),
       getZoom: () => 2,
-      setCenter,
+      setViewport,
+    },
+    host: {
+      current: { getBoundingClientRect: () => ({ width: 800, height: 600 }) },
     },
     setSelection,
     selectAssets,
@@ -46,7 +49,10 @@ it('navigates to live projected nodes and reveals hidden View assets', async () 
   } as unknown as Parameters<typeof useCanvasAssetOperations>[0]
   const { result, rerender } = renderHook(() => useCanvasAssetOperations(props))
   await act(async () => result.current.go(1))
-  expect(setCenter).toHaveBeenCalledWith(220, 290, { zoom: 2 })
+  expect(setViewport).toHaveBeenCalledWith(
+    { x: -40, y: -280, zoom: 2 },
+    { duration: 0 }
+  )
   expect(setSelection).toHaveBeenCalledWith({
     surface: 'canvas',
     ids: [1],
@@ -65,7 +71,10 @@ it('navigates to live projected nodes and reveals hidden View assets', async () 
     height: 120,
   })
   await act(async () => result.current.go(2))
-  expect(setCenter).toHaveBeenLastCalledWith(650, 660, { zoom: 2 })
+  expect(setViewport).toHaveBeenLastCalledWith(
+    { x: -900, y: -1020, zoom: 2 },
+    { duration: 0 }
+  )
 })
 
 it('does not promote a delayed View drop into an Edit placement', async () => {

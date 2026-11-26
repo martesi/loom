@@ -56,7 +56,7 @@ it('merges committed positions into the latest graph, not the graph used for lay
     }
   )
   const { result } = renderHook(() => {
-    const owner = useCanvasBoardOwner('/repo')
+    const owner = useCanvasBoardOwner('/arrange-refresh-late-layout')
     const board = useSyncExternalStore(owner.subscribe, owner.getSnapshot)
     const [nodes, setNodes] = useState<Node[]>([])
     const [edges, setEdges] = useState<Edge[]>([])

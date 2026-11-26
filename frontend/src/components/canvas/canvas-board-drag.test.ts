@@ -43,7 +43,7 @@ afterEach(() => {
 
 it('commits all displayed rectangles in one guarded drag batch', async () => {
   const write = setup()
-  const owner = createCanvasBoardOwner('/repo')
+  const owner = createCanvasBoardOwner('/drag-committed-batch')
   const board = await owner.refresh()
   const drag = owner.beginDrag(board, [first, second])
   expect(drag).not.toBeNull()
@@ -55,7 +55,7 @@ it('commits all displayed rectangles in one guarded drag batch', async () => {
   }))
   await owner.endDrag(drag, after)
   expect(write).toHaveBeenCalledWith(
-    '/repo',
+    '/drag-committed-batch',
     '5',
     [{ ...first, w: null, h: null }, second],
     [first, second],
@@ -65,7 +65,7 @@ it('commits all displayed rectangles in one guarded drag batch', async () => {
 
 it('rejects a late stop after cancellation or refresh', async () => {
   const write = setup()
-  const owner = createCanvasBoardOwner('/repo')
+  const owner = createCanvasBoardOwner('/drag-cancelled-gestures')
   const board = await owner.refresh()
   const cancelled = owner.beginDrag(board, [first])
   if (!cancelled) throw new Error('missing drag')
@@ -80,7 +80,7 @@ it('rejects a late stop after cancellation or refresh', async () => {
 
 it('keeps a completed drag queued across a renderer-only rerender', async () => {
   const write = setup()
-  const owner = createCanvasBoardOwner('/repo')
+  const owner = createCanvasBoardOwner('/drag-stale-revision')
   const board = await owner.refresh()
   if (!board) throw new Error('missing board')
   let release = () => {}
@@ -136,7 +136,7 @@ it('keeps a completed drag queued across a renderer-only rerender', async () => 
     await owner.execute(async () => {})
   })
   expect(write).toHaveBeenCalledWith(
-    '/repo',
+    '/drag-stale-revision',
     '5',
     [{ ...first, w: null, h: null }, second],
     [first, second],
@@ -150,7 +150,7 @@ it('keeps a completed drag queued across a renderer-only rerender', async () => 
 
 it('discards a completed queued drag when a refresh wins before dispatch', async () => {
   const write = setup()
-  const owner = createCanvasBoardOwner('/repo')
+  const owner = createCanvasBoardOwner('/drag-refresh-before-dispatch')
   const board = await owner.refresh()
   let release = () => {}
   const blocked = owner.execute(
@@ -170,7 +170,7 @@ it('discards a completed queued drag when a refresh wins before dispatch', async
 
 it('restores cancelled displayed positions and ignores later pointer changes', async () => {
   setup()
-  const owner = createCanvasBoardOwner('/repo')
+  const owner = createCanvasBoardOwner('/drag-cancelled-display')
   const board = await owner.refresh()
   if (!board) throw new Error('missing board')
   const initial: Node[] = [
@@ -206,7 +206,7 @@ it('reloads and reports a rejected stale drag write', async () => {
   const write = setup()
   const error = new Error('stale layout revision')
   write.mockImplementation(() => Promise.reject(error) as never)
-  const owner = createCanvasBoardOwner('/repo')
+  const owner = createCanvasBoardOwner('/drag-stale-rejected')
   const board = await owner.refresh()
   const drag = owner.beginDrag(board, [first])
   if (!drag) throw new Error('missing drag')

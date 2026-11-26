@@ -60,7 +60,7 @@ it('arranges the displayed Edit graph as one guarded batch, not stored coordinat
     return undefined as never
   })
   const { result } = renderHook(() => {
-    const owner = useCanvasBoardOwner('/repo')
+    const owner = useCanvasBoardOwner('/mode-layout-batch')
     const board = useSyncExternalStore(owner.subscribe, owner.getSnapshot)
     const [nodes, setNodes] = useState<Node[]>([])
     const [edges, setEdges] = useState<Edge[]>([])
@@ -181,12 +181,9 @@ it('arranges the displayed Edit graph as one guarded batch, not stored coordinat
     ).rejects.toThrow('stale revision')
   })
   expect(result.current.nodes[0].position).toEqual({ x: 1234, y: 5678 })
-  await act(async () => {
-    await result.current.model.transitionMode('view')
-  })
-  await act(async () => {
-    await result.current.owner.execute(() => result.current.model.arrangeEdit())
-  })
+  await expect(
+    result.current.owner.execute(() => result.current.model.arrangeEdit())
+  ).rejects.toThrow('Canvas write outcome is unknown')
   expect(write).toHaveBeenCalledTimes(2)
 })
 
@@ -221,7 +218,7 @@ it('uses accepted snapshots for internal View and Edit while preserving Edit geo
     },
   }
   const { result } = renderHook(() => {
-    const owner = useCanvasBoardOwner('/repo')
+    const owner = useCanvasBoardOwner('/mode-snapshot-replay')
     const board = useSyncExternalStore(owner.subscribe, owner.getSnapshot)
     const [nodes, setNodes] = useState<Node[]>([])
     const [edges, setEdges] = useState<Edge[]>([])
@@ -329,7 +326,7 @@ it('uses accepted snapshots for internal View and Edit while preserving Edit geo
     await result.current.owner.endDrag(gesture, [{ ...before, x: 900, y: 800 }])
   })
   expect(writeGeometry).toHaveBeenCalledWith(
-    '/repo',
+    '/mode-snapshot-replay',
     '1',
     [{ imageId: 1, x: 10, y: 20, w: 150, h: 110 }],
     [before],
@@ -388,7 +385,7 @@ it('replays snapshot geometry in Edit and compensates the View anchor while keep
     },
   }
   const { result } = renderHook(() => {
-    const owner = useCanvasBoardOwner('/repo')
+    const owner = useCanvasBoardOwner('/mode-anchor-viewports')
     const board = useSyncExternalStore(owner.subscribe, owner.getSnapshot)
     const [nodes, setNodes] = useState<Node[]>([])
     const [edges, setEdges] = useState<Edge[]>([])

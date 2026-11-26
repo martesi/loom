@@ -1,4 +1,4 @@
-import type { ReactFlowInstance, Viewport } from '@xyflow/react'
+import type { ReactFlowInstance } from '@xyflow/react'
 import type { Dispatch, SetStateAction } from 'react'
 import { useCallback, useEffect, useRef } from 'react'
 import {
@@ -7,12 +7,12 @@ import {
   ImageService,
 } from '../../../bindings/loom/internal/service'
 import type { Selection } from '../../lib/selection'
-import { sameSelection } from '../../lib/selection'
 import type {
   CanvasBoardOwner,
   CanvasOperationIntent,
 } from './canvas-board-owner'
 import { readCanvasModeViewport } from './canvas-mode-viewport'
+import type { CanvasSelectionIntentRef } from './canvas-selection-intent'
 
 interface AssetSelectionRecords {
   key: string
@@ -26,6 +26,7 @@ interface Props {
   flow: ReactFlowInstance
   updateZoomCompensation: (zoom: number) => void
   selection: Selection
+  selectionIntentRef?: CanvasSelectionIntentRef
   refresh: number
   setRefresh: Dispatch<SetStateAction<number>>
   setError: Dispatch<SetStateAction<string>>
@@ -40,19 +41,18 @@ export function useCanvasRepository({
   flow,
   updateZoomCompensation,
   selection,
+  selectionIntentRef,
   refresh,
   setRefresh,
   setError,
   setReady,
   setAssetSelectionRecords,
 }: Props) {
-  const selectionIntent = useRef({ selection, revision: 0 })
-  if (!sameSelection(selectionIntent.current.selection, selection)) {
-    selectionIntent.current = {
-      selection,
-      revision: selectionIntent.current.revision + 1,
-    }
-  }
+  const fallbackSelectionIntent = useRef({
+    current: { key: '', revision: 0, targetRevision: 0 },
+  })
+  const currentSelectionIntent =
+    selectionIntentRef ?? fallbackSelectionIntent.current
   const report = useCallback(
     (error: unknown) => {
       console.error('canvas operation failed', error)
@@ -101,24 +101,23 @@ export function useCanvasRepository({
       guard?: () => boolean,
       intent?: CanvasOperationIntent
     ) => {
-      const revision = selectionIntent.current.revision
+      const revision = currentSelectionIntent.current.revision
+      const targetRevision = currentSelectionIntent.current.targetRevision
       const operationIntent =
         intent ?? executor.captureIntent('relationship', revision)
       const isCurrent = () =>
         (guard?.() ?? true) &&
-        (intent !== undefined ||
-          selectionIntent.current.revision ===
-            operationIntent.userIntentRevision)
+        currentSelectionIntent.current.revision ===
+          operationIntent.userIntentRevision &&
+        currentSelectionIntent.current.targetRevision === targetRevision
       void executor
         .executeIntent(operationIntent, isCurrent, action, true)
         .catch(report)
     },
-    [executor, report]
+    [executor, report, currentSelectionIntent]
   )
   useEffect(() => {
     let cancelled = false
-    let fitTimer: ReturnType<typeof setTimeout> | undefined
-    let repositoryViewport: Viewport | null = null
     const isCurrent = () =>
       !cancelled &&
       executor.repoPath === repoPath &&
@@ -126,7 +125,6 @@ export function useCanvasRepository({
     void ImageService.GetViewport(repoPath)
       .then(async (viewport) => {
         if (!isCurrent()) return null
-        repositoryViewport = viewport
         executor.setRepositoryViewport(viewport)
         const initialView = modeViewports
           ? (readCanvasModeViewport(repoPath, 'view') ?? viewport)
@@ -136,27 +134,15 @@ export function useCanvasRepository({
         if (!isCurrent()) return null
         return executor.refresh()
       })
-      .then((result) => {
+      .then(() => {
         if (!isCurrent()) return
         setReady(true)
-        if (
-          !repositoryViewport &&
-          !modeViewports &&
-          (result?.data.images ?? []).some(
-            (image) => image.placed && !image.trashed
-          )
-        )
-          fitTimer = setTimeout(
-            () => void flow.fitView({ padding: 0.2, maxZoom: 1 }),
-            100
-          )
       })
       .catch((error) => {
         if (!cancelled) report(error)
       })
     return () => {
       cancelled = true
-      if (fitTimer) clearTimeout(fitTimer)
     }
   }, [
     executor,

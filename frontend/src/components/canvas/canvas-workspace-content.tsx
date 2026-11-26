@@ -51,6 +51,7 @@ interface Props {
   setEdges: Dispatch<SetStateAction<Edge[]>>
   selection: Selection
   setSelection: Dispatch<SetStateAction<Selection>>
+  setSelectionFromOperation: Dispatch<SetStateAction<Selection>>
   selectionRef: MutableRefObject<Selection>
   expanded: number | null
   setExpanded: Dispatch<SetStateAction<number | null>>
@@ -82,7 +83,9 @@ export function CanvasWorkspaceContent(props: Props) {
     edges,
     setEdges,
     selection,
+    selectionIntentRef,
     setSelection,
+    setSelectionFromOperation,
     selectionRef,
     expanded,
     setExpanded,
@@ -98,7 +101,6 @@ export function CanvasWorkspaceContent(props: Props) {
     undoActions,
     assetSelectionRecords,
     updateZoomCompensation,
-    selectionIntentRef,
   } = props
   const { report, reload, run, assetSelectionKey } = repository
   const {
@@ -168,7 +170,6 @@ export function CanvasWorkspaceContent(props: Props) {
     refresh,
     error,
     space,
-    ready,
     setError,
   } = workspaceState
   const {
@@ -242,13 +243,23 @@ export function CanvasWorkspaceContent(props: Props) {
     setReveal({ id: imageId, folder: null })
     const live = boardModel.mode === 'legacy' ? node : flow.getNode(node.id)
     if (!live) return
-    void flow
-      .setCenter(
-        live.position.x + (live.measured?.width ?? live.width ?? 150) / 2,
-        live.position.y + (live.measured?.height ?? live.height ?? 110) / 2,
-        { zoom: flow.getZoom() }
+    const centerX =
+      live.position.x + (live.measured?.width ?? live.width ?? 150) / 2
+    const centerY =
+      live.position.y + (live.measured?.height ?? live.height ?? 110) / 2
+    void runViewportCommand(async (isCurrent) => {
+      if (!isCurrent()) return
+      const bounds = host.current?.getBoundingClientRect()
+      const zoom = flow.getZoom()
+      return flow.setViewport(
+        {
+          x: (bounds?.width ?? 0) / 2 - centerX * zoom,
+          y: (bounds?.height ?? 0) / 2 - centerY * zoom,
+          zoom,
+        },
+        { duration: 0 }
       )
-      .catch(report)
+    }).catch(report)
   }
   function handlePreview(node: Node) {
     workspaceState.setPreviewOrigin({ surface: 'canvas' })
@@ -264,43 +275,45 @@ export function CanvasWorkspaceContent(props: Props) {
     workspaceState.setPreviewFolderOrder(orderedIds)
     setPreviewImageId(imageId)
   }
-  const persistViewport = boardModel.mode === 'legacy'
-  const runViewportCommand = (operation: () => Promise<void>) => {
+  const runViewportCommand = (
+    operation: (isCurrent: () => boolean) => Promise<unknown>
+  ) => {
     const command = boardModel.beginViewportCommand()
     return command.waitForViewport.then(() => {
       if (!boardModel.isViewportCommandCurrent(command)) return
-      return operation().then(
-        () => {
+      const isCurrent = () => boardModel.isViewportCommandCurrent(command)
+      return operation(isCurrent)
+        .then(() =>
           boardModel.persistViewportCommand(command, flow.getViewport())
-        },
-        (error: unknown) => {
+        )
+        .catch((error: unknown) => {
           boardModel.cancelViewportCommand(command)
           throw error
-        }
-      )
+        })
     })
   }
-  const fitAll = () =>
-    runViewportCommand(() =>
-      fitCanvas(flow, repo.path, undefined, persistViewport)
+  const fitAll = async () => {
+    await runViewportCommand((isCurrent) =>
+      fitCanvas(flow, host, undefined, isCurrent)
     )
-  const fitSelection = () =>
-    runViewportCommand(() =>
-      fitCanvas(
-        flow,
-        repo.path,
-        nodes.filter(isCanvasNodeSelected),
-        persistViewport
-      )
+  }
+  const fitSelection = async () => {
+    await runViewportCommand((isCurrent) =>
+      fitCanvas(flow, host, nodes.filter(isCanvasNodeSelected), isCurrent)
     )
-  const resetZoom = () =>
-    runViewportCommand(() =>
-      resetCanvasZoom(flow, host, repo.path, persistViewport)
-    )
-  const zoomBy = (factor: number) =>
-    runViewportCommand(() =>
-      zoomCanvas(flow, repo.path, factor, persistViewport)
-    )
+  }
+  const resetZoom = async () => {
+    await runViewportCommand(async (isCurrent) => {
+      if (!isCurrent()) return
+      return resetCanvasZoom(flow, host, repo.path, false)
+    })
+  }
+  const zoomBy = async (factor: number) => {
+    await runViewportCommand(async (isCurrent) => {
+      if (!isCurrent()) return
+      return zoomCanvas(flow, repo.path, factor, false)
+    })
+  }
   function toggleFocusMode() {
     setFocusCanvas((focused) => !focused)
     requestAnimationFrame(() => host.current?.focus())
@@ -310,6 +323,7 @@ export function CanvasWorkspaceContent(props: Props) {
     host,
     data,
     selection,
+    selectionIntentRef,
     workspaceState,
     boardModel,
     assetOperations,
@@ -443,6 +457,7 @@ export function CanvasWorkspaceContent(props: Props) {
           updateProjectionViewport={boardModel.updateProjectionViewport}
           onViewportReady={boardModel.onFlowReady}
           beginUserViewportIntent={boardModel.beginUserViewportIntent}
+          associateViewportEvent={boardModel.associateViewportEvent}
           finishUserViewportIntent={boardModel.finishUserViewportIntent}
           getViewportOrigin={boardModel.getViewportOrigin}
           repoPath={repo.path}
@@ -458,11 +473,11 @@ export function CanvasWorkspaceContent(props: Props) {
           setNodes={setNodes}
           setEdges={setEdges}
           setSelection={setSelection}
+          setSelectionFromOperation={setSelectionFromOperation}
           selectionRef={selectionRef}
           selectionIntentRef={selectionIntentRef}
           setExpanded={setExpanded}
           space={space}
-          ready={ready}
           inspectorOpen={inspectorOpen}
           inspectorPinned={inspectorPinned}
           focusCanvas={focusCanvas}

@@ -1,6 +1,11 @@
 import { afterEach, expect, it, mock, spyOn } from 'bun:test'
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
-import type { Edge, Node, Viewport } from '@xyflow/react'
+import {
+  type Edge,
+  getViewportForBounds,
+  type Node,
+  type Viewport,
+} from '@xyflow/react'
 import { StrictMode, useEffect, useState } from 'react'
 import { ImageService } from '../../../bindings/loom/internal/service'
 import { createCanvasBoardOwner } from './canvas-board-owner'
@@ -286,7 +291,7 @@ it('keeps a saved restore target through early flow feedback and graph refresh',
   expect(setViewport).not.toHaveBeenCalled()
   await act(async () => result.current.controller.onFlowReady())
   await waitFor(() => expect(setViewport).toHaveBeenCalledTimes(1))
-  expect(setViewport).toHaveBeenCalledWith(saved)
+  expect(setViewport).toHaveBeenCalledWith(saved, { duration: 0 })
   expect(viewport).toEqual(saved)
 })
 
@@ -345,17 +350,19 @@ it('lets a user pan supersede a delayed saved restore', async () => {
   expect(pending.map(({ next }) => next)).toEqual([saved])
   let userNavigation: Promise<boolean> | undefined
   act(() => {
-    result.current.controller.beginUserViewportIntent()
+    const token = result.current.controller.beginUserViewportIntent(
+      new Event('pointerdown')
+    )
     userNavigation = result.current.controller.updateViewport(
       userViewport,
       'user',
-      'end'
+      'end',
+      token ?? undefined
     )
   })
   pending[0].resolve(true)
   await waitFor(() => expect(pending).toHaveLength(2))
   expect(pending[1].next).toEqual(userViewport)
-  viewport = pending[1].next
   pending[1].resolve(true)
   await act(async () => {
     await userNavigation
@@ -364,12 +371,12 @@ it('lets a user pan supersede a delayed saved restore', async () => {
 })
 
 it('bounds false viewport readiness retries and reports a failed restore', async () => {
-  const owner = setupOwner()
+  const owner = setupOwner('/bounded-false')
   const board = await owner.refresh()
   if (!board) throw new Error('missing board')
   const saved = { x: -250, y: 60, zoom: 1.6 }
   owner.setRepositoryViewport(saved)
-  writeCanvasModeViewport('/repo', 'view', saved)
+  writeCanvasModeViewport('/bounded-false', 'view', saved)
   const report = mock()
   const setViewport = mock(async () => false)
   const flow = {
@@ -405,20 +412,130 @@ it('bounds false viewport readiness retries and reports a failed restore', async
   )
 })
 
+it('fits only measured nodes with XYFlow bounds and viewport utilities', async () => {
+  const owner = setupOwner('/initial-fit-geometry')
+  const board = await owner.refresh()
+  if (!board) throw new Error('missing board')
+  let viewport: Viewport = { x: 0, y: 0, zoom: 1 }
+  const bounds = { x: -25, y: 40, width: 420, height: 260 }
+  const setViewport = mock(async (next: Viewport) => {
+    viewport = next
+    return true
+  })
+  const flow = {
+    getViewport: () => viewport,
+    getNode: (id: string) => ({
+      id,
+      position: { x: 0, y: 0 },
+      measured: { width: 180, height: 120 },
+    }),
+    getNodesBounds: mock(() => bounds),
+    setViewport,
+  }
+  const { result } = renderHook(() =>
+    useCanvasProjectionController({
+      owner,
+      nodes: [],
+      setNodes: () => {},
+      setEdges: () => {},
+      host: {
+        current: { clientWidth: 1000, clientHeight: 800 },
+      } as HTMLDivElement,
+      flow,
+      report: mock(),
+      reconcileSelection: mock(),
+      startInView: true,
+    })
+  )
+  act(() => {
+    result.current.reconcile(
+      board,
+      { nodes, edges: initialEdges, pairingOrders: orders },
+      []
+    )
+    result.current.onFlowReady()
+  })
+  await waitFor(() => expect(setViewport).toHaveBeenCalledTimes(1))
+  expect(flow.getNodesBounds).toHaveBeenCalledTimes(1)
+  expect(setViewport).toHaveBeenCalledWith(
+    getViewportForBounds(bounds, 1000, 800, 0.05, 1, 0.2),
+    { duration: 0 }
+  )
+})
+
+it('cancels a measured initial fit before it can apply a stale transform', () => {
+  const owner = setupOwner('/invalidated-measured-fit')
+  const setViewport = mock(async () => true)
+  let frame: FrameRequestCallback | null = null
+  spyOn(globalThis, 'requestAnimationFrame').mockImplementation((callback) => {
+    frame = callback
+    return 91
+  })
+  const flow = {
+    getViewport: () => ({ x: 0, y: 0, zoom: 1 }),
+    getNode: (id: string) => ({ id, position: { x: 0, y: 0 } }),
+    getNodesBounds: () => ({ x: 0, y: 0, width: 500, height: 300 }),
+    setViewport,
+  }
+  const { result } = renderHook(() =>
+    useCanvasProjectionController({
+      owner,
+      nodes: [],
+      setNodes: () => {},
+      setEdges: () => {},
+      host: {
+        current: { clientWidth: 1000, clientHeight: 800 },
+      } as HTMLDivElement,
+      flow,
+      report: mock(),
+      reconcileSelection: mock(),
+      startInView: true,
+    })
+  )
+  act(() => {
+    result.current.reconcile(
+      {
+        snapshot: { revision: 'fit', images: [], relationships: [] },
+        data: {
+          images: [{ id: 1, placed: true, trashed: false }],
+          relationships: [],
+          groups: [],
+        },
+      } as never,
+      { nodes, edges: initialEdges, pairingOrders: orders },
+      []
+    )
+    result.current.onFlowReady()
+  })
+  expect(frame).not.toBeNull()
+  const wheel = new WheelEvent('wheel')
+  act(() => {
+    const token = result.current.beginUserViewportIntent(wheel)
+    result.current.updateViewport(
+      { x: 55, y: 35, zoom: 1.2 },
+      'user',
+      'end',
+      token ?? undefined
+    )
+  })
+  frame?.(0)
+  expect(setViewport).not.toHaveBeenCalled()
+})
+
 it('tags synchronous XYFlow restore echoes as internal and does not persist them', async () => {
-  const owner = setupOwner()
+  const owner = setupOwner('/echo-restore')
   const board = await owner.refresh()
   if (!board) throw new Error('missing board')
   const saved = { x: -315, y: 110, zoom: 1.7 }
   owner.setRepositoryViewport(saved)
   const echo = { x: 3, y: 4, zoom: 1 }
-  writeCanvasModeViewport('/repo', 'view', saved)
+  writeCanvasModeViewport('/echo-restore', 'view', saved)
   let controller: ReturnType<typeof useCanvasProjectionController> | null = null
   let viewport: Viewport = { x: 0, y: 0, zoom: 1 }
   const flow = {
     getViewport: () => viewport,
     setViewport: mock(async (next: Viewport) => {
-      expect(controller?.getViewportOrigin(null)).toBe('restore')
+      expect(controller?.getViewportOrigin(null).origin).toBe('restore')
       controller?.updateViewport(echo, 'restore', 'move')
       viewport = next
       return true
@@ -449,7 +566,74 @@ it('tags synchronous XYFlow restore echoes as internal and does not persist them
     result.current.onFlowReady()
   })
   await waitFor(() => expect(flow.setViewport).toHaveBeenCalledTimes(1))
+  expect(flow.setViewport).toHaveBeenCalledWith(saved, { duration: 0 })
   expect(viewport).toEqual(saved)
+})
+
+it('rejects a delayed wheel end after a mode change and identifies a new gesture', async () => {
+  const owner = setupOwner('/delayed-wheel-mode')
+  const board = await owner.refresh()
+  if (!board) throw new Error('missing board')
+  owner.setRepositoryViewport({ x: -60, y: 20, zoom: 1.1 })
+  let viewport: Viewport = { x: 0, y: 0, zoom: 1 }
+  const flow = {
+    getViewport: () => viewport,
+    setViewport: mock(async (next: Viewport) => {
+      viewport = next
+      return true
+    }),
+  }
+  const { result } = renderHook(() =>
+    useCanvasProjectionController({
+      owner,
+      nodes: [],
+      setNodes: () => {},
+      setEdges: () => {},
+      host: { current: null },
+      flow,
+      report: mock(),
+      reconcileSelection: mock(),
+      startInView: true,
+    })
+  )
+  act(() => {
+    result.current.reconcile(
+      board,
+      { nodes, edges: initialEdges, pairingOrders: orders },
+      []
+    )
+    result.current.onFlowReady()
+  })
+  const oldWheel = new WheelEvent('wheel')
+  let oldToken: ReturnType<typeof result.current.beginUserViewportIntent>
+  act(() => {
+    oldToken = result.current.beginUserViewportIntent(oldWheel)
+    result.current.updateViewport(
+      { x: 12, y: 24, zoom: 1.2 },
+      'user',
+      'move',
+      oldToken ?? undefined
+    )
+  })
+  await act(async () => result.current.transitionMode('edit'))
+  expect(result.current.getViewportOrigin(oldWheel).origin).toBe('stale')
+  const newWheel = new WheelEvent('wheel')
+  let newToken: ReturnType<typeof result.current.beginUserViewportIntent>
+  act(() => {
+    newToken = result.current.beginUserViewportIntent(newWheel)
+    expect(result.current.getViewportOrigin(newWheel)).toMatchObject({
+      origin: 'user',
+      token: newToken,
+    })
+    result.current.updateViewport(
+      { x: 95, y: -33, zoom: 0.8 },
+      'user',
+      'end',
+      newToken ?? undefined
+    )
+  })
+  expect(result.current.getViewportOrigin(oldWheel).origin).toBe('stale')
+  owner.dispose()
 })
 
 it('applies a newer owner viewport after an older delayed restore settles', async () => {

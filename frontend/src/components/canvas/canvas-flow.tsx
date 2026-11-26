@@ -17,12 +17,13 @@ import {
   useRef,
 } from 'react'
 import type { CanvasData } from '../../../bindings/loom/internal/service'
-import { ImageService } from '../../../bindings/loom/internal/service'
 import { applyCanvasNodeSelection } from '../../lib/canvas-selection'
 import { emptySelection, type Selection } from '../../lib/selection'
 import type { CanvasBoardOwner } from './canvas-board-owner'
 import type { CanvasInternalMode } from './canvas-mode-policy'
 import type {
+  CanvasViewportEventOrigin,
+  CanvasViewportIntentToken,
   CanvasViewportOrigin,
   CanvasViewportPhase,
 } from './canvas-viewport-origin'
@@ -67,7 +68,6 @@ interface Props {
   displayEdges: Edge[]
   nodeTypes: NodeTypes
   space: boolean
-  ready: boolean
   inspectorOpen: boolean
   inspectorPinned: boolean
   host: MutableRefObject<HTMLDivElement | null>
@@ -90,12 +90,14 @@ interface Props {
   updateProjectionViewport: (
     viewport: Viewport,
     origin: CanvasViewportOrigin,
-    phase: CanvasViewportPhase
+    phase: CanvasViewportPhase,
+    token?: CanvasViewportIntentToken
   ) => void
   onViewportReady: () => void
-  beginUserViewportIntent: () => void
+  beginUserViewportIntent: (event: Event) => CanvasViewportIntentToken | null
+  associateViewportEvent: (event: Event) => void
   finishUserViewportIntent: () => void
-  getViewportOrigin: (event: unknown) => CanvasViewportOrigin
+  getViewportOrigin: (event: unknown) => CanvasViewportEventOrigin
   zoomRaf: MutableRefObject<number>
   pendingZoom: MutableRefObject<number>
   isCanvasNodeSelected: (node: Node) => boolean
@@ -108,7 +110,6 @@ export function CanvasFlow(props: Props) {
   const viewportInputCandidate = useRef(false)
   const viewportInputGeneration = useRef(0)
   const {
-    repoPath,
     owner,
     mode,
     connectionTool,
@@ -119,7 +120,6 @@ export function CanvasFlow(props: Props) {
     displayEdges,
     nodeTypes,
     space,
-    ready,
     inspectorOpen,
     inspectorPinned,
     host,
@@ -139,6 +139,7 @@ export function CanvasFlow(props: Props) {
     updateProjectionViewport,
     onViewportReady,
     beginUserViewportIntent,
+    associateViewportEvent,
     finishUserViewportIntent,
     getViewportOrigin,
     zoomRaf,
@@ -208,24 +209,62 @@ export function CanvasFlow(props: Props) {
             target !== null &&
             target.closest('.react-flow__pane') !== null &&
             (space || event.button !== 0 || event.pointerType === 'touch')
+          if (viewportInputCandidate.current)
+            beginUserViewportIntent(event.nativeEvent)
         }}
-        onPointerUpCapture={() => {
+        onMouseDownCapture={(event) => {
+          const target = event.target instanceof Element ? event.target : null
+          if (
+            target?.closest('.react-flow__pane') &&
+            (space || event.button !== 0)
+          )
+            beginUserViewportIntent(event.nativeEvent)
+        }}
+        onPointerMoveCapture={(event) =>
+          associateViewportEvent(event.nativeEvent)
+        }
+        onMouseMoveCapture={(event) =>
+          associateViewportEvent(event.nativeEvent)
+        }
+        onTouchStartCapture={(event) =>
+          beginUserViewportIntent(event.nativeEvent)
+        }
+        onTouchMoveCapture={(event) =>
+          associateViewportEvent(event.nativeEvent)
+        }
+        onTouchEndCapture={(event) => associateViewportEvent(event.nativeEvent)}
+        onPointerUpCapture={(event) => {
+          associateViewportEvent(event.nativeEvent)
+          viewportInputCandidate.current = false
+        }}
+        onMouseUpCapture={(event) => {
+          associateViewportEvent(event.nativeEvent)
           viewportInputCandidate.current = false
         }}
         onPointerCancel={() => {
           viewportInputCandidate.current = false
           finishUserViewportIntent()
         }}
-        onWheelCapture={() => {
+        onWheelCapture={(event) => {
           const generation = ++viewportInputGeneration.current
           viewportInputCandidate.current = true
+          beginUserViewportIntent(event.nativeEvent)
           requestAnimationFrame(() => {
             if (viewportInputGeneration.current === generation)
               viewportInputCandidate.current = false
           })
         }}
-        onMoveStart={() => {
-          if (viewportInputCandidate.current) beginUserViewportIntent()
+        onMoveStart={(event) => {
+          if (event instanceof Event) {
+            const origin = getViewportOrigin(event)
+            if (
+              origin.origin === 'external' ||
+              (origin.origin !== 'user' &&
+                origin.origin !== 'stale' &&
+                viewportInputCandidate.current)
+            )
+              beginUserViewportIntent(event)
+          }
           viewportInputCandidate.current = false
         }}
         data-total-image-nodes={
@@ -349,19 +388,28 @@ export function CanvasFlow(props: Props) {
           if (gesture) drag.finish(gesture, moved.length ? moved : [node])
         }}
         onMoveEnd={(event, v) => {
-          const origin = getViewportOrigin(event)
-          void updateProjectionViewport(v, ready ? origin : 'external', 'end')
-          if (origin === 'user') finishUserViewportIntent()
-          if (!ready) return
-          if (mode === 'legacy' && origin === 'user')
-            void ImageService.SetViewport(repoPath, v).catch(report)
+          const intent = getViewportOrigin(event)
+          if (intent.origin === 'stale') return
+          void updateProjectionViewport(v, intent.origin, 'end', intent.token)
+          if (intent.origin === 'user') finishUserViewportIntent()
         }}
         onMove={(event, viewport) => {
-          const origin = getViewportOrigin(event)
+          let intent = getViewportOrigin(event)
+          if (
+            (intent.origin === 'external' ||
+              (intent.origin !== 'user' && intent.origin !== 'stale')) &&
+            viewportInputCandidate.current &&
+            event instanceof Event
+          ) {
+            beginUserViewportIntent(event)
+            intent = getViewportOrigin(event)
+          }
+          if (intent.origin === 'stale') return
           void updateProjectionViewport(
             viewport,
-            ready ? origin : 'external',
-            'move'
+            intent.origin,
+            'move',
+            intent.token
           )
           // Zoom badges read this once per frame at most; onMove fires
           // per input event during pans.

@@ -1,5 +1,10 @@
 import { t } from '@lingui/core/macro'
-import type { Edge, Node, ReactFlowInstance } from '@xyflow/react'
+import {
+  type Edge,
+  getViewportForBounds,
+  type Node,
+  type ReactFlowInstance,
+} from '@xyflow/react'
 import type {
   CanvasData,
   GeometryUpdate,
@@ -205,34 +210,71 @@ export function canvasCenter(
 
 export async function fitCanvas(
   flow: ReactFlowInstance,
-  repoPath: string,
+  host: { current: HTMLElement | null },
   nodes?: Node[],
-  persist = true
+  isCurrent: () => boolean = () => true
 ) {
-  await flow.fitView(nodes ? { nodes, padding: 0.2 } : { padding: 0.2 })
-  if (persist) await ImageService.SetViewport(repoPath, flow.getViewport())
+  const nodeIds = (nodes ?? flow.getNodes()).map((node) => node.id)
+  for (let attempt = 0; attempt < 60; attempt++) {
+    if (!isCurrent()) return false
+    const bounds = host.current?.getBoundingClientRect()
+    const measured =
+      nodeIds.length > 0 &&
+      nodeIds.every((id) => {
+        const node = flow.getNode(id)
+        return (
+          (node?.measured?.width ?? 0) > 0 && (node?.measured?.height ?? 0) > 0
+        )
+      })
+    if (measured && bounds && bounds.width > 0 && bounds.height > 0) {
+      const nodeBounds = flow.getNodesBounds(nodeIds)
+      if (nodeBounds.width <= 0 || nodeBounds.height <= 0)
+        throw new Error('Canvas node bounds are empty and cannot be fitted.')
+      const viewport = getViewportForBounds(
+        nodeBounds,
+        bounds.width,
+        bounds.height,
+        0.05,
+        1,
+        0.2
+      )
+      if (!isCurrent()) return false
+      return flow.setViewport(viewport, { duration: 0 })
+    }
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+  }
+  throw new Error('Canvas nodes were not measured in time to fit the view.')
 }
 
 export async function resetCanvasZoom(
   flow: ReactFlowInstance,
   host: { current: HTMLDivElement | null },
-  repoPath: string,
-  persist = true
+  _repoPath: string,
+  _persist = true
 ) {
   const center = canvasCenter(flow, host)
-  await flow.setCenter(center.x, center.y, { zoom: 1 })
-  if (persist) await ImageService.SetViewport(repoPath, flow.getViewport())
+  const bounds = host.current?.getBoundingClientRect()
+  return flow.setViewport(
+    {
+      x: (bounds?.width ?? 0) / 2 - center.x,
+      y: (bounds?.height ?? 0) / 2 - center.y,
+      zoom: 1,
+    },
+    { duration: 0 }
+  )
 }
 
 export async function zoomCanvas(
   flow: ReactFlowInstance,
-  repoPath: string,
+  _repoPath: string,
   factor: number,
-  persist = true
+  _persist = true
 ) {
-  await flow.setViewport({
-    ...flow.getViewport(),
-    zoom: Math.max(0.05, Math.min(4, flow.getZoom() * factor)),
-  })
-  if (persist) await ImageService.SetViewport(repoPath, flow.getViewport())
+  return flow.setViewport(
+    {
+      ...flow.getViewport(),
+      zoom: Math.max(0.05, Math.min(4, flow.getZoom() * factor)),
+    },
+    { duration: 0 }
+  )
 }

@@ -68,7 +68,11 @@ export interface CanvasIntentResult<T> {
 export interface CanvasRepositoryQueue {
   tail: Promise<void>
   needsReconciliation: boolean
-  fence: { error: unknown; uncertain: boolean } | null
+  fence: {
+    error: unknown
+    uncertain: boolean
+    effect: 'unknown' | 'rejected' | 'succeeded-dirty'
+  } | null
   owners: Set<CanvasBoardOwner>
   pendingWrites: number
 }
@@ -106,11 +110,20 @@ function enqueueRepository<T>(
   return result
 }
 
+export class CanvasWriteRejectedError extends Error {
+  readonly effectNotApplied = true
+  readonly cause?: unknown
+
+  constructor(message: string, cause?: unknown) {
+    super(message)
+    this.name = 'CanvasWriteRejectedError'
+    this.cause = cause
+  }
+}
+
 function uncertainTransport(error: unknown) {
-  return (
-    error instanceof TypeError &&
-    /fetch|network|connection|socket/i.test(error.message) &&
-    !('cause' in error)
+  return !(
+    error instanceof CanvasWriteRejectedError && error.effectNotApplied === true
   )
 }
 
@@ -141,7 +154,7 @@ export interface CanvasBoardOwner extends CanvasBoardExecutor {
   ): Promise<CanvasIntentResult<T>>
   /** Dispatch a write from inside the repository queue and reconcile afterward. */
   write<T>(action: () => Promise<T>): Promise<T>
-  getMutationFence(): { error: unknown; uncertain: boolean } | null
+  getMutationFence(): CanvasRepositoryQueue['fence']
   retryReconciliation(): Promise<boolean>
   refresh(): Promise<AcceptedCanvasBoard | null>
   applyHistory(result: UndoResult): Promise<void>
@@ -237,8 +250,10 @@ export function createCanvasBoardOwner(
   ) {
     if (!alreadyPending) lane.pendingWrites++
     lane.needsReconciliation = true
+    let effectSucceeded = false
     try {
       const value = await action()
+      effectSucceeded = true
       let reconciled: AcceptedCanvasBoard | boolean | null
       if (active) {
         reconciled = await owner.refresh()
@@ -254,7 +269,21 @@ export function createCanvasBoardOwner(
       return value
     } catch (error) {
       lane.needsReconciliation = true
-      lane.fence = { error, uncertain: uncertainTransport(error) }
+      const uncertain = effectSucceeded ? false : uncertainTransport(error)
+      lane.fence = {
+        error,
+        uncertain,
+        effect: effectSucceeded
+          ? 'succeeded-dirty'
+          : uncertain
+            ? 'unknown'
+            : 'rejected',
+      }
+      console.error('canvas write settlement failed', {
+        repoPath,
+        effect: lane.fence.effect,
+        error,
+      })
       try {
         const reconciled = active
           ? await owner.refresh()
@@ -398,8 +427,10 @@ export function createCanvasBoardOwner(
         }
         lane.pendingWrites++
         let pendingWrite = true
+        let effectSucceeded = false
         try {
           const value = await action()
+          effectSucceeded = true
           intent.phase = 'settled'
           await writeAndReconcile(async () => value, true)
           lane.pendingWrites--
@@ -410,7 +441,21 @@ export function createCanvasBoardOwner(
           if (pendingWrite) lane.pendingWrites--
           intent.phase = 'settled'
           lane.needsReconciliation = true
-          lane.fence = { error, uncertain: uncertainTransport(error) }
+          const uncertain = effectSucceeded ? false : uncertainTransport(error)
+          lane.fence = {
+            error,
+            uncertain,
+            effect: effectSucceeded
+              ? 'succeeded-dirty'
+              : uncertain
+                ? 'unknown'
+                : 'rejected',
+          }
+          console.error('canvas write settlement failed', {
+            repoPath,
+            effect: lane.fence.effect,
+            error,
+          })
           if (active) {
             try {
               const reconciled = await owner.refresh()

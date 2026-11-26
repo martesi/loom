@@ -6,22 +6,19 @@ import {
   TagService,
 } from '../../../bindings/loom/internal/service'
 import type { Selection } from '../../lib/selection'
+import type { CanvasSelectionIntentRef } from './canvas-selection-intent'
 
 interface Props {
   repoPath: string
-  selection: Selection
-  selectedIds: number[]
   selectionRef: MutableRefObject<Selection>
   groupMembers: (id: number) => number[]
   reload: () => Promise<void>
   fieldSubmissionPending: MutableRefObject<boolean>
-  submissionScopeRef: MutableRefObject<{ key: string; revision: number }>
+  submissionScopeRef: CanvasSelectionIntentRef
 }
 
 export function useInspectorFieldSubmission({
   repoPath,
-  selection,
-  selectedIds,
   selectionRef,
   groupMembers,
   reload,
@@ -45,8 +42,8 @@ export function useInspectorFieldSubmission({
         imageIds,
         expected,
         repoPath,
-        selection,
-        selectedIds,
+        selection: selectionRef.current,
+        selectedIds: selectionRef.current.ids,
         selectionRef,
         groupMembers,
         reload,
@@ -57,8 +54,6 @@ export function useInspectorFieldSubmission({
     },
     [
       repoPath,
-      selection,
-      selectedIds,
       selectionRef,
       groupMembers,
       reload,
@@ -79,7 +74,7 @@ interface SubmitFieldValueProps {
   selectionRef: MutableRefObject<Selection>
   groupMembers: (id: number) => number[]
   reload: () => Promise<void>
-  submissionScopeRef: MutableRefObject<{ key: string; revision: number }>
+  submissionScopeRef: CanvasSelectionIntentRef
 }
 
 async function submitFieldValue({
@@ -96,6 +91,7 @@ async function submitFieldValue({
   submissionScopeRef,
 }: SubmitFieldValueProps) {
   const revision = submissionScopeRef.current.revision
+  const targetRevision = submissionScopeRef.current.targetRevision
   const ids = [...new Set(imageIds)].sort((a, b) => a - b)
   const currentIds = [...new Set(selectedIds)].sort((a, b) => a - b)
   const owner = selection.surface
@@ -121,6 +117,7 @@ async function submitFieldValue({
   ].sort((a, b) => a - b)
   if (
     submissionScopeRef.current.revision !== revision ||
+    submissionScopeRef.current.targetRevision !== targetRevision ||
     (expected &&
       (expected.owner !== owner || expected.revision !== revision)) ||
     selectionRef.current.surface !== owner ||

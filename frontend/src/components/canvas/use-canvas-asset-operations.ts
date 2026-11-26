@@ -3,12 +3,17 @@ import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import { useEffect, useRef } from 'react'
 import { ImageService } from '../../../bindings/loom/internal/service'
 import { readMedia } from '../../lib/clipboard'
-import { type Selection, sameSelection } from '../../lib/selection'
+import type { Selection } from '../../lib/selection'
 import type {
   CanvasBoardOwner,
   CanvasOperationIntent,
 } from './canvas-board-owner'
 import type { CanvasCapability, CanvasInternalMode } from './canvas-mode-policy'
+import {
+  type CanvasSelectionIntentRef,
+  createCanvasSelectionIntentRef,
+} from './canvas-selection-intent'
+import type { CanvasViewportCommand } from './use-canvas-projection-controller'
 import type { RevealRequest } from './use-canvas-workspace-state'
 
 export interface CanvasAssetIntent {
@@ -17,6 +22,8 @@ export interface CanvasAssetIntent {
   mode: CanvasInternalMode
   modeRevision: number
   navigationGeneration: number
+  selectionRevision: number
+  selectionTargetRevision: number
   operation: CanvasOperationIntent
 }
 
@@ -24,8 +31,19 @@ interface Props {
   repoPath: string
   owner: CanvasBoardOwner
   flow: ReactFlowInstance
-  selection: Selection
+  selection?: Selection
+  selectionRef?: MutableRefObject<Selection>
+  selectionIntentRef?: CanvasSelectionIntentRef
+  host?: MutableRefObject<HTMLDivElement | null>
+  beginViewportCommand?: () => CanvasViewportCommand
+  isViewportCommandCurrent?: (command: CanvasViewportCommand) => boolean
+  persistViewportCommand?: (
+    command: CanvasViewportCommand,
+    viewport: import('@xyflow/react').Viewport
+  ) => Promise<boolean>
+  cancelViewportCommand?: (command: CanvasViewportCommand) => void
   setSelection: Dispatch<SetStateAction<Selection>>
+  setSelectionFromOperation?: Dispatch<SetStateAction<Selection>>
   selectedIds: () => number[]
   setExpanded: Dispatch<SetStateAction<number | null>>
   openAssets: () => void
@@ -48,7 +66,15 @@ export function useCanvasAssetOperations({
   owner,
   flow,
   selection,
+  host,
+  beginViewportCommand,
+  isViewportCommandCurrent,
+  persistViewportCommand,
+  cancelViewportCommand,
+  selectionRef,
+  selectionIntentRef,
   setSelection,
+  setSelectionFromOperation,
   selectedIds,
   setExpanded,
   openAssets,
@@ -65,20 +91,27 @@ export function useCanvasAssetOperations({
   setRecentActionIds,
   setError,
 }: Props) {
+  const fallbackSelectionRef = useRef<Selection>(
+    selection ?? { surface: 'canvas', ids: [], edges: [], group: null }
+  )
+  const currentSelectionRef = selectionRef ?? fallbackSelectionRef
+  const fallbackIntentRef = useRef(
+    createCanvasSelectionIntentRef(repoPath, fallbackSelectionRef.current)
+  ).current
+  const currentSelectionIntentRef = selectionIntentRef ?? fallbackIntentRef
+  const publishSelectionFromOperation =
+    setSelectionFromOperation ?? setSelection
   const purgeOrigin = useRef<Selection['surface'] | null>(null)
   const navigationActive = useRef(true)
-  const navigation = useRef({ generation: 0, owner, repoPath, selection })
-  const previous = navigation.current
+  const navigation = useRef({ generation: 0, owner, repoPath })
   if (
-    previous.owner !== owner ||
-    previous.repoPath !== repoPath ||
-    !sameSelection(previous.selection, selection)
+    navigation.current.owner !== owner ||
+    navigation.current.repoPath !== repoPath
   ) {
     navigation.current = {
-      generation: previous.generation + 1,
+      generation: navigation.current.generation + 1,
       owner,
       repoPath,
-      selection,
     }
   }
   useEffect(() => {
@@ -97,7 +130,12 @@ export function useCanvasAssetOperations({
       mode: owner.getMode(),
       modeRevision: owner.getModeRevision(),
       navigationGeneration: navigation.current.generation,
-      operation: owner.captureIntent(capability, navigation.current.generation),
+      selectionRevision: currentSelectionIntentRef.current.revision,
+      selectionTargetRevision: currentSelectionIntentRef.current.targetRevision,
+      operation: owner.captureIntent(
+        capability,
+        currentSelectionIntentRef.current.revision
+      ),
     }
   }
   function isCurrentIntent(intent: CanvasAssetIntent) {
@@ -108,6 +146,9 @@ export function useCanvasAssetOperations({
       navigation.current.owner === owner &&
       navigation.current.repoPath === repoPath &&
       navigation.current.generation === intent.navigationGeneration &&
+      currentSelectionIntentRef.current.revision === intent.selectionRevision &&
+      currentSelectionIntentRef.current.targetRevision ===
+        intent.selectionTargetRevision &&
       owner.isActive?.() !== false &&
       owner.getMode() === intent.mode &&
       owner.getModeRevision() === intent.modeRevision &&
@@ -124,10 +165,16 @@ export function useCanvasAssetOperations({
   // A retained callback must keep the revision from the render that created it.
   const modeRevision = owner.getModeRevision()
   async function go(id: number, folder = false) {
+    let selectionRevision = currentSelectionIntentRef.current.revision
+    let selectionTargetRevision =
+      currentSelectionIntentRef.current.targetRevision
     const isOwnerCurrent = () =>
       navigationActive.current &&
       navigation.current.owner === owner &&
       navigation.current.repoPath === repoPath &&
+      currentSelectionIntentRef.current.revision === selectionRevision &&
+      currentSelectionIntentRef.current.targetRevision ===
+        selectionTargetRevision &&
       owner.isActive?.() !== false &&
       owner.getModeRevision() === modeRevision
     if (!isOwnerCurrent()) return
@@ -143,6 +190,8 @@ export function useCanvasAssetOperations({
       openAssets()
       if (!isCurrent()) return
       selectAssets([id])
+      selectionRevision = currentSelectionIntentRef.current.revision
+      selectionTargetRevision = currentSelectionIntentRef.current.targetRevision
       if (!isCurrent()) return
       setReveal({
         id,
@@ -159,25 +208,45 @@ export function useCanvasAssetOperations({
     setExpanded(null)
     if (!isCurrent()) return
     setSelection({ surface: 'canvas', ids: [id], edges: [], group: null })
+    selectionRevision = currentSelectionIntentRef.current.revision
+    selectionTargetRevision = currentSelectionIntentRef.current.targetRevision
     if (!isCurrent()) return
     const zoom = flow.getZoom()
     if (!isCurrent()) return
-    await flow.setCenter(
-      node
-        ? node.position.x + (node.measured?.width ?? node.width ?? 150) / 2
-        : image.canvasX + 75,
-      node
-        ? node.position.y + (node.measured?.height ?? node.height ?? 110) / 2
-        : image.canvasY + 55,
+    const centerX = node
+      ? node.position.x + (node.measured?.width ?? node.width ?? 150) / 2
+      : image.canvasX + 75
+    const centerY = node
+      ? node.position.y + (node.measured?.height ?? node.height ?? 110) / 2
+      : image.canvasY + 55
+    const command = beginViewportCommand?.()
+    if (command) await command.waitForViewport
+    const commandCurrent = () =>
+      !command || (isViewportCommandCurrent?.(command) ?? true)
+    if (!isCurrent() || !commandCurrent()) {
+      if (command) cancelViewportCommand?.(command)
+      return
+    }
+    const bounds = host?.current?.getBoundingClientRect()
+    if (!flow.setViewport) return
+    const applied = await flow.setViewport(
       {
+        x: (bounds?.width ?? 0) / 2 - centerX * zoom,
+        y: (bounds?.height ?? 0) / 2 - centerY * zoom,
         zoom,
-      }
+      },
+      { duration: 0 }
     )
+    if (!applied || !isCurrent() || !commandCurrent()) {
+      if (command) cancelViewportCommand?.(command)
+      return
+    }
+    if (command) await persistViewportCommand?.(command, flow.getViewport())
   }
 
   async function paste(
     media?: Awaited<ReturnType<typeof readMedia>>,
-    surface = selection.surface,
+    surface = currentSelectionRef.current.surface,
     dropPosition?: XYPosition,
     intent = captureIntent()
   ) {
@@ -203,7 +272,7 @@ export function useCanvasAssetOperations({
     )
     if (!result.dispatched || !isCurrentIntent(intent)) return
     const { ids, canvas } = result.value ?? { ids: null, canvas: false }
-    setSelection({
+    publishSelectionFromOperation({
       surface: canvas ? 'canvas' : 'assets',
       ids: ids ?? [],
       edges: [],
@@ -225,31 +294,43 @@ export function useCanvasAssetOperations({
     )
     const ids = result.value
     if (!result.dispatched || !isCurrentIntent(intent)) return
-    setSelection({ surface: 'assets', ids: ids ?? [], edges: [], group: null })
+    publishSelectionFromOperation({
+      surface: 'assets',
+      ids: ids ?? [],
+      edges: [],
+      group: null,
+    })
     if (ids?.length) setReveal({ id: ids[0], folder: null })
   }
 
   async function remove(purge: boolean) {
+    const currentSelection = currentSelectionRef.current
     const ids = selectedIds()
     if (purge) {
-      if (owner.getMode() !== 'legacy' && selection.surface !== 'assets') return
+      if (owner.getMode() !== 'legacy' && currentSelection.surface !== 'assets')
+        return
       if (ids.length) {
-        purgeOrigin.current = selection.surface
+        purgeOrigin.current = currentSelection.surface
         setPurgeIds(ids)
       }
       return
     }
-    if (selection.surface === 'assets') {
+    if (currentSelection.surface === 'assets') {
       confirmTrash(ids)
       return
     }
-    if (selection.edges.length) {
+    if (currentSelection.edges.length) {
       if (!owner.allows('relationship')) return
       const intent = captureIntent('relationship')
-      await ImageService.UnlinkSources(repoPath, selection.edges)
+      await ImageService.UnlinkSources(repoPath, currentSelection.edges)
       if (!isCurrentIntent(intent)) return
     } else return
-    setSelection({ ...selection, ids: [], edges: [], group: null })
+    publishSelectionFromOperation((current) => ({
+      ...current,
+      ids: [],
+      edges: [],
+      group: null,
+    }))
   }
 
   function confirmTrash(ids: number[]) {
@@ -279,7 +360,12 @@ export function useCanvasAssetOperations({
         : []
     )
     setTrashIds(null)
-    setSelection({ ...selection, ids: [], edges: [], group: null })
+    publishSelectionFromOperation((current) => ({
+      ...current,
+      ids: [],
+      edges: [],
+      group: null,
+    }))
     for (const failure of failures)
       console.error('asset trash failed', {
         assetId: failure.id,
@@ -316,7 +402,12 @@ export function useCanvasAssetOperations({
     if (!result.dispatched || !isCurrentIntent(intent)) return
     purgeOrigin.current = null
     setPurgeIds(null)
-    setSelection({ ...selection, ids: [], edges: [], group: null })
+    publishSelectionFromOperation((current) => ({
+      ...current,
+      ids: [],
+      edges: [],
+      group: null,
+    }))
     completeLifecycleAction()
   }
 

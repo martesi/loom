@@ -19,17 +19,13 @@ import type {
 } from '../../bindings/loom/internal/service'
 import { canvasCenter } from '../components/canvas/canvas-board-operations'
 import { useCanvasBoardOwner } from '../components/canvas/canvas-board-owner'
-import {
-  advanceCanvasSelectionIntent,
-  type CanvasSelectionIntentState,
-} from '../components/canvas/canvas-selection-intent'
+import { useCanvasSelectionAuthority } from '../components/canvas/canvas-selection-intent'
 import { CanvasWorkspaceContent } from '../components/canvas/canvas-workspace-content'
 import { useCanvasAssetOperations } from '../components/canvas/use-canvas-asset-operations'
 import { useCanvasBoardModel } from '../components/canvas/use-canvas-board-model'
 import { useCanvasRepository } from '../components/canvas/use-canvas-repository'
 import { useCanvasWorkspaceState } from '../components/canvas/use-canvas-workspace-state'
 import { useInspectorFieldSubmission } from '../components/canvas/use-inspector-field-submission'
-import { emptySelection, type Selection } from '../lib/selection'
 import { useUndoActions } from '../lib/use-undo'
 
 const emptyData: CanvasData = { images: [], relationships: [], groups: [] }
@@ -40,7 +36,7 @@ const emptyData: CanvasData = { images: [], relationships: [], groups: [] }
 export function CanvasWorkspace({ repo }: { repo: RepoInfo }) {
   return (
     <ReactFlowProvider>
-      <Canvas repo={repo} />
+      <Canvas key={repo.path} repo={repo} />
     </ReactFlowProvider>
   )
 }
@@ -98,41 +94,21 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     active: false,
     anchor: [],
   })
-  const [storedSelection, setSelection] = useState<Selection>(emptySelection),
-    [expanded, setExpanded] = useState<number | null>(null)
-  const liveRelationshipIds = new Set(
-    (data.relationships ?? []).map((item) => item.id)
-  )
-  const liveEdges = storedSelection.edges.filter((id) =>
-    liveRelationshipIds.has(id)
-  )
-  const selection =
-    liveEdges.length === storedSelection.edges.length
-      ? storedSelection
-      : { ...storedSelection, edges: liveEdges }
+  const [expanded, setExpanded] = useState<number | null>(null)
+  const {
+    selection,
+    selectionRef,
+    intentRef: selectionIntentRef,
+    setSelection,
+    setSelectionInternal,
+    setSelectionFromOperation,
+  } = useCanvasSelectionAuthority(repo.path)
   useEffect(() => {
-    setSelection((current) => {
-      const liveIds = new Set((data.relationships ?? []).map((item) => item.id))
-      const edges = current.edges.filter((id) => liveIds.has(id))
-      return edges.length === current.edges.length
-        ? current
-        : { ...current, edges }
-    })
-  }, [data.relationships])
-  const selectionRef = useRef(selection)
-  selectionRef.current = selection
-  const selectionScope = `${repo.path}\u0000${selection.surface}\u0000${selection.ids
-    .slice()
-    .sort((a, b) => a - b)
-    .join(',')}\u0000${selection.edges
-    .slice()
-    .sort((a, b) => a - b)
-    .join(',')}\u0000${selection.group ?? ''}`
-  const selectionIntentRef = useRef<CanvasSelectionIntentState>({
-    key: selectionScope,
-    revision: 0,
-  })
-  advanceCanvasSelectionIntent(selectionIntentRef, selectionScope)
+    const liveIds = new Set((data.relationships ?? []).map((item) => item.id))
+    const edges = selectionRef.current.edges.filter((id) => liveIds.has(id))
+    if (edges.length !== selectionRef.current.edges.length)
+      setSelectionInternal({ ...selectionRef.current, edges })
+  }, [data.relationships, selectionRef, setSelectionInternal])
   const [assetSelectionRecords, setAssetSelectionRecords] = useState<{
     key: string
     records: ImageInfo[]
@@ -164,23 +140,27 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       flow,
       updateZoomCompensation,
       selection,
+      selectionIntentRef,
       refresh,
       setRefresh,
       setError,
       setReady,
       setAssetSelectionRecords,
     })
-  const selectAssets = useCallback((ids: number[]) => {
-    setExpanded(null)
-    setSelection({ surface: 'assets', ids, edges: [], group: null })
-  }, [])
+  const selectAssets = useCallback(
+    (ids: number[]) => {
+      setExpanded(null)
+      setSelection({ surface: 'assets', ids, edges: [], group: null })
+    },
+    [setSelection]
+  )
   const groupMembers = useCallback(
     (id: number) => data.groups?.find((g) => g.id === id)?.memberIds ?? [],
     [data.groups]
   )
   const center = () => canvasCenter(flow, host)
   function selectedIds() {
-    return selectedIdsList
+    return selectionRef.current.ids
   }
   const callbacks = useRef({ report, run, selectAssets })
   callbacks.current = { report, run, selectAssets }
@@ -192,6 +172,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     callbacks,
     selection,
     setSelection,
+    setSelectionInternal,
     nodes,
     setNodes,
     edges,
@@ -206,11 +187,8 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       modifiedMarquee.current.active = false
     },
   })
-  const { selectedIdsList } = boardModel
   const submitInspectorField = useInspectorFieldSubmission({
     repoPath: repo.path,
-    selection,
-    selectedIds: selectedIdsList,
     selectionRef,
     groupMembers,
     reload,
@@ -235,8 +213,15 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     repoPath: repo.path,
     owner: boardOwner,
     flow,
-    selection,
+    host,
+    beginViewportCommand: boardModel.beginViewportCommand,
+    isViewportCommandCurrent: boardModel.isViewportCommandCurrent,
+    persistViewportCommand: boardModel.persistViewportCommand,
+    cancelViewportCommand: boardModel.cancelViewportCommand,
     setSelection,
+    setSelectionFromOperation,
+    selectionRef,
+    selectionIntentRef,
     selectedIds,
     setExpanded,
     openAssets,
@@ -267,6 +252,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       setEdges={setEdges}
       selection={selection}
       setSelection={setSelection}
+      setSelectionFromOperation={setSelectionFromOperation}
       selectionRef={selectionRef}
       expanded={expanded}
       setExpanded={setExpanded}

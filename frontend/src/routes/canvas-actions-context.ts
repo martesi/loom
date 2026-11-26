@@ -6,6 +6,7 @@ import type {
   RelationshipInfo,
 } from '../../bindings/loom/internal/service'
 import type { CanvasBoardOwner } from '../components/canvas/canvas-board-owner'
+import type { CanvasSelectionIntentRef } from '../components/canvas/canvas-selection-intent'
 import type { CanvasConnectionTool } from '../components/canvas/use-canvas-workspace-state'
 import type { AssetLayout } from '../lib/asset-views'
 import type { Selection } from '../lib/selection'
@@ -60,6 +61,7 @@ export interface CanvasActionsContext {
   selectedCanvasNodeIds: string[]
   visible: { current: number[] }
   selection: Selection
+  selectionIntentRef: CanvasSelectionIntentRef
   selectAssets: (ids: number[]) => void
   setSelection: Dispatch<SetStateAction<Selection>>
   data: CanvasData

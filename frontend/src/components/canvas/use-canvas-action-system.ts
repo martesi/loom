@@ -3,7 +3,6 @@ import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { LibraryService } from '../../../bindings/loom/internal/service'
 import type { CanvasAction } from '../../lib/action-catalog'
-import { sameSelection } from '../../lib/selection'
 import {
   readShortcutOverrides,
   shortcutOverridesEvent,
@@ -17,6 +16,10 @@ import {
   allowsCanvasAction,
   canvasActionCapability,
 } from './canvas-mode-policy'
+import {
+  advanceCanvasSelectionEvent,
+  createCanvasSelectionIntentRef,
+} from './canvas-selection-intent'
 import type { PaletteAsset } from './command-palette'
 
 interface Props {
@@ -50,22 +53,14 @@ export function useCanvasActionSystem({
   setPaletteAssetsLoading,
   setPaletteAssetsError,
 }: Props) {
+  const fallbackSelectionIntentRef = useRef(
+    createCanvasSelectionIntentRef(context.repoPath, context.selection)
+  ).current
+  const selectionIntentRef =
+    context.selectionIntentRef ?? fallbackSelectionIntentRef
   const [shortcutOverrides, setShortcutOverrides] = useState(
     readShortcutOverrides
   )
-  const selectionIntent = useRef({
-    selection: context.selection,
-    tool: context.connectionTool,
-    revision: 0,
-  })
-  if (
-    !sameSelection(selectionIntent.current.selection, context.selection) ||
-    selectionIntent.current.tool !== context.connectionTool
-  ) {
-    selectionIntent.current.selection = context.selection
-    selectionIntent.current.tool = context.connectionTool
-    selectionIntent.current.revision++
-  }
   useEffect(() => {
     const sync = () => setShortcutOverrides(readShortcutOverrides())
     window.addEventListener(shortcutOverridesEvent, sync)
@@ -103,7 +98,8 @@ export function useCanvasActionSystem({
           !context.owner.allows(capability)
         )
           return
-        const selectionRevision = selectionIntent.current.revision
+        const selectionRevision = selectionIntentRef.current.revision
+        const targetRevision = selectionIntentRef.current.targetRevision
         const needsStableSelection =
           action.id === 'connect-derivative' || action.id === 'connect-source'
         const startsConnectionTool =
@@ -116,7 +112,9 @@ export function useCanvasActionSystem({
           return context.owner
             .executeIntent(
               intent,
-              () => selectionIntent.current.revision === selectionRevision,
+              () =>
+                selectionIntentRef.current.revision === selectionRevision &&
+                selectionIntentRef.current.targetRevision === targetRevision,
               async () => action.execute(),
               false
             )
@@ -132,7 +130,9 @@ export function useCanvasActionSystem({
         return context.owner
           .executeIntent(
             intent,
-            () => selectionIntent.current.revision === selectionRevision,
+            () =>
+              selectionIntentRef.current.revision === selectionRevision &&
+              selectionIntentRef.current.targetRevision === targetRevision,
             async () => action.execute(),
             true
           )
@@ -276,10 +276,10 @@ export function useCanvasActionSystem({
   }
 
   function choosePaletteAsset(asset: PaletteAsset) {
-    const revision = ++selectionIntent.current.revision
+    const revision = advanceCanvasSelectionEvent(selectionIntentRef)
     setPaletteOpen(false)
     requestAnimationFrame(() => {
-      if (selectionIntent.current.revision !== revision) return
+      if (selectionIntentRef.current.revision !== revision) return
       void context.go(asset.id).catch(report)
     })
   }

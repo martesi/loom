@@ -36,6 +36,7 @@ interface Props {
   callbacks: { current: Callbacks }
   selection: Selection
   setSelection: Dispatch<SetStateAction<Selection>>
+  setSelectionInternal?: Dispatch<SetStateAction<Selection>>
   nodes: Node[]
   setNodes: (update: Node[] | ((nodes: Node[]) => Node[])) => void
   edges: Edge[]
@@ -54,6 +55,7 @@ export function useCanvasBoardModel({
   callbacks,
   selection,
   setSelection,
+  setSelectionInternal,
   nodes,
   setNodes,
   edges,
@@ -64,6 +66,7 @@ export function useCanvasBoardModel({
   cancelPointerGesture,
   startInView,
 }: Props) {
+  const publishSelectionInternally = setSelectionInternal ?? setSelection
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null)
   const previousDisplayNodes = useRef(new Map<string, Node>())
   const previousSourceNodes = useRef(new Map<string, Node>())
@@ -118,7 +121,7 @@ export function useCanvasBoardModel({
         !nodeKeys.has(focusedNode.getAttribute('data-id') ?? '')
       )
         host.current.focus()
-      setSelection((current) => {
+      publishSelectionInternally((current) => {
         if (current.surface !== 'canvas') return current
         const nextIds = current.ids.filter((id) => ids.has(id))
         const nextEdges = current.edges.filter((id) => edgeIds.has(id))
@@ -130,7 +133,7 @@ export function useCanvasBoardModel({
         return { ...current, ids: nextIds, edges: nextEdges }
       })
     },
-    [host, setSelection]
+    [host, publishSelectionInternally]
   )
   const projection = useCanvasProjectionController({
     owner,
@@ -319,6 +322,7 @@ export function useCanvasBoardModel({
     updateProjectionViewport: projection.updateViewport,
     onFlowReady: projection.onFlowReady,
     beginUserViewportIntent: projection.beginUserViewportIntent,
+    associateViewportEvent: projection.associateViewportEvent,
     finishUserViewportIntent: projection.finishUserViewportIntent,
     getViewportOrigin: projection.getViewportOrigin,
     beginViewportCommand: projection.beginViewportCommand,

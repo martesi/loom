@@ -1,50 +1,62 @@
 import { afterEach, expect, it, mock, spyOn } from 'bun:test'
+import { act, cleanup, renderHook } from '@testing-library/react'
+import { StrictMode } from 'react'
 import { ImageService } from '../../../bindings/loom/internal/service'
 import { createCanvasBoardOwner } from './canvas-board-owner'
 import {
-  advanceCanvasSelectionIntent,
   captureCanvasSelectionIntent,
   isCanvasSelectionIntentCurrent,
+  useCanvasSelectionAuthority,
 } from './canvas-selection-intent'
 
-afterEach(() => mock.restore())
-
-it('keeps A→B→A selection intent monotonic', () => {
-  const reference = { current: { key: 'A', revision: 0 } }
-  const revisions = [
-    reference.current.revision,
-    advanceCanvasSelectionIntent(reference, 'B').revision,
-    advanceCanvasSelectionIntent(reference, 'A').revision,
-  ]
-  expect(revisions).toEqual([0, 1, 2])
+afterEach(() => {
+  cleanup()
+  mock.restore()
 })
 
-it('cancels a queued Ctrl-drag after selection changes away and back', async () => {
-  const owner = createCanvasBoardOwner('/ctrl-drag-selection')
+it('cancels a queued Ctrl-drag on same-batch A→B→A through the production setter', async () => {
+  const repoPath = '/production-selection-authority'
+  const owner = createCanvasBoardOwner(repoPath)
   owner.setMode('edit')
-  const reference = { current: { key: 'A', revision: 0 } }
-  const { revision, operation } = captureCanvasSelectionIntent(owner, reference)
-  const link = spyOn(ImageService, 'LinkSource').mockResolvedValue(
-    undefined as never
+  const hook = renderHook(() => useCanvasSelectionAuthority(repoPath), {
+    wrapper: StrictMode,
+  })
+  const captured = captureCanvasSelectionIntent(
+    owner,
+    hook.result.current.intentRef
   )
   let release = () => {}
   const blocker = owner.execute(
     () => new Promise<void>((resolve) => (release = resolve))
   )
   await Promise.resolve()
-  const pending = owner.executeIntent(
-    operation,
-    () => isCanvasSelectionIntentCurrent(reference, revision),
-    () => link('/ctrl-drag-selection', 1, 2),
+  const link = spyOn(ImageService, 'LinkSource').mockResolvedValue(
+    undefined as never
+  )
+  const queued = owner.executeIntent(
+    captured.operation,
+    () =>
+      isCanvasSelectionIntentCurrent(hook.result.current.intentRef, captured),
+    () => link(repoPath, 1, 2),
     true
   )
-  advanceCanvasSelectionIntent(reference, 'B')
-  advanceCanvasSelectionIntent(reference, 'A')
+  let updaterCalls = 0
+  act(() => {
+    hook.result.current.setSelection((current) => {
+      updaterCalls++
+      return { ...current, ids: [2] }
+    })
+    hook.result.current.setSelection((current) => {
+      updaterCalls++
+      return { ...current, ids: [] }
+    })
+  })
+  expect(updaterCalls).toBe(2)
+  expect(hook.result.current.intentRef.current.revision).toBe(2)
+  expect(hook.result.current.selectionRef.current.ids).toEqual([])
   release()
   await blocker
-  const result = await pending
-  expect(result.dispatched).toBe(false)
-  expect(operation.phase).toBe('cancelled')
+  expect((await queued).dispatched).toBe(false)
   expect(link).not.toHaveBeenCalled()
   owner.dispose()
 })

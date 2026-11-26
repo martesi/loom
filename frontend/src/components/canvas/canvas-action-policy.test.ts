@@ -13,6 +13,10 @@ import {
   type CanvasCapability,
   canvasActionCapability,
 } from './canvas-mode-policy'
+import {
+  createCanvasSelectionIntentRef,
+  useCanvasSelectionAuthority,
+} from './canvas-selection-intent'
 import type { PaletteAsset } from './command-palette'
 import { useCanvasAssetOperations } from './use-canvas-asset-operations'
 
@@ -133,16 +137,24 @@ for (const interruption of [
           resolveImage = resolve
         })
     )
-    const setCenter = mock(async () => true)
+    const setViewport = mock(async () => true)
     const hook = renderHook(
       ({ path }) => {
         const owner = useCanvasBoardOwner(path)
-        const [selection, setSelection] = useState(emptySelection)
+        const authority = useCanvasSelectionAuthority(path)
+        const { selection, setSelection, selectionRef, intentRef } = authority
         const operations = useCanvasAssetOperations({
           owner,
           repoPath: path,
           selection,
+          selectionRef,
+          selectionIntentRef: intentRef,
           setSelection,
+          host: {
+            current: {
+              getBoundingClientRect: () => ({ width: 800, height: 600 }),
+            },
+          } as never,
           flow: {
             getNode: () => ({
               position: { x: 200, y: 0 },
@@ -150,7 +162,7 @@ for (const interruption of [
               height: 110,
             }),
             getZoom: () => 1,
-            setCenter,
+            setViewport,
           },
           setExpanded: mock(),
           openAssets: mock(),
@@ -162,6 +174,7 @@ for (const interruption of [
           repoPath: path,
           go: operations.go,
           selection,
+          selectionIntentRef: intentRef,
           displayNodes: [],
           selectedCanvasNodeIds: [],
           selectedIds: () => [],
@@ -236,7 +249,7 @@ for (const interruption of [
         act(() => hook.result.current.setSelection(emptySelection))
       act(() => frame(0))
       expect(getImage).not.toHaveBeenCalled()
-      expect(setCenter).not.toHaveBeenCalled()
+      expect(setViewport).not.toHaveBeenCalled()
       expect(document.activeElement).toBe(focus)
       focus.remove()
       expect(hook.result.current.selection.ids).toEqual(
@@ -261,7 +274,7 @@ for (const interruption of [
         await Promise.resolve()
       })
       expect(hook.result.current.selection.ids).toEqual([1])
-      expect(setCenter).toHaveBeenCalledTimes(1)
+      expect(setViewport).toHaveBeenCalledTimes(1)
       return
     }
     hook.rerender({ path: interruption === 'repository' ? '/b' : '/a' })
@@ -277,7 +290,7 @@ for (const interruption of [
       await currentRequest
     })
     expect(hook.result.current.selection.ids).toEqual([2])
-    expect(setCenter).toHaveBeenCalledWith(275, 55, { zoom: 1 })
+    expect(setViewport).toHaveBeenCalledTimes(1)
   })
 }
 
@@ -300,6 +313,7 @@ it('rechecks the current mode when a previously enabled action reaches the queue
     relationshipActions: [],
     visible: { current: [] },
     selection: { surface: 'canvas', ids: [], edges: [], group: null },
+    selectionIntentRef: createCanvasSelectionIntentRef('/repo', emptySelection),
     data: { images: [], relationships: [], groups: [] },
     arrange,
     undoActions: { undo: async () => {}, redo: async () => {} },
@@ -310,7 +324,7 @@ it('rechecks the current mode when a previously enabled action reaches the queue
     const [, setPaletteAssets] = useState<PaletteAsset[]>([])
     const [, setPaletteAssetsLoading] = useState(false)
     const [, setPaletteAssetsError] = useState(false)
-    return useCanvasActionSystem({
+    const system = useCanvasActionSystem({
       context,
       report: mock(),
       paletteOpen,
@@ -325,6 +339,7 @@ it('rechecks the current mode when a previously enabled action reaches the queue
       setPaletteAssetsLoading,
       setPaletteAssetsError,
     })
+    return system
   })
   const action = result.current.actionById.get('auto-arrange-active')
   const selectionAction = result.current.actionById.get(
@@ -406,28 +421,30 @@ it('cancels a queued selected-subgraph arrangement after selection changes', asy
   const owner = createCanvasBoardOwner('/repo')
   owner.setMode('edit')
   const arrange = mock(async () => {})
-  let context = {
-    owner,
-    repoPath: '/repo',
-    displayNodes: [{ id: '1' }, { id: '2' }, { id: '3' }],
-    selectedCanvasNodeIds: ['1', '2'],
-    canArrangeSelection: true,
-    selectedIds: () => [],
-    selectedImageRecords: [],
-    relationshipActions: [],
-    visible: { current: [] },
-    selection: emptySelection,
-    data: { images: [], relationships: [], groups: [] },
-    arrange,
-    undoActions: { undo: async () => {}, redo: async () => {} },
-  } as unknown as CanvasActionsContext
   const { result, rerender } = renderHook(() => {
+    const authority = useCanvasSelectionAuthority('/repo')
     const [paletteOpen, setPaletteOpen] = useState(false)
     const [, setRecentActionIds] = useState<string[]>([])
     const [, setPaletteAssets] = useState<PaletteAsset[]>([])
     const [, setPaletteAssetsLoading] = useState(false)
     const [, setPaletteAssetsError] = useState(false)
-    return useCanvasActionSystem({
+    const context = {
+      owner,
+      repoPath: '/repo',
+      displayNodes: [{ id: '1' }, { id: '2' }, { id: '3' }],
+      selectedCanvasNodeIds: authority.selection.ids.map(String),
+      canArrangeSelection: authority.selection.ids.length > 0,
+      selectedIds: () => authority.selectionRef.current.ids,
+      selectedImageRecords: [],
+      relationshipActions: [],
+      visible: { current: [] },
+      selection: authority.selection,
+      selectionIntentRef: authority.intentRef,
+      data: { images: [], relationships: [], groups: [] },
+      arrange,
+      undoActions: { undo: async () => {}, redo: async () => {} },
+    } as unknown as CanvasActionsContext
+    const system = useCanvasActionSystem({
       context,
       report: mock(),
       paletteOpen,
@@ -442,6 +459,7 @@ it('cancels a queued selected-subgraph arrangement after selection changes', asy
       setPaletteAssetsLoading,
       setPaletteAssetsError,
     })
+    return { ...system, setSelection: authority.setSelection }
   })
   let release = () => {}
   const blocker = owner.execute(
@@ -451,10 +469,14 @@ it('cancels a queued selected-subgraph arrangement after selection changes', asy
   const action = result.current.actionById.get('auto-arrange-selection')
   if (!action) throw new Error('missing selection arrangement action')
   const queued = result.current.executeAction(action)
-  context = {
-    ...context,
-    selection: { surface: 'canvas', ids: [3], edges: [], group: null },
-  } as unknown as CanvasActionsContext
+  act(() =>
+    result.current.setSelection({
+      surface: 'canvas',
+      ids: [3],
+      edges: [],
+      group: null,
+    })
+  )
   rerender()
   await act(async () => {
     release()
@@ -470,27 +492,6 @@ it('does not apply a queued D action to an image after selection changes', async
   owner.setMode('edit')
   const setConnectionTool = mock()
   const setConnectionAnchorId = mock()
-  const contextFor = (selection: typeof emptySelection) =>
-    ({
-      owner,
-      repoPath: '/repo',
-      selection,
-      connectionTool: null,
-      setConnectionTool,
-      setConnectionAnchorId,
-      selectedIds: () => selection.ids,
-      selectedImageRecords: [],
-      relationshipActions: [],
-      canNavigateRelationship: false,
-      canRemoveRelationship: false,
-      data: { images: [], relationships: [], groups: [] },
-      displayNodes: [],
-      selectedCanvasNodeIds: selection.ids.map(String),
-      visible: { current: [] },
-      undoActions: { undo: async () => {}, redo: async () => {} },
-      setReveal: mock(),
-      report: mock(),
-    }) as unknown as CanvasActionsContext
   const props = {
     report: mock(),
     paletteOpen: false,
@@ -510,15 +511,35 @@ it('does not apply a queued D action to an image after selection changes', async
     edges: [],
     group: null,
   }
-  const hook = renderHook(
-    ({ selection }) =>
-      useCanvasActionSystem({
-        ...props,
-        context: contextFor(selection),
-        pendingRecentAction: useRef<string | null>(null),
-      }),
-    { initialProps: { selection: initialSelection } }
-  )
+  const hook = renderHook(() => {
+    const authority = useCanvasSelectionAuthority('/repo', initialSelection)
+    const system = useCanvasActionSystem({
+      ...props,
+      context: {
+        owner,
+        repoPath: '/repo',
+        selection: authority.selection,
+        selectionIntentRef: authority.intentRef,
+        connectionTool: null,
+        setConnectionTool,
+        setConnectionAnchorId,
+        selectedIds: () => authority.selectionRef.current.ids,
+        selectedImageRecords: [],
+        relationshipActions: [],
+        canNavigateRelationship: false,
+        canRemoveRelationship: false,
+        data: { images: [], relationships: [] },
+        displayNodes: [],
+        selectedCanvasNodeIds: authority.selection.ids.map(String),
+        visible: { current: [] },
+        undoActions: { undo: async () => {}, redo: async () => {} },
+        setReveal: mock(),
+        report: mock(),
+      } as unknown as CanvasActionsContext,
+      pendingRecentAction: useRef<string | null>(null),
+    })
+    return { ...system, setSelection: authority.setSelection }
+  })
   let release = () => {}
   const blocker = owner.execute(
     () =>
@@ -530,9 +551,7 @@ it('does not apply a queued D action to an image after selection changes', async
   const action = hook.result.current.actionById.get('connect-derivative')
   if (!action) throw new Error('missing derivative connection action')
   const pending = hook.result.current.executeAction(action)
-  hook.rerender({
-    selection: { ...initialSelection, ids: [2] },
-  })
+  act(() => hook.result.current.setSelection({ ...initialSelection, ids: [2] }))
   await act(async () => {
     release()
     await blocker

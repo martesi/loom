@@ -22,7 +22,7 @@ it('serializes layout with mode changes and rejects an obsolete board', async ()
     ImageService,
     'SetGeometryFromDisplayAtRevision'
   ).mockResolvedValue(undefined as never)
-  const owner = createCanvasBoardOwner('/repo')
+  const owner = createCanvasBoardOwner('/arrange-owner-serialized')
   const board = await owner.refresh()
   if (!board) throw new Error('missing board')
   owner.setMode('edit')
@@ -84,7 +84,7 @@ it('rejects a graph change while a guarded layout write is pending', async () =>
       return undefined as never
     }
   )
-  const owner = createCanvasBoardOwner('/repo')
+  const owner = createCanvasBoardOwner('/arrange-owner-late-stale')
   const board = await owner.refresh()
   if (!board) throw new Error('missing board')
   owner.setMode('edit')
@@ -130,7 +130,7 @@ it('does not publish an arrangement after its owner lifetime ends', async () => 
       return undefined as never
     }
   )
-  const owner = createCanvasBoardOwner('/repo')
+  const owner = createCanvasBoardOwner('/arrange-owner-dispose')
   const board = await owner.refresh()
   if (!board) throw new Error('missing board')
   owner.setMode('edit')

@@ -90,6 +90,86 @@ test('mode viewport values stay isolated when switching repositories', async ({
   await expectViewport(page, firstEditViewport)
 })
 
+test('a user wheel viewport survives reload', async ({ page }) => {
+  await openFixtureRepo(page, 'media-fixtures')
+  const repoPath = await fixturePath('media-fixtures')
+  await page.evaluate((path) => {
+    for (const mode of ['view', 'edit'])
+      localStorage.removeItem(
+        `loom.canvas.viewport.v1:${encodeURIComponent(path)}:${mode}`
+      )
+  }, repoPath)
+  await page.reload()
+  const pane = page.locator('.react-flow__pane')
+  await pane.waitFor()
+  const box = await pane.boundingBox()
+  if (!box) throw new Error('Canvas pane is not visible')
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.mouse.wheel(140, 95)
+  const key = `loom.canvas.viewport.v1:${encodeURIComponent(repoPath)}:view`
+  await expect
+    .poll(() =>
+      page.evaluate((storageKey) => localStorage.getItem(storageKey), key)
+    )
+    .not.toBeNull()
+  const stored = await page.evaluate((storageKey) => {
+    const value = localStorage.getItem(storageKey)
+    return value ? (JSON.parse(value) as Viewport) : null
+  }, key)
+  if (!stored) throw new Error('User viewport was not persisted')
+  await expectViewport(page, stored)
+
+  await page.reload()
+  await expect(page.getByTestId('canvas-mode-view')).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+  await expectViewport(page, stored)
+})
+
+test('a delayed wheel end cannot cross a mode switch or replace a newer gesture', async ({
+  page,
+}) => {
+  const viewStart = { x: -145, y: 62, zoom: 1.3 }
+  const editStart = { x: 90, y: -35, zoom: 0.85 }
+  await openFixtureRepo(page, 'media-fixtures')
+  const repoPath = await fixturePath('media-fixtures')
+  await setModeViewports(page, repoPath, viewStart, editStart)
+  await page.reload()
+  await expectViewport(page, viewStart)
+  await page.clock.install()
+
+  const pane = page.locator('.react-flow__pane')
+  const box = await pane.boundingBox()
+  if (!box) throw new Error('Canvas pane is not visible')
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.mouse.wheel(105, 58)
+  await expect.poll(() => readRenderedViewport(page)).not.toEqual(viewStart)
+  const acceptedView = await readRenderedViewport(page)
+
+  await page.getByTestId('canvas-mode-edit').click()
+  await expectViewport(page, editStart)
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.mouse.wheel(-75, 44)
+  await expect.poll(() => readRenderedViewport(page)).not.toEqual(editStart)
+  const acceptedEdit = await readRenderedViewport(page)
+  await page.clock.fastForward(200)
+  await expectViewport(page, acceptedEdit)
+  expectViewportClose(
+    await readStoredModeViewport(page, repoPath, 'view'),
+    acceptedView
+  )
+  expectViewportClose(
+    await readStoredModeViewport(page, repoPath, 'edit'),
+    acceptedEdit
+  )
+
+  await page.reload()
+  await expectViewport(page, acceptedView)
+  await page.getByTestId('canvas-mode-edit').click()
+  await expectViewport(page, acceptedEdit)
+})
+
 async function setRepositoryViewport(
   page: Parameters<typeof openFixtureRepo>[0],
   repoPath: string,
@@ -159,4 +239,37 @@ async function expectViewport(
       )
     })
     .toBeLessThan(0.02)
+}
+
+async function readRenderedViewport(
+  page: Parameters<typeof openFixtureRepo>[0]
+) {
+  return page.locator('.react-flow__viewport').evaluate((node) => {
+    const matrix = new DOMMatrixReadOnly(getComputedStyle(node).transform)
+    return { x: matrix.m41, y: matrix.m42, zoom: matrix.a }
+  })
+}
+
+async function readStoredModeViewport(
+  page: Parameters<typeof openFixtureRepo>[0],
+  repoPath: string,
+  mode: 'view' | 'edit'
+) {
+  const key = `loom.canvas.viewport.v1:${encodeURIComponent(repoPath)}:${mode}`
+  return page.evaluate((storageKey) => {
+    const value = localStorage.getItem(storageKey)
+    return value ? (JSON.parse(value) as Viewport) : null
+  }, key)
+}
+
+function expectViewportClose(actual: Viewport | null, expected: Viewport) {
+  expect(actual).not.toBeNull()
+  if (!actual) return
+  expect(
+    Math.max(
+      Math.abs(actual.x - expected.x),
+      Math.abs(actual.y - expected.y),
+      Math.abs(actual.zoom - expected.zoom)
+    )
+  ).toBeLessThan(0.02)
 }

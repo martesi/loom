@@ -28,6 +28,8 @@ import {
   isCanvasSelectionIntentCurrent,
 } from './canvas-selection-intent'
 import type {
+  CanvasViewportEventOrigin,
+  CanvasViewportIntentToken,
   CanvasViewportOrigin,
   CanvasViewportPhase,
 } from './canvas-viewport-origin'
@@ -77,11 +79,11 @@ interface Props {
   setNodes: Dispatch<SetStateAction<Node[]>>
   setEdges: Dispatch<SetStateAction<Edge[]>>
   setSelection: Dispatch<SetStateAction<Selection>>
+  setSelectionFromOperation: Dispatch<SetStateAction<Selection>>
   selectionRef: MutableRefObject<Selection>
   selectionIntentRef: CanvasSelectionIntentRef
   setExpanded: Dispatch<SetStateAction<number | null>>
   space: boolean
-  ready: boolean
   inspectorOpen: boolean
   inspectorPinned: boolean
   focusCanvas: boolean
@@ -132,12 +134,14 @@ interface Props {
   updateProjectionViewport: (
     viewport: Viewport,
     origin: CanvasViewportOrigin,
-    phase: CanvasViewportPhase
+    phase: CanvasViewportPhase,
+    token?: CanvasViewportIntentToken
   ) => void
   onViewportReady: () => void
-  beginUserViewportIntent: () => void
+  beginUserViewportIntent: (event: Event) => CanvasViewportIntentToken | null
+  associateViewportEvent: (event: Event) => void
   finishUserViewportIntent: () => void
-  getViewportOrigin: (event: unknown) => CanvasViewportOrigin
+  getViewportOrigin: (event: unknown) => CanvasViewportEventOrigin
   zoomRaf: MutableRefObject<number>
   pendingZoom: MutableRefObject<number>
   menu: MenuState | null
@@ -166,11 +170,11 @@ export function CanvasMainSurface(props: Props) {
     setNodes,
     setEdges,
     setSelection,
+    setSelectionFromOperation,
     selectionRef,
     selectionIntentRef,
     setExpanded,
     space,
-    ready,
     inspectorOpen,
     inspectorPinned,
     focusCanvas,
@@ -204,6 +208,7 @@ export function CanvasMainSurface(props: Props) {
     updateProjectionViewport,
     onViewportReady,
     beginUserViewportIntent,
+    associateViewportEvent,
     finishUserViewportIntent,
     getViewportOrigin,
     zoomRaf,
@@ -285,16 +290,16 @@ export function CanvasMainSurface(props: Props) {
         if (!owner.allows('relationship')) return
         const id = targetAt(event.clientX, event.clientY)
         if ((event.ctrlKey || event.metaKey) && id) {
-          const { revision, operation } = captureCanvasSelectionIntent(
-            owner,
-            selectionIntentRef
-          )
+          const { revision, targetRevision, key, operation } =
+            captureCanvasSelectionIntent(owner, selectionIntentRef)
           relation.current = {
             source: Number(id),
             x: event.clientX,
             y: event.clientY,
             intent: operation,
             intentRevision: revision,
+            intentTargetRevision: targetRevision,
+            intentKey: key,
           }
           event.stopPropagation()
           event.preventDefault()
@@ -348,10 +353,11 @@ export function CanvasMainSurface(props: Props) {
         updateTarget(null)
         if (!owner.allows('relationship')) return
         const userIntentCurrent = () =>
-          isCanvasSelectionIntentCurrent(
-            selectionIntentRef,
-            drag.intentRevision
-          )
+          isCanvasSelectionIntentCurrent(selectionIntentRef, {
+            revision: drag.intentRevision,
+            targetRevision: drag.intentTargetRevision,
+            key: drag.intentKey,
+          })
         if (!owner.isIntentCurrent(drag.intent, userIntentCurrent)) return
         const id = targetAt(event.clientX, event.clientY)
         if (!isRelationshipDrag(drag, event.clientX, event.clientY)) {
@@ -381,7 +387,7 @@ export function CanvasMainSurface(props: Props) {
                 dispatched &&
                 owner.isIntentCurrent(drag.intent, userIntentCurrent)
               )
-                setSelection({
+                setSelectionFromOperation({
                   surface: 'canvas',
                   ids: [drag.source],
                   edges: [],
@@ -411,6 +417,7 @@ export function CanvasMainSurface(props: Props) {
         updateProjectionViewport={updateProjectionViewport}
         onViewportReady={onViewportReady}
         beginUserViewportIntent={beginUserViewportIntent}
+        associateViewportEvent={associateViewportEvent}
         finishUserViewportIntent={finishUserViewportIntent}
         getViewportOrigin={getViewportOrigin}
         repoPath={repoPath}
@@ -421,7 +428,6 @@ export function CanvasMainSurface(props: Props) {
         displayEdges={displayEdges}
         nodeTypes={nodeTypes}
         space={space}
-        ready={ready}
         inspectorOpen={inspectorOpen}
         inspectorPinned={inspectorPinned}
         host={host}

@@ -1,9 +1,16 @@
-import type { Edge, Node, Viewport, XYPosition } from '@xyflow/react'
+import {
+  type Edge,
+  getViewportForBounds,
+  type Node,
+  type Viewport,
+  type XYPosition,
+} from '@xyflow/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   CanvasData,
   UndoResult,
 } from '../../../bindings/loom/internal/service'
+import { ImageService } from '../../../bindings/loom/internal/service'
 import type {
   AcceptedCanvasBoard,
   CanvasBoardOwner,
@@ -28,14 +35,25 @@ import {
 } from './canvas-projection'
 import { applyProjectionUndo } from './canvas-projection-geometry'
 import type {
+  CanvasViewportEventOrigin,
+  CanvasViewportIntentToken,
   CanvasViewportOrigin,
   CanvasViewportPhase,
 } from './canvas-viewport-origin'
 
 export interface CanvasProjectionViewport {
   getViewport(): Viewport
-  setViewport(viewport: Viewport): Promise<boolean>
-  fitView?(options: { padding: number; maxZoom: number }): Promise<boolean>
+  setViewport(
+    viewport: Viewport,
+    options?: { duration?: number }
+  ): Promise<boolean>
+  getNode?(id: string): Node | undefined
+  getNodesBounds?(nodes: string[]): {
+    x: number
+    y: number
+    width: number
+    height: number
+  }
 }
 
 interface ViewportTask {
@@ -49,7 +67,11 @@ interface ViewportTask {
   origin: 'restore' | 'initial-fit' | 'anchor' | 'user'
   kind: 'set' | 'fit'
   viewport?: Viewport
+  fitNodeIds?: string[]
+  token?: CanvasViewportIntentToken
+  commitUserViewport: boolean
   attempts: number
+  measurementAttempts: number
   settled: boolean
   resolve: (applied: boolean) => void
 }
@@ -107,6 +129,16 @@ export function useCanvasProjectionController(props: Props) {
   const userViewportGesture = useRef(false)
   const viewportCommandOrigin = useRef<number | null>(null)
   const viewportCommandId = useRef(0)
+  const viewportGestureId = useRef(0)
+  const viewportIntentId = useRef(0)
+  const viewportIntentByEvent = useRef(
+    new WeakMap<Event, CanvasViewportIntentToken>()
+  )
+  const currentViewportIntent = useRef<CanvasViewportIntentToken | null>(null)
+  const lastUserViewport = useRef<{
+    token: CanvasViewportIntentToken
+    viewport: Viewport
+  } | null>(null)
   const [mode, setMode] = useState<CanvasInternalMode>('legacy')
   const invalidatePendingViewportTask = useCallback(() => {
     viewportRequestId.current++
@@ -162,8 +194,11 @@ export function useCanvasProjectionController(props: Props) {
   function updateViewport(
     viewport: Viewport,
     origin: CanvasViewportOrigin = 'external',
-    phase: CanvasViewportPhase = 'end'
+    phase: CanvasViewportPhase = 'end',
+    token?: CanvasViewportIntentToken
   ): Promise<boolean> | undefined {
+    if (origin === 'stale') return
+    if (origin === 'user' && !isViewportIntentCurrent(token)) return
     if (
       origin !== 'user' &&
       origin !== 'command' &&
@@ -175,21 +210,77 @@ export function useCanvasProjectionController(props: Props) {
       state.current = setProjectionViewport(state.current, viewport, size())
     }
     if (origin !== 'user') return
-    if (
-      viewportTaskInFlight.current &&
-      activeViewportTask.current?.origin !== 'user'
-    )
-      return requestViewportTask('user', 'set', viewport)
+    if (token) lastUserViewport.current = { token, viewport }
+    if (viewportTaskInFlight.current)
+      return requestViewportTask('user', 'set', viewport, {
+        token,
+        commitUserViewport: phase === 'end',
+      })
     if (phase === 'end') {
-      const currentState = state.current
-      if (currentState)
-        writeCanvasModeViewport(
-          current.current.owner.repoPath,
-          currentState.mode,
-          viewport
-        )
-      userViewportGesture.current = false
+      persistUserViewport(token, viewport)
     }
+  }
+  function isViewportIntentCurrent(token?: CanvasViewportIntentToken) {
+    const owner = current.current.owner
+    return Boolean(
+      token &&
+        currentViewportIntent.current?.id === token.id &&
+        token.owner === owner &&
+        owner.isActive?.() !== false &&
+        token.activationEpoch === owner.getActivationEpoch() &&
+        token.repoPath === owner.repoPath &&
+        token.mode === owner.getMode() &&
+        token.modeRequestRevision === owner.getModeRequestRevision()
+    )
+  }
+  function persistUserViewport(
+    token: CanvasViewportIntentToken | undefined,
+    viewport: Viewport
+  ) {
+    if (!isViewportIntentCurrent(token) || !token) return
+    if (token.mode === 'legacy')
+      void ImageService.SetViewport(token.repoPath, viewport).catch(
+        current.current.report
+      )
+    else writeCanvasModeViewport(token.repoPath, token.mode, viewport)
+  }
+  function persistLastUserViewport() {
+    const last = lastUserViewport.current
+    if (last && isViewportIntentCurrent(last.token))
+      persistUserViewport(last.token, last.viewport)
+    else {
+      const token = currentViewportIntent.current ?? undefined
+      const viewport = current.current.flow?.getViewport()
+      if (viewport && isViewportIntentCurrent(token))
+        persistUserViewport(token, viewport)
+    }
+    lastUserViewport.current = null
+    currentViewportIntent.current = null
+    userViewportGesture.current = false
+  }
+  function captureUserViewportInput(event: Event) {
+    persistLastUserViewport()
+    invalidatePendingViewportTask()
+    viewportCommandOrigin.current = null
+    const owner = current.current.owner
+    userViewportGesture.current = true
+    const token: CanvasViewportIntentToken = {
+      id: ++viewportIntentId.current,
+      gestureId: ++viewportGestureId.current,
+      owner,
+      repoPath: owner.repoPath,
+      mode: owner.getMode(),
+      modeRequestRevision: owner.getModeRequestRevision(),
+      activationEpoch: owner.getActivationEpoch(),
+    }
+    currentViewportIntent.current = token
+    viewportIntentByEvent.current.set(event, token)
+    return token
+  }
+  function associateUserViewportEvent(event: Event) {
+    const token = currentViewportIntent.current
+    if (token && isViewportIntentCurrent(token))
+      viewportIntentByEvent.current.set(event, token)
   }
   function settleViewportTask(task: ViewportTask, applied: boolean) {
     if (task.settled) return
@@ -208,7 +299,8 @@ export function useCanvasProjectionController(props: Props) {
       task.lifetime.activationEpoch === task.activationEpoch &&
       task.owner.repoPath === task.repoPath &&
       task.owner.getMode() === task.mode &&
-      task.owner.getModeRequestRevision() === task.modeRequestRevision
+      task.owner.getModeRequestRevision() === task.modeRequestRevision &&
+      (task.origin !== 'user' || isViewportIntentCurrent(task.token))
     )
   }
   function drainViewportTasks() {
@@ -227,6 +319,26 @@ export function useCanvasProjectionController(props: Props) {
       drainViewportTasks()
       return
     }
+    if (task.kind === 'fit') {
+      const target = getMeasuredFitViewport(flow, task.fitNodeIds ?? [], size())
+      if (!target) {
+        if (task.measurementAttempts >= 60) {
+          failViewportTask(
+            task,
+            new Error('Canvas nodes were not measured in time to fit the view.')
+          )
+          return
+        }
+        task.measurementAttempts++
+        viewportRetryFrame.current = requestAnimationFrame(() => {
+          viewportRetryFrame.current = 0
+          drainViewportTasks()
+        })
+        return
+      }
+      task.viewport = target
+      task.kind = 'set'
+    }
     const currentViewport = flow.getViewport()
     const alreadyAtTarget =
       task.kind === 'set' &&
@@ -234,6 +346,8 @@ export function useCanvasProjectionController(props: Props) {
       sameViewport(currentViewport, task.viewport)
     if (alreadyAtTarget) {
       pendingViewportTask.current = null
+      if (task.commitUserViewport && task.viewport)
+        persistUserViewport(task.token, task.viewport)
       settleViewportTask(task, true)
       return
     }
@@ -245,12 +359,18 @@ export function useCanvasProjectionController(props: Props) {
     })
     let operation: Promise<boolean> | undefined
     try {
-      operation =
-        task.kind === 'fit'
-          ? flow.fitView?.({ padding: 0.2, maxZoom: 1 })
-          : task.viewport
-            ? flow.setViewport(task.viewport)
-            : undefined
+      if (!viewportTaskIsCurrent(task)) {
+        releaseIdle()
+        viewportTaskIdle.current = null
+        viewportTaskInFlight.current = false
+        activeViewportTask.current = null
+        settleViewportTask(task, false)
+        drainViewportTasks()
+        return
+      }
+      operation = task.viewport
+        ? flow.setViewport(task.viewport, { duration: 0 })
+        : undefined
     } catch (error) {
       releaseIdle()
       viewportTaskIdle.current = null
@@ -304,6 +424,9 @@ export function useCanvasProjectionController(props: Props) {
             actualViewport,
             size()
           )
+        const finalViewport = actualViewport ?? task.viewport
+        if (task.commitUserViewport && finalViewport)
+          persistUserViewport(task.token, finalViewport)
         settleViewportTask(task, true)
         drainViewportTasks()
       },
@@ -326,7 +449,12 @@ export function useCanvasProjectionController(props: Props) {
   function requestViewportTask(
     origin: ViewportTask['origin'],
     kind: ViewportTask['kind'],
-    viewport?: Viewport
+    viewport?: Viewport,
+    options: {
+      fitNodeIds?: string[]
+      token?: CanvasViewportIntentToken
+      commitUserViewport?: boolean
+    } = {}
   ) {
     invalidatePendingViewportTask()
     const owner = current.current.owner
@@ -345,7 +473,11 @@ export function useCanvasProjectionController(props: Props) {
         origin,
         kind,
         viewport,
+        fitNodeIds: options.fitNodeIds,
+        token: options.token,
+        commitUserViewport: options.commitUserViewport ?? false,
         attempts: 0,
+        measurementAttempts: 0,
         settled: false,
         resolve,
       }
@@ -357,21 +489,30 @@ export function useCanvasProjectionController(props: Props) {
     viewportReady.current = true
     drainViewportTasks()
   }
-  function beginUserViewportIntent() {
-    userViewportGesture.current = true
-    viewportCommandOrigin.current = null
-    invalidatePendingViewportTask()
+  function beginUserViewportIntent(event: Event) {
+    return captureUserViewportInput(event)
+  }
+  function associateViewportEvent(event: Event) {
+    associateUserViewportEvent(event)
   }
   function finishUserViewportIntent() {
     userViewportGesture.current = false
   }
-  function getViewportOrigin(event: unknown): CanvasViewportOrigin {
-    if (event !== null && userViewportGesture.current) return 'user'
-    if (activeViewportTask.current) return activeViewportTask.current.origin
-    if (viewportCommandOrigin.current !== null) return 'command'
-    return userViewportGesture.current ? 'user' : 'external'
+  function getViewportOrigin(event: unknown): CanvasViewportEventOrigin {
+    if (event && typeof event === 'object') {
+      const token = viewportIntentByEvent.current.get(event as Event)
+      if (token)
+        return isViewportIntentCurrent(token)
+          ? { origin: 'user', token }
+          : { origin: 'stale', token }
+    }
+    if (activeViewportTask.current)
+      return { origin: activeViewportTask.current.origin }
+    if (viewportCommandOrigin.current !== null) return { origin: 'command' }
+    return { origin: 'external' }
   }
   function beginViewportCommand(): CanvasViewportCommand {
+    persistLastUserViewport()
     invalidatePendingViewportTask()
     userViewportGesture.current = false
     const id = ++viewportCommandId.current
@@ -398,7 +539,7 @@ export function useCanvasProjectionController(props: Props) {
       command.modeRequestRevision === command.owner.getModeRequestRevision()
     )
   }
-  function persistViewportCommand(
+  async function persistViewportCommand(
     command: CanvasViewportCommand,
     viewport: Viewport
   ) {
@@ -408,6 +549,7 @@ export function useCanvasProjectionController(props: Props) {
       state.current = setProjectionViewport(state.current, viewport, size())
     if (command.mode !== 'legacy')
       writeCanvasModeViewport(command.repoPath, command.mode, viewport)
+    else await ImageService.SetViewport(command.repoPath, viewport)
     return true
   }
   function cancelViewportCommand(command: CanvasViewportCommand) {
@@ -504,6 +646,7 @@ export function useCanvasProjectionController(props: Props) {
   }
   async function transitionMode(target: 'view' | 'edit') {
     const { owner } = current.current
+    persistLastUserViewport()
     invalidatePendingViewportTask()
     viewportCommandOrigin.current = null
     const requestRevision = owner.requestModeTransition(target)
@@ -592,7 +735,10 @@ export function useCanvasProjectionController(props: Props) {
       void requestViewportTask(
         needsInitialFit ? 'initial-fit' : 'restore',
         needsInitialFit ? 'fit' : 'set',
-        needsInitialFit ? undefined : initial.viewViewport
+        needsInitialFit ? undefined : initial.viewViewport,
+        needsInitialFit
+          ? { fitNodeIds: initial.viewNodes.map((node) => node.id) }
+          : undefined
       )
       return true
     }
@@ -650,6 +796,7 @@ export function useCanvasProjectionController(props: Props) {
     updateViewport,
     onFlowReady,
     beginUserViewportIntent,
+    associateViewportEvent,
     finishUserViewportIntent,
     getViewportOrigin,
     beginViewportCommand,
@@ -660,6 +807,33 @@ export function useCanvasProjectionController(props: Props) {
     reconcile,
     arrangeEdit,
   }
+}
+
+function getMeasuredFitViewport(
+  flow: CanvasProjectionViewport,
+  nodeIds: string[],
+  viewportSize: { width: number; height: number }
+) {
+  if (!nodeIds.length || viewportSize.width <= 0 || viewportSize.height <= 0)
+    return null
+  if (!flow.getNode || !flow.getNodesBounds) return null
+  const measured = nodeIds.every((id) => {
+    const node = flow.getNode?.(id) as
+      | (Node & { measured?: { width?: number; height?: number } })
+      | undefined
+    return (node?.measured?.width ?? 0) > 0 && (node?.measured?.height ?? 0) > 0
+  })
+  if (!measured) return null
+  const bounds = flow.getNodesBounds(nodeIds)
+  if (bounds.width <= 0 || bounds.height <= 0) return null
+  return getViewportForBounds(
+    bounds,
+    viewportSize.width,
+    viewportSize.height,
+    0.05,
+    1,
+    0.2
+  )
 }
 
 function sameViewport(a: Viewport, b: Viewport) {

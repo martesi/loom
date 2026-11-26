@@ -25,6 +25,7 @@ import {
 import { emptySelection } from '../../lib/selection'
 import { Toaster } from '../ui/toast'
 import {
+  CanvasWriteRejectedError,
   createCanvasBoardOwner,
   createCanvasRepositoryQueue,
   useCanvasBoardOwner,
@@ -301,6 +302,106 @@ describe('canvas board owner', () => {
     replacement.dispose()
   })
 
+  it('treats untyped dispatched failures as unknown after successful reads', async () => {
+    spyOn(console, 'error').mockImplementation(() => {})
+    const failures: unknown[] = [
+      new TypeError('fetch failed'),
+      new TypeError('adapter failed', { cause: new Error('socket closed') }),
+      new DOMException('request aborted', 'AbortError'),
+      new SyntaxError('invalid response payload'),
+      new Error('untyped backend rejection'),
+      'non-Error adapter failure',
+    ]
+    for (const [index, failure] of failures.entries()) {
+      const owner = createCanvasBoardOwner(`/unknown-dispatched-${index}`)
+      owner.setMode('edit')
+      spyOn(owner, 'refresh').mockResolvedValue({
+        snapshot: { revision: 'read-success', images: [], relationships: [] },
+        data,
+      } as never)
+      const intent = owner.captureIntent('relationship', 0)
+      await expect(
+        owner.executeIntent(
+          intent,
+          () => true,
+          async () => {
+            throw failure
+          },
+          true
+        )
+      ).rejects.toBe(failure)
+      expect(owner.getMutationFence()).toMatchObject({
+        uncertain: true,
+        effect: 'unknown',
+        error: failure,
+      })
+      expect(await owner.retryReconciliation()).toBe(false)
+      owner.dispose()
+    }
+  })
+
+  it('uses only the typed no-effect rejection as confirmed rejection', async () => {
+    const owner = createCanvasBoardOwner('/confirmed-no-effect')
+    owner.setMode('edit')
+    spyOn(owner, 'refresh').mockResolvedValue({
+      snapshot: { revision: 'read-success', images: [], relationships: [] },
+      data,
+    } as never)
+    const intent = owner.captureIntent('relationship', 0)
+    const rejection = new CanvasWriteRejectedError('backend validation failed')
+    await expect(
+      owner.executeIntent(
+        intent,
+        () => true,
+        async () => {
+          throw rejection
+        },
+        true
+      )
+    ).rejects.toBe(rejection)
+    expect(owner.getMutationFence()).toBeNull()
+    owner.dispose()
+  })
+
+  it('does not let a read clear a write that commits after the read', async () => {
+    spyOn(console, 'error').mockImplementation(() => {})
+    const owner = createCanvasBoardOwner('/late-commit-after-read')
+    owner.setMode('edit')
+    let backendCommitted = false
+    const refresh = spyOn(owner, 'refresh').mockImplementation(
+      async () =>
+        ({
+          snapshot: {
+            revision: backendCommitted ? 'late-commit' : 'before-commit',
+            images: [],
+            relationships: [],
+          },
+          data,
+        }) as never
+    )
+    const intent = owner.captureIntent('relationship', 0)
+    await expect(
+      owner.executeIntent(
+        intent,
+        () => true,
+        async () => {
+          throw new TypeError('connection closed after dispatch')
+        },
+        true
+      )
+    ).rejects.toThrow('connection closed after dispatch')
+    expect(refresh).toHaveBeenCalledTimes(1)
+    expect(owner.getMutationFence()?.uncertain).toBe(true)
+    backendCommitted = true
+    const lateSnapshot = await owner.refresh()
+    expect(lateSnapshot?.snapshot.revision).toBe('late-commit')
+    expect(owner.getMutationFence()).toMatchObject({
+      uncertain: true,
+      effect: 'unknown',
+    })
+    owner.dispose()
+  })
+
   it('waits for the real resize commit and its reload before undo, then waits for undo reload before redo', async () => {
     spyOn(ImageService, 'GetLayoutSnapshot').mockImplementation(
       () =>
@@ -338,7 +439,8 @@ describe('canvas board owner', () => {
     const redo = spyOn(UndoService, 'Redo').mockImplementation(
       () => Promise.resolve({ applied: true, error: '' }) as never
     )
-    const { result } = renderHook(() => useBoard('/repo'), { wrapper })
+    const repoPath = '/owner-test-waits-undo'
+    const { result } = renderHook(() => useBoard(repoPath), { wrapper })
     await waitFor(() =>
       expect(result.current.owner.getSnapshot()).not.toBeNull()
     )
@@ -363,7 +465,7 @@ describe('canvas board owner', () => {
     const redoDone = result.current.undo.redo()
     await waitFor(() => expect(geometry).toHaveBeenCalledTimes(1))
     expect(geometry).toHaveBeenCalledWith(
-      '/repo',
+      repoPath,
       '1',
       [{ imageId: 1, x: 10, y: 20, w: null, h: null }],
       [{ imageId: 1, x: 10, y: 20, w: 150, h: 110 }],
@@ -397,7 +499,9 @@ describe('canvas board owner', () => {
       ImageService,
       'SetGeometryFromDisplayAtRevision'
     ).mockImplementation(() => Promise.resolve() as never)
-    const { result } = renderHook(() => useBoard('/repo'), { wrapper })
+    const { result } = renderHook(() => useBoard('/owner-test-cancel-resize'), {
+      wrapper,
+    })
     await waitFor(() =>
       expect(result.current.owner.getSnapshot()).not.toBeNull()
     )
@@ -436,7 +540,9 @@ describe('canvas board owner', () => {
       ImageService,
       'SetGeometryFromDisplayAtRevision'
     ).mockImplementation(() => Promise.reject(error) as never)
-    const { result } = renderHook(() => useBoard('/repo'), { wrapper })
+    const { result } = renderHook(() => useBoard('/owner-test-stale-resize'), {
+      wrapper,
+    })
     await waitFor(() =>
       expect(result.current.owner.getSnapshot()).not.toBeNull()
     )
@@ -471,7 +577,8 @@ describe('canvas board owner', () => {
     const redo = spyOn(UndoService, 'Redo').mockImplementation(
       () => Promise.resolve({ applied: false, error: '' }) as never
     )
-    const { result } = renderHook(() => useBoard('/repo'), { wrapper })
+    const repoPath = '/owner-test-unchanged-resize'
+    const { result } = renderHook(() => useBoard(repoPath), { wrapper })
     await waitFor(() =>
       expect(result.current.owner.getSnapshot()).not.toBeNull()
     )
@@ -492,7 +599,7 @@ describe('canvas board owner', () => {
     })
     const rectangle = [{ imageId: 1, x: 10, y: 20, w: 150, h: 110 }]
     expect(write).toHaveBeenCalledWith(
-      '/repo',
+      repoPath,
       '1',
       rectangle,
       rectangle,
@@ -502,7 +609,9 @@ describe('canvas board owner', () => {
   })
 
   it('preserves errors and continues after a rejected operation', async () => {
-    const { result } = renderHook(() => useCanvasBoardOwner('/repo'))
+    const { result } = renderHook(() =>
+      useCanvasBoardOwner('/owner-test-queue')
+    )
     const failure = deferred<number>()
     const first = result.current.execute(() => failure.promise)
     const second = result.current.execute(() => Promise.resolve(42))
@@ -512,7 +621,7 @@ describe('canvas board owner', () => {
     await expect(second).resolves.toBe(42)
   })
 
-  it('reports failed repository operations and still runs queued undo', async () => {
+  it('keeps a queued undo fenced after an unknown repository write failure', async () => {
     spyOn(ImageService, 'LoadCanvas').mockImplementation(
       () => Promise.resolve(data) as never
     )
@@ -523,20 +632,25 @@ describe('canvas board owner', () => {
     const undo = spyOn(UndoService, 'Undo').mockImplementation(
       () => Promise.resolve({ applied: false, error: '' }) as never
     )
-    const { result } = renderHook(() => useBoard('/repo'), { wrapper })
+    const { result } = renderHook(
+      () => useBoard('/owner-test-failed-operation'),
+      { wrapper }
+    )
     const pending = deferred<void>()
     const error = new Error('resize failed')
     act(() => result.current.repository.run(() => pending.promise))
     const undoDone = result.current.undo.undo()
     pending.reject(error)
-    await act(async () => {
-      await undoDone
-    })
+    await expect(undoDone).rejects.toThrow('Canvas write outcome is unknown')
     await waitFor(() =>
       expect(log).toHaveBeenCalledWith('canvas operation failed', error)
     )
     expect(result.current.error).toBe('resize failed')
-    expect(undo).toHaveBeenCalledTimes(1)
+    expect(undo).not.toHaveBeenCalled()
+    expect(result.current.owner.getMutationFence()).toMatchObject({
+      uncertain: true,
+      effect: 'unknown',
+    })
   })
 
   it('propagates a failed undo reload and continues with queued redo', async () => {
@@ -554,7 +668,9 @@ describe('canvas board owner', () => {
     const redo = spyOn(UndoService, 'Redo').mockImplementation(
       () => Promise.resolve({ applied: false, error: '' }) as never
     )
-    const { result } = renderHook(() => useBoard('/repo'), { wrapper })
+    const { result } = renderHook(() => useBoard('/owner-test-undo-reload'), {
+      wrapper,
+    })
     await waitFor(() => expect(result.current.nodes).toHaveLength(1))
     const undoDone = result.current.undo.undo()
     const failure = undoDone.then(
@@ -585,7 +701,9 @@ describe('canvas board owner', () => {
       () =>
         Promise.resolve({ applied: false, error: 'asset was purged' }) as never
     )
-    const { result } = renderHook(() => useBoard('/repo'), { wrapper })
+    const { result } = renderHook(() => useBoard('/owner-test-undo-no-op'), {
+      wrapper,
+    })
     await waitFor(() => expect(result.current.nodes).toHaveLength(1))
     await act(async () => {
       await result.current.undo.undo()

@@ -39,6 +39,8 @@ export interface CanvasPendingRelationGesture {
   y: number
   intent: CanvasOperationIntent
   intentRevision: number
+  intentTargetRevision: number
+  intentKey: string
 }
 
 export interface RevealRequest {

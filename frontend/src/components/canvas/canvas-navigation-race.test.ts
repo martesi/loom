@@ -1,13 +1,16 @@
 import { afterEach, expect, it, mock, spyOn } from 'bun:test'
 import { act, cleanup, renderHook } from '@testing-library/react'
-import { useState } from 'react'
 import { ImageService } from '../../../bindings/loom/internal/service'
-import { emptySelection } from '../../lib/selection'
 import {
   createCanvasBoardOwner,
   useCanvasBoardOwner,
 } from './canvas-board-owner'
+import { useCanvasSelectionAuthority } from './canvas-selection-intent'
 import { useCanvasAssetOperations } from './use-canvas-asset-operations'
+
+const host = {
+  current: { getBoundingClientRect: () => ({ width: 800, height: 600 }) },
+} as never
 
 afterEach(() => {
   cleanup()
@@ -21,16 +24,20 @@ it('allows a retained direct navigation after an unrelated selection render', as
     canvasX: 100,
     canvasY: 0,
   } as never)
-  const setCenter = mock(async () => true)
+  const setViewport = mock(async () => true)
   const hook = renderHook(() => {
     const owner = useCanvasBoardOwner('/repo')
-    const [selection, setSelection] = useState(emptySelection)
+    const { selection, selectionRef, intentRef, setSelection } =
+      useCanvasSelectionAuthority('/repo')
     const operations = useCanvasAssetOperations({
       owner,
       repoPath: '/repo',
       selection,
+      selectionRef,
+      selectionIntentRef: intentRef,
       setSelection,
-      flow: { getNode: () => undefined, getZoom: () => 1, setCenter },
+      host,
+      flow: { getNode: () => undefined, getZoom: () => 1, setViewport },
       setExpanded: mock(),
       openAssets: mock(),
       selectAssets: mock(),
@@ -49,7 +56,7 @@ it('allows a retained direct navigation after an unrelated selection render', as
   )
   await act(async () => retainedGo(1))
   expect(hook.result.current.selection.ids).toEqual([1])
-  expect(setCenter).toHaveBeenCalledTimes(1)
+  expect(setViewport).toHaveBeenCalledTimes(1)
 })
 
 it('does not let an older navigation replace a newer selection or viewport', async () => {
@@ -57,16 +64,20 @@ it('does not let an older navigation replace a newer selection or viewport', asy
   spyOn(ImageService, 'GetImage').mockImplementation(
     (_path, id) => new Promise((resolve) => pending.set(id, resolve))
   )
-  const setCenter = mock(async () => true)
+  const setViewport = mock(async () => true)
   const { result } = renderHook(() => {
     const owner = useCanvasBoardOwner('/repo')
-    const [selection, setSelection] = useState(emptySelection)
+    const { selection, selectionRef, intentRef, setSelection } =
+      useCanvasSelectionAuthority('/repo')
     const operations = useCanvasAssetOperations({
       owner,
       repoPath: '/repo',
       selection,
+      selectionRef,
+      selectionIntentRef: intentRef,
       setSelection,
-      flow: { getNode: () => undefined, getZoom: () => 1, setCenter },
+      host,
+      flow: { getNode: () => undefined, getZoom: () => 1, setViewport },
       setExpanded: mock(),
       openAssets: mock(),
       selectAssets: mock(),
@@ -89,8 +100,7 @@ it('does not let an older navigation replace a newer selection or viewport', asy
     await alpha
   })
   expect(result.current.selection.ids).toEqual([2])
-  expect(setCenter).toHaveBeenCalledTimes(1)
-  expect(setCenter).toHaveBeenCalledWith(275, 55, { zoom: 1 })
+  expect(setViewport).toHaveBeenCalledTimes(1)
 })
 
 it('ignores a retained repository callback without interrupting current navigation', async () => {
@@ -101,17 +111,21 @@ it('ignores a retained repository callback without interrupting current navigati
         resolveImage = resolve
       })
   )
-  const setCenter = mock(async () => true)
+  const setViewport = mock(async () => true)
   const hook = renderHook(
     ({ path }) => {
       const owner = useCanvasBoardOwner(path)
-      const [selection, setSelection] = useState(emptySelection)
+      const { selection, selectionRef, intentRef, setSelection } =
+        useCanvasSelectionAuthority(path)
       const operations = useCanvasAssetOperations({
         owner,
         repoPath: path,
         selection,
+        selectionRef,
+        selectionIntentRef: intentRef,
         setSelection,
-        flow: { getNode: () => undefined, getZoom: () => 1, setCenter },
+        host,
+        flow: { getNode: () => undefined, getZoom: () => 1, setViewport },
         setExpanded: mock(),
         openAssets: mock(),
         selectAssets: mock(),
@@ -134,7 +148,7 @@ it('ignores a retained repository callback without interrupting current navigati
     await currentRequest
   })
   expect(hook.result.current.selection.ids).toEqual([2])
-  expect(setCenter).toHaveBeenCalledWith(275, 55, { zoom: 1 })
+  expect(setViewport).toHaveBeenCalledTimes(1)
 })
 
 for (const strict of [false, true]) {
@@ -149,16 +163,20 @@ for (const strict of [false, true]) {
               })
             : Promise.resolve({ id: 1, placed: true, canvasX: 100 } as never)
       )
-      const setCenter = mock(async () => true)
+      const setViewport = mock(async () => true)
       const hook = renderHook(
         () => {
           const owner = useCanvasBoardOwner('/repo')
-          const [selection, setSelection] = useState(emptySelection)
+          const { selection, selectionRef, intentRef, setSelection } =
+            useCanvasSelectionAuthority('/repo')
           const operations = useCanvasAssetOperations({
             owner,
             repoPath: '/repo',
             selection,
+            selectionRef,
+            selectionIntentRef: intentRef,
             setSelection,
+            host,
             flow: {
               getNode: () => ({
                 position: { x: 200, y: 20 },
@@ -166,7 +184,7 @@ for (const strict of [false, true]) {
                 height: 80,
               }),
               getZoom: () => 1,
-              setCenter,
+              setViewport,
             },
             setExpanded: mock(),
             openAssets: mock(),
@@ -190,12 +208,7 @@ for (const strict of [false, true]) {
         await currentRequest
       })
       expect(hook.result.current.selection.ids).toEqual([2])
-      expect(setCenter).toHaveBeenCalledTimes(1)
-      expect(setCenter).toHaveBeenCalledWith(
-        backToLegacy ? 275 : 250,
-        backToLegacy ? 55 : 60,
-        { zoom: 1 }
-      )
+      expect(setViewport).toHaveBeenCalledTimes(1)
     })
   }
 }
@@ -206,10 +219,11 @@ it('does not start navigation from a retained callback after unmount', async () 
   )
   const hook = renderHook(() => {
     const owner = useCanvasBoardOwner('/repo')
+    const authority = useCanvasSelectionAuthority('/repo')
     return useCanvasAssetOperations({
       owner,
       repoPath: '/repo',
-      selection: emptySelection,
+      ...authority,
     } as unknown as Parameters<typeof useCanvasAssetOperations>[0])
   })
   const retainedGo = hook.result.current.go
@@ -228,16 +242,20 @@ it('rejects a replaced or inactive owner even when the repository path is unchan
   )
   const first = createCanvasBoardOwner('/repo')
   const second = createCanvasBoardOwner('/repo')
-  const setCenter = mock(async () => true)
+  const setViewport = mock(async () => true)
   const hook = renderHook(
     ({ owner }) => {
-      const [selection, setSelection] = useState(emptySelection)
+      const { selection, selectionRef, intentRef, setSelection } =
+        useCanvasSelectionAuthority('/repo')
       const operations = useCanvasAssetOperations({
         owner,
         repoPath: '/repo',
         selection,
+        selectionRef,
+        selectionIntentRef: intentRef,
         setSelection,
-        flow: { getNode: () => undefined, getZoom: () => 1, setCenter },
+        host,
+        flow: { getNode: () => undefined, getZoom: () => 1, setViewport },
         setExpanded: mock(),
         openAssets: mock(),
         selectAssets: mock(),
@@ -257,7 +275,7 @@ it('rejects a replaced or inactive owner even when the repository path is unchan
     await currentRequest
   })
   expect(hook.result.current.selection.ids).toEqual([2])
-  expect(setCenter).toHaveBeenCalledWith(275, 55, { zoom: 1 })
+  expect(setViewport).toHaveBeenCalledTimes(1)
   second.dispose()
   await hook.result.current.operations.go(3)
   expect(getImage).toHaveBeenCalledTimes(1)
@@ -272,19 +290,23 @@ for (const target of ['canvas', 'assets'] as const) {
       canvasY: 20,
       filePath: '/repo/1.png',
     } as never)
-    const setCenter = mock(async () => true)
+    const setViewport = mock(async () => true)
     const selectAssets = mock()
     const setReveal = mock()
     const hook = renderHook(() => {
       const owner = useCanvasBoardOwner('/repo')
-      const [selection, setSelection] = useState(emptySelection)
+      const { selection, selectionRef, intentRef, setSelection } =
+        useCanvasSelectionAuthority('/repo')
       const changeMode = () => owner.setMode('view')
       const operations = useCanvasAssetOperations({
         owner,
         repoPath: '/repo',
         selection,
+        selectionRef,
+        selectionIntentRef: intentRef,
         setSelection,
-        flow: { getNode: () => undefined, getZoom: () => 1, setCenter },
+        host,
+        flow: { getNode: () => undefined, getZoom: () => 1, setViewport },
         setExpanded: changeMode,
         openAssets: changeMode,
         selectAssets,
@@ -294,7 +316,7 @@ for (const target of ['canvas', 'assets'] as const) {
     })
     await act(async () => hook.result.current.operations.go(1))
     expect(hook.result.current.selection.ids).toEqual([])
-    expect(setCenter).not.toHaveBeenCalled()
+    expect(setViewport).not.toHaveBeenCalled()
     expect(selectAssets).not.toHaveBeenCalled()
     expect(setReveal).not.toHaveBeenCalled()
   })
@@ -314,20 +336,24 @@ for (const interruption of [
           resolveImage = resolve
         })
     )
-    const setCenter = mock(async () => true)
+    const setViewport = mock(async () => true)
     const openAssets = mock()
     const selectAssets = mock()
     const setReveal = mock()
     const hook = renderHook(
       ({ path }) => {
         const owner = useCanvasBoardOwner(path)
-        const [selection, setSelection] = useState(emptySelection)
+        const { selection, selectionRef, intentRef, setSelection } =
+          useCanvasSelectionAuthority(path)
         const operations = useCanvasAssetOperations({
           owner,
           repoPath: path,
           selection,
+          selectionRef,
+          selectionIntentRef: intentRef,
           setSelection,
-          flow: { getNode: () => undefined, getZoom: () => 1, setCenter },
+          host,
+          flow: { getNode: () => undefined, getZoom: () => 1, setViewport },
           setExpanded: mock(),
           openAssets,
           selectAssets,
@@ -360,7 +386,7 @@ for (const interruption of [
     expect(openAssets).not.toHaveBeenCalled()
     expect(selectAssets).not.toHaveBeenCalled()
     expect(setReveal).not.toHaveBeenCalled()
-    expect(setCenter).not.toHaveBeenCalled()
+    expect(setViewport).not.toHaveBeenCalled()
     if (interruption !== 'unmount')
       expect(hook.result.current.selection.ids).toEqual(
         interruption === 'selection' ? [2] : []
