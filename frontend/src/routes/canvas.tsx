@@ -5,6 +5,7 @@ import {
   useReactFlow,
 } from '@xyflow/react'
 import {
+  type SetStateAction,
   useCallback,
   useEffect,
   useRef,
@@ -19,6 +20,7 @@ import type {
 } from '../../bindings/loom/internal/service'
 import { canvasCenter } from '../components/canvas/canvas-board-operations'
 import { useCanvasBoardOwner } from '../components/canvas/canvas-board-owner'
+import type { CanvasUserIntent } from '../components/canvas/canvas-operation'
 import { CanvasWorkspaceContent } from '../components/canvas/canvas-workspace-content'
 import { useCanvasAssetOperations } from '../components/canvas/use-canvas-asset-operations'
 import { useCanvasBoardModel } from '../components/canvas/use-canvas-board-model'
@@ -42,6 +44,15 @@ export function CanvasWorkspace({ repo }: { repo: RepoInfo }) {
 }
 function Canvas({ repo }: { repo: RepoInfo }) {
   const boardOwner = useCanvasBoardOwner(repo.path)
+  const selectionIntentRevision = useRef(0)
+  const intentOwner = useRef({ owner: boardOwner, repoPath: repo.path })
+  if (
+    intentOwner.current.owner !== boardOwner ||
+    intentOwner.current.repoPath !== repo.path
+  ) {
+    intentOwner.current = { owner: boardOwner, repoPath: repo.path }
+    selectionIntentRevision.current++
+  }
   const flow = useReactFlow(),
     host = useRef<HTMLDivElement>(null)
   const inverseZoom = useRef(1)
@@ -94,7 +105,8 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     active: false,
     anchor: [],
   })
-  const [storedSelection, setSelection] = useState<Selection>(emptySelection),
+  const [storedSelection, setStoredSelection] =
+      useState<Selection>(emptySelection),
     [expanded, setExpanded] = useState<number | null>(null)
   const liveRelationshipIds = new Set(
     (data.relationships ?? []).map((item) => item.id)
@@ -106,8 +118,44 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     liveEdges.length === storedSelection.edges.length
       ? storedSelection
       : { ...storedSelection, edges: liveEdges }
+  const selectionRef = useRef(selection)
+  const selectionForIntent = useRef(selection)
+  selectionForIntent.current = selection
+  const beginSelectionIntent = useCallback(() => {
+    selectionIntentRevision.current++
+    const ownerIntentRevision = boardOwner.advanceIntent()
+    return {
+      owner: boardOwner,
+      repoPath: repo.path,
+      lifetimeRevision: boardOwner.getLifetimeRevision(),
+      modeRevision: boardOwner.getModeRevision(),
+      mode: boardOwner.getMode(),
+      selectionSurface: selectionForIntent.current.surface,
+      ownerIntentRevision,
+      selectionRevision: selectionIntentRevision.current,
+      board: boardOwner.getSnapshot(),
+    } satisfies CanvasUserIntent
+  }, [boardOwner, repo.path])
+  const commitSelection = useCallback((update: SetStateAction<Selection>) => {
+    const next =
+      typeof update === 'function' ? update(selectionForIntent.current) : update
+    selectionForIntent.current = next
+    setStoredSelection(next)
+  }, [])
+  const setSelection = useCallback(
+    (update: SetStateAction<Selection>) => {
+      beginSelectionIntent()
+      const next =
+        typeof update === 'function'
+          ? update(selectionForIntent.current)
+          : update
+      selectionForIntent.current = next
+      setStoredSelection(next)
+    },
+    [beginSelectionIntent]
+  )
   useEffect(() => {
-    setSelection((current) => {
+    setStoredSelection((current) => {
       const liveIds = new Set((data.relationships ?? []).map((item) => item.id))
       const edges = current.edges.filter((id) => liveIds.has(id))
       return edges.length === current.edges.length
@@ -115,7 +163,6 @@ function Canvas({ repo }: { repo: RepoInfo }) {
         : { ...current, edges }
     })
   }, [data.relationships])
-  const selectionRef = useRef(selection)
   selectionRef.current = selection
   const submissionScope = `${repo.path}\u0000${selection.surface}\u0000${selection.ids
     .slice()
@@ -164,10 +211,13 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       setReady,
       setAssetSelectionRecords,
     })
-  const selectAssets = useCallback((ids: number[]) => {
-    setExpanded(null)
-    setSelection({ surface: 'assets', ids, edges: [], group: null })
-  }, [])
+  const selectAssets = useCallback(
+    (ids: number[]) => {
+      setExpanded(null)
+      setSelection({ surface: 'assets', ids, edges: [], group: null })
+    },
+    [setSelection]
+  )
   const groupMembers = useCallback(
     (id: number) => data.groups?.find((g) => g.id === id)?.memberIds ?? [],
     [data.groups]
@@ -184,7 +234,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     renditionGeneration,
     callbacks,
     selection,
-    setSelection,
+    setSelection: setStoredSelection,
     nodes,
     setNodes,
     edges,
@@ -225,11 +275,12 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     owner: boardOwner,
     flow,
     selection,
-    setSelection,
+    setSelection: commitSelection,
+    selectionIntentRevision,
+    beginSelectionIntent,
     selectedIds,
     setExpanded,
     openAssets,
-    selectAssets,
     setReveal,
     center,
     purgeIds,
@@ -256,6 +307,9 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       setEdges={setEdges}
       selection={selection}
       setSelection={setSelection}
+      commitSelection={commitSelection}
+      selectionIntentRevision={selectionIntentRevision}
+      beginSelectionIntent={beginSelectionIntent}
       selectionRef={selectionRef}
       expanded={expanded}
       setExpanded={setExpanded}

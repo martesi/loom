@@ -6,7 +6,10 @@ import type {
   RelationshipInfo,
 } from '../../bindings/loom/internal/service'
 import type { CanvasBoardOwner } from '../components/canvas/canvas-board-owner'
-import type { CanvasOperationContext } from '../components/canvas/canvas-operation'
+import type {
+  CanvasOperationContext,
+  CanvasUserIntent,
+} from '../components/canvas/canvas-operation'
 import type { AssetLayout } from '../lib/asset-views'
 import type { Selection } from '../lib/selection'
 
@@ -26,6 +29,7 @@ export interface CanvasActionsContext {
   owner: CanvasBoardOwner
   repoPath: string
   importInput: { current: HTMLInputElement | null }
+  openImportPicker: () => void
   assetsOpen: boolean
   assetsPinned: boolean
   openAssets: () => void
@@ -70,7 +74,8 @@ export interface CanvasActionsContext {
   handlePreview: (node: Node) => void
   handleLocate: (node: Node) => void
   setReveal: Dispatch<SetStateAction<RevealRequest | null>>
-  go: (id: number, folder?: boolean) => Promise<void>
+  beginSelectionIntent: () => CanvasUserIntent
+  go: (id: number, folder?: boolean, intent?: CanvasUserIntent) => Promise<void>
   requestInspectorCommand: (command: string) => void
   setCompressIds: Dispatch<SetStateAction<number[] | null>>
   setExpanded: Dispatch<SetStateAction<number | null>>
@@ -78,7 +83,7 @@ export interface CanvasActionsContext {
   canNavigateRelationship: boolean
   relationshipActions: RelationshipInfo[]
   canRemoveRelationship: boolean
-  paste: () => Promise<void>
+  paste: () => Promise<unknown>
   undoActions: {
     undo: () => Promise<void>
     redo: () => Promise<void>

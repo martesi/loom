@@ -1,10 +1,17 @@
 import { afterEach, expect, it, mock, spyOn } from 'bun:test'
-import { ImageService } from '../../../bindings/loom/internal/service'
+import { Call } from '@wailsio/runtime'
+import {
+  ImageService,
+  UndoService,
+} from '../../../bindings/loom/internal/service'
 import type { CanvasInternalMode } from './canvas-mode-policy'
 import {
   type CanvasOperationContext,
   type CanvasOperationRuntime,
+  canvasRepositoryIssue,
   isCanvasOperationPending,
+  isCanvasRepositoryDirty,
+  isCanvasRepositoryUncertain,
   submitCanvasOperation,
 } from './canvas-operation'
 import { canvasEffects } from './canvas-operation-effects'
@@ -24,6 +31,7 @@ function deferred<T>() {
 function runtime(repo: string) {
   const token = {}
   let lifetime = 0
+  let intentRevision = 0
   let mode: CanvasInternalMode = 'edit'
   let requestedMode: CanvasInternalMode | null = null
   let snapshot: object | null = {}
@@ -33,6 +41,7 @@ function runtime(repo: string) {
     token,
     isCurrent: (revision) => revision === lifetime,
     getLifetime: () => lifetime,
+    getIntentRevision: () => intentRevision,
     getMode: () => mode,
     getRequestedMode: () => requestedMode,
     setMode: (next) => {
@@ -59,6 +68,9 @@ function runtime(repo: string) {
     },
     replaceLifetime: () => {
       lifetime++
+    },
+    advanceIntent: () => {
+      intentRevision++
     },
     repo,
   }
@@ -253,7 +265,7 @@ it('serializes viewport writes without marking the board dirty or blocking layou
   expect(owner.state().reconciliations).toBe(1)
 })
 
-it('marks state dirty before a partial effect and reconciles before the next command', async () => {
+it('fences repository after an unacknowledged effect failure', async () => {
   const owner = runtime('/canvas-op-partial-effect')
   await start(owner)
   const board = owner.runtime.getSnapshot()
@@ -273,7 +285,7 @@ it('marks state dirty before a partial effect and reconciles before the next com
   )
   expect(partialWrite).toBe(true)
   expect(failed.status).toBe('failed')
-  expect(owner.state().reconciliations).toBe(2)
+  expect(owner.state().reconciliations).toBe(1)
 
   const next = await submitCanvasOperation(
     owner.repo,
@@ -281,9 +293,33 @@ it('marks state dirty before a partial effect and reconciles before the next com
     mutation(board),
     async (context) => context.effect(async () => 'written')
   )
-  expect(next.status).toBe('success')
+  expect(next.status).toBe('failed')
   expect(effectContext.token).not.toBeNull()
-  expect(owner.state().reconciliations).toBe(3)
+  expect(owner.state().reconciliations).toBe(1)
+})
+
+it('recovers after a settled Wails backend error and allows the next mutation', async () => {
+  const owner = runtime('/canvas-op-settled-backend-error')
+  await start(owner)
+  const board = owner.runtime.getSnapshot()
+  const backendError = new Call.RuntimeError('stale layout revision')
+  const rejected = await submitCanvasOperation(
+    owner.repo,
+    owner.runtime,
+    mutation(board),
+    (context) => context.effect(async () => Promise.reject(backendError))
+  )
+  expect(rejected).toMatchObject({ status: 'failed', error: backendError })
+  expect(isCanvasRepositoryDirty(owner.repo)).toBe(false)
+  expect(isCanvasRepositoryUncertain(owner.repo)).toBe(false)
+
+  const next = await submitCanvasOperation(
+    owner.repo,
+    owner.runtime,
+    mutation(board),
+    (context) => context.effect(async () => 'next write')
+  )
+  expect(next).toMatchObject({ status: 'success', value: 'next write' })
 })
 
 it('keeps the repository dirty when history reconciliation fails', async () => {
@@ -348,7 +384,7 @@ it('cancels prepared work after owner replacement and permits fresh activation',
   expect(outcome.status).toBe('success')
 })
 
-it('cleans pending gates after disposal during a dispatched effect and recovers the replacement owner', async () => {
+it('retains dirty state after disposal and recovers an acknowledged write with a replacement owner', async () => {
   const owner = runtime('/canvas-op-disposed-effect')
   await start(owner)
   const board = owner.runtime.getSnapshot()
@@ -368,8 +404,10 @@ it('cleans pending gates after disposal during a dispatched effect and recovers 
   owner.replaceLifetime()
   write.resolve()
 
-  expect(await pending).toMatchObject({ status: 'cancelled' })
+  expect(await pending).toMatchObject({ status: 'failed' })
   expect(isCanvasOperationPending(owner.repo)).toBe(false)
+  expect(isCanvasRepositoryDirty(owner.repo)).toBe(true)
+  expect(isCanvasRepositoryUncertain(owner.repo)).toBe(false)
 
   const reactivated = await submitCanvasOperation(
     owner.repo,
@@ -378,6 +416,7 @@ it('cleans pending gates after disposal during a dispatched effect and recovers 
     (context) => context.reconcile()
   )
   expect(reactivated.status).toBe('success')
+  expect(isCanvasRepositoryDirty(owner.repo)).toBe(false)
   expect(isCanvasOperationPending(owner.repo)).toBe(false)
 
   const replacement = runtime(owner.repo)
@@ -394,6 +433,102 @@ it('cleans pending gates after disposal during a dispatched effect and recovers 
     value: 'fresh write',
   })
   expect(isCanvasOperationPending(owner.repo)).toBe(false)
+})
+
+it('does not treat repeated recovery reads as settlement proof after a lost response', async () => {
+  const owner = runtime('/canvas-op-late-commit')
+  await start(owner)
+  const board = owner.runtime.getSnapshot()
+  const lateCommit = deferred<void>()
+  let committedLate = false
+  let mutationCalls = 0
+  const lostResponse = await submitCanvasOperation(
+    owner.repo,
+    owner.runtime,
+    mutation(board),
+    (context) =>
+      context.effect(async () => {
+        mutationCalls++
+        void lateCommit.promise.then(() => {
+          committedLate = true
+        })
+        throw new Error('transport response lost before commit acknowledgment')
+      })
+  )
+  expect(lostResponse).toMatchObject({ status: 'failed' })
+  expect(isCanvasRepositoryDirty(owner.repo)).toBe(true)
+  expect(isCanvasRepositoryUncertain(owner.repo)).toBe(true)
+  expect(canvasRepositoryIssue(owner.repo)?.message).toContain('unknown')
+
+  for (let index = 0; index < 2; index++) {
+    const refresh = await submitCanvasOperation(
+      owner.repo,
+      owner.runtime,
+      { kind: 'recovery' },
+      (context) => context.reconcile()
+    )
+    expect(refresh.status).toBe('success')
+    expect(isCanvasRepositoryDirty(owner.repo)).toBe(true)
+    expect(isCanvasRepositoryUncertain(owner.repo)).toBe(true)
+  }
+  lateCommit.resolve()
+  await lateCommit.promise
+  expect(committedLate).toBe(true)
+
+  const replacement = runtime(owner.repo)
+  expect((await start(replacement)).status).toBe('success')
+  const blocked = await submitCanvasOperation(
+    replacement.repo,
+    replacement.runtime,
+    mutation(replacement.runtime.getSnapshot()),
+    async (context) => {
+      mutationCalls++
+      await context.effect(async () => 'must remain fenced')
+    }
+  )
+  expect(blocked).toMatchObject({ status: 'failed' })
+  expect(mutationCalls).toBe(1)
+  expect(isCanvasRepositoryDirty(owner.repo)).toBe(true)
+})
+
+it('holds replacement activation behind an Undo whose response is lost', async () => {
+  const owner = runtime('/canvas-op-held-undo-replacement')
+  await start(owner)
+  const board = owner.runtime.getSnapshot()
+  const undoResponse = deferred<never>()
+  const undoStarted = deferred<void>()
+  spyOn(UndoService, 'Undo').mockImplementation(() => {
+    undoStarted.resolve()
+    return undoResponse.promise
+  })
+  const undo = submitCanvasOperation(
+    owner.repo,
+    owner.runtime,
+    { kind: 'history', board },
+    (context) => canvasEffects.undo(context, owner.repo)
+  )
+  await undoStarted.promise
+  owner.replaceLifetime()
+  const replacement = runtime(owner.repo)
+  const activation = start(replacement)
+  await Promise.resolve()
+  expect(replacement.state().reconciliations).toBe(0)
+  undoResponse.reject(new Error('Undo response lost'))
+  expect(await undo).toMatchObject({ status: 'failed' })
+  expect((await activation).status).toBe('success')
+  expect(isCanvasRepositoryDirty(owner.repo)).toBe(true)
+
+  let mutationCalled = false
+  const blocked = await submitCanvasOperation(
+    replacement.repo,
+    replacement.runtime,
+    mutation(replacement.runtime.getSnapshot()),
+    async () => {
+      mutationCalled = true
+    }
+  )
+  expect(blocked.status).toBe('failed')
+  expect(mutationCalled).toBe(false)
 })
 
 it('rejects a stale board after async preparation before performing its effect', async () => {

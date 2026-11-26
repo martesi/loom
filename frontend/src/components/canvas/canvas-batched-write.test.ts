@@ -199,17 +199,18 @@ for (const operation of [
     releaseSlowWrite()
     await Promise.all([actionPromise, followup])
 
-    expect(events.indexOf('write-2-settled')).toBeLessThan(
-      events.indexOf('reconcile')
-    )
-    expect(events.indexOf('reconcile')).toBeLessThan(
-      events.indexOf('history-followup')
-    )
+    expect(events.indexOf('write-2-settled')).toBeGreaterThanOrEqual(0)
+    expect(events).not.toContain('reconcile')
+    expect(events).not.toContain('history-followup')
+    expect(await followup).toMatchObject({
+      status: 'failed',
+      error: { message: expect.stringContaining('state is unknown') },
+    })
     expect(report).toHaveBeenCalledTimes(1)
     expect(report.mock.calls[0][0]).toMatchObject({
       message: expect.stringContaining('may be incomplete'),
     })
-    expect(reload).toHaveBeenCalledTimes(1)
+    expect(reload).not.toHaveBeenCalled()
     owner.dispose()
   })
 }
@@ -235,14 +236,26 @@ for (const operation of [
     } as never)
     let releaseCommitted!: () => void
     let signalCommitted!: () => void
+    let resolveLateCommit!: () => void
+    const lateCommit = new Promise<void>((resolve) => {
+      resolveLateCommit = resolve
+    })
+    let committedLate = false
     const committed = new Promise<void>((resolve) => {
       releaseCommitted = resolve
     })
     const started = new Promise<void>((resolve) => {
       signalCommitted = resolve
     })
+    let serviceCalls = 0
     const serviceWrite = (_path: string, id: number) => {
-      if (id === 1) return Promise.reject(new Error('first write failed'))
+      serviceCalls++
+      if (id === 1) {
+        void lateCommit.then(() => {
+          committedLate = true
+        })
+        return Promise.reject(new Error('first write response was lost'))
+      }
       signalCommitted()
       return committed
     }
@@ -279,7 +292,9 @@ for (const operation of [
     expect(await action).toMatchObject({
       status: 'failed',
       error: {
-        message: expect.stringContaining('Asset 1: first write failed'),
+        message: expect.stringContaining(
+          'Asset 1: first write response was lost'
+        ),
       },
     })
     expect(isCanvasOperationPending(repoPath)).toBe(false)
@@ -287,13 +302,27 @@ for (const operation of [
     const replacement = createCanvasBoardOwner(repoPath, true)
     expect((await replacement.activate()).status).toBe('success')
     expect(replacement.isLayoutPending()).toBe(false)
+    for (let index = 0; index < 2; index++) {
+      const read = await replacement.submit({ kind: 'recovery' }, (context) =>
+        context.reconcile()
+      )
+      expect(read.status).toBe('success')
+      expect(replacement.getRepositoryIssue()?.message).toContain('unknown')
+    }
+    resolveLateCommit()
+    await lateCommit
+    expect(committedLate).toBe(true)
     const freshBoard = replacement.getSnapshot()
     if (!freshBoard) throw new Error('expected replacement board')
     const subsequent = await replacement.submit(
       { kind: 'mutation', capability: 'lifecycle', board: freshBoard },
-      (context) => context.effect(async () => {})
+      (context) => canvasEffects.setArchived(context, repoPath, 3, false)
     )
-    expect(subsequent.status).toBe('success')
+    expect(subsequent).toMatchObject({
+      status: 'failed',
+      error: { message: expect.stringContaining('unknown') },
+    })
+    expect(serviceCalls).toBe(2)
     expect(replacement.isLayoutPending()).toBe(false)
     replacement.dispose()
   })

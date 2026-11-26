@@ -146,6 +146,63 @@ afterEach(() => {
   mock.restore()
 })
 
+it('starts paste-media synchronously from the palette event', async () => {
+  const owner = createCanvasBoardOwner('/palette-sync-paste')
+  await activateOwner(owner)
+  const paste = mock(async () => {})
+  const context = {
+    owner,
+    repoPath: '/palette-sync-paste',
+    selection: emptySelection,
+    displayNodes: [],
+    selectedCanvasNodeIds: [],
+    canFitSelection: false,
+    canArrangeSelection: false,
+    fitAll: mock(async () => {}),
+    fitSelection: mock(async () => {}),
+    resetZoom: mock(async () => {}),
+    zoomBy: mock(async () => {}),
+    arrange: mock(async () => {}),
+    alignHorizontal: mock(async () => {}),
+    alignVertical: mock(async () => {}),
+    selectedIds: () => [],
+    selectedImageRecords: [],
+    relationshipActions: [],
+    visible: { current: [] },
+    data: { images: [], relationships: [], groups: [] },
+    paste,
+    undoActions: { undo: async () => {}, redo: async () => {} },
+  } as unknown as CanvasActionsContext
+  const { result } = renderHook(() =>
+    useCanvasActionSystem({
+      context,
+      report: mock(),
+      paletteOpen: true,
+      setPaletteOpen: mock(),
+      setRecentActionIds: mock(),
+      pendingRecentAction: useRef(null),
+      trashIds: null,
+      purgeIds: null,
+      host: useRef(null),
+      paletteAssetRequest: 0,
+      setPaletteAssets: mock(),
+      setPaletteAssetsLoading: mock(),
+      setPaletteAssetsError: mock(),
+    })
+  )
+  let frameScheduled = false
+  spyOn(globalThis, 'requestAnimationFrame').mockImplementation((_callback) => {
+    frameScheduled = true
+    return 1
+  })
+  const pasteAction = result.current.actionById.get('paste-media')
+  if (!pasteAction) throw new Error('paste-media action was not registered')
+  act(() => result.current.runPaletteAction(pasteAction))
+  expect(paste).toHaveBeenCalledTimes(1)
+  expect(frameScheduled).toBe(false)
+  owner.dispose()
+})
+
 for (const interruption of ['repository', 'mode'] as const) {
   it(`discards a scheduled palette choice after a ${interruption} change`, async () => {
     let frame: FrameRequestCallback = () => {}
@@ -190,6 +247,7 @@ for (const interruption of ['repository', 'mode'] as const) {
           owner,
           repoPath: path,
           go: operations.go,
+          beginSelectionIntent: operations.beginSelectionIntent,
           selection,
           displayNodes: [],
           selectedCanvasNodeIds: [],
@@ -354,7 +412,7 @@ it('rechecks the current mode when a previously enabled action reaches the queue
   await act(async () => {
     blocker.release()
     expect((await blocker.blocked).status).toBe('success')
-    expect((await view).status).toBe('success')
+    expect((await view).status).toBe('cancelled')
     await queued
   })
   expect(arrange).not.toHaveBeenCalled()
@@ -463,8 +521,7 @@ for (const change of [
       await Promise.all([queued, ...transitions])
     })
     expect(arrange).not.toHaveBeenCalled()
-    if (change !== 'mode ABA') expect(report).not.toHaveBeenCalled()
-    else expect(report).toHaveBeenCalledWith(expect.any(Error))
+    expect(report).not.toHaveBeenCalled()
     if (change !== 'owner lifetime')
       await owner.submit({ kind: 'mode', target: 'edit' }, async (operation) =>
         operation.setMode('edit')
@@ -523,6 +580,6 @@ it('rejects a palette geometry intent when mode changes before its frame', async
   owner.beginModeTransition()
   act(() => frame(0))
   expect(arrange).not.toHaveBeenCalled()
-  expect(report).toHaveBeenCalledWith(expect.any(Error))
+  expect(report).not.toHaveBeenCalled()
   owner.dispose()
 })

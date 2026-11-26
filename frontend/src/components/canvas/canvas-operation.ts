@@ -1,8 +1,20 @@
+import type { CanvasCapability, CanvasInternalMode } from './canvas-mode-policy'
+import { contextBrand } from './canvas-operation-errors'
 import {
-  allowsCanvasCapability,
-  type CanvasCapability,
-  type CanvasInternalMode,
-} from './canvas-mode-policy'
+  createCanvasRepositoryState,
+  dispatchCanvasOperation,
+  type RepositoryState,
+  settleDispatchError,
+  settleFailure,
+  type Ticket,
+} from './canvas-operation-recovery'
+
+export {
+  CanvasOperationUncertainError,
+  canvasCancellation,
+  isCanvasOperationCancellation,
+  isCanvasOperationUncertainError,
+} from './canvas-operation-errors'
 
 export type CanvasOperationRequest =
   | { kind: 'startup' }
@@ -33,13 +45,23 @@ export type CanvasUserOperationRequest = Exclude<
   { kind: 'startup' }
 >
 
+export interface CanvasUserIntent {
+  owner: object
+  repoPath: string
+  lifetimeRevision: number
+  modeRevision: number
+  mode: CanvasInternalMode
+  selectionSurface: 'assets' | 'canvas'
+  ownerIntentRevision: number
+  selectionRevision: number
+  board: object | null
+}
+
 export type CanvasOperationOutcome<T> =
   | { status: 'success'; value: T }
   | { status: 'cancelled'; reason: string }
   | { status: 'rejected'; reason: string }
   | { status: 'failed'; error: Error }
-
-const contextBrand: unique symbol = Symbol('CanvasOperationContext')
 
 export interface CanvasOperationContext {
   readonly [contextBrand]: true
@@ -55,6 +77,7 @@ export interface CanvasOperationRuntime {
   readonly token: object
   isCurrent(lifetime: number): boolean
   getLifetime(): number
+  getIntentRevision(): number
   getMode(): CanvasInternalMode
   getRequestedMode(): CanvasInternalMode | null
   setMode(mode: CanvasInternalMode): void
@@ -62,70 +85,15 @@ export interface CanvasOperationRuntime {
   recover(context: CanvasOperationContext): Promise<void>
 }
 
-interface Ticket {
-  token: object
-  lifetime: number
-  request: CanvasOperationRequest
-  mayFollowQueuedHistory: boolean
-  blocksLayout: boolean
-  effectStarted: boolean
-}
-
-interface RepositoryState {
-  tail: Promise<void>
-  dirty: boolean
-  active: Ticket | null
-  queued: Map<object, number>
-  layoutPending: number
-}
-
 const repositories = new Map<string, RepositoryState>()
 
 function repositoryState(repoPath: string): RepositoryState {
   let repository = repositories.get(repoPath)
   if (!repository) {
-    repository = {
-      tail: Promise.resolve(),
-      dirty: true,
-      active: null,
-      queued: new Map(),
-      layoutPending: 0,
-    }
+    repository = createCanvasRepositoryState()
     repositories.set(repoPath, repository)
   }
   return repository
-}
-
-function errorOf(value: unknown): Error {
-  return value instanceof Error ? value : new Error(String(value))
-}
-
-function isCancelled(
-  value: unknown
-): value is Error & { canvasCancelled: true } {
-  return (
-    value instanceof Error && Reflect.get(value, 'canvasCancelled') === true
-  )
-}
-
-export function isCanvasOperationCancellation(value: unknown) {
-  return isCancelled(value)
-}
-
-function isRejected(value: unknown): value is Error & { canvasRejected: true } {
-  return value instanceof Error && Reflect.get(value, 'canvasRejected') === true
-}
-
-export function canvasCancellation(reason: string) {
-  const error = new Error(reason)
-  Object.assign(error, { canvasCancelled: true })
-  return error
-}
-
-function canvasRejection(reason: string) {
-  const error = new Error(reason)
-  Object.assign(error, { canvasRejected: true })
-  return error
 }
 
 export function isCanvasOperationPending(repoPath: string) {
@@ -134,7 +102,21 @@ export function isCanvasOperationPending(repoPath: string) {
 }
 
 export function isCanvasRepositoryDirty(repoPath: string) {
-  return repositoryState(repoPath).dirty
+  const repository = repositoryState(repoPath)
+  return repository.dirty || repository.uncertain
+}
+
+export function canvasRepositoryUncertainty(repoPath: string) {
+  return repositories.get(repoPath)?.uncertainty ?? null
+}
+
+export function isCanvasRepositoryUncertain(repoPath: string) {
+  return repositories.get(repoPath)?.uncertain ?? false
+}
+
+export function canvasRepositoryIssue(repoPath: string) {
+  const repository = repositories.get(repoPath)
+  return repository?.uncertainty ?? repository?.failure ?? null
 }
 
 export function pendingCanvasOperationFor(
@@ -177,6 +159,7 @@ export function submitCanvasOperation<T>(
   const ticket: Ticket = {
     token: {},
     lifetime: runtime.getLifetime(),
+    intentRevision: runtime.getIntentRevision(),
     request,
     mayFollowQueuedHistory:
       request.kind === 'history' &&
@@ -187,6 +170,7 @@ export function submitCanvasOperation<T>(
       request.kind !== 'viewport' &&
       !(request.kind === 'mutation' && request.capability === 'navigate'),
     effectStarted: false,
+    effectAcknowledged: false,
   }
   if (ticket.blocksLayout) repository.layoutPending++
   repository.queued.set(
@@ -196,315 +180,34 @@ export function submitCanvasOperation<T>(
   const previous = repository.tail
   const dispatchResult: Promise<CanvasOperationOutcome<T>> = previous.then(() =>
     Promise.resolve().then(() =>
-      dispatch<T>(repoPath, repository, runtime, ticket, action)
+      dispatchCanvasOperation<T>(repoPath, repository, runtime, ticket, action)
     )
   )
-  const result = dispatchResult.then(
-    (outcome) => outcome,
-    (error: unknown) => settleFailure<T>(repository, ticket, error)
-  )
-  repository.tail = result.then(
+  const result = dispatchResult
+    .then(
+      (outcome) => outcome,
+      (error: unknown) => settleDispatchError<T>(repository, ticket, error)
+    )
+    .catch((error: unknown) => settleFailure<T>(repository, ticket, error))
+  const finalized = result
+    .then((outcome) => {
+      if (repository.active === ticket) repository.active = null
+      if (outcome.status === 'success' && !runtime.isCurrent(ticket.lifetime))
+        return {
+          status: 'cancelled' as const,
+          reason: 'The Canvas owner changed before the operation completed.',
+        }
+      return outcome
+    })
+    .finally(() => {
+      if (repository.active === ticket) repository.active = null
+      decrementQueued(repository, runtime.token, ticket.blocksLayout)
+    })
+  repository.tail = finalized.then(
     () => undefined,
     () => undefined
   )
-  return result.then((outcome) => {
-    if (repository.active === ticket) repository.active = null
-    decrementQueued(repository, runtime.token, ticket.blocksLayout)
-    if (outcome.status === 'success' && !runtime.isCurrent(ticket.lifetime))
-      return {
-        status: 'cancelled',
-        reason: 'The Canvas owner changed before the operation completed.',
-      }
-    return outcome
-  })
-}
-
-function dispatch<T>(
-  repoPath: string,
-  repository: RepositoryState,
-  runtime: CanvasOperationRuntime,
-  ticket: Ticket,
-  action: (context: CanvasOperationContext) => Promise<T>
-): Promise<CanvasOperationOutcome<T>> {
-  if (!runtime.isCurrent(ticket.lifetime))
-    return Promise.resolve({
-      status: 'cancelled',
-      reason: 'The Canvas owner changed before this operation started.',
-    })
-
-  repository.active = ticket
-  const context = createContext(repoPath, repository, runtime, ticket)
-  if (
-    repository.dirty &&
-    ticket.request.kind !== 'startup' &&
-    ticket.request.kind !== 'recovery'
-  ) {
-    return recover(
-      repository,
-      runtime,
-      createContext(repoPath, repository, runtime, ticket, true)
-    ).then(
-      () =>
-        settle(repository, ticket, {
-          status: 'rejected',
-          reason: 'Canvas was refreshed. Retry the command.',
-        }),
-      (error: unknown) =>
-        isCancelled(error)
-          ? settle(repository, ticket, {
-              status: 'cancelled',
-              reason: error.message,
-            })
-          : settle(repository, ticket, {
-              status: 'failed',
-              error: errorOf(error),
-            })
-    )
-  }
-
-  const rejection = validateRequest(
-    runtime,
-    ticket.request,
-    ticket.mayFollowQueuedHistory
-  )
-  if (rejection) {
-    if (modeRequestCancels(runtime, ticket.request))
-      return Promise.resolve(
-        settle(repository, ticket, {
-          status: 'cancelled',
-          reason: 'Canvas is entering View mode.',
-        })
-      )
-    return Promise.resolve(
-      settle(repository, ticket, { status: 'rejected', reason: rejection })
-    )
-  }
-
-  return Promise.resolve()
-    .then(() => action(context))
-    .then(
-      (value) =>
-        repository.dirty
-          ? recover(
-              repository,
-              runtime,
-              createContext(repoPath, repository, runtime, ticket, true)
-            ).then(
-              () => settle(repository, ticket, { status: 'success', value }),
-              (error: unknown) =>
-                isCancelled(error)
-                  ? settle(repository, ticket, {
-                      status: 'cancelled',
-                      reason: error.message,
-                    })
-                  : settle(repository, ticket, {
-                      status: 'failed',
-                      error: possibleSuccessError(error),
-                    })
-            )
-          : settle(repository, ticket, { status: 'success', value }),
-      (error: unknown) =>
-        isCancelled(error)
-          ? settle(repository, ticket, {
-              status: 'cancelled',
-              reason: error.message,
-            })
-          : isRejected(error) && !repository.dirty
-            ? settle(repository, ticket, {
-                status: 'rejected',
-                reason: error.message,
-              })
-            : !repository.dirty
-              ? settleFailure(repository, ticket, error)
-              : Promise.resolve()
-                  .then(() =>
-                    recover(
-                      repository,
-                      runtime,
-                      createContext(repoPath, repository, runtime, ticket, true)
-                    )
-                  )
-                  .then(
-                    () => settleFailure(repository, ticket, error),
-                    (reconcileError: unknown) =>
-                      settleFailure(
-                        repository,
-                        ticket,
-                        new Error(
-                          `${errorOf(error).message} Canvas reconciliation also failed: ${errorOf(reconcileError).message}`
-                        )
-                      )
-                  )
-    )
-}
-
-function createContext(
-  repoPath: string,
-  repository: RepositoryState,
-  runtime: CanvasOperationRuntime,
-  ticket: Ticket,
-  skipRequestValidation = false
-): CanvasOperationContext {
-  const assertCurrent = () => {
-    if (repository.active !== ticket || !runtime.isCurrent(ticket.lifetime))
-      throw canvasCancellation(
-        'The Canvas owner changed during this operation.'
-      )
-    if (!skipRequestValidation && !ticket.effectStarted) {
-      if (modeRequestCancels(runtime, ticket.request))
-        throw canvasCancellation('Canvas is entering View mode.')
-    }
-    if (!skipRequestValidation) {
-      const rejection = validateRequest(
-        runtime,
-        ticket.request,
-        ticket.mayFollowQueuedHistory,
-        ticket.effectStarted
-      )
-      if (rejection) throw canvasRejection(rejection)
-    }
-  }
-  return {
-    [contextBrand]: true,
-    token: ticket.token,
-    assertCurrent,
-    setMode: (mode) => {
-      assertCurrent()
-      if (ticket.request.kind !== 'mode' || ticket.request.target !== mode)
-        throw new Error(
-          'Canvas mode can only change inside its matching mode operation.'
-        )
-      runtime.setMode(mode)
-    },
-    prepare: (operation) => {
-      assertCurrent()
-      return operation().then((value) => {
-        assertCurrent()
-        return value
-      })
-    },
-    effect: (operation) => {
-      assertCurrent()
-      if (
-        ticket.request.kind !== 'mutation' &&
-        ticket.request.kind !== 'history' &&
-        ticket.request.kind !== 'viewport'
-      )
-        throw new Error('This Canvas operation cannot perform a write.')
-      if (affectsBoardState(ticket.request)) repository.dirty = true
-      ticket.effectStarted = true
-      return operation()
-    },
-    reconcile: () =>
-      recover(
-        repository,
-        runtime,
-        createContext(repoPath, repository, runtime, ticket, true)
-      ),
-  }
-}
-
-function recover(
-  repository: RepositoryState,
-  runtime: CanvasOperationRuntime,
-  context: CanvasOperationContext
-): Promise<void> {
-  context.assertCurrent()
-  return Promise.resolve()
-    .then(() => runtime.recover(context))
-    .then(() => {
-      context.assertCurrent()
-      repository.dirty = false
-    })
-}
-
-function validateRequest(
-  runtime: CanvasOperationRuntime,
-  request: CanvasOperationRequest,
-  mayFollowQueuedHistory = false,
-  dispatchedEffect = false
-): string | null {
-  if (
-    request.kind === 'mode' ||
-    request.kind === 'startup' ||
-    request.kind === 'recovery'
-  )
-    return null
-  if (request.kind === 'history') {
-    if (
-      request.board !== runtime.getSnapshot() &&
-      !(mayFollowQueuedHistory && runtime.getSnapshot() !== null)
-    )
-      return 'Canvas changed. Retry the history command.'
-    return null
-  }
-  if (request.kind === 'viewport') {
-    if (request.board !== runtime.getSnapshot())
-      return 'Canvas changed. Retry the viewport update.'
-    if (
-      runtime.getMode() !== request.mode ||
-      (!dispatchedEffect && runtime.getRequestedMode() !== null)
-    )
-      return 'Canvas mode changed before the viewport update.'
-    return null
-  }
-  if (
-    request.kind === 'mutation' &&
-    !dispatchedEffect &&
-    runtime.getRequestedMode() === 'view' &&
-    (request.capability === 'geometry' ||
-      request.capability === 'relationship' ||
-      request.capability === 'canvas-drop')
-  )
-    return 'This operation is not available in the current Canvas mode.'
-  if (request.board !== runtime.getSnapshot())
-    return 'Canvas changed. Retry the command.'
-  if (!allowsCanvasCapability(runtime.getMode(), request.capability))
-    return 'This operation is not available in the current Canvas mode.'
-  return null
-}
-
-function modeRequestCancels(
-  runtime: CanvasOperationRuntime,
-  request: CanvasOperationRequest
-) {
-  return (
-    (request.kind === 'viewport' &&
-      (runtime.getRequestedMode() !== null ||
-        runtime.getMode() !== request.mode)) ||
-    (request.kind === 'mutation' &&
-      runtime.getRequestedMode() === 'view' &&
-      (request.capability === 'geometry' ||
-        request.capability === 'relationship' ||
-        request.capability === 'canvas-drop'))
-  )
-}
-
-function settle<T>(
-  repository: RepositoryState,
-  ticket: Ticket,
-  outcome: CanvasOperationOutcome<T>
-): CanvasOperationOutcome<T> {
-  if (repository.active === ticket) repository.active = null
-  return outcome
-}
-
-function settleFailure<T>(
-  repository: RepositoryState,
-  ticket: Ticket,
-  error: unknown
-): CanvasOperationOutcome<T> {
-  if (isCancelled(error))
-    return settle(repository, ticket, {
-      status: 'cancelled',
-      reason: error.message,
-    })
-  if (isRejected(error))
-    return settle(repository, ticket, {
-      status: 'rejected',
-      reason: error.message,
-    })
-  return settle(repository, ticket, { status: 'failed', error: errorOf(error) })
+  return finalized
 }
 
 function decrementQueued(
@@ -516,18 +219,4 @@ function decrementQueued(
   if (count) repository.queued.set(token, count)
   else repository.queued.delete(token)
   if (blocksLayout) repository.layoutPending--
-}
-
-function possibleSuccessError(error: unknown) {
-  return new Error(
-    `The operation may have succeeded, but Canvas could not be reconciled: ${errorOf(error).message}`
-  )
-}
-
-function affectsBoardState(request: CanvasOperationRequest) {
-  return !(
-    request.kind === 'read' ||
-    request.kind === 'viewport' ||
-    (request.kind === 'mutation' && request.capability === 'navigate')
-  )
 }

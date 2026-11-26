@@ -7,6 +7,9 @@ import {
   parseAssetViews,
   serializeAssetViews,
 } from '../../lib/asset-views'
+import type { CanvasBoardOwner } from './canvas-board-owner'
+import { unwrapCanvasOutcome } from './canvas-operation'
+import { canvasEffects } from './canvas-operation-effects'
 
 const SETTING_KEY = 'assets.saved_views'
 const DEFAULT_VIEW_ID = 'default-recent'
@@ -17,6 +20,7 @@ interface SaveResult {
 }
 
 export function useSavedAssetViews(
+  owner: CanvasBoardOwner,
   path: string,
   onError: (error: unknown) => void
 ) {
@@ -27,7 +31,6 @@ export function useSavedAssetViews(
   const [loadRequest, setLoadRequest] = useState(0)
   const savedViewsRef = useRef<AssetView[]>([])
   const loadedRef = useRef(false)
-  const writeQueue = useRef<Promise<void>>(Promise.resolve())
   const pendingWrites = useRef(0)
   const errorHandler = useRef(onError)
   errorHandler.current = onError
@@ -75,20 +78,26 @@ export function useSavedAssetViews(
     if (!loadedRef.current) return
     pendingWrites.current += 1
     setSaveStatus('saving')
-    writeQueue.current = writeQueue.current
-      .then(() => {
-        const { views, selectedId } = update(savedViewsRef.current)
-        return SettingsService.Set(
-          path,
-          SETTING_KEY,
-          serializeAssetViews(views)
-        ).then(() => {
-          savedViewsRef.current = views
-          setSavedViews(views)
-          onSaved(selectedId)
-        })
-      })
-      .then(() => {
+    const board = owner.getSnapshot()
+    void owner
+      .submit(
+        { kind: 'mutation', capability: 'metadata', board },
+        async (context) => {
+          const result = update(savedViewsRef.current)
+          await canvasEffects.settingsSet(
+            context,
+            path,
+            SETTING_KEY,
+            serializeAssetViews(result.views)
+          )
+          return result
+        }
+      )
+      .then((outcome) => {
+        const result = unwrapCanvasOutcome(outcome)
+        savedViewsRef.current = result.views
+        setSavedViews(result.views)
+        onSaved(result.selectedId)
         pendingWrites.current -= 1
         setSaveStatus(pendingWrites.current ? 'saving' : 'saved')
       })

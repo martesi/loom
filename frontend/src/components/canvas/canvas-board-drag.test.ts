@@ -1,5 +1,6 @@
 import { afterEach, expect, it, mock, spyOn } from 'bun:test'
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
+import { Call } from '@wailsio/runtime'
 import type { Node } from '@xyflow/react'
 import { useState } from 'react'
 import { ImageService } from '../../../bindings/loom/internal/service'
@@ -219,7 +220,7 @@ it('restores cancelled displayed positions and ignores later pointer changes', a
 
 it('reloads and reports a rejected stale drag write', async () => {
   const write = setup()
-  const error = new Error('stale layout revision')
+  const error = new Call.RuntimeError('stale layout revision')
   write.mockImplementation(() => Promise.reject(error) as never)
   const owner = createCanvasBoardOwner('/repo')
   const board = await refreshBoard(owner)

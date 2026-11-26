@@ -338,7 +338,10 @@ test('browser import creates an unplaced asset and keeps Canvas focused behavior
   page,
 }) => {
   await open(page, 'clipboard-fixtures')
-  await page.locator('input[type=file]').setInputFiles({
+  const chooser = page.waitForEvent('filechooser')
+  await page.getByTestId('repository-actions').click()
+  await page.getByRole('menuitem', { name: 'Import media' }).click()
+  await (await chooser).setFiles({
     name: 'imported.png',
     mimeType: 'image/png',
     buffer: Buffer.from(

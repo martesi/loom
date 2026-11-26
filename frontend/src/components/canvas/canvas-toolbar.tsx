@@ -2,6 +2,7 @@ import { t } from '@lingui/core/macro'
 import { Trans } from '@lingui/react/macro'
 import { Command, MoreHorizontal, PanelLeft, PanelRight } from 'lucide-react'
 import type { Dispatch, RefObject, SetStateAction } from 'react'
+import { useEffect } from 'react'
 import type { RepoInfo } from '../../../bindings/loom/internal/service'
 import { cn } from '../../lib/utils'
 import { Tooltip } from '../ui/tooltip'
@@ -17,11 +18,13 @@ interface Props {
   setRepoMenuOpen: Dispatch<SetStateAction<boolean>>
   repoMenuRef: RefObject<HTMLDivElement | null>
   importInput: RefObject<HTMLInputElement | null>
+  onOpenImport: () => void
   actionShortcut: (id: string) => string | undefined
   openPalette: (shortcuts?: boolean, initialQuery?: string) => void
   executeActionById: (id: string) => void
   toggleFocusMode: () => void
   onImportFiles: (files: File[]) => void
+  onImportCancel: () => void
 }
 
 export function CanvasToolbar({
@@ -34,12 +37,19 @@ export function CanvasToolbar({
   setRepoMenuOpen,
   repoMenuRef,
   importInput,
+  onOpenImport,
   actionShortcut,
   openPalette,
   executeActionById,
   toggleFocusMode,
   onImportFiles,
+  onImportCancel,
 }: Props) {
+  useEffect(() => {
+    const input = importInput.current
+    input?.addEventListener('cancel', onImportCancel)
+    return () => input?.removeEventListener('cancel', onImportCancel)
+  }, [importInput, onImportCancel])
   return (
     <>
       <div
@@ -151,7 +161,7 @@ export function CanvasToolbar({
                 role="menuitem"
                 onClick={() => {
                   setRepoMenuOpen(false)
-                  importInput.current?.click()
+                  onOpenImport()
                 }}
                 className="rounded px-3 py-2 text-left text-xs hover:bg-accent focus-visible:ring-2 focus-visible:ring-primary/40"
               >

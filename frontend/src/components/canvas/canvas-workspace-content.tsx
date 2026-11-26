@@ -2,6 +2,7 @@ import { t } from '@lingui/core/macro'
 import { Trans } from '@lingui/react/macro'
 import type { Edge, Node, ReactFlowInstance } from '@xyflow/react'
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
+import { useRef } from 'react'
 import type {
   CanvasData,
   ImageInfo,
@@ -21,7 +22,10 @@ import {
   zoomCanvas,
 } from './canvas-board-operations'
 import { CanvasMainSurface } from './canvas-main-surface'
-import type { CanvasOperationContext } from './canvas-operation'
+import type {
+  CanvasOperationContext,
+  CanvasUserIntent,
+} from './canvas-operation'
 import { CanvasOverlays } from './canvas-overlays'
 import { CanvasToolbar } from './canvas-toolbar'
 import { DetailPanel } from './detail-panel'
@@ -49,6 +53,9 @@ interface Props {
   setEdges: Dispatch<SetStateAction<Edge[]>>
   selection: Selection
   setSelection: Dispatch<SetStateAction<Selection>>
+  selectionIntentRevision: MutableRefObject<number>
+  beginSelectionIntent: () => CanvasUserIntent
+  commitSelection: Dispatch<SetStateAction<Selection>>
   selectionRef: MutableRefObject<Selection>
   expanded: number | null
   setExpanded: Dispatch<SetStateAction<number | null>>
@@ -81,6 +88,9 @@ export function CanvasWorkspaceContent(props: Props) {
     setEdges,
     selection,
     setSelection,
+    selectionIntentRevision,
+    beginSelectionIntent,
+    commitSelection,
     selectionRef,
     expanded,
     setExpanded,
@@ -173,6 +183,14 @@ export function CanvasWorkspaceContent(props: Props) {
     setHoveredNodeId,
   } = boardModel
   const { paste, importMedia, finishTrash, confirmPurge } = assetOperations
+  const pickerIntent = useRef<CanvasUserIntent | null>(null)
+  const openImportPicker = () => {
+    pickerIntent.current = beginSelectionIntent()
+    importInput.current?.click()
+  }
+  const cancelImportPicker = () => {
+    pickerIntent.current = null
+  }
   const validTarget = (source: number, id: string) =>
     validateRelationshipTarget(source, id, data, groupMembers)
   const arrange = (operation: CanvasOperationContext, nodeIds?: string[]) =>
@@ -260,6 +278,7 @@ export function CanvasWorkspaceContent(props: Props) {
     selectionActions: {
       selectAssets,
       setSelection,
+      openImportPicker,
       setExpanded,
       expanded,
       selectedIds,
@@ -294,17 +313,21 @@ export function CanvasWorkspaceContent(props: Props) {
     jumpTo: handlePreviewJump,
     close: closePreview,
   } = preview
+  const repositoryIssue = boardModel.owner.getRepositoryIssue()
+  const visibleError = repositoryIssue?.message ?? error
   return (
     <div className="relative h-screen overflow-hidden bg-surface-canvas text-ink">
-      {error && (
+      {visibleError && (
         <div
           role="alert"
           className="absolute left-1/2 top-16 z-40 flex max-w-[min(620px,calc(100vw-24px))] -translate-x-1/2 items-center gap-3 rounded-md border border-danger/30 bg-card px-3 py-2 text-sm shadow-lg"
         >
-          {error}
-          <button type="button" onClick={() => setError('')}>
-            <Trans>Dismiss</Trans>
-          </button>
+          {visibleError}
+          {!repositoryIssue && (
+            <button type="button" onClick={() => setError('')}>
+              <Trans>Dismiss</Trans>
+            </button>
+          )}
         </div>
       )}
       <div className="absolute inset-0">
@@ -346,6 +369,9 @@ export function CanvasWorkspaceContent(props: Props) {
           setNodes={setNodes}
           setEdges={setEdges}
           setSelection={setSelection}
+          commitSelection={commitSelection}
+          selectionIntentRevision={selectionIntentRevision}
+          beginSelectionIntent={beginSelectionIntent}
           selectionRef={selectionRef}
           setExpanded={setExpanded}
           space={space}
@@ -436,13 +462,18 @@ export function CanvasWorkspaceContent(props: Props) {
         setRepoMenuOpen={setRepoMenuOpen}
         repoMenuRef={repoMenuRef}
         importInput={importInput}
+        onOpenImport={openImportPicker}
         actionShortcut={(id) => actionById.get(id)?.shortcut}
         openPalette={openPalette}
         executeActionById={executeActionById}
         toggleFocusMode={toggleFocusMode}
         onImportFiles={(files) => {
-          void importMedia(() => filesToMedia(files)).catch(report)
+          const intent = pickerIntent.current
+          pickerIntent.current = null
+          if (files.length && intent !== null)
+            void importMedia(() => filesToMedia(files), intent).catch(report)
         }}
+        onImportCancel={cancelImportPicker}
       />
       <CanvasOverlays
         owner={boardModel.owner}

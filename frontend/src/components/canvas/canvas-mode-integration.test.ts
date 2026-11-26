@@ -1,5 +1,6 @@
 import { afterEach, expect, it, mock, spyOn } from 'bun:test'
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
+import { Call } from '@wailsio/runtime'
 import type { Edge, Node, Viewport } from '@xyflow/react'
 import { useRef, useState, useSyncExternalStore } from 'react'
 import {
@@ -179,7 +180,7 @@ it('arranges the displayed Edit graph as one guarded batch, not stored coordinat
       )
     )
   )
-  write.mockRejectedValueOnce(new Error('stale revision'))
+  write.mockRejectedValueOnce(new Call.RuntimeError('stale revision'))
   await act(async () => {
     const outcome = await reserveCanvasOperation(
       result.current.owner,

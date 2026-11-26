@@ -161,14 +161,16 @@ it('serializes two refreshes and publishes them in FIFO order', async () => {
   expect(owner.getSnapshot()?.snapshot.images?.[0].geometry).toEqual(rect(3))
 })
 
-it('keeps the repository dirty after failed reconciliation and rejects the next command', async () => {
+it('keeps the repository fenced after a write whose outcome is unknown', async () => {
   mockBoard()
-  const owner = ownerFor('/repo', true)
+  const repoPath = '/repo-unknown-write-fence'
+  const owner = ownerFor(repoPath, true)
   await refreshBoard(owner)
   const board = owner.getSnapshot()
   const reload = spyOn(ImageService, 'LoadCanvas').mockRejectedValueOnce(
     new Error('reload failed') as never
   )
+  reload.mockClear()
   const partialWrite = owner.submit(
     { kind: 'mutation', capability: 'geometry', board },
     (context) =>
@@ -177,20 +179,24 @@ it('keeps the repository dirty after failed reconciliation and rejects the next 
       })
   )
   expect(await partialWrite).toMatchObject({ status: 'failed' })
-  expect(reload).toHaveBeenCalledTimes(2)
-  expect(isCanvasRepositoryDirty('/repo')).toBe(true)
+  expect(reload).not.toHaveBeenCalled()
+  expect(isCanvasRepositoryDirty(repoPath)).toBe(true)
 
   let wrote = false
   expect(
     await owner.submit(
-      { kind: 'mutation', capability: 'geometry', board: owner.getSnapshot() },
+      {
+        kind: 'mutation',
+        capability: 'geometry',
+        board: owner.getSnapshot(),
+      },
       async () => {
         wrote = true
       }
     )
-  ).toMatchObject({ status: 'rejected' })
+  ).toMatchObject({ status: 'failed' })
   expect(wrote).toBe(false)
-  expect(isCanvasRepositoryDirty('/repo')).toBe(false)
+  expect(isCanvasRepositoryDirty(repoPath)).toBe(true)
 })
 
 it('cancels prepared work after disposal and does not publish its late result', async () => {

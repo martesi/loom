@@ -198,6 +198,6 @@ export async function runCanvasEffectBatch(
       `Asset ${id}: ${cause instanceof Error ? cause.message : String(cause)}`
   )
   throw new Error(
-    `${operation} may be incomplete: ${failures.length} of ${ids.length} assets failed. Other changes may have succeeded. The current repository state was refreshed. ${details.join('; ')}`
+    `${operation} may be incomplete: ${failures.length} of ${ids.length} assets failed. Other changes may have succeeded. Repository state is unknown and further writes are blocked because the backend cannot prove settlement. ${details.join('; ')}`
   )
 }

@@ -3,9 +3,14 @@ import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import { useEffect, useRef } from 'react'
 import { ImageService } from '../../../bindings/loom/internal/service'
 import { readMedia } from '../../lib/clipboard'
+import { normalizePayload } from '../../lib/clipboard-payload'
 import type { Selection } from '../../lib/selection'
 import type { CanvasBoardOwner } from './canvas-board-owner'
-import { unwrapCanvasOutcome } from './canvas-operation'
+import {
+  type CanvasUserIntent,
+  canvasCancellation,
+  unwrapCanvasOutcome,
+} from './canvas-operation'
 import { canvasEffects } from './canvas-operation-effects'
 import type { RevealRequest } from './use-canvas-workspace-state'
 
@@ -16,11 +21,12 @@ interface Props {
   owner: CanvasBoardOwner
   flow: ReactFlowInstance
   selection: Selection
+  selectionIntentRevision?: MutableRefObject<number>
+  beginSelectionIntent?: () => CanvasUserIntent
   setSelection: Dispatch<SetStateAction<Selection>>
   selectedIds: () => number[]
   setExpanded: Dispatch<SetStateAction<number | null>>
   openAssets: () => void
-  selectAssets: (ids: number[]) => void
   setReveal: Dispatch<SetStateAction<RevealRequest | null>>
   center: () => { x: number; y: number }
   purgeIds: number[] | null
@@ -34,73 +40,130 @@ interface Props {
   setError: Dispatch<SetStateAction<string>>
 }
 
-export function useCanvasAssetOperations({
-  repoPath,
-  owner,
-  flow,
-  selection,
-  setSelection,
-  selectedIds,
-  setExpanded,
-  openAssets,
-  selectAssets,
-  setReveal,
-  center,
-  purgeIds,
-  trashIds,
-  setPurgeIds,
-  setTrashIds,
-  lifecyclePendingRef,
-  setLifecyclePending,
-  pendingRecentAction,
-  setRecentActionIds,
-  setError,
-}: Props) {
+export function useCanvasAssetOperations(props: Props) {
+  const {
+    repoPath,
+    owner,
+    flow,
+    selection,
+    setSelection,
+    selectedIds,
+    setExpanded,
+    openAssets,
+    setReveal,
+    center,
+    purgeIds,
+    trashIds,
+    setPurgeIds,
+    setTrashIds,
+    lifecyclePendingRef,
+    setLifecyclePending,
+    pendingRecentAction,
+    setRecentActionIds,
+    setError,
+  } = props
   const purgeOrigin = useRef<Selection['surface'] | null>(null)
   const navigationActive = useRef(true)
-  const navigation = useRef({ generation: 0, owner, repoPath, selection })
-  const previous = navigation.current
-  if (
-    previous.owner !== owner ||
-    previous.repoPath !== repoPath ||
-    !sameSelection(previous.selection, selection)
-  ) {
-    navigation.current = {
-      generation: previous.generation + 1,
-      owner,
-      repoPath,
-      selection,
-    }
+  const navigationSequence = useRef(0)
+  const fallbackIntentRevision = useRef(0)
+  const previousSelection = useRef(selection)
+  const internalSelection = useRef<Selection | null>(null)
+  if (!sameSelection(previousSelection.current, selection)) {
+    if (
+      !props.selectionIntentRevision &&
+      (!internalSelection.current ||
+        !sameSelection(internalSelection.current, selection))
+    )
+      fallbackIntentRevision.current++
+    internalSelection.current = null
+    previousSelection.current = selection
+  }
+  const selectionIntentRevision =
+    props.selectionIntentRevision ?? fallbackIntentRevision
+  const beginSelectionIntent: () => CanvasUserIntent =
+    props.beginSelectionIntent ??
+    (() => {
+      fallbackIntentRevision.current++
+      const ownerIntentRevision = owner.advanceIntent()
+      return {
+        owner,
+        repoPath,
+        lifetimeRevision: owner.getLifetimeRevision(),
+        modeRevision: owner.getModeRevision(),
+        mode: owner.getMode(),
+        selectionSurface: selection?.surface ?? 'assets',
+        ownerIntentRevision,
+        selectionRevision: fallbackIntentRevision.current,
+        board: owner.getSnapshot(),
+      }
+    })
+  const currentOwner = useRef({ owner, repoPath })
+  currentOwner.current = { owner, repoPath }
+  const commitSelection = (next: Selection) => {
+    internalSelection.current = next
+    setSelection(next)
   }
   useEffect(() => {
     navigationActive.current = true
     return () => {
       navigationActive.current = false
-      navigation.current.generation++
+      navigationSequence.current++
     }
   }, [])
   // A retained callback must keep the revision from the render that created it.
   const modeRevision = owner.getModeRevision()
-  async function go(id: number, folder = false) {
+  const isIntentCurrent = (intent: CanvasUserIntent, checkBoard = false) =>
+    navigationActive.current &&
+    selectionIntentRevision.current === intent.selectionRevision &&
+    intent.owner === owner &&
+    intent.repoPath === repoPath &&
+    intent.lifetimeRevision === owner.getLifetimeRevision() &&
+    intent.modeRevision === owner.getModeRevision() &&
+    intent.ownerIntentRevision === owner.getIntentRevision() &&
+    (!checkBoard || intent.board === owner.getSnapshot()) &&
+    currentOwner.current.owner === owner &&
+    currentOwner.current.repoPath === repoPath &&
+    owner.isActive?.() !== false
+  async function go(
+    id: number,
+    folder = false,
+    suppliedIntent?: CanvasUserIntent
+  ) {
+    if (
+      !navigationActive.current ||
+      currentOwner.current.owner !== owner ||
+      currentOwner.current.repoPath !== repoPath ||
+      owner.isActive?.() === false ||
+      owner.getModeRevision() !== modeRevision
+    )
+      return
+    const intent = suppliedIntent ?? beginSelectionIntent()
+    if (!isIntentCurrent(intent)) return
+    const request = ++navigationSequence.current
+    const lifetime = intent.lifetimeRevision
+    const repository = intent.repoPath
     const isOwnerCurrent = () =>
       navigationActive.current &&
-      navigation.current.owner === owner &&
-      navigation.current.repoPath === repoPath &&
+      currentOwner.current.owner === owner &&
+      currentOwner.current.repoPath === repository &&
       owner.isActive?.() !== false &&
-      owner.getModeRevision() === modeRevision
+      owner.getLifetimeRevision() === lifetime &&
+      owner.getModeRevision() === intent.modeRevision &&
+      selectionIntentRevision.current === intent.selectionRevision &&
+      owner.getIntentRevision() === intent.ownerIntentRevision
     if (!isOwnerCurrent()) return
-    const request = ++navigation.current.generation
     const isCurrent = () =>
-      navigation.current.generation === request && isOwnerCurrent()
+      navigationSequence.current === request && isOwnerCurrent()
     const image = await ImageService.GetImage(repoPath, id)
     if (!isCurrent() || !image) return
-    const mode = owner.getMode()
+    const mode = intent.mode
     const node = mode === 'legacy' ? undefined : flow.getNode(String(id))
     if (!isCurrent()) return
     if (folder || (mode === 'legacy' ? !image.placed : !node)) {
       openAssets()
       if (!isCurrent()) return
-      selectAssets([id])
+      setExpanded(null)
+      commitSelection({ surface: 'assets', ids: [id], edges: [], group: null })
       if (!isCurrent()) return
       setReveal({
         id,
@@ -116,7 +179,7 @@ export function useCanvasAssetOperations({
     }
     setExpanded(null)
     if (!isCurrent()) return
-    setSelection({ surface: 'canvas', ids: [id], edges: [], group: null })
+    commitSelection({ surface: 'canvas', ids: [id], edges: [], group: null })
     if (!isCurrent()) return
     const zoom = flow.getZoom()
     if (!isCurrent()) return
@@ -135,33 +198,30 @@ export function useCanvasAssetOperations({
 
   async function paste(
     media?: Media | (() => Promise<Media>),
-    surface = selection.surface
+    surface?: Selection['surface'],
+    suppliedIntent?: CanvasUserIntent
   ) {
+    const intent = suppliedIntent ?? beginSelectionIntent()
+    const destinationSurface = surface ?? intent.selectionSurface
     const point = center()
-    const board = owner.getSnapshot()
-    const lifetime = owner.getLifetimeRevision()
-    const intent = navigation.current.generation
-    const isCurrentIntent = () =>
-      navigationActive.current &&
-      navigation.current.generation === intent &&
-      navigation.current.owner === owner &&
-      navigation.current.repoPath === repoPath
+    const board = intent.board
+    const shouldPlace =
+      destinationSurface === 'canvas' && intent.mode !== 'view'
     const source = media
       ? typeof media === 'function'
         ? media()
         : Promise.resolve(media)
       : readMedia()
     const preparation = await source.then(
-      (assets) => ({ status: 'success' as const, assets }),
+      (assets) => ({
+        status: 'success' as const,
+        assets: validateMedia(assets),
+      }),
       (error: unknown) => ({ status: 'failed' as const, error })
     )
-    if (
-      owner.isActive?.() === false ||
-      owner.getLifetimeRevision() !== lifetime
-    )
-      return
-    if (!isCurrentIntent()) return
     if (preparation.status === 'failed') throw preparation.error
+    if (!isIntentCurrent(intent, true))
+      return { status: 'cancelled-before-dispatch' as const }
     const outcome = await owner.submit(
       {
         kind: 'mutation',
@@ -169,21 +229,23 @@ export function useCanvasAssetOperations({
         board,
       },
       async (context) => {
-        const canvas = surface === 'canvas' && owner.getMode() !== 'view'
+        if (!isIntentCurrent(intent, true))
+          throw canvasCancellation('Import intent changed before dispatch.')
         const ids = await canvasEffects.importMedia(
           context,
           repoPath,
           preparation.assets,
-          canvas,
+          shouldPlace,
           point.x,
           point.y
         )
-        return { ids, canvas }
+        return { ids, canvas: shouldPlace }
       }
     )
-    if (!isCurrentIntent() || outcome.status === 'cancelled') return
+    if (outcome.status === 'cancelled') return
     const { ids, canvas } = unwrapCanvasOutcome(outcome)
-    setSelection({
+    if (!isIntentCurrent(intent)) return
+    commitSelection({
       surface: canvas ? 'canvas' : 'assets',
       ids: ids ?? [],
       edges: [],
@@ -192,38 +254,34 @@ export function useCanvasAssetOperations({
     if (!canvas && ids?.length) setReveal({ id: ids[0], folder: null })
   }
 
-  async function importMedia(media: Media | (() => Promise<Media>)) {
-    const intent = navigation.current.generation
-    const board = owner.getSnapshot()
-    const lifetime = owner.getLifetimeRevision()
-    const isCurrentIntent = () =>
-      navigationActive.current &&
-      navigation.current.generation === intent &&
-      navigation.current.owner === owner &&
-      navigation.current.repoPath === repoPath
-    const preparation = await Promise.resolve()
-      .then(() =>
-        typeof media === 'function' ? media() : Promise.resolve(media)
-      )
-      .then(
-        (assets) => ({ status: 'success' as const, assets }),
-        (error: unknown) => ({ status: 'failed' as const, error })
-      )
-    if (
-      !isCurrentIntent() ||
-      owner.isActive?.() === false ||
-      owner.getLifetimeRevision() !== lifetime
+  async function importMedia(
+    media: Media | (() => Promise<Media>),
+    suppliedIntent?: CanvasUserIntent
+  ) {
+    const intent = suppliedIntent ?? beginSelectionIntent()
+    const board = intent.board
+    const source =
+      typeof media === 'function' ? media() : Promise.resolve(media)
+    const preparation = await source.then(
+      (assets) => ({
+        status: 'success' as const,
+        assets: validateMedia(assets),
+      }),
+      (error: unknown) => ({ status: 'failed' as const, error })
     )
-      return
     if (preparation.status === 'failed') throw preparation.error
+    if (!isIntentCurrent(intent, true))
+      return { status: 'cancelled-before-dispatch' as const }
     const outcome = await owner.submit(
       {
         kind: 'mutation',
         capability: 'lifecycle',
         board,
       },
-      (context) =>
-        canvasEffects.importMedia(
+      (context) => {
+        if (!isIntentCurrent(intent, true))
+          throw canvasCancellation('Import intent changed before dispatch.')
+        return canvasEffects.importMedia(
           context,
           repoPath,
           preparation.assets,
@@ -231,10 +289,17 @@ export function useCanvasAssetOperations({
           0,
           0
         )
+      }
     )
-    if (!isCurrentIntent() || outcome.status === 'cancelled') return
+    if (outcome.status === 'cancelled') return
     const ids = unwrapCanvasOutcome(outcome)
-    setSelection({ surface: 'assets', ids: ids ?? [], edges: [], group: null })
+    if (!isIntentCurrent(intent)) return
+    commitSelection({
+      surface: 'assets',
+      ids: ids ?? [],
+      edges: [],
+      group: null,
+    })
     if (ids?.length) setReveal({ id: ids[0], folder: null })
   }
 
@@ -266,7 +331,7 @@ export function useCanvasAssetOperations({
       if (outcome.status === 'cancelled') return
       unwrapCanvasOutcome(outcome)
     } else return
-    setSelection({ ...selection, ids: [], edges: [], group: null })
+    commitSelection({ ...selection, ids: [], edges: [], group: null })
   }
 
   function confirmTrash(ids: number[]) {
@@ -306,7 +371,7 @@ export function useCanvasAssetOperations({
         : []
     )
     setTrashIds(null)
-    setSelection({ ...selection, ids: [], edges: [], group: null })
+    commitSelection({ ...selection, ids: [], edges: [], group: null })
     for (const failure of failures)
       console.error('asset trash failed', {
         assetId: failure.id,
@@ -349,7 +414,7 @@ export function useCanvasAssetOperations({
     if (!purged) return
     purgeOrigin.current = null
     setPurgeIds(null)
-    setSelection({ ...selection, ids: [], edges: [], group: null })
+    commitSelection({ ...selection, ids: [], edges: [], group: null })
     completeLifecycleAction()
   }
 
@@ -364,6 +429,7 @@ export function useCanvasAssetOperations({
 
   return {
     go,
+    beginSelectionIntent,
     paste,
     importMedia,
     remove,
@@ -373,9 +439,13 @@ export function useCanvasAssetOperations({
   }
 }
 
+function validateMedia(media: Media): Media {
+  if (!media.length) throw new Error('Clipboard contains no media files')
+  return normalizePayload(JSON.stringify({ version: 1, media }))
+}
+
 function sameSelection(a: Selection, b: Selection) {
-  if (a === b) return true
-  if (!a || !b) return false
+  if (!a || !b) return a === b
   return (
     a.surface === b.surface &&
     a.group === b.group &&

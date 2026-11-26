@@ -242,7 +242,10 @@ it('uses the projected graph for navigation and preview in View and Edit', async
   await act(async () => {
     await current().operations.go(4)
   })
-  expect(selectAssets).toHaveBeenCalledWith([4])
+  expect(current().selection).toMatchObject({
+    surface: 'assets',
+    ids: [4],
+  })
   expect(reveal).toHaveBeenCalledWith({ id: 4, folder: null })
   await act(async () => {
     await current().model.transitionMode('edit')

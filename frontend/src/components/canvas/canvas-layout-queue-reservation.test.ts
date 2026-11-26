@@ -172,7 +172,7 @@ it('reconciles a replacement owner after an old in-flight write settles', async 
     )
   ).toBeNull()
   releaseWrite()
-  expect((await submitted).status).toBe('cancelled')
+  expect((await submitted).status).toBe('failed')
   expect((await refreshed).status).toBe('success')
   const freshBoard = replacement.getSnapshot()
   expect(freshBoard).not.toBeNull()
@@ -231,7 +231,7 @@ it('keeps a reactivated owner fenced until its old in-flight write settles', asy
     )
   ).toBeNull()
   releaseWrite()
-  expect((await submitted).status).toBe('cancelled')
+  expect((await submitted).status).toBe('failed')
   expect((await activation).status).toBe('success')
   const refreshed = owner.getSnapshot()
   expect(refreshed).not.toBeNull()
@@ -257,14 +257,11 @@ it('blocks gestures after reconciliation failure until a later refresh succeeds'
   load.mockRejectedValueOnce(new Error('reconciliation failed'))
   const outcome = await owner.submit(
     { kind: 'mutation', capability: 'geometry', board },
-    (context) =>
-      context.effect(async () => {
-        throw new Error('backend write failed')
-      })
+    (context) => context.effect(async () => {})
   )
   expect(outcome).toMatchObject({ status: 'failed' })
   if (outcome.status === 'failed')
-    expect(outcome.error.message).toContain('backend write failed')
+    expect(outcome.error.message).toContain('may have succeeded')
   if (outcome.status === 'failed')
     expect(outcome.error.message).toContain('reconciliation failed')
   expect(owner.beginDrag(board, [before])).toBeNull()
@@ -317,7 +314,7 @@ it('records View intent synchronously and preserves rapid View-to-Edit FIFO', as
   const edit = setMode(owner, 'edit')
   release()
   expect((await blocker).status).toBe('success')
-  expect((await view).status).toBe('success')
+  expect((await view).status).toBe('cancelled')
   expect((await edit).status).toBe('success')
   expect(owner.getMode()).toBe('edit')
   expect(owner.allows('geometry')).toBe(true)
@@ -351,7 +348,7 @@ it('clears a failed pending mode intent so later geometry can recover', async ()
 })
 
 for (const kind of ['resize', 'drag'] as const) {
-  it(`releases a queued ${kind} reservation after write failure and continues`, async () => {
+  it(`releases a queued ${kind} reservation after uncertain write failure and fences later work`, async () => {
     const { owner, write } = setup()
     const board = await refreshBoard(owner)
     expect((await setMode(owner, 'edit')).status).toBe('success')
@@ -376,14 +373,12 @@ for (const kind of ['resize', 'drag'] as const) {
     expect(await submitted).toMatchObject({ status: 'failed' })
     expect(owner.isLayoutPending()).toBe(false)
     let continued = false
-    expect(
-      (
-        await reserveCanvasRead(owner, async () => {
-          continued = true
-        })
-      ).status
-    ).toBe('success')
-    expect(continued).toBe(true)
+    const fenced = await reserveCanvasRead(owner, async () => {
+      continued = true
+    })
+    expect(fenced.status).toBe('failed')
+    expect(continued).toBe(false)
+    expect(owner.getRepositoryIssue()?.message).toContain('unknown')
     owner.dispose()
   })
 }

@@ -1,5 +1,5 @@
 import { afterEach, expect, it, mock, spyOn } from 'bun:test'
-import { act, cleanup, renderHook } from '@testing-library/react'
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import {
   type ClipboardMedia,
   ImageService,
@@ -59,7 +59,12 @@ it('navigates to live projected nodes and reveals hidden View assets', async () 
     group: null,
   })
   await act(async () => result.current.go(2))
-  expect(selectAssets).toHaveBeenCalledWith([2])
+  expect(setSelection).toHaveBeenCalledWith({
+    surface: 'assets',
+    ids: [2],
+    edges: [],
+    group: null,
+  })
   expect(setReveal).toHaveBeenCalledWith({ id: 2, folder: null })
   owner.setMode('edit')
   rerender()
@@ -73,7 +78,7 @@ it('navigates to live projected nodes and reveals hidden View assets', async () 
   expect(setCenter).toHaveBeenLastCalledWith(650, 660, { zoom: 2 })
 })
 
-it('rechecks mode after a delayed paste and imports without Canvas geometry in View', async () => {
+it('cancels delayed paste when mode intent changes before dispatch', async () => {
   const owner = createCanvasBoardOwner('/repo')
   owner.setMode('edit')
   const imported = spyOn(ImageService, 'ImportMedia').mockResolvedValue([
@@ -90,6 +95,7 @@ it('rechecks mode after a delayed paste and imports without Canvas geometry in V
     relationships: [],
   } as never)
   await refreshBoard(owner)
+  imported.mockClear()
   const setSelection = mock()
   const props = {
     owner,
@@ -122,24 +128,13 @@ it('rechecks mode after a delayed paste and imports without Canvas geometry in V
     await blocker
     await pending
   })
-  expect(imported).toHaveBeenCalledWith(
-    '/repo',
-    [{ name: 'media.png', data: 'aGVsbG8=' }],
-    false,
-    10,
-    20
-  )
-  expect(setSelection).toHaveBeenCalledWith({
-    surface: 'assets',
-    ids: [1],
-    edges: [],
-    group: null,
-  })
+  expect(imported).not.toHaveBeenCalled()
+  expect(setSelection).not.toHaveBeenCalled()
 })
 
 it('validates invalid clipboard text before a conflicting queued write', async () => {
   const owner = createCanvasBoardOwner('/repo-invalid-paste')
-  spyOn(ImageService, 'LoadCanvas').mockResolvedValue({
+  const load = spyOn(ImageService, 'LoadCanvas').mockResolvedValue({
     images: [{ id: 1 }],
     relationships: [],
     groups: [],
@@ -153,6 +148,7 @@ it('validates invalid clipboard text before a conflicting queued write', async (
     [] as never
   )
   await refreshBoard(owner)
+  load.mockClear()
   let releaseWrite = () => {}
   let signalWriteStarted = () => {}
   const writeStarted = new Promise<void>((resolve) => {
@@ -191,9 +187,85 @@ it('validates invalid clipboard text before a conflicting queued write', async (
   ).rejects.toThrow('Clipboard contains no media files')
   expect(importMedia).not.toHaveBeenCalled()
   expect(archive).toHaveBeenCalledTimes(1)
+  expect(load).not.toHaveBeenCalled()
 
   releaseWrite()
   expect((await blocker).status).toBe('success')
+  owner.dispose()
+})
+
+it('cancels a queued paste after synchronous selection ABA without RPC or reconciliation', async () => {
+  const owner = createCanvasBoardOwner('/repo-intent-aba')
+  const importMedia = spyOn(ImageService, 'ImportMedia').mockResolvedValue([
+    3,
+  ] as never)
+  const load = spyOn(ImageService, 'LoadCanvas').mockResolvedValue({
+    images: [],
+    relationships: [],
+    groups: [],
+  } as never)
+  spyOn(ImageService, 'GetLayoutSnapshot').mockResolvedValue({
+    revision: '1',
+    images: [],
+    relationships: [],
+  } as never)
+  await refreshBoard(owner)
+  load.mockClear()
+  const intent = { current: 0 }
+  const beginIntent = () => {
+    intent.current++
+    const ownerIntentRevision = owner.advanceIntent()
+    return {
+      owner,
+      repoPath: '/repo-intent-aba',
+      lifetimeRevision: owner.getLifetimeRevision(),
+      modeRevision: owner.getModeRevision(),
+      mode: owner.getMode(),
+      selectionSurface: 'assets',
+      ownerIntentRevision,
+      selectionRevision: intent.current,
+      board: owner.getSnapshot(),
+    }
+  }
+  const props = {
+    owner,
+    repoPath: '/repo-intent-aba',
+    selection: {
+      surface: 'assets',
+      ids: [1],
+      edges: [],
+      group: null,
+    },
+    selectionIntentRevision: intent,
+    beginSelectionIntent: beginIntent,
+    center: () => ({ x: 10, y: 20 }),
+    setSelection: mock(),
+    setReveal: mock(),
+  } as unknown as Parameters<typeof useCanvasAssetOperations>[0]
+  const { result } = renderHook(() => useCanvasAssetOperations(props))
+  let releaseRead = () => {}
+  let signalReadStarted = () => {}
+  const readStarted = new Promise<void>((resolve) => {
+    signalReadStarted = resolve
+  })
+  const readGate = new Promise<void>((resolve) => {
+    releaseRead = resolve
+  })
+  const read = reserveCanvasRead(owner, async () => {
+    signalReadStarted()
+    await readGate
+  })
+  await readStarted
+  const paste = result.current.paste([{ name: 'one.png', data: 'aGVsbG8=' }])
+  await waitFor(() => expect(owner.isLayoutPending()).toBe(true))
+  beginIntent() // A -> B
+  beginIntent() // B -> A before React can render either update
+  releaseRead()
+  await read
+  await expect(paste).resolves.toBeUndefined()
+  expect(importMedia).not.toHaveBeenCalled()
+  expect(load).not.toHaveBeenCalled()
+  expect(owner.isLayoutPending()).toBe(false)
   owner.dispose()
 })
 
@@ -263,7 +335,9 @@ it('rejects valid prepared media against a snapshot replaced during preparation'
   expect(owner.getSnapshot()).not.toBe(previous)
 
   resolveMedia([{ name: 'valid.png', data: 'aGVsbG8=' }])
-  await expect(paste).rejects.toThrow('Canvas changed')
+  await expect(paste).resolves.toMatchObject({
+    status: 'cancelled-before-dispatch',
+  })
   expect(importMedia).not.toHaveBeenCalled()
   owner.dispose()
 })
@@ -314,7 +388,9 @@ it('does not import prepared media after selection intent changes and returns to
   currentProps = { ...currentProps, selection: original }
   rerender()
   resolveMedia([{ name: 'fresh.png', data: 'aGVsbG8=' }])
-  await expect(paste).resolves.toBeUndefined()
+  await expect(paste).resolves.toMatchObject({
+    status: 'cancelled-before-dispatch',
+  })
   expect(importMedia).not.toHaveBeenCalled()
   owner.dispose()
 })
@@ -473,13 +549,15 @@ it('consumes prepared media without importing after a repository owner switch', 
   expect((await replacementOwner.activate()).status).toBe('success')
   owner.dispose()
   resolveMedia([{ name: 'valid.png', data: 'aGVsbG8=' }])
-  await expect(paste).resolves.toBeUndefined()
+  await expect(paste).resolves.toMatchObject({
+    status: 'cancelled-before-dispatch',
+  })
   expect(importMedia).not.toHaveBeenCalled()
   await expect(
     result.current.paste(() =>
       Promise.reject(new Error('Clipboard read was cancelled'))
     )
-  ).resolves.toBeUndefined()
+  ).rejects.toThrow('Clipboard read was cancelled')
   replacementOwner.dispose()
 })
 

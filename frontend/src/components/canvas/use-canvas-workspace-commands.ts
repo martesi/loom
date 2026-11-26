@@ -46,6 +46,7 @@ interface Props {
   selectionActions: {
     selectAssets: (ids: number[]) => void
     setSelection: React.Dispatch<React.SetStateAction<Selection>>
+    openImportPicker: () => void
     setExpanded: React.Dispatch<React.SetStateAction<number | null>>
     expanded: number | null
     selectedIds: () => number[]
@@ -127,6 +128,7 @@ export function useCanvasWorkspaceCommands(props: Props) {
     selection,
     selectedIds: selectionActions.selectedIds,
     remove: assetOperations.remove,
+    beginIntent: assetOperations.beginSelectionIntent,
     setSelection: selectionActions.setSelection,
     setExpanded: selectionActions.setExpanded,
     expanded: selectionActions.expanded,

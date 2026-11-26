@@ -18,7 +18,11 @@ import type { CanvasBoardOwner } from './canvas-board-owner'
 import { CanvasDock } from './canvas-dock'
 import { CanvasFlow } from './canvas-flow'
 import type { CanvasInternalMode } from './canvas-mode-policy'
-import type { CanvasOperationContext } from './canvas-operation'
+import {
+  type CanvasOperationContext,
+  type CanvasUserIntent,
+  canvasCancellation,
+} from './canvas-operation'
 import { canvasEffects } from './canvas-operation-effects'
 import { PerfHud } from './perf-hud'
 
@@ -54,6 +58,9 @@ interface Props {
   setNodes: Dispatch<SetStateAction<Node[]>>
   setEdges: Dispatch<SetStateAction<Edge[]>>
   setSelection: Dispatch<SetStateAction<Selection>>
+  commitSelection: Dispatch<SetStateAction<Selection>>
+  selectionIntentRevision: MutableRefObject<number>
+  beginSelectionIntent: () => CanvasUserIntent
   selectionRef: MutableRefObject<Selection>
   setExpanded: Dispatch<SetStateAction<number | null>>
   space: boolean
@@ -89,8 +96,9 @@ interface Props {
     media?:
       | Awaited<ReturnType<typeof readMedia>>
       | (() => Promise<Awaited<ReturnType<typeof readMedia>>>),
-    surface?: Selection['surface']
-  ) => Promise<void>
+    surface?: Selection['surface'],
+    intent?: CanvasUserIntent
+  ) => Promise<unknown>
   dragTargetRaf: MutableRefObject<number>
   pendingDragNode: MutableRefObject<Node | null>
   report: (error: unknown) => void
@@ -122,6 +130,9 @@ export function CanvasMainSurface(props: Props) {
     setNodes,
     setEdges,
     setSelection,
+    commitSelection,
+    selectionIntentRevision,
+    beginSelectionIntent,
     selectionRef,
     setExpanded,
     space,
@@ -188,6 +199,7 @@ export function CanvasMainSurface(props: Props) {
         if (!owner.allows('relationship')) return
         const id = targetAt(event.clientX, event.clientY)
         if ((event.ctrlKey || event.metaKey) && id) {
+          beginSelectionIntent()
           relation.current = {
             source: Number(id),
             x: event.clientX,
@@ -277,8 +289,18 @@ export function CanvasMainSurface(props: Props) {
       }}
       onDrop={(e) => {
         e.preventDefault()
+        const intent = beginSelectionIntent()
         const raw = e.dataTransfer.getData('application/x-loom-assets')
         const droppedFiles = Array.from(e.dataTransfer.files)
+        const isCurrentIntent = (checkBoard = false) =>
+          intent.owner === owner &&
+          intent.repoPath === repoPath &&
+          intent.selectionRevision === selectionIntentRevision.current &&
+          intent.ownerIntentRevision === owner.getIntentRevision() &&
+          intent.lifetimeRevision === owner.getLifetimeRevision() &&
+          intent.modeRevision === owner.getModeRevision() &&
+          (!checkBoard || intent.board === owner.getSnapshot()) &&
+          owner.isActive?.() !== false
         if (raw) {
           const payload = parseAssetDragPayload(raw)
           if (!payload) {
@@ -295,14 +317,19 @@ export function CanvasMainSurface(props: Props) {
               x: e.clientX,
               y: e.clientY,
             })
+            if (!isCurrentIntent(true)) return
             void (async () => {
               const outcome = await owner.submit(
                 {
                   kind: 'mutation',
                   capability: 'canvas-drop',
-                  board: owner.getSnapshot(),
+                  board: intent.board,
                 },
                 async (context) => {
+                  if (!isCurrentIntent(true))
+                    throw canvasCancellation(
+                      'Asset placement intent changed before dispatch.'
+                    )
                   const images = await context.prepare(() =>
                     Promise.all(
                       uniqueIds.map((id) => ImageService.GetImage(repoPath, id))
@@ -316,6 +343,10 @@ export function CanvasMainSurface(props: Props) {
                     throw new Error(
                       'Missing or trashed assets cannot be placed. Refine the selection and try again.'
                     )
+                  if (!isCurrentIntent(true))
+                    throw canvasCancellation(
+                      'Asset placement intent changed before dispatch.'
+                    )
                   await canvasEffects.placeImages(
                     context,
                     repoPath,
@@ -326,17 +357,17 @@ export function CanvasMainSurface(props: Props) {
                   return true
                 }
               )
-              if (outcome.status !== 'success') {
-                if (outcome.status === 'failed') throw outcome.error
-                if (outcome.status === 'rejected')
-                  throw new Error(outcome.reason)
-                return
-              }
+              if (outcome.status === 'cancelled') return
+              if (outcome.status === 'failed') throw outcome.error
+              if (outcome.status === 'rejected') throw new Error(outcome.reason)
+              if (!isCurrentIntent()) return
               if (!assetsPinned) {
                 closeAssets(false)
-                requestAnimationFrame(() => host.current?.focus())
+                requestAnimationFrame(() => {
+                  if (isCurrentIntent()) host.current?.focus()
+                })
               }
-              setSelection({
+              commitSelection({
                 surface: 'canvas',
                 ids: uniqueIds,
                 edges: [],
@@ -344,8 +375,10 @@ export function CanvasMainSurface(props: Props) {
               })
             })().catch(report)
           }
-        } else
-          void paste(() => filesToMedia(droppedFiles), 'canvas').catch(report)
+        } else if (droppedFiles.length)
+          void paste(() => filesToMedia(droppedFiles), 'canvas', intent).catch(
+            report
+          )
       }}
     >
       <CanvasFlow

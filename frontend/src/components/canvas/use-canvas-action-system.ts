@@ -135,6 +135,7 @@ export function useCanvasActionSystem({
       !allowsCanvasAction(context.owner.getMode(), action.id)
     )
       return Promise.resolve()
+    context.owner.advanceIntent()
     return Promise.resolve(currentAction.execute())
       .then((result) => {
         if (isCanvasOperationOutcome(result)) {
@@ -200,12 +201,13 @@ export function useCanvasActionSystem({
     const capability = canvasActionCapability(currentAction.id)
     const revision = context.owner.getModeRevision()
     const lifetime = context.owner.getLifetimeRevision()
+    const intent = context.owner.getIntentRevision()
     const board = context.owner.getSnapshot()
     // The route owns focus after palette commands; do not race dialog restoration.
     setPaletteOpen(false)
     // Start clipboard access in the palette event. A frame delay can lose the
     // browser's transient user activation before navigator.clipboard.read().
-    if (currentAction.id === 'paste') {
+    if (currentAction.id === 'paste-media') {
       void executeAction(currentAction).then(() =>
         setRecentActionIds((ids) =>
           [
@@ -230,6 +232,12 @@ export function useCanvasActionSystem({
       currentAction.id === 'purge-selection'
     if (isLifecycleAction) pendingRecentAction.current = currentAction.id
     requestAnimationFrame(() => {
+      if (
+        intent !== context.owner.getIntentRevision() ||
+        lifetime !== context.owner.getLifetimeRevision() ||
+        context.owner.isActive?.() === false
+      )
+        return
       if (
         (capability === 'geometry' || capability === 'relationship') &&
         (revision !== context.owner.getModeRevision() ||
@@ -285,8 +293,11 @@ export function useCanvasActionSystem({
   }
 
   function choosePaletteAsset(asset: PaletteAsset) {
+    const intent = context.beginSelectionIntent()
     setPaletteOpen(false)
-    requestAnimationFrame(() => void context.go(asset.id).catch(report))
+    requestAnimationFrame(
+      () => void context.go(asset.id, false, intent).catch(report)
+    )
   }
 
   // Retry changes this request token to rerun the repository asset query.

@@ -56,7 +56,7 @@ it('queues a replacement owner activation behind a disposed owner write', async 
   expect(load).toHaveBeenCalledTimes(1)
 
   releaseWrite()
-  expect(await write).toMatchObject({ status: 'cancelled' })
+  expect(await write).toMatchObject({ status: 'failed' })
   expect((await activation).status).toBe('success')
   expect(load).toHaveBeenCalledTimes(2)
   expect(replacement.getSnapshot()?.snapshot.revision).toBe('1')

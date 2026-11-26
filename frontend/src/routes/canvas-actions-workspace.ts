@@ -25,7 +25,7 @@ export function canvasWorkspaceActions(
     setRepoOpenRequest,
     setNavigatorModeRequest,
     setSearchFocusRequest,
-    importInput,
+    openImportPicker,
     repoPath,
   } = context
   return [
@@ -238,7 +238,7 @@ export function canvasWorkspaceActions(
       aliases: [t`add files`, t`upload`],
       context: t`Workspace`,
       enabled: true,
-      execute: () => importInput.current?.click(),
+      execute: openImportPicker,
     },
     {
       id: 'show-all-assets',

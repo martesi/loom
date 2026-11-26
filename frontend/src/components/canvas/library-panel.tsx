@@ -112,7 +112,7 @@ export const LibraryPanel = memo(function LibraryPanel({
     retryLoad,
     saveView,
     deleteView,
-  } = useSavedAssetViews(path, onError)
+  } = useSavedAssetViews(owner, path, onError)
   const views = [...DEFAULT_ASSET_VIEWS, ...savedViews]
   const savedViewIds = new Set(savedViews.map((view) => view.id))
   const currentView: AssetView = {

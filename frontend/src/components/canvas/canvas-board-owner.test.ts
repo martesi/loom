@@ -15,6 +15,7 @@ import {
   screen,
   waitFor,
 } from '@testing-library/react'
+import { Call } from '@wailsio/runtime'
 import type { Edge, Node, ReactFlowInstance } from '@xyflow/react'
 import { createElement, useRef, useState, useSyncExternalStore } from 'react'
 import {
@@ -433,7 +434,7 @@ describe('canvas board owner', () => {
     spyOn(ImageService, 'GetViewport').mockImplementation(
       () => Promise.resolve(null) as never
     )
-    const error = new Error('stale layout revision; reload canvas')
+    const error = new Call.RuntimeError('stale layout revision; reload canvas')
     spyOn(console, 'error').mockImplementation(() => {})
     const write = spyOn(
       ImageService,
@@ -625,7 +626,7 @@ describe('canvas board owner', () => {
   })
 
   it('preserves a history service error after authoritative recovery', async () => {
-    const error = new Error('undo failed')
+    const error = new Call.RuntimeError('undo failed')
     const load = spyOn(ImageService, 'LoadCanvas').mockResolvedValue(
       data as never
     )

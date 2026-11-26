@@ -25,6 +25,7 @@ interface KeyboardState {
   selection: Selection
   selectedIds: () => number[]
   settingsSection: 'appearance' | 'keyboard' | null
+  space: boolean
 }
 
 interface Props extends KeyboardState {
@@ -34,6 +35,7 @@ interface Props extends KeyboardState {
   setRepoMenuOpen: Dispatch<SetStateAction<boolean>>
   setSelection: Dispatch<SetStateAction<Selection>>
   setExpanded: Dispatch<SetStateAction<number | null>>
+  beginIntent: () => void
 }
 
 export function useCanvasKeyboardShortcuts(props: Props) {
@@ -63,6 +65,7 @@ export function useCanvasKeyboardShortcuts(props: Props) {
         !current.paletteOpen
       ) {
         event.preventDefault()
+        current.beginIntent()
         current.setSpace(true)
         return
       }
@@ -142,9 +145,15 @@ export function useCanvasKeyboardShortcuts(props: Props) {
       else void current.executeAction(action)
     }
     const up = (event: KeyboardEvent) => {
-      if (event.code === 'Space') state.current.setSpace(false)
+      if (event.code === 'Space') {
+        if (state.current.space) state.current.beginIntent()
+        state.current.setSpace(false)
+      }
     }
-    const blur = () => state.current.setSpace(false)
+    const blur = () => {
+      if (state.current.space) state.current.beginIntent()
+      state.current.setSpace(false)
+    }
     window.addEventListener('keydown', down, true)
     window.addEventListener('keyup', up)
     window.addEventListener('blur', blur)

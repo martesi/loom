@@ -18,6 +18,7 @@ import {
   type CanvasOperationOutcome,
   type CanvasOperationRuntime,
   type CanvasUserOperationRequest,
+  canvasRepositoryIssue,
   isCanvasOperationPending,
   isCanvasRepositoryDirty,
   submitCanvasOperation,
@@ -36,6 +37,9 @@ export interface CanvasBoardOwner extends CanvasBoardExecutor {
   getMode(): CanvasInternalMode
   getModeRevision(): number
   getLifetimeRevision(): number
+  getIntentRevision(): number
+  getRepositoryIssue(): Error | null
+  advanceIntent(): number
   isLayoutPending(): boolean
   submit<T>(
     request: CanvasUserOperationRequest,
@@ -121,6 +125,7 @@ export function createCanvasBoardOwner(
   let mode: CanvasInternalMode = 'legacy'
   let modeRevision = 0
   let lifetimeRevision = 0
+  let intentRevision = 0
   let nextGestureToken = 1
   let accepted: AcceptedCanvasBoard | null = null
   let acceptedGeneration = -1
@@ -166,6 +171,7 @@ export function createCanvasBoardOwner(
     token: operationToken,
     isCurrent: (revision) => active && revision === lifetimeRevision,
     getLifetime: () => lifetimeRevision,
+    getIntentRevision: () => intentRevision,
     getMode: () => mode,
     getRequestedMode: () => requestedMode,
     setMode: (next) => {
@@ -212,10 +218,17 @@ export function createCanvasBoardOwner(
     getMode: () => mode,
     getModeRevision: () => modeRevision,
     getLifetimeRevision: () => lifetimeRevision,
+    getIntentRevision: () => intentRevision,
+    getRepositoryIssue: () => canvasRepositoryIssue(operationIdentity),
+    advanceIntent() {
+      intentRevision++
+      return intentRevision
+    },
     isLayoutPending: () => isCanvasOperationPending(operationIdentity),
     submit,
     beginModeTransition: (target) => {
       modeRevision++
+      intentRevision++
       requestedMode = target ?? null
       owner.cancelGesture()
       return modeRevision
@@ -230,6 +243,7 @@ export function createCanvasBoardOwner(
         )
       owner.cancelGesture()
       if (mode !== next) modeRevision++
+      intentRevision++
       mode = next
       requestedMode = null
     },
@@ -500,6 +514,7 @@ export function createCanvasBoardOwner(
     dispose() {
       active = false
       lifetimeRevision++
+      intentRevision++
       startup = null
       startupSettled = false
       generation++

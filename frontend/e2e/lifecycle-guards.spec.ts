@@ -109,6 +109,7 @@ test.describe('P0 lifecycle and selection guards', () => {
     await placeAssets(page, ['dock-alpha.png', 'dock-beta.png'])
     const nodes = imageNodes(page)
     await nodes.first().click()
+    await expect(nodes.first()).toHaveClass(/selected/)
     const second = await nodes.nth(1).boundingBox()
     if (!second) throw new Error('second Canvas node has no bounding box')
     await page.keyboard.down('Shift')
