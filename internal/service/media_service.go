@@ -219,7 +219,9 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 			cx = x + float64(i%6)*190
 			cy = y + float64(i/6)*160
 		}
-		result, err := tx.Exec("INSERT INTO images(file_path,canvas_x,canvas_y) VALUES (?,?,?)", dest, cx, cy)
+		fileIdentity := store.FileIdentity(fileInfo)
+		fileHash := fmt.Sprintf("%x", sha256.Sum256(data))
+		result, err := tx.Exec("INSERT INTO images(file_path,canvas_x,canvas_y,import_file_identity,import_file_sha256) VALUES (?,?,?,?,?)", dest, cx, cy, fileIdentity, fileHash)
 		if err != nil {
 			return nil, err
 		}
@@ -239,7 +241,7 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 		paths = append(paths, stash)
 		ownedFiles[stash] = stashInfo
 		ownedFileHashes[stash] = fmt.Sprintf("%x", sha256.Sum256(data))
-		entries = append(entries, importHistoryEntry{ImageID: id, RetainedPath: stash, SHA256: fmt.Sprintf("%x", sha256.Sum256(data))})
+		entries = append(entries, importHistoryEntry{ImageID: id, RetainedPath: stash, SHA256: fileHash, FileIdentity: fileIdentity, RetainedIdentity: store.FileIdentity(stashInfo)})
 	}
 	forward, err := json.Marshal(step(stepImportBatch, importBatchPayload{Entries: entries, Active: true}))
 	if err != nil {

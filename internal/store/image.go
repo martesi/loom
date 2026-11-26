@@ -107,32 +107,33 @@ func (r *Repo) registerImage(ctx context.Context, path string) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	var discardedHash string
-	err := r.DB.QueryRow(`SELECT sha256 FROM discarded_import_files WHERE file_path = ?`, path).Scan(&discardedHash)
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, err
+	}
+	var discardedHash, discardedIdentity string
+	err = r.DB.QueryRow(`SELECT sha256, file_identity FROM discarded_import_files WHERE file_path = ?`, path).Scan(&discardedHash, &discardedIdentity)
 	if err != nil && err != sql.ErrNoRows {
 		return 0, err
 	}
 	if err == nil {
-		fingerprint, _, err := fingerprintFile(ctx, path)
+		fingerprint, stableInfo, err := fingerprintFile(ctx, path)
 		if err != nil {
 			return 0, err
 		}
-		if fingerprint == discardedHash {
+		if discardedIdentity != "" && FileIdentity(stableInfo) == discardedIdentity && fingerprint == discardedHash {
 			return 0, nil
 		}
 		if _, err := r.DB.Exec(`DELETE FROM discarded_import_files WHERE file_path = ?`, path); err != nil {
 			return 0, err
 		}
 	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return 0, err
-	}
 	marker := fmt.Sprintf("stat:%d:%d", info.Size(), info.ModTime().UnixNano())
 	var size sql.NullInt64
-	var oldMarker, oldFingerprint sql.NullString
-	err = r.DB.QueryRow(`SELECT file_size, content_hash, source_fingerprint FROM images WHERE file_path = ?`, path).Scan(&size, &oldMarker, &oldFingerprint)
-	if err == nil && size.Valid && size.Int64 == info.Size() && oldMarker.String == marker && oldFingerprint.Valid && oldFingerprint.String != "" {
+	var oldMarker, oldFingerprint, importIdentity, importHash sql.NullString
+	var importUndone bool
+	err = r.DB.QueryRow(`SELECT file_size, content_hash, source_fingerprint, import_undone, import_file_identity, import_file_sha256 FROM images WHERE file_path = ?`, path).Scan(&size, &oldMarker, &oldFingerprint, &importUndone, &importIdentity, &importHash)
+	if err == nil && size.Valid && size.Int64 == info.Size() && oldMarker.String == marker && oldFingerprint.Valid && oldFingerprint.String != "" && !importUndone {
 		return 0, nil
 	}
 	if err != nil && err != sql.ErrNoRows {
@@ -144,6 +145,11 @@ func (r *Repo) registerImage(ctx context.Context, path string) (int, error) {
 		return 0, fmt.Errorf("fingerprint %s: %w", path, err)
 	}
 	marker = fmt.Sprintf("stat:%d:%d", stableInfo.Size(), stableInfo.ModTime().UnixNano())
+	if !isNew && importUndone && (importIdentity.String == "" || FileIdentity(stableInfo) != importIdentity.String || fingerprint != importHash.String) {
+		if _, err := r.DB.Exec(`UPDATE images SET import_undone = 0 WHERE file_path = ? AND import_undone = 1`, path); err != nil {
+			return 0, err
+		}
+	}
 	if isNew {
 		res, err := r.DB.Exec(`INSERT OR IGNORE INTO images (file_path, file_size, content_hash, source_fingerprint, source_revision) VALUES (?, ?, ?, ?, 1)`, path, stableInfo.Size(), marker, fingerprint)
 		if err != nil {
@@ -244,16 +250,27 @@ func (r *Repo) scanAndRegisterImagesWithFingerprint(ctx context.Context, advance
 		if item.err != nil {
 			return changed, fmt.Errorf("fingerprint %s: %w", item.path, item.err)
 		}
-		var discardedHash string
-		err := r.DB.QueryRow(`SELECT sha256 FROM discarded_import_files WHERE file_path = ?`, item.path).Scan(&discardedHash)
+		var discardedHash, discardedIdentity string
+		err := r.DB.QueryRow(`SELECT sha256, file_identity FROM discarded_import_files WHERE file_path = ?`, item.path).Scan(&discardedHash, &discardedIdentity)
 		if err != nil && err != sql.ErrNoRows {
 			return changed, err
 		}
 		if err == nil {
-			if item.fingerprint == discardedHash {
+			if discardedIdentity != "" && FileIdentity(item.info) == discardedIdentity && item.fingerprint == discardedHash {
 				continue
 			}
 			if _, err := r.DB.Exec(`DELETE FROM discarded_import_files WHERE file_path = ?`, item.path); err != nil {
+				return changed, err
+			}
+		}
+		var importUndone bool
+		var importIdentity, importHash string
+		rowErr := r.DB.QueryRow(`SELECT import_undone, import_file_identity, import_file_sha256 FROM images WHERE file_path = ?`, item.path).Scan(&importUndone, &importIdentity, &importHash)
+		if rowErr != nil && rowErr != sql.ErrNoRows {
+			return changed, rowErr
+		}
+		if rowErr == nil && importUndone && (importIdentity == "" || FileIdentity(item.info) != importIdentity || item.fingerprint != importHash) {
+			if _, err := r.DB.Exec(`UPDATE images SET import_undone = 0 WHERE file_path = ? AND import_undone = 1`, item.path); err != nil {
 				return changed, err
 			}
 		}

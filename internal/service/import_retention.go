@@ -13,12 +13,18 @@ import (
 )
 
 type discardedImportFile struct {
-	path string
-	hash string
+	path     string
+	hash     string
+	identity string
+}
+
+type importRedoFile struct {
+	hash     string
+	identity string
 }
 
 type discardedImportRedo struct {
-	snapshots map[string]string
+	snapshots map[string]importRedoFile
 	active    []discardedImportFile
 }
 
@@ -36,7 +42,7 @@ func recordOperationInTx(repo *store.Repo, tx *sql.Tx, kind, forward, inverse st
 // pruneUndoneImportRedoTx removes hidden import rows whose redo operations are
 // about to be discarded. File cleanup is deferred until the caller commits.
 func pruneUndoneImportRedoTx(tx *sql.Tx) (discardedImportRedo, error) {
-	result := discardedImportRedo{snapshots: make(map[string]string)}
+	result := discardedImportRedo{snapshots: make(map[string]importRedoFile)}
 	var cursor int64
 	var rawCursor string
 	err := tx.QueryRow(`SELECT value FROM settings WHERE scope = 'repo' AND key = 'undo_cursor'`).Scan(&rawCursor)
@@ -73,7 +79,7 @@ func pruneUndoneImportRedoTx(tx *sql.Tx) (discardedImportRedo, error) {
 			entries = append(entries, payload.Entries...)
 			for _, entry := range payload.Entries {
 				if entry.RetainedPath != "" && entry.SHA256 != "" {
-					result.snapshots[filepath.Clean(entry.RetainedPath)] = entry.SHA256
+					result.snapshots[filepath.Clean(entry.RetainedPath)] = importRedoFile{hash: entry.SHA256, identity: entry.RetainedIdentity}
 				}
 			}
 		}
@@ -99,14 +105,22 @@ func pruneUndoneImportRedoTx(tx *sql.Tx) (discardedImportRedo, error) {
 		if err != nil {
 			return result, err
 		}
-		if _, err := tx.Exec(`INSERT INTO discarded_import_files (file_path, sha256) VALUES (?, ?)
-			ON CONFLICT(file_path) DO UPDATE SET sha256 = excluded.sha256`, path, entry.SHA256); err != nil {
+		if entry.FileIdentity == "" {
+			// Without a stable ID, keep the bytes and let normal discovery
+			// register the path after its hidden row is removed.
+			if _, err := tx.Exec(`DELETE FROM images WHERE id = ? AND import_undone = 1`, entry.ImageID); err != nil {
+				return result, err
+			}
+			continue
+		}
+		if _, err := tx.Exec(`INSERT INTO discarded_import_files (file_path, sha256, file_identity) VALUES (?, ?, ?)
+			ON CONFLICT(file_path) DO UPDATE SET sha256 = excluded.sha256, file_identity = excluded.file_identity`, path, entry.SHA256, entry.FileIdentity); err != nil {
 			return result, err
 		}
 		if _, err := tx.Exec(`DELETE FROM images WHERE id = ? AND import_undone = 1`, entry.ImageID); err != nil {
 			return result, err
 		}
-		result.active = append(result.active, discardedImportFile{path: path, hash: entry.SHA256})
+		result.active = append(result.active, discardedImportFile{path: path, hash: entry.SHA256, identity: entry.FileIdentity})
 	}
 	return result, nil
 }
@@ -136,12 +150,12 @@ func cleanupDiscardedImportRedoBestEffortWith(repo *store.Repo, discarded discar
 		if err != nil {
 			continue
 		}
-		if fmt.Sprintf("%x", sha256.Sum256(data)) != file.hash {
+		if store.FileIdentity(before) == "" || store.FileIdentity(before) != file.identity || fmt.Sprintf("%x", sha256.Sum256(data)) != file.hash {
 			clearDiscardedImportSuppression(repo, file.path, operation)
 			continue
 		}
 		after, err := os.Stat(file.path)
-		if err != nil || !os.SameFile(before, after) {
+		if err != nil || !os.SameFile(before, after) || store.FileIdentity(after) != file.identity {
 			continue
 		}
 		if err := remove(file.path); err != nil && !os.IsNotExist(err) {
@@ -168,13 +182,17 @@ func recordImportFileSuppression(repo *store.Repo, path, expectedHash string, ow
 	if err != nil || fmt.Sprintf("%x", sha256.Sum256(data)) != expectedHash {
 		return
 	}
-	if _, err := repo.DB.Exec(`INSERT INTO discarded_import_files (file_path, sha256) VALUES (?, ?)
-		ON CONFLICT(file_path) DO UPDATE SET sha256 = excluded.sha256`, path, expectedHash); err != nil {
+	identity := store.FileIdentity(info)
+	if identity == "" || (owned != nil && store.FileIdentity(owned) != identity) {
+		return
+	}
+	if _, err := repo.DB.Exec(`INSERT INTO discarded_import_files (file_path, sha256, file_identity) VALUES (?, ?, ?)
+		ON CONFLICT(file_path) DO UPDATE SET sha256 = excluded.sha256, file_identity = excluded.file_identity`, path, expectedHash, identity); err != nil {
 		log.Printf("%s: unable to suppress failed import file %q: %v", operation, path, err)
 	}
 }
 
-func collectImportRedoTail(repo *store.Repo) (map[string]string, error) {
+func collectImportRedoTail(repo *store.Repo) (map[string]importRedoFile, error) {
 	cursor, err := repo.UndoCursor()
 	if err != nil {
 		return nil, err
@@ -184,7 +202,7 @@ func collectImportRedoTail(repo *store.Repo) (map[string]string, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	candidates := make(map[string]string)
+	candidates := make(map[string]importRedoFile)
 	for rows.Next() {
 		var forward, inverse string
 		if err := rows.Scan(&forward, &inverse); err != nil {
@@ -196,9 +214,9 @@ func collectImportRedoTail(repo *store.Repo) (map[string]string, error) {
 	return candidates, rows.Err()
 }
 
-func collectImportRedoForImages(repo *store.Repo, ids []int64) (map[string]string, error) {
+func collectImportRedoForImages(repo *store.Repo, ids []int64) (map[string]importRedoFile, error) {
 	if len(ids) == 0 {
-		return map[string]string{}, nil
+		return map[string]importRedoFile{}, nil
 	}
 	selected := make(map[int64]bool, len(ids))
 	for _, id := range ids {
@@ -209,7 +227,7 @@ func collectImportRedoForImages(repo *store.Repo, ids []int64) (map[string]strin
 		return nil, err
 	}
 	defer rows.Close()
-	candidates := make(map[string]string)
+	candidates := make(map[string]importRedoFile)
 	for rows.Next() {
 		var forward, inverse string
 		if err := rows.Scan(&forward, &inverse); err != nil {
@@ -226,7 +244,7 @@ func collectImportRedoForImages(repo *store.Repo, ids []int64) (map[string]strin
 			}
 			for _, entry := range payload.Entries {
 				if selected[entry.ImageID] && entry.RetainedPath != "" {
-					candidates[filepath.Clean(entry.RetainedPath)] = entry.SHA256
+					candidates[filepath.Clean(entry.RetainedPath)] = importRedoFile{hash: entry.SHA256, identity: entry.RetainedIdentity}
 				}
 			}
 		}
@@ -234,7 +252,7 @@ func collectImportRedoForImages(repo *store.Repo, ids []int64) (map[string]strin
 	return candidates, rows.Err()
 }
 
-func collectImportPayloadPaths(candidates map[string]string, raw string) {
+func collectImportPayloadPaths(candidates map[string]importRedoFile, raw string) {
 	var step OpStep
 	if err := json.Unmarshal([]byte(raw), &step); err != nil || step.Kind != stepImportBatch {
 		return
@@ -245,12 +263,12 @@ func collectImportPayloadPaths(candidates map[string]string, raw string) {
 	}
 	for _, entry := range payload.Entries {
 		if entry.RetainedPath != "" && entry.SHA256 != "" {
-			candidates[filepath.Clean(entry.RetainedPath)] = entry.SHA256
+			candidates[filepath.Clean(entry.RetainedPath)] = importRedoFile{hash: entry.SHA256, identity: entry.RetainedIdentity}
 		}
 	}
 }
 
-func cleanupUnreferencedImportRedo(repo *store.Repo, candidates map[string]string) error {
+func cleanupUnreferencedImportRedo(repo *store.Repo, candidates map[string]importRedoFile) error {
 	rows, err := repo.DB.Query(`SELECT forward, inverse FROM operation_log`)
 	if err != nil {
 		return err
@@ -298,18 +316,18 @@ func cleanupUnreferencedImportRedo(repo *store.Repo, candidates map[string]strin
 			continue
 		}
 		path := filepath.Join(dir, entry.Name())
-		expectedHash, wasPruned := candidates[filepath.Clean(path)]
+		candidate, wasPruned := candidates[filepath.Clean(path)]
 		if !referenced[filepath.Clean(path)] && wasPruned {
 			before, err := os.Stat(path)
-			if err != nil || !before.Mode().IsRegular() {
+			if err != nil || !before.Mode().IsRegular() || candidate.identity == "" || store.FileIdentity(before) != candidate.identity {
 				continue
 			}
 			data, err := os.ReadFile(path)
-			if err != nil || fmt.Sprintf("%x", sha256.Sum256(data)) != expectedHash {
+			if err != nil || fmt.Sprintf("%x", sha256.Sum256(data)) != candidate.hash {
 				continue
 			}
 			after, err := os.Stat(path)
-			if err != nil || !os.SameFile(before, after) {
+			if err != nil || !os.SameFile(before, after) || store.FileIdentity(after) != candidate.identity {
 				continue
 			}
 			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
@@ -320,7 +338,7 @@ func cleanupUnreferencedImportRedo(repo *store.Repo, candidates map[string]strin
 	return nil
 }
 
-func cleanupImportRedoBestEffort(repo *store.Repo, candidates map[string]string, operation string) {
+func cleanupImportRedoBestEffort(repo *store.Repo, candidates map[string]importRedoFile, operation string) {
 	if err := cleanupUnreferencedImportRedo(repo, candidates); err != nil {
 		log.Printf("%s: unable to clean up import snapshots: %v", operation, err)
 	}

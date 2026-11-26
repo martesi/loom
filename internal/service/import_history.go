@@ -9,14 +9,18 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"loom/internal/store"
 )
 
 const stepImportBatch = "import_batch"
 
 type importHistoryEntry struct {
-	ImageID      int64  `json:"imageId"`
-	RetainedPath string `json:"retainedPath"`
-	SHA256       string `json:"sha256"`
+	ImageID          int64  `json:"imageId"`
+	RetainedPath     string `json:"retainedPath"`
+	SHA256           string `json:"sha256"`
+	FileIdentity     string `json:"fileIdentity,omitempty"`
+	RetainedIdentity string `json:"retainedIdentity,omitempty"`
 }
 
 type importBatchPayload struct {
@@ -145,8 +149,8 @@ func exclusiveStageDirectory(path string) string {
 }
 
 // applyImportBatchTx retains all active media and changes only the imported
-// rows. A redo never replaces a file that changed outside Loom: it restores
-// the captured bytes at a new, exclusive path instead.
+// rows. A redo rejects a changed file at its original path. If the original
+// file is absent, it restores the captured bytes at a new, exclusive path.
 type ownedImportFile struct {
 	path string
 	info os.FileInfo
@@ -192,9 +196,31 @@ func applyImportBatchTx(tx *sql.Tx, payload importBatchPayload, created *[]owned
 			}
 			continue
 		}
+		var importUndone bool
+		if err := tx.QueryRow(`SELECT import_undone FROM images WHERE id = ?`, entry.ImageID).Scan(&importUndone); err != nil {
+			return err
+		}
+		if !importUndone {
+			return fmt.Errorf("imported file %d was replaced and cannot be redone", entry.ImageID)
+		}
 		activePath := currentPath
+		var activeInfo os.FileInfo
 		current, readErr := os.ReadFile(currentPath)
-		if readErr != nil || fmt.Sprintf("%x", sha256.Sum256(current)) != entry.SHA256 {
+		currentInfo, statErr := os.Stat(currentPath)
+		if readErr == nil && statErr == nil {
+			identity := store.FileIdentity(currentInfo)
+			if identity == "" || entry.FileIdentity == "" || identity != entry.FileIdentity {
+				return fmt.Errorf("imported file %d was replaced and cannot be redone", entry.ImageID)
+			}
+			if fmt.Sprintf("%x", sha256.Sum256(current)) != entry.SHA256 {
+				return fmt.Errorf("imported file %d changed and cannot be redone", entry.ImageID)
+			}
+			activeInfo = currentInfo
+		}
+		if (readErr != nil && !os.IsNotExist(readErr)) || (statErr != nil && !os.IsNotExist(statErr)) {
+			return fmt.Errorf("inspect import path: %w", errors.Join(readErr, statErr))
+		}
+		if os.IsNotExist(readErr) || os.IsNotExist(statErr) {
 			var info os.FileInfo
 			var err error
 			activePath, info, err = writeRetainedImport(currentPath, item.data, writeFile...)
@@ -210,12 +236,13 @@ func applyImportBatchTx(tx *sql.Tx, payload importBatchPayload, created *[]owned
 				return err
 			}
 			*created = append(*created, ownedImportFile{path: activePath, info: info, hash: entry.SHA256})
+			activeInfo = info
 			if afterWrite != nil {
 				afterWrite(activePath)
 			}
 		}
 		if activePath != currentPath {
-			if _, err := tx.Exec(`UPDATE images SET file_path = ?, trashed = 0, import_undone = 0, thumb_path = NULL, width = NULL, height = NULL, file_size = ?, content_hash = NULL, source_fingerprint = NULL, source_revision = source_revision + 1 WHERE id = ?`, activePath, len(item.data), entry.ImageID); err != nil {
+			if _, err := tx.Exec(`UPDATE images SET file_path = ?, trashed = 0, import_undone = 0, import_file_identity = ?, import_file_sha256 = ?, thumb_path = NULL, width = NULL, height = NULL, file_size = ?, content_hash = NULL, source_fingerprint = NULL, source_revision = source_revision + 1 WHERE id = ?`, activePath, store.FileIdentity(activeInfo), entry.SHA256, len(item.data), entry.ImageID); err != nil {
 				return err
 			}
 		} else if _, err := tx.Exec(`UPDATE images SET trashed = 0, import_undone = 0 WHERE id = ?`, entry.ImageID); err != nil {

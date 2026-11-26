@@ -2,7 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { expect, test } from './test-fixtures'
 import { enterEdit, fixturePath, imageNodes, openFixtureRepo } from './test-helpers'
 
-test('a pasted batch in an empty Edit canvas is one recoverable undo', async ({
+test('a pasted batch undo does not revive after an external replacement', async ({
   page,
   context,
   clipboardAccess: _clipboardAccess,
@@ -42,15 +42,18 @@ test('a pasted batch in an empty Edit canvas is one recoverable undo', async ({
   const replacement = Buffer.from('external replacement after undo')
   await writeFile(paths[0], replacement)
   await page.keyboard.press('ControlOrMeta+Shift+z')
-  await expect(nodes).toHaveCount(3)
-  const redoneIds = await nodes.evaluateAll((elements) =>
+  await expect(nodes).toHaveCount(0)
+  const discoveredIds = await nodes.evaluateAll((elements) =>
     elements.map((node) => node.getAttribute('data-id'))
   )
-  for (const id of ids) expect(redoneIds).toContain(id)
-  const restored = await fixturePath('import-empty-fixtures', 'batch-a (redo 1).png')
+  for (const id of ids) expect(discoveredIds).not.toContain(id)
   expect(await readFile(paths[0])).toEqual(replacement)
-  expect(await readFile(restored)).toEqual(bytes[0])
   expect(await readFile(paths[1])).toEqual(bytes[1])
+  const redoPath = await fixturePath(
+    'import-empty-fixtures',
+    'batch-a (redo 1).png'
+  )
+  expect(await readFile(redoPath).catch(() => null)).toBeNull()
   await page.getByTestId('canvas-mode-view').click()
   await expect(nodes).toHaveCount(0)
 })
