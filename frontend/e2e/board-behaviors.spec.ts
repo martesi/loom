@@ -30,7 +30,8 @@ async function dragBy(page: Page, locator: Locator, dx: number, dy: number) {
 test('multi-image drag is one undoable geometry change', async ({
   page,
 }, testInfo) => {
-  await openFixtureRepo(page, 'arrange-resize-fixtures')
+  await openFixtureRepo(page, 'arrange-resize-pair-fixtures')
+  await page.getByTestId('canvas-mode-edit').click()
   await placeAssets(page, ['arrange-alpha.png', 'arrange-beta.png'])
   await page.keyboard.press('ControlOrMeta+0')
   const nodes = imageNodes(page)
@@ -81,6 +82,7 @@ test('relationships reject cycles, support ctrl-click selection, and delete as e
   page,
 }) => {
   await openFixtureRepo(page, 'relationship-fixtures')
+  await page.getByTestId('canvas-mode-edit').click()
   await placeAssets(page, [
     'relation-alpha.png',
     'relation-beta.png',
@@ -182,6 +184,7 @@ test('relationships reject cycles, support ctrl-click selection, and delete as e
 
 test('relationship gestures reject self-links', async ({ page }) => {
   await openFixtureRepo(page, 'relationship-self-link-fixtures')
+  await page.getByTestId('canvas-mode-edit').click()
   await placeAssets(page, ['relation-alpha.png'])
   await page.keyboard.press('ControlOrMeta+0')
 
@@ -207,6 +210,7 @@ test('Sources navigation reveals and selects an unplaced asset', async ({
   page,
 }) => {
   await openFixtureRepo(page, 'sources-nav-fixtures')
+  await page.getByTestId('canvas-mode-edit').click()
   await placeAssets(page, ['relation-alpha.png', 'relation-beta.png'])
   await page.keyboard.press('ControlOrMeta+0')
   await ctrlDrag(page, imageNodes(page).nth(0), imageNodes(page).nth(1))
@@ -258,7 +262,8 @@ test('Sources navigation reveals and selects an unplaced asset', async ({
 })
 
 test('auto-arrange respects resized node bounds', async ({ page }) => {
-  await openFixtureRepo(page, 'arrange-resize-fixtures')
+  await openFixtureRepo(page, 'arrange-resize-pair-fixtures')
+  await page.getByTestId('canvas-mode-edit').click()
   await placeAssets(page, ['arrange-alpha.png', 'arrange-beta.png'])
   await page.keyboard.press('ControlOrMeta+0')
 
@@ -286,6 +291,15 @@ test('auto-arrange respects resized node bounds', async ({ page }) => {
     })
     .toBe(true)
 
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'arrange-gamma.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64'
+    ),
+  })
+  await expect(nodes).toHaveCount(3)
   await dropAsset(page, 'arrange-gamma.png', { x: 500, y: 450 })
   await expect(nodes).toHaveCount(3)
   await selectImageNodes(page, [1, 2])

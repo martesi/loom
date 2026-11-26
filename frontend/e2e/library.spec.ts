@@ -275,6 +275,7 @@ test('asset selection survives view switches and multi-row drag transfers select
   page,
 }) => {
   await openFixtureRepo(page, 'library-selection-fixtures')
+  await page.getByTestId('canvas-mode-edit').click()
   const list = page.getByRole('listbox', { name: 'Assets' })
   const selectedAssets = list.locator('[role=option][aria-selected=true]')
 

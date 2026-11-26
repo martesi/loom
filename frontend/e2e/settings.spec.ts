@@ -235,6 +235,7 @@ test.describe('Settings', () => {
     page,
   }) => {
     await openFixtureRepo(page, 'preview-fixtures', { drawers: 'closed' })
+    await page.getByTestId('canvas-mode-edit').click()
     const sourcePath = await fixturePath(
       'preview-fixtures',
       'preview-alpha.png'

@@ -69,6 +69,7 @@ test.describe('Physical Cards and Studio Palette', () => {
     page,
   }) => {
     await openFixtureRepo(page, 'card-fixtures')
+    await page.getByTestId('canvas-mode-edit').click()
     await placeAssets(page, ['card-alpha.png'])
     await page.keyboard.press('ControlOrMeta+0')
 
@@ -114,6 +115,7 @@ test.describe('Physical Cards and Studio Palette', () => {
     page,
   }) => {
     await openFixtureRepo(page, 'card-hover-fixtures')
+    await page.getByTestId('canvas-mode-edit').click()
     await placeAssets(page, ['hover-alpha.png'])
     await page.keyboard.press('ControlOrMeta+0')
 
@@ -222,6 +224,7 @@ test.describe('Physical Cards and Studio Palette', () => {
     page,
   }) => {
     await openFixtureRepo(page, 'relationship-fixtures')
+    await page.getByTestId('canvas-mode-edit').click()
     await expect(
       page.getByRole('textbox', { name: 'Search assets' })
     ).toBeVisible()

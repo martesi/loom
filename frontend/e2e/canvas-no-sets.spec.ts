@@ -26,7 +26,8 @@ test('an empty canvas keeps its assets available', async ({ page }) => {
 test('Canvas selection does not create sets or delete images', async ({
   page,
 }, testInfo) => {
-  await openFixtureRepo(page, 'group-fixtures')
+  await openFixtureRepo(page, 'group-pair-fixtures')
+  await page.getByTestId('canvas-mode-edit').click()
   await placeAssets(page, ['group-alpha.png', 'group-beta.png'])
   await page.keyboard.press('ControlOrMeta+0')
   await selectImageNodes(page, [0, 1])

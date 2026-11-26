@@ -6,6 +6,7 @@ test.describe('selection ownership across Canvas surfaces', () => {
     page,
   }) => {
     await openFixtureRepo(page, 'dock-fixtures', { drawers: 'closed' })
+    await page.getByTestId('canvas-mode-edit').click()
     await placeAssets(page, ['dock-alpha.png'])
     const node = page.locator('.react-flow__node-image')
     const assets = page.locator('aside[aria-label="Assets"]')

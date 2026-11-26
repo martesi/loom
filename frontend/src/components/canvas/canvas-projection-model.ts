@@ -31,7 +31,7 @@ export function canvasProjectionGraph(
     id: String(edge.id),
     source: String(edge.sourceImageId),
     target: String(edge.derivedImageId),
-    ariaLabel: `Relationship from ${imageNames.get(edge.sourceImageId) ?? edge.sourceImageId} to ${imageNames.get(edge.derivedImageId) ?? edge.derivedImageId}`,
+    ariaLabel: `Edge from ${imageNames.get(edge.sourceImageId) ?? edge.sourceImageId} to ${imageNames.get(edge.derivedImageId) ?? edge.derivedImageId} (relationship)`,
     reconnectable: false,
   }))
   return {

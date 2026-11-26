@@ -26,6 +26,7 @@ test('node resize and movement persist while Space drag pans instead of moving n
   page,
 }) => {
   await openFixtureRepo(page, 'resize-fixtures')
+  await page.getByTestId('canvas-mode-edit').click()
   await placeAssets(page, ['resize-alpha.png'])
   const node = imageNodes(page).first()
   await node.click()
@@ -69,6 +70,7 @@ test('node resize and movement persist while Space drag pans instead of moving n
 
 test('text-input undo does not undo canvas changes', async ({ page }) => {
   await openFixtureRepo(page, 'shortcut-fixtures')
+  await page.getByTestId('canvas-mode-edit').click()
   await placeAssets(page, ['shortcut-alpha.png', 'shortcut-beta.png'])
   await autoArrangeCanvas(page)
   const positions = () =>
@@ -95,6 +97,7 @@ test('file drop and canvas clipboard paste create placed assets and errors are d
   void clipboardAccess
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
   await openFixtureRepo(page, 'media-fixtures')
+  await page.getByTestId('canvas-mode-edit').click()
 
   await page.evaluate(() => {
     const encoded =

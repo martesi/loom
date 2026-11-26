@@ -104,6 +104,7 @@ test('canvas context menus and auto-arrange preserve the canvas origin', async (
   page,
 }) => {
   await open(page, 'canvas-menu-actions-fixtures')
+  await page.getByTestId('canvas-mode-edit').click()
   await drop(page, 'context-alpha.png', 280, 240)
   await drop(page, 'context-beta.png', 520, 420)
   await page.keyboard.press('ControlOrMeta+0')
@@ -199,6 +200,7 @@ test('explicit relationship gesture, navigation, and individual selection', asyn
   page,
 }) => {
   await open(page, 'menu-linux-fixtures')
+  await page.getByTestId('canvas-mode-edit').click()
   await drop(page, 'menu-alpha.png', 50, 100)
   await drop(page, 'menu-beta.png', 280, 200)
   await page.keyboard.press('ControlOrMeta+0')
@@ -309,6 +311,7 @@ test('Select all excludes unplaced assets without hiding them from Assets', asyn
 })
 test('marquee selection replaces the Canvas selection', async ({ page }) => {
   await open(page, 'set-fixtures')
+  await page.getByTestId('canvas-mode-edit').click()
   await drop(page, 'set-alpha.png', 360, 100)
   await drop(page, 'set-beta.png', 580, 100)
   await drop(page, 'set-gamma.png', 820, 100)

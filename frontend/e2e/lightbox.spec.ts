@@ -13,7 +13,8 @@ import {
 test('lightbox chrome layout, info toggle, and history navigation', async ({
   page,
 }) => {
-  await openFixtureRepo(page, 'lightbox-fixtures', { drawers: 'closed' })
+  await openFixtureRepo(page, 'lightbox-stage-fixtures', { drawers: 'closed' })
+  await page.getByTestId('canvas-mode-edit').click()
   await placeAssets(page, [
     'lightbox-alpha.png',
     'lightbox-beta.png',

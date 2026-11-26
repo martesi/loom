@@ -15,6 +15,7 @@ test('select, arrange, align individual images, then restore viewport', async ({
   page,
 }) => {
   await openFixtureRepo(page, 'group-fixtures', { drawers: 'closed' })
+  await page.getByTestId('canvas-mode-edit').click()
   for (const [index, name] of [
     'group-alpha.png',
     'group-beta.png',

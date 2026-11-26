@@ -200,8 +200,16 @@ const fixtureRepos = [
     files: ['arrange-alpha.png', 'arrange-beta.png', 'arrange-gamma.png'],
   },
   {
+    name: 'arrange-resize-pair-fixtures',
+    files: ['arrange-alpha.png', 'arrange-beta.png'],
+  },
+  {
     name: 'group-fixtures',
     files: ['group-alpha.png', 'group-beta.png', 'group-gamma.png'],
+  },
+  {
+    name: 'group-pair-fixtures',
+    files: ['group-alpha.png', 'group-beta.png'],
   },
   {
     name: 'group-drop-fixtures',
@@ -259,6 +267,10 @@ const fixtureRepos = [
       'album/lightbox-epsilon.png',
       'album/lightbox-zeta.png',
     ],
+  },
+  {
+    name: 'lightbox-stage-fixtures',
+    files: ['lightbox-alpha.png', 'lightbox-beta.png', 'lightbox-gamma.png'],
   },
   // Dedicated fixtures for Card & Deck Stacks
   { name: 'card-fixtures', files: ['card-alpha.png', 'card-beta.png'] },

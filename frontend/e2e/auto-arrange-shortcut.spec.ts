@@ -17,6 +17,7 @@ test('dock subgraph arrangement leaves unselected items in place', async ({
   page,
 }, testInfo) => {
   await openFixtureRepo(page, 'dock-arrange-fixtures', { drawers: 'closed' })
+  await page.getByTestId('canvas-mode-edit').click()
   await placeAssets(page, [
     'arrange-alpha.png',
     'arrange-beta.png',
@@ -42,6 +43,7 @@ test('auto-arrange can be rebound, executed, persisted, and reset', async ({
   page,
 }, testInfo) => {
   await openFixtureRepo(page, 'dock-arrange-fixtures', { drawers: 'closed' })
+  await page.getByTestId('canvas-mode-edit').click()
   await placeAssets(page, [
     'arrange-alpha.png',
     'arrange-beta.png',
@@ -124,6 +126,7 @@ test('auto-arrange can be rebound, executed, persisted, and reset', async ({
 for (const id of ['auto-arrange-active', 'auto-arrange-canvas']) {
   test(`honors and resets persisted ${id} overrides`, async ({ page }) => {
     await openFixtureRepo(page, 'dock-arrange-fixtures', { drawers: 'closed' })
+    await page.getByTestId('canvas-mode-edit').click()
     await placeAssets(page, [
       'arrange-alpha.png',
       'arrange-beta.png',
