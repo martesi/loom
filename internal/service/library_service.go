@@ -59,7 +59,7 @@ func (s *LibraryService) ListImages(repoPath string, query LibraryQuery) ([]Libr
 		return nil, err
 	}
 
-	relationships, err := repo.ListRelationships()
+	relationships, err := repo.ListStoredRelationships()
 	if err != nil {
 		return nil, err
 	}

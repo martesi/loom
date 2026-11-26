@@ -531,6 +531,28 @@ func (r *Repo) ListRelationships() ([]Relationship, error) {
 	return rels, rows.Err()
 }
 
+// ListStoredRelationships returns every persisted edge, including edges with
+// trashed endpoints. Library metadata uses these to preserve provenance.
+func (r *Repo) ListStoredRelationships() ([]Relationship, error) {
+	rows, err := r.DB.Query(`
+		SELECT id, source_image_id, derived_image_id, pairing_order, created_at
+		FROM relationships ORDER BY pairing_order, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var rels []Relationship
+	for rows.Next() {
+		var rel Relationship
+		if err := rows.Scan(&rel.ID, &rel.SourceImageID, &rel.DerivedImageID, &rel.PairingOrder, &rel.CreatedAt); err != nil {
+			return nil, err
+		}
+		rels = append(rels, rel)
+	}
+	return rels, rows.Err()
+}
+
 // SetCanvasPosition persists a node's dragged position on the (currently
 // repository canvas.
 func (r *Repo) SetCanvasPosition(imageID int64, x, y float64) error {

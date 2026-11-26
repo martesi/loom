@@ -508,7 +508,6 @@ export function CanvasMainSurface(props: Props) {
             resetZoom: actionById.get('reset-zoom')?.shortcut ?? '',
             autoArrange: actionById.get('auto-arrange-active')?.shortcut ?? '',
             inspect: actionById.get('toggle-inspector')?.shortcut ?? '',
-            unplace: actionById.get('unplace-selection')?.shortcut ?? '',
           }}
           onAction={runDockAction}
         />
