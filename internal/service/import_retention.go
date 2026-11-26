@@ -2,14 +2,131 @@ package service
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
+	"loom/internal/store"
 	"os"
 	"path/filepath"
-
-	"loom/internal/store"
+	"strconv"
 )
+
+type discardedImportFile struct {
+	path string
+	hash string
+}
+
+type discardedImportRedo struct {
+	snapshots map[string]string
+	active    []discardedImportFile
+}
+
+func recordOperationInTx(repo *store.Repo, tx *sql.Tx, kind, forward, inverse string) (discardedImportRedo, error) {
+	discarded, err := pruneUndoneImportRedoTx(tx)
+	if err != nil {
+		return discarded, err
+	}
+	if err := repo.RecordOperationInTx(tx, kind, forward, inverse); err != nil {
+		return discarded, err
+	}
+	return discarded, nil
+}
+
+// pruneUndoneImportRedoTx removes hidden import rows whose redo operations are
+// about to be discarded. File cleanup is deferred until the caller commits.
+func pruneUndoneImportRedoTx(tx *sql.Tx) (discardedImportRedo, error) {
+	result := discardedImportRedo{snapshots: make(map[string]string)}
+	var cursor int64
+	var rawCursor string
+	err := tx.QueryRow(`SELECT value FROM settings WHERE scope = 'repo' AND key = 'undo_cursor'`).Scan(&rawCursor)
+	if err != nil && err != sql.ErrNoRows {
+		return result, err
+	}
+	if err == nil {
+		parsed, err := strconv.ParseInt(rawCursor, 10, 64)
+		if err != nil {
+			return result, err
+		}
+		cursor = parsed
+	}
+	rows, err := tx.Query(`SELECT forward, inverse FROM operation_log WHERE seq > ?`, cursor)
+	if err != nil {
+		return result, err
+	}
+	var entries []importHistoryEntry
+	for rows.Next() {
+		var forward, inverse string
+		if err := rows.Scan(&forward, &inverse); err != nil {
+			rows.Close()
+			return result, err
+		}
+		for _, raw := range []string{forward, inverse} {
+			var step OpStep
+			if err := json.Unmarshal([]byte(raw), &step); err != nil || step.Kind != stepImportBatch {
+				continue
+			}
+			var payload importBatchPayload
+			if err := json.Unmarshal(step.Payload, &payload); err != nil {
+				continue
+			}
+			entries = append(entries, payload.Entries...)
+			for _, entry := range payload.Entries {
+				if entry.RetainedPath != "" && entry.SHA256 != "" {
+					result.snapshots[filepath.Clean(entry.RetainedPath)] = entry.SHA256
+				}
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return result, err
+	}
+	if err := rows.Close(); err != nil {
+		return result, err
+	}
+	seen := make(map[int64]bool)
+	for _, entry := range entries {
+		if seen[entry.ImageID] || entry.SHA256 == "" {
+			continue
+		}
+		seen[entry.ImageID] = true
+		var path string
+		err := tx.QueryRow(`SELECT file_path FROM images WHERE id = ? AND import_undone = 1`, entry.ImageID).Scan(&path)
+		if err == sql.ErrNoRows {
+			continue
+		}
+		if err != nil {
+			return result, err
+		}
+		if _, err := tx.Exec(`DELETE FROM images WHERE id = ? AND import_undone = 1`, entry.ImageID); err != nil {
+			return result, err
+		}
+		result.active = append(result.active, discardedImportFile{path: path, hash: entry.SHA256})
+	}
+	return result, nil
+}
+
+func cleanupDiscardedImportRedoBestEffort(repo *store.Repo, discarded discardedImportRedo, operation string) {
+	for _, file := range discarded.active {
+		before, err := os.Stat(file.path)
+		if err != nil {
+			continue
+		}
+		data, err := os.ReadFile(file.path)
+		if err != nil || fmt.Sprintf("%x", sha256.Sum256(data)) != file.hash {
+			continue
+		}
+		after, err := os.Stat(file.path)
+		if err != nil || !os.SameFile(before, after) {
+			continue
+		}
+		if err := os.Remove(file.path); err != nil && !os.IsNotExist(err) {
+			log.Printf("%s: unable to clean up discarded import file %q: %v", operation, file.path, err)
+		}
+	}
+	cleanupImportRedoBestEffort(repo, discarded.snapshots, operation)
+}
 
 func collectImportRedoTail(repo *store.Repo) (map[string]string, error) {
 	cursor, err := repo.UndoCursor()
@@ -137,8 +254,16 @@ func cleanupUnreferencedImportRedo(repo *store.Repo, candidates map[string]strin
 		path := filepath.Join(dir, entry.Name())
 		expectedHash, wasPruned := candidates[filepath.Clean(path)]
 		if !referenced[filepath.Clean(path)] && wasPruned {
+			before, err := os.Stat(path)
+			if err != nil || !before.Mode().IsRegular() {
+				continue
+			}
 			data, err := os.ReadFile(path)
 			if err != nil || fmt.Sprintf("%x", sha256.Sum256(data)) != expectedHash {
+				continue
+			}
+			after, err := os.Stat(path)
+			if err != nil || !os.SameFile(before, after) {
 				continue
 			}
 			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {

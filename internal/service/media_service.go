@@ -129,10 +129,6 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 	if err := r.PrepareOperationLog(); err != nil {
 		return nil, err
 	}
-	redoTail, err := collectImportRedoTail(r)
-	if err != nil {
-		return nil, err
-	}
 	tx, err := r.DB.Begin()
 	if err != nil {
 		return nil, err
@@ -223,14 +219,15 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 	if err != nil {
 		return nil, err
 	}
-	if err := r.RecordOperationInTx(tx, "import_batch", string(forward), string(inverse)); err != nil {
+	discarded, err := recordOperationInTx(r, tx, "import_batch", string(forward), string(inverse))
+	if err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	committed = true
-	cleanupImportRedoBestEffort(r, redoTail, "discarded import snapshots")
+	cleanupDiscardedImportRedoBestEffort(r, discarded, "discarded import history")
 	return ids, nil
 }
 

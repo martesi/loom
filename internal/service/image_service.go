@@ -591,6 +591,7 @@ func (s *ImageService) linkSourceToGroup(repoPath string, sourceID, groupID int6
 			newLinks = append(newLinks, rel)
 		}
 	}
+	var discarded discardedImportRedo
 	if len(newLinks) > 0 {
 		fwd, err := json.Marshal(step(stepGraphInsert, graphPayload{Relationships: newLinks}))
 		if err != nil {
@@ -600,13 +601,15 @@ func (s *ImageService) linkSourceToGroup(repoPath string, sourceID, groupID int6
 		if err != nil {
 			return fmt.Errorf("encode grouped relationship inverse: %w", err)
 		}
-		if err := repo.RecordOperationInTx(tx, stepLinks, string(fwd), string(inv)); err != nil {
+		discarded, err = recordOperationInTx(repo, tx, stepLinks, string(fwd), string(inv))
+		if err != nil {
 			return fmt.Errorf("record grouped relationship history: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit grouped relationship transaction: %w", err)
 	}
+	cleanupDiscardedImportRedoBestEffort(repo, discarded, "record grouped relationship mutation")
 	return nil
 }
 

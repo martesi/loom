@@ -3,7 +3,6 @@ package service
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 
 	"loom/internal/store"
 )
@@ -163,22 +162,32 @@ func recordOp(repo *store.Repo, kind string, forward, inverse OpStep) error {
 	if err != nil {
 		return err
 	}
-	redoTail, err := collectImportRedoTail(repo)
-	if err != nil {
+	if err := repo.PrepareOperationLog(); err != nil {
 		if rollbackErr := applyStep(repo, inverse); rollbackErr != nil {
 			return fmt.Errorf("operation history cleanup preparation failed: %w; compensating rollback failed: %v", err, rollbackErr)
 		}
 		return fmt.Errorf("operation history cleanup preparation failed: %w (mutation rolled back)", err)
 	}
-	if err := repo.RecordOperation(kind, string(fwd), string(inv)); err != nil {
+	tx, err := repo.DB.Begin()
+	if err != nil {
+		if rollbackErr := applyStep(repo, inverse); rollbackErr != nil {
+			return fmt.Errorf("operation log transaction failed: %w; compensating rollback failed: %v", err, rollbackErr)
+		}
+		return fmt.Errorf("operation log transaction failed: %w (mutation rolled back)", err)
+	}
+	discarded, err := recordOperationInTx(repo, tx, kind, string(fwd), string(inv))
+	if err == nil {
+		err = tx.Commit()
+	} else {
+		_ = tx.Rollback()
+	}
+	if err != nil {
 		if rollbackErr := applyStep(repo, inverse); rollbackErr != nil {
 			return fmt.Errorf("operation log append failed: %w; compensating rollback failed: %v", err, rollbackErr)
 		}
 		return fmt.Errorf("operation log append failed: %w (mutation rolled back)", err)
 	}
-	if err := cleanupUnreferencedImportRedo(repo, redoTail); err != nil {
-		log.Printf("record operation %s: unable to clean up import snapshots: %v", kind, err)
-	}
+	cleanupDiscardedImportRedoBestEffort(repo, discarded, fmt.Sprintf("record operation %s", kind))
 	return nil
 }
 

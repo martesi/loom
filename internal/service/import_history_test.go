@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,62 @@ import (
 
 	"loom/internal/store"
 )
+
+type failingExclusiveFile struct {
+	file      *os.File
+	statErr   error
+	writeSize int
+	writeErr  error
+}
+
+func (f failingExclusiveFile) Stat() (os.FileInfo, error) {
+	if f.statErr != nil {
+		return nil, f.statErr
+	}
+	return f.file.Stat()
+}
+
+func (f failingExclusiveFile) Write(data []byte) (int, error) {
+	if f.writeSize >= 0 && f.writeSize < len(data) {
+		n, err := f.file.Write(data[:f.writeSize])
+		if err != nil {
+			return n, err
+		}
+		return n, f.writeErr
+	}
+	return f.file.Write(data)
+}
+
+func (f failingExclusiveFile) Close() error { return f.file.Close() }
+
+func TestWriteExclusiveModeCleansPartialWritesAndStatFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		statErr   error
+		writeSize int
+	}{
+		{name: "partial write", writeSize: 3},
+		{name: "stat failure", statErr: errors.New("stat failed"), writeSize: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "exclusive.bin")
+			data := []byte("payload")
+			_, err := writeExclusiveModeUsing(path, data, 0o600, func(path string, flags int, mode os.FileMode) (exclusiveFile, error) {
+				file, err := os.OpenFile(path, flags, mode)
+				if err != nil {
+					return nil, err
+				}
+				return failingExclusiveFile{file: file, statErr: tc.statErr, writeSize: tc.writeSize, writeErr: errors.New("short write")}, nil
+			})
+			if err == nil {
+				t.Fatal("writeExclusiveModeUsing unexpectedly succeeded")
+			}
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Fatalf("failed exclusive write left path behind, stat err=%v", err)
+			}
+		})
+	}
+}
 
 func TestImportBatchUndoRedoRetainsBytesAndDoesNotOverwriteExternalReplacement(t *testing.T) {
 	repoPath := t.TempDir()
@@ -178,6 +235,188 @@ func TestUndoneImportIsHiddenFromLibraryAndTrashActions(t *testing.T) {
 	state, err := (&UndoService{}).State(repoPath)
 	if err != nil || !state.CanRedo {
 		t.Fatalf("redo history after rejected Trash actions = %+v, err=%v", state, err)
+	}
+}
+
+func TestDiscardingUndoneImportRedoCleansFilesAndDoesNotRediscover(t *testing.T) {
+	repoPath := t.TempDir()
+	service := &ImageService{}
+	seedIDs, err := service.ImportMedia(repoPath, []ClipboardMedia{
+		{Name: "seed-a.png", Data: base64.StdEncoding.EncodeToString([]byte("seed a"))},
+		{Name: "seed-b.png", Data: base64.StdEncoding.EncodeToString([]byte("seed b"))},
+	}, false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids, err := service.ImportMedia(repoPath, []ClipboardMedia{{Name: "discard.png", Data: base64.StdEncoding.EncodeToString([]byte("discard me"))}}, false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	image, err := repo.GetImageByID(ids[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var forward string
+	if err := repo.DB.QueryRow(`SELECT forward FROM operation_log WHERE seq = (SELECT max(seq) FROM operation_log)`).Scan(&forward); err != nil {
+		t.Fatal(err)
+	}
+	var logged OpStep
+	var payload importBatchPayload
+	if err := json.Unmarshal([]byte(forward), &logged); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(logged.Payload, &payload); err != nil || len(payload.Entries) != 1 {
+		t.Fatalf("discarded import payload = %+v, err=%v", payload, err)
+	}
+	retained := payload.Entries[0].RetainedPath
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&UndoService{}).Undo(repoPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(image.FilePath); err != nil {
+		t.Fatalf("undo should keep active file until redo branch is discarded: %v", err)
+	}
+	if _, err := os.Stat(retained); err != nil {
+		t.Fatalf("undo should keep retained redo snapshot: %v", err)
+	}
+	if err := service.LinkSource(repoPath, seedIDs[0], seedIDs[1]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(image.FilePath); !os.IsNotExist(err) {
+		t.Fatalf("discarded unmodified import active file still exists, err=%v", err)
+	}
+	if _, err := os.Stat(retained); !os.IsNotExist(err) {
+		t.Fatalf("discarded redo snapshot still exists, err=%v", err)
+	}
+	repo, err = store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	var rowCount int
+	if err := repo.DB.QueryRow(`SELECT count(*) FROM images WHERE id = ?`, ids[0]).Scan(&rowCount); err != nil || rowCount != 0 {
+		t.Fatalf("discarded import rows = %d, err=%v", rowCount, err)
+	}
+	canvas, err := (&ImageService{}).LoadCanvas(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, found := range canvas.Images {
+		if found.ID == ids[0] || found.FilePath == image.FilePath {
+			t.Fatalf("reload rediscovered discarded import: %+v", found)
+		}
+	}
+}
+
+func TestDiscardedImportPreservesExternallyModifiedFilesAndSnapshots(t *testing.T) {
+	repoPath := t.TempDir()
+	service := &ImageService{}
+	seedIDs, err := service.ImportMedia(repoPath, []ClipboardMedia{
+		{Name: "seed-a.png", Data: base64.StdEncoding.EncodeToString([]byte("seed a"))},
+		{Name: "seed-b.png", Data: base64.StdEncoding.EncodeToString([]byte("seed b"))},
+	}, false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids, err := service.ImportMedia(repoPath, []ClipboardMedia{{Name: "external.png", Data: base64.StdEncoding.EncodeToString([]byte("original"))}}, false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	image, err := repo.GetImageByID(ids[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var forward string
+	if err := repo.DB.QueryRow(`SELECT forward FROM operation_log WHERE seq = (SELECT max(seq) FROM operation_log)`).Scan(&forward); err != nil {
+		t.Fatal(err)
+	}
+	var logged OpStep
+	var payload importBatchPayload
+	if err := json.Unmarshal([]byte(forward), &logged); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(logged.Payload, &payload); err != nil || len(payload.Entries) != 1 {
+		t.Fatalf("import payload = %+v, err=%v", payload, err)
+	}
+	retained := payload.Entries[0].RetainedPath
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&UndoService{}).Undo(repoPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(image.FilePath, []byte("external replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(retained, []byte("modified snapshot"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.LinkSource(repoPath, seedIDs[0], seedIDs[1]); err != nil {
+		t.Fatal(err)
+	}
+	active, err := os.ReadFile(image.FilePath)
+	if err != nil || string(active) != "external replacement" {
+		t.Fatalf("external active file = %q, err=%v", active, err)
+	}
+	snapshot, err := os.ReadFile(retained)
+	if err != nil || string(snapshot) != "modified snapshot" {
+		t.Fatalf("modified snapshot = %q, err=%v", snapshot, err)
+	}
+	repo, err = store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	var rowCount int
+	if err := repo.DB.QueryRow(`SELECT count(*) FROM images WHERE id = ? AND import_undone = 1`, ids[0]).Scan(&rowCount); err != nil || rowCount != 0 {
+		t.Fatalf("discarded undone rows = %d, err=%v", rowCount, err)
+	}
+}
+
+func TestRedoCleanupFailureDoesNotFailCommittedGraphMutation(t *testing.T) {
+	repoPath := t.TempDir()
+	service := &ImageService{}
+	seedIDs, err := service.ImportMedia(repoPath, []ClipboardMedia{
+		{Name: "seed-a.png", Data: base64.StdEncoding.EncodeToString([]byte("seed a"))},
+		{Name: "seed-b.png", Data: base64.StdEncoding.EncodeToString([]byte("seed b"))},
+	}, false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ImportMedia(repoPath, []ClipboardMedia{{Name: "discard.png", Data: base64.StdEncoding.EncodeToString([]byte("discard"))}}, false, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&UndoService{}).Undo(repoPath); err != nil {
+		t.Fatal(err)
+	}
+	redoDir := filepath.Join(repoPath, ".loom", "trash", "import-redo")
+	if err := os.RemoveAll(redoDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(redoDir, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.LinkSource(repoPath, seedIDs[0], seedIDs[1]); err != nil {
+		t.Fatalf("committed graph mutation reported best-effort cleanup failure: %v", err)
+	}
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	relationships, err := repo.ListRelationships()
+	if err != nil || len(relationships) != 1 {
+		t.Fatalf("relationships after cleanup failure = %+v, err=%v", relationships, err)
 	}
 }
 

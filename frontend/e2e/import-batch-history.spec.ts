@@ -65,8 +65,9 @@ test('an explicit file drop imports one batch and preserves unrelated files', as
   await page.locator('.react-flow__pane').dispatchEvent('drop', {
     dataTransfer: await page.evaluateHandle((bytes) => {
       const transfer = new DataTransfer()
-      transfer.items.add(new File([bytes], 'drop-a.png', { type: 'image/png' }))
-      transfer.items.add(new File([bytes], 'drop-b.png', { type: 'image/png' }))
+      const payload = Uint8Array.from(bytes).buffer
+      transfer.items.add(new File([payload], 'drop-a.png', { type: 'image/png' }))
+      transfer.items.add(new File([payload], 'drop-b.png', { type: 'image/png' }))
       return transfer
     }, [...data]),
   })

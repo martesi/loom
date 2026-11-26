@@ -138,8 +138,13 @@ func (s *ImageService) setGeometryFromDisplay(path string, revision *string, exp
 	if err := applyGeometryTx(tx, after); err != nil {
 		return err
 	}
-	if err := graphRecord(repo, tx, stepGeometry, step(stepGeometry, geometryPayload{after}), step(stepGeometry, geometryPayload{before})); err != nil {
+	discarded, err := graphRecord(repo, tx, stepGeometry, step(stepGeometry, geometryPayload{after}), step(stepGeometry, geometryPayload{before}))
+	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	cleanupDiscardedImportRedoBestEffort(repo, discarded, "record geometry mutation")
+	return nil
 }

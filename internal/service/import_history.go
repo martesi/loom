@@ -27,17 +27,31 @@ func writeExclusive(path string, data []byte) (os.FileInfo, error) {
 	return writeExclusiveMode(path, data, 0o600)
 }
 
+type exclusiveFile interface {
+	Stat() (os.FileInfo, error)
+	Write([]byte) (int, error)
+	Close() error
+}
+
 func writeExclusiveMode(path string, data []byte, mode os.FileMode) (os.FileInfo, error) {
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	return writeExclusiveModeUsing(path, data, mode, func(path string, flags int, mode os.FileMode) (exclusiveFile, error) {
+		return os.OpenFile(path, flags, mode)
+	})
+}
+
+func writeExclusiveModeUsing(path string, data []byte, mode os.FileMode, open func(string, int, os.FileMode) (exclusiveFile, error)) (os.FileInfo, error) {
+	file, err := open(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 	if err != nil {
 		return nil, err
 	}
 	info, statErr := file.Stat()
-	_, writeErr := file.Write(data)
-	closeErr := file.Close()
 	if statErr != nil {
+		_ = file.Close()
+		removeOwnedFilePrefix(path, nil, data)
 		return nil, statErr
 	}
+	_, writeErr := file.Write(data)
+	closeErr := file.Close()
 	if writeErr != nil {
 		removeOwnedFilePrefix(path, info, data)
 		return nil, writeErr
@@ -148,7 +162,7 @@ func removeOwnedFile(path string, owned os.FileInfo, expectedHash string) {
 
 func removeOwnedFilePrefix(path string, owned os.FileInfo, data []byte) {
 	current, err := os.Stat(path)
-	if err != nil || owned == nil || !os.SameFile(current, owned) {
+	if err != nil || (owned != nil && !os.SameFile(current, owned)) {
 		return
 	}
 	onDisk, err := os.ReadFile(path)
