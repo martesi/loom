@@ -164,8 +164,8 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 		if err != nil {
 			return nil, fmt.Errorf("decode media: %w", err)
 		}
-		var file *os.File
 		var dest string
+		var fileInfo os.FileInfo
 		for n := 0; ; n++ {
 			candidate := name
 			if n > 0 {
@@ -173,7 +173,7 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 				candidate = fmt.Sprintf("%s (%d)%s", strings.TrimSuffix(name, ext), n, ext)
 			}
 			dest = filepath.Join(r.Path, candidate)
-			file, err = os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+			fileInfo, err = writeExclusiveMode(dest, data, 0o644)
 			if os.IsExist(err) {
 				continue
 			}
@@ -183,19 +183,7 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 			break
 		}
 		paths = append(paths, dest)
-		ownedFiles[dest], err = file.Stat()
-		if err != nil {
-			file.Close()
-			return nil, err
-		}
-		_, writeErr := file.Write(data)
-		closeErr := file.Close()
-		if writeErr != nil {
-			return nil, writeErr
-		}
-		if closeErr != nil {
-			return nil, closeErr
-		}
+		ownedFiles[dest] = fileInfo
 		ownedFileHashes[dest] = fmt.Sprintf("%x", sha256.Sum256(data))
 		if s.afterImportFileWrite != nil {
 			s.afterImportFileWrite(dest)
@@ -242,9 +230,7 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 		return nil, err
 	}
 	committed = true
-	if err := cleanupUnreferencedImportRedo(r, redoTail); err != nil {
-		return nil, fmt.Errorf("clean up discarded import snapshots: %w", err)
-	}
+	cleanupImportRedoBestEffort(r, redoTail, "discarded import snapshots")
 	return ids, nil
 }
 
@@ -428,15 +414,15 @@ func purgeImages(r *store.Repo, ids []int64) error {
 		images = append(images, img)
 	}
 	for _, img := range images {
+		if img.ImportUndone {
+			return fmt.Errorf("asset %d is hidden by import undo", img.ID)
+		}
 		rel, err := filepath.Rel(r.Path, img.FilePath)
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return fmt.Errorf("asset is outside repository")
 		}
 	}
 	for _, img := range images {
-		if img.ImportUndone {
-			return fmt.Errorf("asset %d is hidden by import undo", img.ID)
-		}
 		if err := os.Remove(img.FilePath); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("purge %s: %w", filepath.Base(img.FilePath), err)
 		}

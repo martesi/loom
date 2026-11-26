@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"database/sql"
 	"fmt"
@@ -23,7 +24,11 @@ type importBatchPayload struct {
 }
 
 func writeExclusive(path string, data []byte) (os.FileInfo, error) {
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	return writeExclusiveMode(path, data, 0o600)
+}
+
+func writeExclusiveMode(path string, data []byte, mode os.FileMode) (os.FileInfo, error) {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 	if err != nil {
 		return nil, err
 	}
@@ -34,11 +39,11 @@ func writeExclusive(path string, data []byte) (os.FileInfo, error) {
 		return nil, statErr
 	}
 	if writeErr != nil {
-		removeOwnedFile(path, info, fmt.Sprintf("%x", sha256.Sum256(data)))
+		removeOwnedFilePrefix(path, info, data)
 		return nil, writeErr
 	}
 	if closeErr != nil {
-		removeOwnedFile(path, info, fmt.Sprintf("%x", sha256.Sum256(data)))
+		removeOwnedFilePrefix(path, info, data)
 		return nil, closeErr
 	}
 	return info, nil
@@ -53,7 +58,7 @@ type ownedImportFile struct {
 	hash string
 }
 
-func applyImportBatchTx(tx *sql.Tx, payload importBatchPayload, created *[]ownedImportFile) error {
+func applyImportBatchTx(tx *sql.Tx, payload importBatchPayload, created *[]ownedImportFile, afterWrite func(string)) error {
 	if len(payload.Entries) == 0 {
 		return fmt.Errorf("import history batch is empty")
 	}
@@ -102,6 +107,9 @@ func applyImportBatchTx(tx *sql.Tx, payload importBatchPayload, created *[]owned
 				return err
 			}
 			*created = append(*created, ownedImportFile{path: activePath, info: info, hash: entry.SHA256})
+			if afterWrite != nil {
+				afterWrite(activePath)
+			}
 		}
 		if activePath != currentPath {
 			if _, err := tx.Exec(`UPDATE images SET file_path = ?, trashed = 0, import_undone = 0, thumb_path = NULL, width = NULL, height = NULL, file_size = ?, content_hash = NULL, source_fingerprint = NULL, source_revision = source_revision + 1 WHERE id = ?`, activePath, len(item.data), entry.ImageID); err != nil {
@@ -135,5 +143,16 @@ func removeOwnedFile(path string, owned os.FileInfo, expectedHash string) {
 		if readErr == nil && fmt.Sprintf("%x", sha256.Sum256(data)) == expectedHash {
 			_ = os.Remove(path)
 		}
+	}
+}
+
+func removeOwnedFilePrefix(path string, owned os.FileInfo, data []byte) {
+	current, err := os.Stat(path)
+	if err != nil || owned == nil || !os.SameFile(current, owned) {
+		return
+	}
+	onDisk, err := os.ReadFile(path)
+	if err == nil && len(onDisk) <= len(data) && bytes.Equal(onDisk, data[:len(onDisk)]) {
+		_ = os.Remove(path)
 	}
 }

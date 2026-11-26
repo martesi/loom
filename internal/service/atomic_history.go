@@ -9,7 +9,7 @@ import (
 )
 
 // Selection, replay and cursor update share one SQLite writer transaction.
-func replayAtomicHistory(repo *store.Repo, redo bool) (bool, *store.Operation, []GeometryUpdate, error) {
+func replayAtomicHistory(repo *store.Repo, redo bool, afterImportFileWrite ...func(string)) (bool, *store.Operation, []GeometryUpdate, error) {
 	if err := repo.PrepareOperationLog(); err != nil {
 		return true, nil, nil, err
 	}
@@ -19,6 +19,10 @@ func replayAtomicHistory(repo *store.Repo, redo bool) (bool, *store.Operation, [
 	}
 	committed := false
 	var createdFiles []ownedImportFile
+	var afterWrite func(string)
+	if len(afterImportFileWrite) > 0 {
+		afterWrite = afterImportFileWrite[0]
+	}
 	defer func() {
 		if !committed {
 			_ = tx.Rollback()
@@ -59,7 +63,7 @@ func replayAtomicHistory(repo *store.Repo, redo bool) (bool, *store.Operation, [
 	case stepImportBatch:
 		var payload importBatchPayload
 		if err = json.Unmarshal(s.Payload, &payload); err == nil {
-			err = applyImportBatchTx(tx, payload, &createdFiles)
+			err = applyImportBatchTx(tx, payload, &createdFiles, afterWrite)
 		}
 	case stepGraphInsert, stepGraphDelete, stepGraphReverse:
 		var p graphPayload

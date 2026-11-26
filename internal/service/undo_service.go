@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 
 	"loom/internal/store"
 )
@@ -175,7 +176,10 @@ func recordOp(repo *store.Repo, kind string, forward, inverse OpStep) error {
 		}
 		return fmt.Errorf("operation log append failed: %w (mutation rolled back)", err)
 	}
-	return cleanupUnreferencedImportRedo(repo, redoTail)
+	if err := cleanupUnreferencedImportRedo(repo, redoTail); err != nil {
+		log.Printf("record operation %s: unable to clean up import snapshots: %v", kind, err)
+	}
+	return nil
 }
 
 // purgedErr is returned by applyStep when a step's target image no longer
@@ -514,7 +518,9 @@ func applyStep(repo *store.Repo, s OpStep) error {
 // recorded), the cursor does not move and the failure reason is returned
 // for the frontend to surface (e.g. as a toast) rather than silently
 // dropped.
-type UndoService struct{}
+type UndoService struct {
+	afterImportRedoFileWrite func(string)
+}
 
 type UndoResult struct {
 	Applied bool   `json:"applied"`
@@ -564,7 +570,7 @@ func (s *UndoService) replay(repoPath string, redo bool) (*UndoResult, error) {
 	defer unlock()
 	defer repo.Close()
 
-	handled, op, geometry, err := replayAtomicHistory(repo, redo)
+	handled, op, geometry, err := replayAtomicHistory(repo, redo, s.afterImportRedoFileWrite)
 	if err != nil {
 		if op == nil {
 			return nil, err

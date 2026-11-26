@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 
@@ -148,6 +149,12 @@ func cleanupUnreferencedImportRedo(repo *store.Repo, candidates map[string]strin
 	return nil
 }
 
+func cleanupImportRedoBestEffort(repo *store.Repo, candidates map[string]string, operation string) {
+	if err := cleanupUnreferencedImportRedo(repo, candidates); err != nil {
+		log.Printf("%s: unable to clean up import snapshots: %v", operation, err)
+	}
+}
+
 // Once an image is purged, its import-history payload can no longer be replayed.
 // Clear only that image's retained path, then let the reference scan safely
 // remove bytes that no remaining operation can use.
@@ -228,8 +235,6 @@ func forgetPurgedImportHistory(repo *store.Repo, ids []int64) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	if err := cleanupUnreferencedImportRedo(repo, candidates); err != nil {
-		return fmt.Errorf("clean up purged import snapshots: %w", err)
-	}
+	cleanupImportRedoBestEffort(repo, candidates, "purge images")
 	return nil
 }
