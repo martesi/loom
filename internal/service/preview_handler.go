@@ -509,11 +509,6 @@ func serveCachedPreview(w http.ResponseWriter, r *http.Request, path string) (bo
 	}
 	if info.Size() == 0 {
 		previewCacheFiles.RUnlock()
-		previewCacheFiles.Lock()
-		if current, statErr := os.Stat(path); statErr == nil && current.Size() == 0 && current.Mode().IsRegular() {
-			_ = os.Remove(path)
-		}
-		previewCacheFiles.Unlock()
 		return false, nil
 	}
 	err = servePreviewFileLocked(w, r, path)

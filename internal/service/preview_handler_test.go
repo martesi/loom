@@ -198,11 +198,24 @@ func TestCacheOnlyRenditionReadsExistingCacheWithoutRepositoryMutation(t *testin
 	if processor.calls != 0 {
 		t.Fatalf("cache-only endpoint invoked the renderer %d times", processor.calls)
 	}
+	emptyCachePath := renditionCachePath(cacheDir, id, 1280, source)
+	if err := os.WriteFile(emptyCachePath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	missingRecorder := httptest.NewRecorder()
 	missingURL := previewTestURL(t, repoPath, id, 1280) + "&cacheOnly=1"
 	ServePreviewWithProcessor(missingRecorder, httptest.NewRequest(http.MethodGet, missingURL, nil), processor)
 	if missingRecorder.Code != http.StatusNoContent {
 		t.Fatalf("cache miss status = %d, want no-content", missingRecorder.Code)
+	}
+	if emptyInfo, err := os.Stat(emptyCachePath); err != nil || emptyInfo.Size() != 0 {
+		t.Fatalf("cache-only observation changed the empty cache file: info=%v err=%v", emptyInfo, err)
+	}
+	noCacheRecorder := httptest.NewRecorder()
+	noCacheURL := previewTestURL(t, repoPath, id, 2048) + "&cacheOnly=1"
+	ServePreviewWithProcessor(noCacheRecorder, httptest.NewRequest(http.MethodGet, noCacheURL, nil), processor)
+	if noCacheRecorder.Code != http.StatusNoContent {
+		t.Fatalf("cache miss without an entry status = %d, want no-content", noCacheRecorder.Code)
 	}
 	repo, err = store.OpenExistingReadOnly(repoPath)
 	if err != nil {

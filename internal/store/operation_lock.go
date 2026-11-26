@@ -1,6 +1,8 @@
 package store
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 )
@@ -23,6 +25,9 @@ func LockRepoOperations(repoPath string) func() {
 }
 
 func canonicalRepoPath(repoPath string) string {
+	if canonical, err := CanonicalRepoOperationRoot(repoPath); err == nil {
+		return canonical
+	}
 	abs, err := filepath.Abs(repoPath)
 	if err != nil {
 		return filepath.Clean(repoPath)
@@ -32,4 +37,27 @@ func canonicalRepoPath(repoPath string) string {
 		return filepath.Clean(resolved)
 	}
 	return abs
+}
+
+// CanonicalRepoOperationRoot returns the strict identity used by
+// LockRepoOperations for an existing repository root. Admission callers must
+// fail closed if the root cannot be resolved instead of using the lock's
+// fallback spelling for a missing or inaccessible path.
+func CanonicalRepoOperationRoot(repoPath string) (string, error) {
+	abs, err := filepath.Abs(repoPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve repository root: %w", err)
+	}
+	resolved, err := filepath.EvalSymlinks(filepath.Clean(abs))
+	if err != nil {
+		return "", fmt.Errorf("canonicalize repository root: %w", err)
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", fmt.Errorf("inspect repository root: %w", err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("repository root is not a directory")
+	}
+	return filepath.Clean(resolved), nil
 }
