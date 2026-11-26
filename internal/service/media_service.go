@@ -189,6 +189,13 @@ func (s *ImageService) ReplaceMedia(repoPath string, imageID int64, item Clipboa
 	if err != nil {
 		return fmt.Errorf("decode replacement media: %w", err)
 	}
+	if err := r.PrepareOperationLog(); err != nil {
+		return err
+	}
+	activePath, err := replacementMediaPath(r, image, name)
+	if err != nil {
+		return err
+	}
 
 	stashDir := filepath.Join(repoPath, ".loom", "trash", "replacements", fmt.Sprint(imageID))
 	if err := os.MkdirAll(stashDir, 0o755); err != nil {
@@ -218,10 +225,6 @@ func (s *ImageService) ReplaceMedia(repoPath string, imageID int64, item Clipboa
 	outgoing.Close()
 	os.Remove(outgoingPath)
 
-	activePath := filepath.Join(filepath.Dir(image.FilePath), name)
-	if activePath != image.FilePath {
-		activePath = availableMediaPath(activePath)
-	}
 	currentFingerprint, _, err := store.FingerprintFile(context.Background(), image.FilePath)
 	if err != nil {
 		os.Remove(incomingPath)
@@ -424,17 +427,47 @@ func rejectPurgeWithRetainedRelationships(r *store.Repo, images []store.Image) e
 	return nil
 }
 
-func availableMediaPath(path string) string {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return path
+func replacementMediaPath(repo *store.Repo, image store.Image, name string) (string, error) {
+	base := filepath.Join(filepath.Dir(image.FilePath), name)
+	root, err := filepath.Abs(repo.Path)
+	if err != nil {
+		return "", err
 	}
-	dir := filepath.Dir(path)
-	ext := filepath.Ext(path)
-	base := strings.TrimSuffix(filepath.Base(path), ext)
-	for i := 1; ; i++ {
-		candidate := filepath.Join(dir, fmt.Sprintf("%s (%d)%s", base, i, ext))
-		if _, err := os.Stat(candidate); os.IsNotExist(err) {
-			return candidate
+	base, err = filepath.Abs(base)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(root, base)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("replacement path is outside repository")
+	}
+	tx, err := repo.DB.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE operation_log SET seq=seq WHERE 0`); err != nil {
+		return "", fmt.Errorf("lock replacement path selection: %w", err)
+	}
+	for suffix := 0; ; suffix++ {
+		candidate := suffixedPath(base, suffix)
+		var reserved bool
+		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images WHERE file_path=? AND id!=?) OR EXISTS(SELECT 1 FROM import_intents WHERE file_path=?)`, candidate, image.ID, candidate).Scan(&reserved); err != nil {
+			return "", err
 		}
+		if reserved {
+			continue
+		}
+		if candidate != image.FilePath {
+			if _, err := os.Lstat(candidate); err == nil {
+				continue
+			} else if !os.IsNotExist(err) {
+				return "", fmt.Errorf("inspect replacement path %s: %w", candidate, err)
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return "", err
+		}
+		return candidate, nil
 	}
 }

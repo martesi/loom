@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { access, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -162,8 +163,6 @@ test('legacy retained identity needs two confirmations and has guarded undo/redo
       .filter({ hasText: 'e2e-legacy-retained.png' })
   ).toHaveCount(0)
 
-  await retained.getByTestId('show-unverified-retained').click()
-  await expect(dialog.getByTestId('show-unverified-confirmation')).toBeVisible()
   const filePath = await fixturePath(
     'clipboard-fixtures',
     'e2e-legacy-retained.png'
@@ -171,20 +170,80 @@ test('legacy retained identity needs two confirmations and has guarded undo/redo
   const reviewedFingerprint = await retained.getAttribute(
     'data-current-fingerprint'
   )
-  await writeFile(filePath, 'changed after the evidence review')
-  await dialog.getByTestId('confirm-show-unverified').click()
-  await expect(dialog.getByTestId('show-unverified-confirmation')).toBeVisible()
-  await expect(retained).not.toHaveAttribute(
+  const firstObservation = 'changed before first confirmation request'
+  const firstFingerprint = createHash('sha256')
+    .update(firstObservation)
+    .digest('hex')
+  await writeFile(filePath, firstObservation)
+  await retained.getByTestId('show-unverified-retained').click()
+  const firstConfirmation = dialog.getByTestId('show-unverified-confirmation')
+  await expect(firstConfirmation).toBeVisible()
+  await expect(
+    dialog.getByTestId('show-unverified-observed-evidence')
+  ).toContainText(firstFingerprint)
+  await expect(retained).toHaveAttribute(
     'data-current-fingerprint',
-    reviewedFingerprint ?? ''
+    firstFingerprint
   )
+  const firstToken = await firstConfirmation.getAttribute(
+    'data-evidence-confirmation'
+  )
+  expect(firstToken).toBeTruthy()
+  expect(firstFingerprint).not.toBe(reviewedFingerprint)
+
+  const secondObservation = 'changed after first confirmation was displayed'
+  const secondFingerprint = createHash('sha256')
+    .update(secondObservation)
+    .digest('hex')
+  await writeFile(filePath, secondObservation)
+  await dialog.getByTestId('confirm-show-unverified').click()
+  const secondConfirmation = dialog.getByTestId('show-unverified-confirmation')
+  await expect(secondConfirmation).toBeVisible()
+  await expect(
+    dialog.getByTestId('show-unverified-observed-evidence')
+  ).toContainText(secondFingerprint)
+  await expect(retained).toHaveAttribute(
+    'data-current-fingerprint',
+    secondFingerprint
+  )
+  const secondToken = await secondConfirmation.getAttribute(
+    'data-evidence-confirmation'
+  )
+  expect(secondToken).toBeTruthy()
+  expect(secondToken).not.toBe(firstToken)
   await expect(
     page
       .locator('[data-asset-id]')
       .filter({ hasText: 'e2e-legacy-retained.png' })
   ).toHaveCount(0)
-  // The stale confirmation only refreshes the request. A second explicit click
-  // is required before the separate redo-history confirmation appears.
+
+  const thirdObservation = 'changed after refreshed confirmation was displayed'
+  const thirdFingerprint = createHash('sha256')
+    .update(thirdObservation)
+    .digest('hex')
+  await writeFile(filePath, thirdObservation)
+  await dialog.getByTestId('confirm-show-unverified').click()
+  const thirdConfirmation = dialog.getByTestId('show-unverified-confirmation')
+  await expect(thirdConfirmation).toBeVisible()
+  await expect(
+    dialog.getByTestId('show-unverified-observed-evidence')
+  ).toContainText(thirdFingerprint)
+  await expect(retained).toHaveAttribute(
+    'data-current-fingerprint',
+    thirdFingerprint
+  )
+  const thirdToken = await thirdConfirmation.getAttribute(
+    'data-evidence-confirmation'
+  )
+  expect(thirdToken).toBeTruthy()
+  expect(thirdToken).not.toBe(secondToken)
+  await expect(
+    page
+      .locator('[data-asset-id]')
+      .filter({ hasText: 'e2e-legacy-retained.png' })
+  ).toHaveCount(0)
+
+  // Only a stable observation followed by another explicit click reaches redo confirmation.
   await dialog.getByTestId('confirm-show-unverified').click()
   await expect(
     dialog.getByTestId('redo-replacement-confirmation')

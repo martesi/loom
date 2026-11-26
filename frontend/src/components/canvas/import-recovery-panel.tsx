@@ -3,10 +3,12 @@ import { Trans } from '@lingui/react/macro'
 import { useEffect, useState } from 'react'
 import {
   ImageService,
+  ImportResolutionStatus,
   type PendingImportBatch,
   type PendingImportResolutionRequest,
   type RecoverableImport,
   type RetainedImportResolutionRequest,
+  type RetainedImportResolutionResult,
 } from '../../../bindings/loom/internal/service'
 import { Button } from '../ui/button'
 import { ImportRecoverySections } from './import-recovery-sections'
@@ -42,6 +44,8 @@ export function ImportRecoveryPanel({ path, refresh, onRecovered }: Props) {
   >({})
   const [adoptionRequest, setAdoptionRequest] =
     useState<RetainedImportResolutionRequest | null>(null)
+  const [adoptionEvidence, setAdoptionEvidence] =
+    useState<RetainedImportResolutionResult | null>(null)
   const [releaseConfirmation, setReleaseConfirmation] = useState<{
     batchID: string
     indexes: number[]
@@ -173,6 +177,23 @@ export function ImportRecoveryPanel({ path, refresh, onRecovered }: Props) {
     void (async () => {
       const result = await ImageService.ResolveRetainedImport(path, request)
       if (!result) throw new Error('Recovery returned no result')
+      setRetained((current) =>
+        current.map((item) =>
+          item.imageId === request.imageId
+            ? {
+                ...item,
+                status: result.status,
+                recordedFingerprint:
+                  result.recordedFingerprint ?? item.recordedFingerprint,
+                currentFingerprint: result.currentFingerprint,
+                resolutionError: result.resolutionError,
+                verified:
+                  result.status ===
+                    ImportResolutionStatus.ImportStatusVerified && item.trusted,
+              }
+            : item
+        )
+      )
       if (result.needsUnverifiedConfirmation) {
         const refreshedRequest = {
           ...request,
@@ -186,28 +207,18 @@ export function ImportRecoveryPanel({ path, refresh, onRecovered }: Props) {
             next[requestKey] = refreshedRequest
             return next
           })
-          setRetained((current) =>
-            current.map((item) =>
-              item.imageId === request.imageId
-                ? {
-                    ...item,
-                    status: result.status,
-                    currentFingerprint: result.currentFingerprint,
-                    verified: false,
-                  }
-                : item
-            )
-          )
           setError(
             result.resolutionError ||
               'Evidence changed. Review it and confirm the current state again.'
           )
         }
+        setAdoptionEvidence(result)
         setAdoptionRequest(refreshedRequest)
         return
       }
       if (result.needsRedoConfirmation) {
         setAdoptionRequest(null)
+        setAdoptionEvidence(null)
         setReplaceRequest({
           kind: 'retained',
           request: {
@@ -223,6 +234,8 @@ export function ImportRecoveryPanel({ path, refresh, onRecovered }: Props) {
           delete next[requestKey]
           return next
         })
+        setAdoptionRequest(null)
+        setAdoptionEvidence(null)
         setError(
           result.resolutionError ||
             `Recovery is blocked for this item (${result.status})`
@@ -232,6 +245,7 @@ export function ImportRecoveryPanel({ path, refresh, onRecovered }: Props) {
       committed = true
       setReplaceRequest(null)
       setAdoptionRequest(null)
+      setAdoptionEvidence(null)
       await onRecovered()
       await refreshLists()
       setRetainedRequests((current) => {
@@ -399,6 +413,9 @@ export function ImportRecoveryPanel({ path, refresh, onRecovered }: Props) {
               <div
                 role="alert"
                 data-testid="show-unverified-confirmation"
+                data-evidence-confirmation={
+                  adoptionEvidence?.evidenceConfirmation ?? ''
+                }
                 className="mt-3 grid gap-2 rounded border border-warning/40 p-3 text-sm"
               >
                 <p>
@@ -409,6 +426,40 @@ export function ImportRecoveryPanel({ path, refresh, onRecovered }: Props) {
                     again. Redo will be refused if the file state changes.
                   </Trans>
                 </p>
+                {adoptionEvidence && (
+                  <dl
+                    data-testid="show-unverified-observed-evidence"
+                    className="grid gap-1 break-all text-xs text-ink-subtle"
+                  >
+                    <div>
+                      <dt className="inline font-semibold">
+                        <Trans>Observed status</Trans>:{' '}
+                      </dt>
+                      <dd className="inline">{adoptionEvidence.status}</dd>
+                    </div>
+                    <div>
+                      <dt className="inline font-semibold">
+                        <Trans>Recorded fingerprint</Trans>:{' '}
+                      </dt>
+                      <dd className="inline">
+                        {adoptionEvidence.recordedFingerprint || '—'}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="inline font-semibold">
+                        <Trans>Current fingerprint</Trans>:{' '}
+                      </dt>
+                      <dd className="inline">
+                        {adoptionEvidence.currentFingerprint || '—'}
+                      </dd>
+                    </div>
+                    {adoptionEvidence.resolutionError && (
+                      <div role="note" className="text-warning">
+                        {adoptionEvidence.resolutionError}
+                      </div>
+                    )}
+                  </dl>
+                )}
                 <div className="flex gap-2">
                   <Button
                     type="button"

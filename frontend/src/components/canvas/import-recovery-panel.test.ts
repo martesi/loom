@@ -271,9 +271,11 @@ it('requires fresh explicit consent after stale evidence and keeps uncertain ret
   const resolve = spyOn(ImageService, 'ResolveRetainedImport')
     .mockResolvedValueOnce({
       applied: false,
-      status: ImportResolutionStatus.ImportStatusUntrusted,
+      status: ImportResolutionStatus.ImportStatusChanged,
+      recordedFingerprint: 'recorded-original',
+      currentFingerprint: 'backend-observed-after-list',
       needsUnverifiedConfirmation: true,
-      evidenceConfirmation: 'token-old',
+      evidenceConfirmation: 'token-initial-observation',
     } as never)
     .mockResolvedValueOnce({
       applied: false,
@@ -301,9 +303,23 @@ it('requires fresh explicit consent after stale evidence and keeps uncertain ret
   await act(async () => Promise.resolve())
   fireEvent.click(screen.getByRole('button', { name: /import recovery/i }))
   fireEvent.click(await screen.findByTestId('show-unverified-retained'))
+  const confirmation = await screen.findByTestId('show-unverified-confirmation')
+  expect(confirmation.getAttribute('data-evidence-confirmation')).toBe(
+    'token-initial-observation'
+  )
+  expect(
+    screen.getByTestId('show-unverified-observed-evidence').textContent
+  ).toContain('backend-observed-after-list')
+  expect(
+    screen
+      .getByTestId('retained-import')
+      .getAttribute('data-current-fingerprint')
+  ).toBe('backend-observed-after-list')
   fireEvent.click(await screen.findByTestId('confirm-show-unverified'))
   await waitFor(() => expect(resolve).toHaveBeenCalledTimes(2))
-  expect(await screen.findByText(/observed-new/)).toBeTruthy()
+  expect(
+    screen.getByTestId('show-unverified-observed-evidence').textContent
+  ).toContain('observed-new')
   expect(screen.getByTestId('show-unverified-confirmation')).toBeTruthy()
   expect(onRecovered).not.toHaveBeenCalled()
   const oldRequest = resolve.mock.calls[1]?.[1]
