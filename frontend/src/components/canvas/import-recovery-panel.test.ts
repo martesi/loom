@@ -39,6 +39,12 @@ it('keeps incomplete and ambiguous pending files visible without recovering them
           filePresent: true,
           verified: false,
         },
+        {
+          path: '/repo/missing.png',
+          fingerprint: 'expected-c',
+          filePresent: false,
+          verified: false,
+        },
       ],
     },
   ] as never)
@@ -65,15 +71,18 @@ it('keeps incomplete and ambiguous pending files visible without recovering them
   await act(async () => Promise.resolve())
   fireEvent.click(screen.getByRole('button', { name: /import recovery/i }))
   expect(await screen.findByText('/repo/changed.png')).toBeTruthy()
+  expect(screen.getByText('/repo/missing.png')).toBeTruthy()
   expect(
     screen.getByText(/file differs from the recorded import/i)
   ).toBeTruthy()
+  expect(screen.getByText(/file is missing; reservation remains/i)).toBeTruthy()
   expect(
     screen.getByText(/legacy record has no trusted fingerprint/i)
   ).toBeTruthy()
-  expect(
-    screen.getByRole('button', { name: /finish verified batch/i })
-  ).toHaveProperty('disabled', true)
+  const finishBatch = screen.getByRole('button', {
+    name: /finish verified batch/i,
+  })
+  expect(finishBatch).toHaveProperty('disabled', true)
   expect(
     screen.getByRole('button', { name: /restore verified import/i })
   ).toHaveProperty('disabled', true)

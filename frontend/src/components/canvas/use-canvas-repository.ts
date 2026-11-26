@@ -68,11 +68,20 @@ export function useCanvasRepository({
     }
     let cancelled = false
     const ids = assetSelectionKey.split(':', 2)[1]?.split(',').map(Number) ?? []
-    void Promise.all(ids.map((id) => ImageService.GetImage(repoPath, id)))
+    void Promise.all(
+      ids.map((id) =>
+        ImageService.GetImage(repoPath, id).catch((cause: unknown) => {
+          if (isMissingImageError(cause)) return null
+          throw cause
+        })
+      )
+    )
       .then((images) => {
         if (cancelled) return
         setAssetSelectionRecords({
           key: assetSelectionKey,
+          // Undo can remove a selected imported image. Treat that stale
+          // selection as absent instead of surfacing a misleading error toast.
           records: images.filter((image): image is ImageInfo => image !== null),
         })
       })
@@ -123,4 +132,9 @@ export function useCanvasRepository({
     }
   }, [executor, repoPath, flow, updateZoomCompensation, setReady, report])
   return { report, reload, reloadForData, run, assetSelectionKey }
+}
+
+function isMissingImageError(cause: unknown) {
+  const message = cause instanceof Error ? cause.message : String(cause)
+  return /^image \d+ not found$/.test(message)
 }

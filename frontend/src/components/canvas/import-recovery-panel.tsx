@@ -112,12 +112,13 @@ export function ImportRecoveryPanel({ path, refresh, onRecovered }: Props) {
   const count = pending.length + retained.length
 
   return (
-    <>
+    <div data-testid="import-recovery-panel">
       <div className="px-2 pb-2">
         <Button
           type="button"
           size="sm"
           variant="secondary"
+          data-testid="import-recovery-trigger"
           onClick={() => {
             setError('')
             void refreshLists().catch((cause: unknown) =>
@@ -143,7 +144,10 @@ export function ImportRecoveryPanel({ path, refresh, onRecovered }: Props) {
       <Dialog.Root open={open} onOpenChange={setOpen}>
         <Dialog.Portal>
           <Dialog.Backdrop className="fixed inset-0 z-[90] bg-black/30" />
-          <Dialog.Popup className="fixed left-1/2 top-1/2 z-[90] max-h-[min(80vh,48rem)] w-[min(38rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 overflow-auto rounded-lg border border-border bg-card p-5 text-ink shadow-xl outline-none">
+          <Dialog.Popup
+            data-testid="import-recovery-dialog"
+            className="fixed left-1/2 top-1/2 z-[90] max-h-[min(80vh,48rem)] w-[min(38rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 overflow-auto rounded-lg border border-border bg-card p-5 text-ink shadow-xl outline-none"
+          >
             <Dialog.Title className="text-base font-semibold">
               <Trans>Import recovery</Trans>
             </Dialog.Title>
@@ -164,6 +168,7 @@ export function ImportRecoveryPanel({ path, refresh, onRecovered }: Props) {
             {replaceRequest && (
               <div
                 role="alert"
+                data-testid="redo-replacement-confirmation"
                 className="mt-3 rounded border border-danger/30 p-3 text-sm"
               >
                 <p>
@@ -178,6 +183,7 @@ export function ImportRecoveryPanel({ path, refresh, onRecovered }: Props) {
                     type="button"
                     size="sm"
                     variant="danger"
+                    data-testid="confirm-redo-replacement"
                     disabled={working !== null}
                     onClick={() => {
                       if (replaceRequest.kind === 'pending')
@@ -267,6 +273,16 @@ export function ImportRecoveryPanel({ path, refresh, onRecovered }: Props) {
                   return (
                     <div
                       key={item.imageId}
+                      data-testid="retained-import"
+                      data-recovery-status={
+                        !item.trusted
+                          ? 'untrusted'
+                          : !item.filePresent
+                            ? 'missing'
+                            : item.verified
+                              ? 'verified'
+                              : 'changed'
+                      }
                       className="grid gap-2 rounded border border-border p-3"
                     >
                       <p className="break-all text-xs font-medium">
@@ -295,6 +311,7 @@ export function ImportRecoveryPanel({ path, refresh, onRecovered }: Props) {
                         type="button"
                         size="sm"
                         variant="secondary"
+                        data-testid="restore-retained-import"
                         disabled={!verified || working !== null}
                         onClick={() => recoverRetained(item.imageId, false)}
                       >
@@ -315,7 +332,7 @@ export function ImportRecoveryPanel({ path, refresh, onRecovered }: Props) {
           </Dialog.Popup>
         </Dialog.Portal>
       </Dialog.Root>
-    </>
+    </div>
   )
 }
 

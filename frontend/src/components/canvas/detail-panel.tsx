@@ -103,20 +103,24 @@ export const DetailPanel = memo(function DetailPanel({
         Promise.resolve(
           (data.images ?? []).find((i) => i.id === id) ??
             ImageService.GetImage(path, id)
-        )
+        ).catch((cause: unknown) => {
+          if (isMissingImageError(cause)) return null
+          throw cause
+        })
       )
     )
-      .then((list) => {
-        if (!cancelled)
-          setImageResult({
-            path,
-            key,
-            images: list.filter((i): i is ImageInfo => i !== null),
-          })
+      .then((images) => {
+        if (cancelled) return
+        setImageResult({
+          path,
+          key,
+          // An undo can remove an item that remains in a multi-selection.
+          // Ignore that stale ID instead of reporting a false load failure.
+          images: images.filter((image): image is ImageInfo => image !== null),
+        })
       })
       .catch((error: unknown) => {
         if (cancelled) return
-        // Settle pending focus even when the selected image cannot be loaded.
         setImageResult({ path, key, images: [] })
         errors.current(error)
       })
@@ -411,3 +415,8 @@ export const DetailPanel = memo(function DetailPanel({
     </div>
   )
 })
+
+function isMissingImageError(cause: unknown) {
+  const message = cause instanceof Error ? cause.message : String(cause)
+  return /^image \d+ not found$/.test(message)
+}

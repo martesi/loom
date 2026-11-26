@@ -387,6 +387,81 @@ func TestPendingImportRecoveryDoesNotDiscardRedoBranch(t *testing.T) {
 	}
 }
 
+func TestPendingImportRecoveryListsVerifiedMissingAndChangedFilesWithoutMutation(t *testing.T) {
+	root := t.TempDir()
+	repo, err := store.Bootstrap(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := prepareImportItems([]ClipboardMedia{
+		{Name: "verified.png", Data: "dmVyaWZpZWQ="},
+		{Name: "changed.png", Data: "Y2hhbmdlZA=="},
+		{Name: "missing.png", Data: "bWlzc2luZw=="},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	batchID, paths, err := reserveImportPaths(repo, items, false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := createReservedFiles(items, paths); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths[1].Path, []byte("user replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(paths[2].Path); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	service := &ImageService{}
+	batches, err := service.ListPendingImportBatches(root)
+	if err != nil || len(batches) != 1 || batches[0].ID != batchID || len(batches[0].Files) != 3 {
+		t.Fatalf("pending batch evidence: %+v err=%v", batches, err)
+	}
+	want := []PendingImportFile{
+		{Path: paths[0].Path, Fingerprint: items[0].Fingerprint, FilePresent: true, Verified: true},
+		{Path: paths[1].Path, Fingerprint: items[1].Fingerprint, FilePresent: true, Verified: false},
+		{Path: paths[2].Path, Fingerprint: items[2].Fingerprint, FilePresent: false, Verified: false},
+	}
+	for i := range want {
+		if batches[0].Files[i] != want[i] {
+			t.Fatalf("pending file %d status: got=%+v want=%+v", i, batches[0].Files[i], want[i])
+		}
+	}
+	if _, err := service.RecoverPendingImportBatch(root, batchID); err == nil {
+		t.Fatal("incomplete or ambiguous batch was recovered")
+	}
+	if got, err := os.ReadFile(paths[1].Path); err != nil || string(got) != "user replacement" {
+		t.Fatalf("recovery changed ambiguous user file: %q err=%v", got, err)
+	}
+	if got, err := os.ReadFile(paths[0].Path); err != nil || string(got) != "verified" {
+		t.Fatalf("recovery changed verified file: %q err=%v", got, err)
+	}
+	if _, err := os.Stat(paths[2].Path); !os.IsNotExist(err) {
+		t.Fatalf("recovery changed missing file state: err=%v", err)
+	}
+	repo, err = store.Bootstrap(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	var images, intents int
+	if err := repo.DB.QueryRow(`SELECT COUNT(*) FROM images`).Scan(&images); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DB.QueryRow(`SELECT COUNT(*) FROM import_intents WHERE batch_id=?`, batchID).Scan(&intents); err != nil {
+		t.Fatal(err)
+	}
+	if images != 0 || intents != 3 {
+		t.Fatalf("failed recovery lost reservation or exposed assets: images=%d intents=%d", images, intents)
+	}
+}
+
 func TestRetainedImportBlocksStaleAssetAndGraphMutations(t *testing.T) {
 	root := t.TempDir()
 	service := &ImageService{}
