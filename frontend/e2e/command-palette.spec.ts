@@ -1,11 +1,12 @@
 import { expect, test } from './test-fixtures'
-import { asset, openFixtureRepo, placeAssets } from './test-helpers'
+import { asset, enterEdit, openFixtureRepo, placeAssets } from './test-helpers'
 
 test.describe('Canvas command palette', () => {
   test('searches labels, aliases, and categories while hiding unavailable actions', async ({
     page,
   }) => {
     await openFixtureRepo(page, 'direct-fixtures', { drawers: 'closed' })
+    await enterEdit(page)
     await placeAssets(page, ['direct-alpha.png'])
     await page.keyboard.press('ControlOrMeta+k')
 
@@ -317,7 +318,12 @@ test.describe('Canvas command palette', () => {
     page,
   }) => {
     await openFixtureRepo(page, 'dock-fixtures', { drawers: 'closed' })
-    await placeAssets(page, ['dock-alpha.png'])
+    await enterEdit(page)
+    await expect(
+      page
+        .locator('.react-flow__node-image')
+        .filter({ hasText: 'dock-alpha.png' })
+    ).toHaveCount(1)
     await page.keyboard.press('ControlOrMeta+k')
     await page
       .getByRole('combobox', { name: 'Search commands' })

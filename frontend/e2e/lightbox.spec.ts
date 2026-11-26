@@ -2,9 +2,9 @@ import { expect, test } from './test-fixtures'
 import {
   autoArrangeCanvas,
   ctrlDrag,
+  enterEdit,
   imageNodes,
   openFixtureRepo,
-  placeAssets,
 } from './test-helpers'
 
 // Covers the lightbox rework: close top-left, actions top-right, history
@@ -14,27 +14,26 @@ test('lightbox chrome layout, info toggle, and history navigation', async ({
   page,
 }) => {
   await openFixtureRepo(page, 'lightbox-fixtures', { drawers: 'closed' })
-  await placeAssets(page, [
-    'lightbox-alpha.png',
-    'lightbox-beta.png',
-    'lightbox-gamma.png',
-  ])
+  await enterEdit(page)
+  await expect(imageNodes(page)).toHaveCount(6)
   await autoArrangeCanvas(page)
   await page.keyboard.press('ControlOrMeta+0')
 
   // Let the arrange + reset-zoom re-render settle before measuring drag
   // points (same preamble as board-behaviors: click + hint assertion).
   const nodes = imageNodes(page)
-  await nodes.nth(0).click()
+  const alpha = nodes.filter({ hasText: 'lightbox-alpha.png' })
+  const beta = nodes.filter({ hasText: 'lightbox-beta.png' })
+  await alpha.click()
   await page.getByTestId('toggle-inspector-shelf').click()
   await expect(page.getByText(/Ctrl\/Cmd-drag this image/)).toBeVisible()
 
   // Alpha -> beta relationship so the info panel has a "Derived from" jump.
-  await ctrlDrag(page, nodes.nth(0), nodes.nth(1))
+  await ctrlDrag(page, alpha, beta)
   await expect(page.locator('.react-flow__edge')).toHaveCount(1)
 
   // Double-click the derived image to open the preview viewer.
-  await nodes.nth(1).dblclick()
+  await beta.dblclick()
 
   const close = page.getByTestId('lightbox-close')
   const toolbar = page.getByTestId('lightbox-toolbar')
@@ -153,5 +152,5 @@ test('lightbox chrome layout, info toggle, and history navigation', async ({
   // Close dismisses the viewer.
   await close.click()
   await expect(toolbar).toHaveCount(0)
-  await expect(imageNodes(page)).toHaveCount(3)
+  await expect(imageNodes(page)).toHaveCount(6)
 })

@@ -2,6 +2,7 @@ import { expect, test } from './test-fixtures'
 import {
   asset,
   assets,
+  enterEdit,
   imageNodes,
   openAssetsShelf,
   openFixtureRepo,
@@ -106,6 +107,7 @@ test.describe('P0 lifecycle and selection guards', () => {
     page,
   }) => {
     await openFixtureRepo(page, 'dock-fixtures', { drawers: 'closed' })
+    await enterEdit(page)
     await placeAssets(page, ['dock-alpha.png', 'dock-beta.png'])
     const nodes = imageNodes(page)
     await nodes.first().click()
@@ -132,6 +134,7 @@ test.describe('P0 lifecycle and selection guards', () => {
     page,
   }) => {
     await openFixtureRepo(page, 'dock-fixtures')
+    await enterEdit(page)
     const first = asset(page, 'dock-alpha.png')
     const second = asset(page, 'dock-beta.png')
     await first.click()

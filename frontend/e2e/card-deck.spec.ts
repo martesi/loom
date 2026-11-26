@@ -1,6 +1,7 @@
 import { expect, test } from './test-fixtures'
 import {
   autoArrangeCanvas,
+  enterEdit,
   imageNodes,
   nodeBox,
   openFixtureRepo,
@@ -69,7 +70,7 @@ test.describe('Physical Cards and Studio Palette', () => {
     page,
   }) => {
     await openFixtureRepo(page, 'card-fixtures')
-    await placeAssets(page, ['card-alpha.png'])
+    await enterEdit(page)
     await page.keyboard.press('ControlOrMeta+0')
 
     const node = imageNodes(page).first()
@@ -114,6 +115,7 @@ test.describe('Physical Cards and Studio Palette', () => {
     page,
   }) => {
     await openFixtureRepo(page, 'card-hover-fixtures')
+    await enterEdit(page)
     await placeAssets(page, ['hover-alpha.png'])
     await page.keyboard.press('ControlOrMeta+0')
 
@@ -230,7 +232,8 @@ test.describe('Physical Cards and Studio Palette', () => {
     const assetState = page.getByRole('combobox', { name: 'Asset state' })
     await expect(assetState).toBeVisible()
 
-    await placeAssets(page, ['relation-alpha.png', 'relation-beta.png'])
+    await enterEdit(page)
+    await expect(imageNodes(page)).toHaveCount(3)
     await autoArrangeCanvas(page)
     await page.keyboard.press('ControlOrMeta+0')
     const source = imageNodes(page).nth(0)

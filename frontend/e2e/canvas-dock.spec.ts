@@ -1,11 +1,12 @@
 import type { Locator } from '@playwright/test'
 import { expect, test } from './test-fixtures'
 import {
-  dropAsset,
+  emptyCanvasPoint,
+  enterEdit,
   imageNodes,
+  moveImageNode,
   nodeBox,
   openFixtureRepo,
-  placeAssets,
   selectImageNodes,
 } from './test-helpers'
 
@@ -35,7 +36,8 @@ test.describe('contextual Canvas Dock', () => {
     await expect(page.getByTestId('dock-reset-zoom')).toBeEnabled()
     await expect(page.getByTestId('dock-auto-arrange')).toBeDisabled()
 
-    await placeAssets(page, ['dock-alpha.png', 'dock-beta.png'])
+    await enterEdit(page)
+    await expect(imageNodes(page)).toHaveCount(2)
     await selectImageNodes(page, [0, 1])
     await expect(dock).toHaveAttribute('data-mode', 'multiple')
     await expect(dock).toHaveAttribute('data-selection-count', '2')
@@ -54,9 +56,8 @@ test.describe('contextual Canvas Dock', () => {
       }
     }
 
-    await page
-      .locator('.react-flow__pane')
-      .click({ position: { x: 600, y: 400 } })
+    const empty = await emptyCanvasPoint(page)
+    await page.mouse.click(empty.x, empty.y)
     await expect(page.locator('.react-flow__node.selected')).toHaveCount(0)
     await expect(dock).toHaveAttribute('data-mode', 'idle')
 
@@ -76,7 +77,8 @@ test.describe('contextual Canvas Dock', () => {
     page,
   }) => {
     await openFixtureRepo(page, 'dock-rel-fixtures', { drawers: 'closed' })
-    await placeAssets(page, ['rel-alpha.png', 'rel-beta.png'])
+    await enterEdit(page)
+    await expect(imageNodes(page)).toHaveCount(2)
     await selectImageNodes(page, [0])
 
     await page.getByTestId('dock-preview').click()
@@ -98,7 +100,8 @@ test.describe('contextual Canvas Dock', () => {
     page,
   }) => {
     await openFixtureRepo(page, 'dock-fixtures', { drawers: 'closed' })
-    await placeAssets(page, ['dock-alpha.png'])
+    await enterEdit(page)
+    await expect(imageNodes(page)).toHaveCount(2)
     await selectImageNodes(page, [0])
 
     const preview = page.getByTestId('dock-preview')
@@ -113,16 +116,16 @@ test.describe('contextual Canvas Dock', () => {
     await expect(page.locator('.yarl__portal')).toBeVisible()
     await page.keyboard.press('Escape')
 
-    await page.locator('.react-flow__pane').click({
-      position: { x: 80, y: 300 },
-    })
+    await expect(page.getByRole('dialog', { name: 'Lightbox' })).toHaveCount(0)
+    const empty = await emptyCanvasPoint(page)
+    await page.mouse.click(empty.x, empty.y)
     await page.getByRole('main', { name: 'Canvas' }).focus()
     const viewport = page.locator('.react-flow__viewport')
     const beforePan = await viewport.getAttribute('style')
-    await page.mouse.move(80, 300)
+    await page.mouse.move(empty.x, empty.y)
     await page.keyboard.down('Space')
     await page.mouse.down()
-    await page.mouse.move(160, 360, { steps: 5 })
+    await page.mouse.move(empty.x + 80, empty.y + 60, { steps: 5 })
     await page.mouse.up()
     await page.keyboard.up('Space')
 
@@ -132,8 +135,9 @@ test.describe('contextual Canvas Dock', () => {
   test('Align Horizontally and Vertically actions work accurately', async ({
     page,
   }) => {
-    await openFixtureRepo(page, 'dock-arrange-fixtures', { drawers: 'closed' })
-    await placeAssets(page, ['arrange-alpha.png', 'arrange-beta.png'])
+    await openFixtureRepo(page, 'dock-rel-fixtures', { drawers: 'closed' })
+    await enterEdit(page)
+    await expect(imageNodes(page)).toHaveCount(2)
     const nodes = imageNodes(page)
     await selectImageNodes(page, [0, 1])
 
@@ -159,8 +163,9 @@ test.describe('contextual Canvas Dock', () => {
   test('multiple selection has no grouping or unplace actions', async ({
     page,
   }) => {
-    await openFixtureRepo(page, 'dock-group-fixtures', { drawers: 'closed' })
-    await placeAssets(page, ['group-alpha.png', 'group-beta.png'])
+    await openFixtureRepo(page, 'dock-rel-fixtures', { drawers: 'closed' })
+    await enterEdit(page)
+    await expect(imageNodes(page)).toHaveCount(2)
     await selectImageNodes(page, [0, 1])
     await expect(page.getByTestId('dock-create-set')).toHaveCount(0)
     await expect(page.getByTestId('dock-unplace')).toHaveCount(0)
@@ -172,7 +177,8 @@ test.describe('contextual Canvas Dock', () => {
     page,
   }) => {
     await openFixtureRepo(page, 'dock-resize-fixtures', { drawers: 'closed' })
-    await dropAsset(page, 'resize-alpha.png', { x: 900, y: 10 })
+    await enterEdit(page)
+    await expect(imageNodes(page)).toHaveCount(1)
     await selectImageNodes(page, [0])
 
     const dock = page.getByTestId('canvas-dock')
@@ -208,7 +214,9 @@ test.describe('contextual Canvas Dock', () => {
 
   test('keyboard shortcuts trigger dock actions', async ({ page }) => {
     await openFixtureRepo(page, 'dock-shortcut-fixtures', { drawers: 'closed' })
-    await placeAssets(page, ['shortcut-alpha.png', 'shortcut-beta.png'])
+    await enterEdit(page)
+    await expect(imageNodes(page)).toHaveCount(2)
+    await page.getByRole('main', { name: 'Canvas' }).focus()
 
     await page.keyboard.press('Shift+A')
     await page.keyboard.press('Control+0')
@@ -226,12 +234,10 @@ test.describe('contextual Canvas Dock', () => {
     page,
   }, testInfo) => {
     await openFixtureRepo(page, 'dock-arrange-fixtures', { drawers: 'closed' })
-    await placeAssets(page, [
-      'arrange-alpha.png',
-      'arrange-beta.png',
-      'arrange-gamma.png',
-    ])
+    await enterEdit(page)
+    await expect(imageNodes(page)).toHaveCount(3)
     const nodes = imageNodes(page)
+    await moveImageNode(page, nodes.nth(2), 100, 100)
     await selectImageNodes(page, [0, 1])
     const positions = async () =>
       Promise.all([0, 1, 2].map((index) => nodePosition(nodes.nth(index))))

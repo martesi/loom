@@ -2,6 +2,7 @@ import { access, readdir, writeFile } from 'node:fs/promises'
 import { expect, test } from './test-fixtures'
 import {
   dropAsset,
+  enterEdit,
   fixturePath,
   imageNodes,
   openFixtureRepo,
@@ -235,6 +236,7 @@ test.describe('Settings', () => {
     page,
   }) => {
     await openFixtureRepo(page, 'preview-fixtures', { drawers: 'closed' })
+    await enterEdit(page)
     const sourcePath = await fixturePath(
       'preview-fixtures',
       'preview-alpha.png'

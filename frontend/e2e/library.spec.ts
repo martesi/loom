@@ -4,6 +4,7 @@ import {
   asset,
   assets,
   dropAsset,
+  enterEdit,
   fixturePath,
   imageNodes,
   openAssetsShelf,
@@ -42,6 +43,7 @@ test('library selection, search, placement filters, and folder navigation', asyn
   await page
     .locator('.react-flow__pane')
     .click({ position: { x: 500, y: 400 } })
+  await enterEdit(page)
   await placeAssets(page, ['root-alpha.png'])
   await openAssetsShelf(page)
   await filters.click()
@@ -275,6 +277,7 @@ test('asset selection survives view switches and multi-row drag transfers select
   page,
 }) => {
   await openFixtureRepo(page, 'library-selection-fixtures')
+  await enterEdit(page)
   const list = page.getByRole('listbox', { name: 'Assets' })
   const selectedAssets = list.locator('[role=option][aria-selected=true]')
 
@@ -297,12 +300,12 @@ test('asset selection survives view switches and multi-row drag transfers select
       targetPosition: { x: 500, y: 160 },
     }
   )
-  await expect(imageNodes(page)).toHaveCount(2)
+  await expect(imageNodes(page)).toHaveCount(4)
   await expect(selectedAssets).toHaveCount(0)
   await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
 
   await dropAsset(page, 'root-alpha.png', { x: 480, y: 220 })
-  await expect(imageNodes(page)).toHaveCount(2)
+  await expect(imageNodes(page)).toHaveCount(4)
 })
 
 test('inspector edits metadata and library filters follow tag/archive/trash state', async ({
@@ -404,7 +407,8 @@ test('rescan discovers new files and exposes missing files', async ({
   await page.getByRole('option', { name: /Rescan repository/ }).click()
   await expect(asset(page, 'rescan-added.png')).toBeVisible()
 
-  await placeAssets(page, ['rescan-alpha.png'])
+  await enterEdit(page)
+  await dropAsset(page, 'rescan-alpha.png', { x: 100, y: 100 })
   await rm(await fixturePath('rescan-fixtures', 'rescan-alpha.png'))
   await page.getByTestId('open-command-palette').click()
   await page
@@ -417,6 +421,11 @@ test('rescan discovers new files and exposes missing files', async ({
     .getByRole('combobox', { name: 'Asset state' })
     .selectOption('missing')
   await expect(asset(page, 'rescan-alpha.png')).toBeVisible()
+  await page.getByTestId('open-command-palette').click()
+  await page
+    .getByRole('combobox', { name: 'Search commands' })
+    .fill('@rescan-alpha')
+  await page.getByRole('option', { name: /rescan-alpha\.png/ }).click()
   await expect(
     page.getByRole('img', { name: 'File not found on disk' })
   ).toBeVisible()

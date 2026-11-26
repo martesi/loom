@@ -1,13 +1,13 @@
 import { expect, test } from './test-fixtures'
-import { asset, openFixtureRepo, placeAssets } from './test-helpers'
+import { asset, enterEdit, imageNodes, openFixtureRepo } from './test-helpers'
 
 test.describe('selection ownership across Canvas surfaces', () => {
   test('routes a placed asset through Assets, Inspector, Dock, and palette', async ({
     page,
   }) => {
     await openFixtureRepo(page, 'dock-fixtures', { drawers: 'closed' })
-    await placeAssets(page, ['dock-alpha.png'])
-    const node = page.locator('.react-flow__node-image')
+    await enterEdit(page)
+    const node = imageNodes(page).filter({ hasText: 'dock-alpha.png' })
     const assets = page.locator('aside[aria-label="Assets"]')
     const inspector = page.locator('aside[aria-label="Inspector"]')
     const dock = page.getByTestId('canvas-dock')

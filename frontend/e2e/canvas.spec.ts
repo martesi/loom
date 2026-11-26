@@ -6,6 +6,9 @@ import {
   autoArrangeCanvas,
   imageNodes as canvasNodes,
   dropAsset,
+  emptyCanvasPoint,
+  enterEdit,
+  moveImageNode,
   openFixtureRepo as open,
   openAssetsShelf,
 } from './test-helpers'
@@ -37,6 +40,7 @@ test('Assets selection, placement, trash and viewport persistence', async ({
   await expect(
     page.getByText('Drag an asset from Assets onto the canvas.')
   ).toBeVisible()
+  await enterEdit(page)
   const rows = assets(page)
   await rows.first().click()
   await rows.last().click({ modifiers: ['Shift'] })
@@ -56,7 +60,10 @@ test('Assets selection, placement, trash and viewport persistence', async ({
   await rows.first().click()
   await expect(page.locator('[role=option][aria-selected=true]')).toHaveCount(1)
   await expect(page.locator('.react-flow__node.selected')).toHaveCount(0)
-  await canvasNodes(page).first().click()
+  const firstNode = canvasNodes(page).first()
+  const firstBox = await firstNode.boundingBox()
+  if (!firstBox) throw new Error('Canvas node has no bounds')
+  await firstNode.click({ position: { x: firstBox.width - 20, y: 20 } })
   await expect(page.locator('[role=option][aria-selected=true]')).toHaveCount(0)
   await expect(page.locator('.react-flow__node.selected')).toHaveCount(1)
   await page.keyboard.press('Control+a')
@@ -104,12 +111,14 @@ test('canvas context menus and auto-arrange preserve the canvas origin', async (
   page,
 }) => {
   await open(page, 'canvas-menu-actions-fixtures')
+  await enterEdit(page)
   await drop(page, 'context-alpha.png', 280, 240)
   await drop(page, 'context-beta.png', 520, 420)
   await page.keyboard.press('ControlOrMeta+0')
 
   const nodes = canvasNodes(page)
   await expect(nodes).toHaveCount(2)
+  await moveImageNode(page, nodes.nth(1), 100, 100)
   const before = [
     await nodePosition(nodes.nth(0)),
     await nodePosition(nodes.nth(1)),
@@ -149,10 +158,8 @@ test('canvas context menus and auto-arrange preserve the canvas origin', async (
     3
   )
 
-  await page.locator('.react-flow__pane').click({
-    button: 'right',
-    position: { x: 850, y: 100 },
-  })
+  const empty = await emptyCanvasPoint(page)
+  await page.mouse.click(empty.x, empty.y, { button: 'right' })
   const paneMenu = page.getByRole('menu')
   await expect(paneMenu).toBeVisible()
   await expect(
@@ -174,9 +181,8 @@ test('canvas context menus and auto-arrange preserve the canvas origin', async (
     })
   ).toBeVisible()
   await page.keyboard.press('Escape')
-  await page
-    .locator('.react-flow__pane')
-    .click({ position: { x: 850, y: 100 } })
+  const emptyAgain = await emptyCanvasPoint(page)
+  await page.mouse.click(emptyAgain.x, emptyAgain.y)
 
   await nodes.first().click({ button: 'right' })
   const nodeMenu = page.getByRole('menu')
@@ -199,6 +205,7 @@ test('explicit relationship gesture, navigation, and individual selection', asyn
   page,
 }) => {
   await open(page, 'menu-linux-fixtures')
+  await enterEdit(page)
   await drop(page, 'menu-alpha.png', 50, 100)
   await drop(page, 'menu-beta.png', 280, 200)
   await page.keyboard.press('ControlOrMeta+0')
@@ -269,12 +276,10 @@ test('explicit relationship gesture, navigation, and individual selection', asyn
   await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
   await expect(page.getByTestId('dock-create-set')).toHaveCount(0)
   await expect(nodes).toHaveCount(2)
-  await page.locator('.react-flow__pane').click({ position: { x: 10, y: 10 } })
+  const empty = await emptyCanvasPoint(page)
+  await page.mouse.click(empty.x, empty.y)
   await expect(page.locator('.react-flow__node-group')).toHaveCount(0)
-  await page.locator('.react-flow__pane').click({
-    button: 'right',
-    position: { x: 10, y: 10 },
-  })
+  await page.mouse.click(empty.x, empty.y, { button: 'right' })
   await page
     .getByRole('menu')
     .getByRole('menuitem', { name: 'Select all' })
@@ -285,6 +290,7 @@ test('Select all excludes unplaced assets without hiding them from Assets', asyn
   page,
 }) => {
   await open(page, 'partial-set-fixtures')
+  await enterEdit(page)
   await drop(page, 'partial-alpha.png', 80, 100)
   await expect(canvasNodes(page)).toHaveCount(1)
   await canvasNodes(page).first().click()
@@ -309,6 +315,7 @@ test('Select all excludes unplaced assets without hiding them from Assets', asyn
 })
 test('marquee selection replaces the Canvas selection', async ({ page }) => {
   await open(page, 'set-fixtures')
+  await enterEdit(page)
   await drop(page, 'set-alpha.png', 360, 100)
   await drop(page, 'set-beta.png', 580, 100)
   await drop(page, 'set-gamma.png', 820, 100)

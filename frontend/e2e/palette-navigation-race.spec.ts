@@ -1,10 +1,16 @@
 import { expect, test } from './test-fixtures'
-import { imageNodes, openFixtureRepo, placeAssets } from './test-helpers'
+import {
+  enterEdit,
+  imageNodes,
+  openFixtureRepo,
+  placeAssets,
+} from './test-helpers'
 
 test('a delayed palette choice cannot replace a newer canvas selection', async ({
   page,
 }, testInfo) => {
   await openFixtureRepo(page, 'dock-fixtures', { drawers: 'closed' })
+  await enterEdit(page)
   await placeAssets(page, ['dock-alpha.png', 'dock-beta.png'])
   const alpha = imageNodes(page).filter({ hasText: 'dock-alpha.png' })
   const beta = imageNodes(page).filter({ hasText: 'dock-beta.png' })

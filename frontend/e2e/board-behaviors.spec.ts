@@ -5,7 +5,7 @@ import {
   asset,
   autoArrangeCanvas,
   ctrlDrag,
-  dropAsset,
+  enterEdit,
   fixturePath,
   imageNodes,
   nodeBox,
@@ -31,7 +31,8 @@ test('multi-image drag is one undoable geometry change', async ({
   page,
 }, testInfo) => {
   await openFixtureRepo(page, 'arrange-resize-fixtures')
-  await placeAssets(page, ['arrange-alpha.png', 'arrange-beta.png'])
+  await enterEdit(page)
+  await expect(imageNodes(page)).toHaveCount(3)
   await page.keyboard.press('ControlOrMeta+0')
   const nodes = imageNodes(page)
   await nodes.first().click()
@@ -81,11 +82,8 @@ test('relationships reject cycles, support ctrl-click selection, and delete as e
   page,
 }) => {
   await openFixtureRepo(page, 'relationship-fixtures')
-  await placeAssets(page, [
-    'relation-alpha.png',
-    'relation-beta.png',
-    'relation-gamma.png',
-  ])
+  await enterEdit(page)
+  await expect(imageNodes(page)).toHaveCount(3)
   await autoArrangeCanvas(page)
   await page.keyboard.press('ControlOrMeta+0')
 
@@ -182,7 +180,8 @@ test('relationships reject cycles, support ctrl-click selection, and delete as e
 
 test('relationship gestures reject self-links', async ({ page }) => {
   await openFixtureRepo(page, 'relationship-self-link-fixtures')
-  await placeAssets(page, ['relation-alpha.png'])
+  await enterEdit(page)
+  await expect(imageNodes(page)).toHaveCount(1)
   await page.keyboard.press('ControlOrMeta+0')
 
   const node = imageNodes(page).first()
@@ -207,6 +206,7 @@ test('Sources navigation reveals and selects an unplaced asset', async ({
   page,
 }) => {
   await openFixtureRepo(page, 'sources-nav-fixtures')
+  await enterEdit(page)
   await placeAssets(page, ['relation-alpha.png', 'relation-beta.png'])
   await page.keyboard.press('ControlOrMeta+0')
   await ctrlDrag(page, imageNodes(page).nth(0), imageNodes(page).nth(1))
@@ -259,7 +259,8 @@ test('Sources navigation reveals and selects an unplaced asset', async ({
 
 test('auto-arrange respects resized node bounds', async ({ page }) => {
   await openFixtureRepo(page, 'arrange-resize-fixtures')
-  await placeAssets(page, ['arrange-alpha.png', 'arrange-beta.png'])
+  await enterEdit(page)
+  await expect(imageNodes(page)).toHaveCount(3)
   await page.keyboard.press('ControlOrMeta+0')
 
   const nodes = imageNodes(page)
@@ -286,7 +287,6 @@ test('auto-arrange respects resized node bounds', async ({ page }) => {
     })
     .toBe(true)
 
-  await dropAsset(page, 'arrange-gamma.png', { x: 500, y: 450 })
   await expect(nodes).toHaveCount(3)
   await selectImageNodes(page, [1, 2])
   await nodes.nth(1).click({ button: 'right' })

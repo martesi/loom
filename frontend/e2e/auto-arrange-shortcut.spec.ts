@@ -1,9 +1,10 @@
 import type { Locator } from '@playwright/test'
 import { expect, test } from './test-fixtures'
 import {
+  enterEdit,
   imageNodes,
+  moveImageNode,
   openFixtureRepo,
-  placeAssets,
   selectImageNodes,
 } from './test-helpers'
 
@@ -17,11 +18,8 @@ test('dock subgraph arrangement leaves unselected items in place', async ({
   page,
 }, testInfo) => {
   await openFixtureRepo(page, 'dock-arrange-fixtures', { drawers: 'closed' })
-  await placeAssets(page, [
-    'arrange-alpha.png',
-    'arrange-beta.png',
-    'arrange-gamma.png',
-  ])
+  await enterEdit(page)
+  await expect(imageNodes(page)).toHaveCount(3)
   await selectImageNodes(page, [0, 1])
   const nodes = imageNodes(page)
   const before = await positions(nodes)
@@ -42,11 +40,9 @@ test('auto-arrange can be rebound, executed, persisted, and reset', async ({
   page,
 }, testInfo) => {
   await openFixtureRepo(page, 'dock-arrange-fixtures', { drawers: 'closed' })
-  await placeAssets(page, [
-    'arrange-alpha.png',
-    'arrange-beta.png',
-    'arrange-gamma.png',
-  ])
+  await enterEdit(page)
+  await expect(imageNodes(page)).toHaveCount(3)
+  await moveImageNode(page, imageNodes(page).nth(2), 100, 100)
   await selectImageNodes(page, [0, 1])
   const nodes = imageNodes(page)
   const before = await positions(nodes)
@@ -124,11 +120,9 @@ test('auto-arrange can be rebound, executed, persisted, and reset', async ({
 for (const id of ['auto-arrange-active', 'auto-arrange-canvas']) {
   test(`honors and resets persisted ${id} overrides`, async ({ page }) => {
     await openFixtureRepo(page, 'dock-arrange-fixtures', { drawers: 'closed' })
-    await placeAssets(page, [
-      'arrange-alpha.png',
-      'arrange-beta.png',
-      'arrange-gamma.png',
-    ])
+    await enterEdit(page)
+    await expect(imageNodes(page)).toHaveCount(3)
+    await moveImageNode(page, imageNodes(page).nth(2), 100, 100)
     await page.evaluate((actionId) => {
       localStorage.setItem(
         'loom.shortcuts.v1',
