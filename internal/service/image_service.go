@@ -21,6 +21,14 @@ type ImageService struct {
 	dimensionProbe       func(context.Context, string) (media.Dimensions, error)
 	afterImportFileWrite func(string)
 	writeImportFile      func(string, []byte, os.FileMode) (os.FileInfo, error)
+	fileIdentityAt       func(string, os.FileInfo) string
+}
+
+func (s *ImageService) importFileIdentity(path string, info os.FileInfo) string {
+	if s.fileIdentityAt != nil {
+		return s.fileIdentityAt(path, info)
+	}
+	return store.FileIdentityAt(path, info)
 }
 
 func (s *ImageService) mediaProcessor() media.Processor {

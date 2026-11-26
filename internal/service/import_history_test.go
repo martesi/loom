@@ -146,6 +146,62 @@ func TestPersistentImportStatFailureDoesNotClaimUnverifiedOwnership(t *testing.T
 	}
 }
 
+func TestImportRejectsTransientFileIdentityLookupFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		failCall int
+	}{
+		{name: "visible file", failCall: 1},
+		{name: "retained copy", failCall: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repoPath := t.TempDir()
+			calls := 0
+			service := &ImageService{fileIdentityAt: func(path string, info os.FileInfo) string {
+				calls++
+				if calls == tc.failCall {
+					return ""
+				}
+				return store.FileIdentityAt(path, info)
+			}}
+			_, err := service.ImportMedia(repoPath, []ClipboardMedia{{
+				Name: "transient-identity.png", Data: base64.StdEncoding.EncodeToString([]byte("captured bytes")),
+			}}, false, 0, 0)
+			if err == nil {
+				t.Fatal("ImportMedia committed despite an unavailable recorded file identity")
+			}
+			if calls != tc.failCall {
+				t.Fatalf("identity lookups = %d, want first failure on call %d", calls, tc.failCall)
+			}
+			// A subsequent lookup succeeds. The initial transaction must still
+			// fail rather than recording an empty identity and retrying later.
+			visiblePath := filepath.Join(repoPath, "transient-identity.png")
+			visibleInfo, err := os.Stat(visiblePath)
+			if err != nil {
+				t.Fatalf("stat visible file after transient identity failure: %v", err)
+			}
+			if store.FileIdentityAt(visiblePath, visibleInfo) == "" {
+				t.Fatal("identity lookup did not recover after the injected transient failure")
+			}
+			repo, err := store.Bootstrap(repoPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer repo.Close()
+			var imageCount, historyCount int
+			if err := repo.DB.QueryRow(`SELECT COUNT(*) FROM images`).Scan(&imageCount); err != nil {
+				t.Fatal(err)
+			}
+			if err := repo.DB.QueryRow(`SELECT COUNT(*) FROM operation_log WHERE kind = 'import_batch'`).Scan(&historyCount); err != nil {
+				t.Fatal(err)
+			}
+			if imageCount != 0 || historyCount != 0 {
+				t.Fatalf("failed identity lookup committed image/history rows: images=%d history=%d", imageCount, historyCount)
+			}
+		})
+	}
+}
+
 func TestImportWriteFailureLeavesPartialBytesHiddenAndAllowsExternalChange(t *testing.T) {
 	repoPath := t.TempDir()
 	service := &ImageService{writeImportFile: func(path string, data []byte, mode os.FileMode) (os.FileInfo, error) {

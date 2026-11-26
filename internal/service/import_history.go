@@ -164,9 +164,10 @@ func exclusiveStageDirectory(path string) string {
 // rows. A redo rejects a changed file at its original path. If the original
 // file is absent, it restores the captured bytes at a new, exclusive path.
 type ownedImportFile struct {
-	path string
-	info os.FileInfo
-	hash string
+	path     string
+	info     os.FileInfo
+	hash     string
+	identity string
 }
 
 func applyImportBatchTx(tx *sql.Tx, payload importBatchPayload, created, validate *[]ownedImportFile, afterWrite func(string), writeFile ...func(string, []byte) (os.FileInfo, error)) error {
@@ -194,7 +195,7 @@ func applyImportBatchTx(tx *sql.Tx, payload importBatchPayload, created, validat
 				return fmt.Errorf("read retained import bytes for image %d: %w", entry.ImageID, err)
 			}
 			item.data = data
-			*validate = append(*validate, ownedImportFile{path: entry.RetainedPath, info: info, hash: entry.SHA256})
+			*validate = append(*validate, ownedImportFile{path: entry.RetainedPath, info: info, hash: entry.SHA256, identity: entry.RetainedIdentity})
 		}
 		validated = append(validated, item)
 	}
@@ -215,6 +216,7 @@ func applyImportBatchTx(tx *sql.Tx, payload importBatchPayload, created, validat
 		}
 		activePath := currentPath
 		var activeInfo os.FileInfo
+		activeIdentity := ""
 		current, readErr := os.ReadFile(currentPath)
 		currentInfo, statErr := os.Stat(currentPath)
 		if readErr == nil && statErr == nil {
@@ -226,6 +228,7 @@ func applyImportBatchTx(tx *sql.Tx, payload importBatchPayload, created, validat
 				return fmt.Errorf("imported file %d changed and cannot be redone", entry.ImageID)
 			}
 			activeInfo = currentInfo
+			activeIdentity = identity
 		}
 		if (readErr != nil && !os.IsNotExist(readErr)) || (statErr != nil && !os.IsNotExist(statErr)) {
 			return fmt.Errorf("inspect import path: %w", errors.Join(readErr, statErr))
@@ -243,18 +246,22 @@ func applyImportBatchTx(tx *sql.Tx, payload importBatchPayload, created, validat
 			}
 			*created = append(*created, ownedImportFile{path: activePath, info: info, hash: entry.SHA256})
 			activeInfo = info
+			activeIdentity = store.FileIdentityAt(activePath, info)
+			if activeIdentity == "" {
+				return fmt.Errorf("restored import file %d has no verifiable identity", entry.ImageID)
+			}
 			if afterWrite != nil {
 				afterWrite(activePath)
 			}
 		}
 		if activePath != currentPath {
-			if _, err := tx.Exec(`UPDATE images SET file_path = ?, trashed = 0, import_undone = 0, import_file_identity = ?, import_file_sha256 = ?, thumb_path = NULL, width = NULL, height = NULL, file_size = ?, content_hash = NULL, source_fingerprint = NULL, source_revision = source_revision + 1 WHERE id = ?`, activePath, store.FileIdentityAt(activePath, activeInfo), entry.SHA256, len(item.data), entry.ImageID); err != nil {
+			if _, err := tx.Exec(`UPDATE images SET file_path = ?, trashed = 0, import_undone = 0, import_file_identity = ?, import_file_sha256 = ?, thumb_path = NULL, width = NULL, height = NULL, file_size = ?, content_hash = NULL, source_fingerprint = NULL, source_revision = source_revision + 1 WHERE id = ?`, activePath, activeIdentity, entry.SHA256, len(item.data), entry.ImageID); err != nil {
 				return err
 			}
 		} else if _, err := tx.Exec(`UPDATE images SET trashed = 0, import_undone = 0 WHERE id = ?`, entry.ImageID); err != nil {
 			return err
 		}
-		*validate = append(*validate, ownedImportFile{path: activePath, info: activeInfo, hash: entry.SHA256})
+		*validate = append(*validate, ownedImportFile{path: activePath, info: activeInfo, hash: entry.SHA256, identity: activeIdentity})
 	}
 	return nil
 }
@@ -290,14 +297,17 @@ func ownedFilePrefixHash(path string, owned os.FileInfo, data []byte) (string, o
 }
 
 func verifyOwnedImportFile(file ownedImportFile) error {
-	if file.info == nil || store.FileIdentityAt(file.path, file.info) == "" {
+	if file.info == nil || file.identity == "" {
 		return fmt.Errorf("import file %q has no verifiable identity", file.path)
+	}
+	if store.FileIdentityAt(file.path, file.info) != file.identity {
+		return fmt.Errorf("import file %q identity differs from recorded identity", file.path)
 	}
 	before, err := os.Stat(file.path)
 	if err != nil {
 		return fmt.Errorf("inspect import file %q before commit: %w", file.path, err)
 	}
-	if !before.Mode().IsRegular() || !os.SameFile(before, file.info) || store.FileIdentityAt(file.path, before) != store.FileIdentityAt(file.path, file.info) {
+	if !before.Mode().IsRegular() || !os.SameFile(before, file.info) || store.FileIdentityAt(file.path, before) != file.identity {
 		return fmt.Errorf("import file %q changed before commit", file.path)
 	}
 	data, err := os.ReadFile(file.path)
@@ -308,7 +318,7 @@ func verifyOwnedImportFile(file ownedImportFile) error {
 		return fmt.Errorf("import file %q content changed before commit", file.path)
 	}
 	after, err := os.Stat(file.path)
-	if err != nil || !os.SameFile(before, after) || !os.SameFile(after, file.info) || store.FileIdentityAt(file.path, after) != store.FileIdentityAt(file.path, file.info) {
+	if err != nil || !os.SameFile(before, after) || !os.SameFile(after, file.info) || store.FileIdentityAt(file.path, after) != file.identity {
 		return fmt.Errorf("import file %q changed during commit validation", file.path)
 	}
 	return nil
