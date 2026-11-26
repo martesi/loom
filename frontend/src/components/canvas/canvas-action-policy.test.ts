@@ -406,6 +406,83 @@ it('rechecks the current mode when a previously enabled action reaches the queue
   expect(arrange).toHaveBeenCalledTimes(1)
 })
 
+it('does not apply a queued D action to an image after selection changes', async () => {
+  const owner = createCanvasBoardOwner('/repo')
+  owner.setMode('edit')
+  const setConnectionTool = mock()
+  const setConnectionAnchorId = mock()
+  const contextFor = (selection: typeof emptySelection) =>
+    ({
+      owner,
+      repoPath: '/repo',
+      selection,
+      connectionTool: null,
+      setConnectionTool,
+      setConnectionAnchorId,
+      selectedIds: () => selection.ids,
+      selectedImageRecords: [],
+      relationshipActions: [],
+      canNavigateRelationship: false,
+      canRemoveRelationship: false,
+      data: { images: [], relationships: [], groups: [] },
+      displayNodes: [],
+      selectedCanvasNodeIds: selection.ids.map(String),
+      visible: { current: [] },
+      undoActions: { undo: async () => {}, redo: async () => {} },
+      setReveal: mock(),
+      report: mock(),
+    }) as unknown as CanvasActionsContext
+  const props = {
+    report: mock(),
+    paletteOpen: false,
+    setPaletteOpen: mock(),
+    setRecentActionIds: mock(),
+    trashIds: null,
+    purgeIds: null,
+    host: { current: null },
+    paletteAssetRequest: 0,
+    setPaletteAssets: mock(),
+    setPaletteAssetsLoading: mock(),
+    setPaletteAssetsError: mock(),
+  }
+  const initialSelection = {
+    surface: 'canvas' as const,
+    ids: [1],
+    edges: [],
+    group: null,
+  }
+  const hook = renderHook(
+    ({ selection }) =>
+      useCanvasActionSystem({
+        ...props,
+        context: contextFor(selection),
+        pendingRecentAction: useRef<string | null>(null),
+      }),
+    { initialProps: { selection: initialSelection } }
+  )
+  let release = () => {}
+  const blocker = owner.execute(
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve
+      })
+  )
+  await Promise.resolve()
+  const action = hook.result.current.actionById.get('connect-derivative')
+  if (!action) throw new Error('missing derivative connection action')
+  const pending = hook.result.current.executeAction(action)
+  hook.rerender({
+    selection: { ...initialSelection, ids: [2] },
+  })
+  await act(async () => {
+    release()
+    await blocker
+    await pending
+  })
+  expect(setConnectionAnchorId).not.toHaveBeenCalled()
+  expect(setConnectionTool).not.toHaveBeenCalled()
+})
+
 it('denies unknown actions in View and Edit, but preserves legacy behavior', () => {
   for (const id of ['future-mutation', 'toString', '__proto__']) {
     expect(canvasActionCapability(id)).toBeUndefined()

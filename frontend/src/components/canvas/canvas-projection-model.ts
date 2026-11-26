@@ -26,10 +26,12 @@ export function canvasProjectionGraph(
   const nodes: Node[] = images.map((image) =>
     imageNode(image, renditionGeneration, onResizeStart, onResizeEnd)
   )
+  const imageNames = new Map(images.map((image) => [image.id, image.fileName]))
   const edges: Edge[] = relationships.map((edge) => ({
     id: String(edge.id),
     source: String(edge.sourceImageId),
     target: String(edge.derivedImageId),
+    ariaLabel: `Relationship from ${imageNames.get(edge.sourceImageId) ?? edge.sourceImageId} to ${imageNames.get(edge.derivedImageId) ?? edge.derivedImageId}`,
     reconnectable: false,
   }))
   return {
@@ -56,6 +58,7 @@ function imageNode(
   return {
     id: String(image.id),
     type: 'image',
+    ariaLabel: `Image: ${image.fileName}`,
     position: { x: image.canvasX, y: image.canvasY },
     width: image.canvasW || 150,
     height: image.canvasH || 110,

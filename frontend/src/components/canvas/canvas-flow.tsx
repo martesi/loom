@@ -170,6 +170,8 @@ export function CanvasFlow(props: Props) {
         </div>
       )}
       <ReactFlow
+        nodesFocusable
+        edgesFocusable
         onKeyDownCapture={(event) => {
           keyboardContextMenu.current =
             event.target instanceof SVGElement &&

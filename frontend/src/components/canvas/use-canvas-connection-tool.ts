@@ -1,11 +1,13 @@
 import { t } from '@lingui/core/macro'
 import type {
+  KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
 } from 'react'
 import { useEffect, useRef } from 'react'
 import type { CanvasData } from '../../../bindings/loom/internal/service'
 import { ImageService } from '../../../bindings/loom/internal/service'
+import { type Selection, sameSelection } from '../../lib/selection'
 import type { CanvasBoardOwner } from './canvas-board-owner'
 import type { CanvasInternalMode } from './canvas-mode-policy'
 import type { CanvasConnectionTool } from './use-canvas-workspace-state'
@@ -43,6 +45,8 @@ interface Props {
   setError: (message: string) => void
   setPreview: (preview: Preview | null) => void
   updateTarget: (target: Target | null) => void
+  exitTool: () => void
+  getSelection: () => Selection
 }
 
 interface PendingConnection {
@@ -51,6 +55,7 @@ interface PendingConnection {
   owner: CanvasBoardOwner
   repoPath: string
   modeRevision: number
+  selection: Selection
   targetId?: string
   edgeId?: number
 }
@@ -81,6 +86,52 @@ export function useCanvasConnectionTool(props: Props) {
       event.stopPropagation()
       event.preventDefault()
     }
+    return true
+  }
+
+  function onKeyDownCapture(event: ReactKeyboardEvent<HTMLElement>) {
+    const { tool, mode, owner } = current.current
+    if (!tool) return false
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      cancel()
+      current.current.exitTool()
+      return true
+    }
+    if (
+      event.key !== 'Enter' ||
+      mode !== 'edit' ||
+      !owner.allows('relationship')
+    )
+      return false
+    const element = event.target instanceof Element ? event.target : null
+    if (
+      !element ||
+      element.closest('button,a,input,textarea,select,[contenteditable=true]')
+    )
+      return false
+    if (tool === 'reverse-relationship') {
+      const edge = element.closest<HTMLElement>('.react-flow__edge[data-id]')
+      if (!edge) return false
+      const connection = createConnection(0, tool, {
+        edgeId: Number(edge.dataset.id),
+      })
+      event.preventDefault()
+      event.stopPropagation()
+      reverseEdge(connection, edge)
+      return true
+    }
+    const node = element.closest<HTMLElement>('.react-flow__node[data-id]')
+    if (!node) return false
+    const targetId = node.dataset.id
+    if (!targetId || current.current.anchorId === null) return false
+    const connection = createConnection(current.current.anchorId, tool, {
+      targetId,
+    })
+    event.preventDefault()
+    event.stopPropagation()
+    completeLink(connection, targetId)
     return true
   }
 
@@ -116,6 +167,7 @@ export function useCanvasConnectionTool(props: Props) {
         owner,
         repoPath,
         modeRevision: owner.getModeRevision(),
+        selection: current.current.getSelection(),
         edgeId: Number(edge.dataset.id),
       }
       event.stopPropagation()
@@ -144,6 +196,7 @@ export function useCanvasConnectionTool(props: Props) {
       owner,
       repoPath,
       modeRevision: owner.getModeRevision(),
+      selection: current.current.getSelection(),
     }
     return true
   }
@@ -161,7 +214,7 @@ export function useCanvasConnectionTool(props: Props) {
 
   function onPointerUpCapture(event: ReactPointerEvent<HTMLElement>) {
     const connection = pending.current
-    const { targetAt, validTarget, run, setError } = current.current
+    const { targetAt } = current.current
     if (!connection) return false
     event.stopPropagation()
     event.preventDefault()
@@ -171,10 +224,17 @@ export function useCanvasConnectionTool(props: Props) {
     if (!isCurrent(connection)) return true
     if (connection.edgeId !== undefined) {
       reverseEdge(connection, event.target)
-      return true
+      return
     }
     const id = targetAt(event.clientX, event.clientY)
     if (!id || id !== connection.targetId) return true
+    completeLink(connection, id)
+    return true
+  }
+
+  function completeLink(connection: PendingConnection, id: string) {
+    if (!isCurrent(connection)) return
+    const { validTarget, run, setError } = current.current
     const source =
       connection.tool === 'connect-source' ? Number(id) : connection.anchorId
     const derived =
@@ -182,13 +242,29 @@ export function useCanvasConnectionTool(props: Props) {
     const result = validTarget(source, String(derived))
     if (!result.valid) {
       setError(result.reason ?? t`Cannot create this relationship`)
-      return true
+      return
     }
     run(
       () => ImageService.LinkSource(connection.repoPath, source, derived),
       () => isCurrent(connection)
     )
-    return true
+  }
+
+  function createConnection(
+    anchorId: number,
+    tool: PendingConnection['tool'],
+    target: Pick<PendingConnection, 'targetId' | 'edgeId'>
+  ): PendingConnection {
+    const { owner, repoPath } = current.current
+    return {
+      anchorId,
+      tool,
+      owner,
+      repoPath,
+      modeRevision: owner.getModeRevision(),
+      selection: current.current.getSelection(),
+      ...target,
+    }
   }
 
   function reverseEdge(
@@ -226,6 +302,7 @@ export function useCanvasConnectionTool(props: Props) {
       latest.owner === connection.owner &&
       latest.repoPath === connection.repoPath &&
       latest.tool === connection.tool &&
+      sameSelection(latest.getSelection(), connection.selection) &&
       latest.mode === 'edit' &&
       connection.owner.isActive?.() !== false &&
       connection.owner.getMode() === 'edit' &&
@@ -341,6 +418,7 @@ export function useCanvasConnectionTool(props: Props) {
 
   return {
     onClickCapture,
+    onKeyDownCapture,
     onPointerDownCapture,
     onPointerMove,
     onPointerUpCapture,

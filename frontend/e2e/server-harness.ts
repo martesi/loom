@@ -116,6 +116,7 @@ const benchmarkRepos =
     : []
 
 const fixtureRepos = [
+  { name: 'empty-fixtures', files: [] },
   { name: 'e2e-repo', files: ['auth-fixture.png'] },
   {
     name: 'canvas-fixtures',

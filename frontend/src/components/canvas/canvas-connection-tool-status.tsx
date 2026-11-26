@@ -26,6 +26,9 @@ export function CanvasConnectionToolStatus({
           anchorName !== undefined &&
           ` · ${anchorName}`}
       </span>
+      <span>
+        Focus an image or relationship, then press Enter. Escape cancels.
+      </span>
       <button
         type="button"
         aria-label={t`Exit connection mode`}

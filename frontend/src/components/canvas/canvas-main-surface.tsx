@@ -201,6 +201,11 @@ export function CanvasMainSurface(props: Props) {
     setError,
     setPreview: setRelationshipPreview,
     updateTarget,
+    exitTool: () => {
+      setConnectionTool(null)
+      setConnectionAnchorId(null)
+    },
+    getSelection: () => selectionRef.current,
   })
   const dropHandlers = useCanvasDropHandlers({
     repoPath,
@@ -230,6 +235,9 @@ export function CanvasMainSurface(props: Props) {
       aria-label={t`Canvas`}
       tabIndex={-1}
       className="absolute inset-0 min-w-0 outline-none"
+      onKeyDownCapture={(event) => {
+        connectionEvents.onKeyDownCapture(event)
+      }}
       onClickCapture={(event) => {
         if (connectionEvents.onClickCapture(event)) return
         if (
