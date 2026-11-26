@@ -225,6 +225,9 @@ func removeVerifiedDuplicate(root, source, destination, expectedFingerprint stri
 }
 
 func ensureIncomingMetadata(repo *store.Repo, journal replacementJournal) error {
+	if journal.Action == "initial" {
+		return ensureInitialReplacementIncoming(repo, journal)
+	}
 	state, err := replacementPathState(repo.Path, journal.IncomingPath)
 	if err != nil {
 		return err
@@ -248,15 +251,6 @@ func ensureIncomingMetadata(repo *store.Repo, journal replacementJournal) error 
 			currentIsTarget && active.info.Size() == journal.TargetFileSize &&
 			fmt.Sprintf("stat:%d:%d", active.info.Size(), active.info.ModTime().UnixNano()) == journal.TargetContentHash.String {
 			return nil
-		}
-	}
-	if !state.exists && journal.Action == "initial" && len(journal.IncomingData) > 0 && canResumeIncomingCreation(repo.Path, journal) {
-		if err := ensureIncomingReplacementFile(repo.Path, journal, journal.IncomingData); err != nil {
-			return err
-		}
-		state, err = replacementPathState(repo.Path, journal.IncomingPath)
-		if err != nil {
-			return err
 		}
 	}
 	if !fileMatches(state, journal.IncomingFingerprint) {

@@ -5,6 +5,7 @@ import {
   type PendingImportBatch,
   type RecoverableImport,
   type ReplacementResult,
+  type UnverifiedReplacementRedoTail,
 } from '../../../bindings/loom/internal/service'
 import { Button } from '../ui/button'
 
@@ -12,6 +13,11 @@ interface Props {
   pending: PendingImportBatch[]
   retained: RecoverableImport[]
   replacementRecoveries: ReplacementResult[]
+  legacyRedoTail: UnverifiedReplacementRedoTail | null
+  legacyTailLoadError: string
+  pendingLoadError: string
+  retainedLoadError: string
+  replacementLoadError: string
   selectedItems: Record<string, number[]>
   releasedItems: Record<string, number[]>
   releaseConfirmationBatch: string | null
@@ -24,12 +30,20 @@ interface Props {
   onCancelRelease: () => void
   onRestoreVerified: (item: RecoverableImport) => void
   onShowUnverified: (item: RecoverableImport) => void
+  onRetryReplacement: (requestID: string) => void
+  onRetryLegacyTail: () => void
+  onResolveLegacyTail: () => void
 }
 
 export function ImportRecoverySections({
   pending,
   retained,
   replacementRecoveries,
+  legacyRedoTail,
+  legacyTailLoadError,
+  pendingLoadError,
+  retainedLoadError,
+  replacementLoadError,
   selectedItems,
   releasedItems,
   releaseConfirmationBatch,
@@ -42,10 +56,13 @@ export function ImportRecoverySections({
   onCancelRelease,
   onRestoreVerified,
   onShowUnverified,
+  onRetryReplacement,
+  onRetryLegacyTail,
+  onResolveLegacyTail,
 }: Props) {
   return (
     <>
-      {replacementRecoveries.length > 0 && (
+      {(replacementRecoveries.length > 0 || replacementLoadError) && (
         <section
           className="mt-3 grid gap-2 rounded border border-warning/40 p-3"
           data-testid="pending-replacement-recoveries"
@@ -53,6 +70,20 @@ export function ImportRecoverySections({
           <h3 className="text-sm font-semibold">
             <Trans>Replacement recovery needs attention</Trans>
           </h3>
+          {replacementLoadError && (
+            <div role="alert" className="grid gap-2 text-sm text-danger">
+              <p>{replacementLoadError}</p>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                disabled={working}
+                onClick={() => onRetryReplacement('')}
+              >
+                <Trans>Retry replacement status and recovery</Trans>
+              </Button>
+            </div>
+          )}
           {replacementRecoveries.map((replacement) => (
             <div
               key={replacement.requestId}
@@ -90,6 +121,16 @@ export function ImportRecoverySections({
                   value={replacement.incomingFingerprint || '—'}
                 />
               </dl>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="justify-self-start"
+                disabled={working}
+                onClick={() => onRetryReplacement(replacement.requestId)}
+              >
+                <Trans>Retry safe recovery</Trans>
+              </Button>
             </div>
           ))}
           <p className="text-xs text-ink-subtle">
@@ -100,11 +141,73 @@ export function ImportRecoverySections({
           </p>
         </section>
       )}
+      {(legacyRedoTail?.available || legacyTailLoadError) && (
+        <section
+          className="mt-3 grid gap-2 rounded border border-danger/30 p-3"
+          data-testid="unverified-legacy-redo-tail"
+        >
+          <h3 className="text-sm font-semibold">
+            <Trans>Unverified legacy replacement history</Trans>
+          </h3>
+          {legacyTailLoadError ? (
+            <div role="alert" className="grid gap-2 text-sm text-danger">
+              <p>{legacyTailLoadError}</p>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                disabled={working}
+                onClick={onRetryLegacyTail}
+              >
+                <Trans>Retry legacy history status</Trans>
+              </Button>
+            </div>
+          ) : legacyRedoTail?.available ? (
+            <>
+              <p className="text-sm">{legacyRedoTail.warning}</p>
+              <dl className="grid gap-1 break-all text-xs text-ink-subtle">
+                <EvidenceLine
+                  label={<Trans>History cursor</Trans>}
+                  value={String(legacyRedoTail.cursor)}
+                />
+                <EvidenceLine
+                  label={<Trans>Redo tail</Trans>}
+                  value={`${legacyRedoTail.startSeq}–${legacyRedoTail.endSeq} (${legacyRedoTail.operationCount})`}
+                />
+                <EvidenceLine
+                  label={<Trans>Status</Trans>}
+                  value={legacyRedoTail.status || 'unverified'}
+                />
+              </dl>
+              <p className="text-xs text-ink-muted">
+                <Trans>
+                  This action removes history entries only. It does not delete,
+                  move, or change files and does not create provenance.
+                </Trans>
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                variant="danger"
+                data-testid="discard-unverified-redo-tail"
+                disabled={working}
+                onClick={onResolveLegacyTail}
+              >
+                <Trans>Discard the entire confirmed redo tail</Trans>
+              </Button>
+            </>
+          ) : null}
+        </section>
+      )}
       <section className="mt-5 grid gap-3">
         <h3 className="text-sm font-semibold">
           <Trans>Interrupted imports</Trans>
         </h3>
-        {pending.length === 0 ? (
+        {pendingLoadError ? (
+          <p role="alert" className="text-sm text-danger">
+            {pendingLoadError}
+          </p>
+        ) : pending.length === 0 ? (
           <p className="text-sm text-ink-muted">
             <Trans>No interrupted imports.</Trans>
           </p>
@@ -262,7 +365,11 @@ export function ImportRecoverySections({
         <h3 className="text-sm font-semibold">
           <Trans>Undone imports</Trans>
         </h3>
-        {retained.length === 0 ? (
+        {retainedLoadError ? (
+          <p role="alert" className="text-sm text-danger">
+            {retainedLoadError}
+          </p>
+        ) : retained.length === 0 ? (
           <p className="text-sm text-ink-muted">
             <Trans>No undone imports need recovery.</Trans>
           </p>

@@ -76,6 +76,15 @@ func finalizeReplacementJournal(repo *store.Repo, journal replacementJournal) er
 	} else if err := moveReplacementHistoryCursor(tx, current); err != nil {
 		return err
 	}
+	if current.Action == "undo" || current.Action == "redo" {
+		historyResult := &UndoResult{Applied: true, Kind: current.HistoryKind}
+		if err := completeHistoryReplayRequestTx(tx, repo.Path, current.RequestID, current.Action == "redo", &store.Operation{
+			Seq: current.HistorySeq, Kind: current.HistoryKind, Forward: current.HistoryForward,
+			Inverse: current.HistoryInverse, CreatedAt: current.HistoryCreatedAt.String,
+		}, historyResult); err != nil {
+			return fmt.Errorf("complete history replay request receipt: %w", err)
+		}
+	}
 	receipt := replacementReplayReceipt{Applied: true, RequestID: current.RequestID, ImageID: current.ImageID, Action: current.Action, Kind: current.HistoryKind}
 	receiptJSON, err := jsonMarshalReplacementReceipt(receipt)
 	if err != nil {

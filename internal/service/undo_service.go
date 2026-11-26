@@ -585,6 +585,28 @@ func (s *UndoService) replay(repoPath string, redo bool, requestID string) (*Und
 	defer unlock()
 	defer repo.Close()
 	requestHash := replacementReplayRequestHash(repo.Path, redo, nil)
+	if receipt, found, err := readHistoryReplayRequest(repo.DB, requestID, repo.Path, redo); err != nil || found {
+		if err != nil {
+			return nil, err
+		}
+		if receipt.PendingRecovery {
+			if err := recoverReplacementJournals(repo); err != nil {
+				var pending *replacementRecoveryError
+				if errors.As(err, &pending) {
+					receipt.Error = pending.Error()
+				}
+				return receipt, nil
+			}
+			receipt, found, err = readHistoryReplayRequest(repo.DB, requestID, repo.Path, redo)
+			if err != nil || !found {
+				if err == nil {
+					err = fmt.Errorf("history replay receipt disappeared during recovery")
+				}
+				return nil, err
+			}
+		}
+		return receipt, nil
+	}
 	if receipt, found, err := readReplacementReceipt(repo, requestID, requestHash); found || err != nil {
 		if err != nil {
 			return nil, err
@@ -611,26 +633,38 @@ func (s *UndoService) replay(repoPath string, redo bool, requestID string) (*Und
 		}
 		return nil, err
 	}
+	if pendingID, pendingKind, err := pendingHistoryReplay(repo); err != nil {
+		return nil, err
+	} else if pendingID != "" {
+		return &UndoResult{
+			PendingRecovery: true, RequestID: pendingID,
+			Error: fmt.Sprintf("History request %s for %s is still pending inspection; this request was not applied.", pendingID, pendingKind),
+		}, nil
+	}
 
-	handled, op, geometry, err := replayAtomicHistory(repo, redo)
+	handled, op, result, err := replayAtomicHistory(repo, redo, requestID)
 	if err != nil {
 		if op == nil {
 			return nil, err
 		}
-		return &UndoResult{Applied: false, Kind: op.Kind, Error: err.Error()}, nil
-	}
-	if op == nil {
-		return &UndoResult{Applied: false}, nil
+		return &UndoResult{Applied: false, Kind: op.Kind, RequestID: requestID, Error: err.Error()}, nil
 	}
 	if handled {
-		return &UndoResult{Applied: true, Kind: op.Kind, Geometry: geometry}, nil
+		return result, nil
 	}
 	if op.Kind == stepRepresentation {
 		result, err := beginReplacementHistoryReplay(repo, op, redo, requestID)
 		if err != nil {
-			return &UndoResult{Applied: false, Kind: op.Kind, Error: err.Error()}, nil
+			result, persistErr := persistHistoryReplayFailure(repo, requestID, redo, op, err)
+			if persistErr != nil {
+				return nil, errors.Join(err, persistErr)
+			}
+			return result, nil
 		}
 		return replacementResultToUndo(result), nil
+	}
+	if op == nil {
+		return nil, fmt.Errorf("history replay did not select an operation")
 	}
 	// The remaining legacy steps perform filesystem work or own nested store
 	// transactions. Their selection, replay and cursor are not cross-process
@@ -642,6 +676,32 @@ func (s *UndoService) replay(repoPath string, redo bool, requestID string) (*Und
 	var replay OpStep
 	if err := json.Unmarshal([]byte(raw), &replay); err != nil {
 		return nil, err
+	}
+	if replay.Kind == stepSetTrashed || replay.Kind == stepMoveFile {
+		imageID, err := historyStepImageID(replay)
+		if err != nil {
+			return &UndoResult{Applied: false, Kind: op.Kind, RequestID: requestID, Error: err.Error()}, nil
+		}
+		releaseImage, ok := acquireReplacementImageLock(repo.Path, imageID)
+		if !ok {
+			return &UndoResult{Applied: false, Kind: op.Kind, RequestID: requestID, Error: fmt.Sprintf("asset %d is busy in a preview or replacement", imageID)}, nil
+		}
+		defer releaseImage()
+		started, err := beginLegacyFilesystemHistoryReplay(repo, requestID, redo, op)
+		if err != nil {
+			return nil, err
+		}
+		if !started {
+			result, found, err := readHistoryReplayRequest(repo.DB, requestID, repo.Path, redo)
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				return nil, fmt.Errorf("filesystem history replay request disappeared")
+			}
+			return result, nil
+		}
+		return executeLegacyFilesystemHistoryReplay(repo, requestID, redo, op, replay)
 	}
 	if err := applyStep(repo, replay); err != nil {
 		return &UndoResult{Applied: false, Kind: op.Kind, Error: err.Error()}, nil
@@ -659,5 +719,24 @@ func replacementResultToUndo(result *ReplacementResult) *UndoResult {
 	return &UndoResult{
 		Applied: result.Applied, Kind: result.Kind, Error: result.Message,
 		PendingRecovery: result.PendingRecovery, RequestID: result.RequestID, Phase: result.Phase,
+	}
+}
+
+func historyStepImageID(history OpStep) (int64, error) {
+	switch history.Kind {
+	case stepSetTrashed:
+		var payload trashedStepPayload
+		if err := json.Unmarshal(history.Payload, &payload); err != nil {
+			return 0, err
+		}
+		return payload.ImageID, nil
+	case stepMoveFile:
+		var payload moveFileStepPayload
+		if err := json.Unmarshal(history.Payload, &payload); err != nil {
+			return 0, err
+		}
+		return payload.ImageID, nil
+	default:
+		return 0, fmt.Errorf("history step %q has no single image", history.Kind)
 	}
 }

@@ -679,6 +679,11 @@ func (s *ImageService) TrashImage(repoPath string, imageID int64) error {
 	}
 	defer unlock()
 	defer repo.Close()
+	releaseImage, ok := acquireReplacementImageLock(repo.Path, imageID)
+	if !ok {
+		return fmt.Errorf("asset %d is busy in a preview or replacement", imageID)
+	}
+	defer releaseImage()
 
 	if err := repo.SetTrashed(imageID, true); err != nil {
 		return err
@@ -696,6 +701,11 @@ func (s *ImageService) RestoreImage(repoPath string, imageID int64) error {
 	}
 	defer unlock()
 	defer repo.Close()
+	releaseImage, ok := acquireReplacementImageLock(repo.Path, imageID)
+	if !ok {
+		return fmt.Errorf("asset %d is busy in a preview or replacement", imageID)
+	}
+	defer releaseImage()
 
 	if err := repo.SetTrashed(imageID, false); err != nil {
 		return err
@@ -792,6 +802,11 @@ func (s *ImageService) MoveFile(repoPath string, imageID int64, newRelPath strin
 	}
 	defer unlock()
 	defer repo.Close()
+	releaseImage, ok := acquireReplacementImageLock(repo.Path, imageID)
+	if !ok {
+		return "", "", fmt.Errorf("asset %d is busy in a preview or replacement", imageID)
+	}
+	defer releaseImage()
 
 	oldPath, newPath, err = repo.MoveFile(imageID, newRelPath)
 	if err != nil {

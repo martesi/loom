@@ -31,7 +31,8 @@ func chooseReplacementPathTx(tx *sql.Tx, repoPath string, image store.Image, nam
 		var reserved bool
 		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images WHERE file_path=? AND id!=?)
 			OR EXISTS(SELECT 1 FROM import_intents WHERE file_path=?)
-			OR EXISTS(SELECT 1 FROM replacement_path_reservations WHERE path=?)`, candidate, image.ID, candidate, candidate).Scan(&reserved); err != nil {
+			OR EXISTS(SELECT 1 FROM replacement_path_reservations WHERE path=?)
+			OR EXISTS(SELECT 1 FROM replacement_incoming_attempts WHERE path=? AND protected=1)`, candidate, image.ID, candidate, candidate, candidate).Scan(&reserved); err != nil {
 			return "", err
 		}
 		if reserved {

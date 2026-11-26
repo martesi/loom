@@ -120,7 +120,8 @@ func (r *Repo) registerImage(ctx context.Context, path string) (int, error) {
 	}
 	var pending bool
 	if err := r.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM import_intents WHERE file_path = ?)
-		OR EXISTS(SELECT 1 FROM replacement_path_reservations WHERE path = ?)`, path, path).Scan(&pending); err != nil {
+		OR EXISTS(SELECT 1 FROM replacement_path_reservations WHERE path = ?)
+		OR EXISTS(SELECT 1 FROM replacement_incoming_attempts WHERE path = ? AND protected=1)`, path, path, path).Scan(&pending); err != nil {
 		return 0, err
 	}
 	if pending {
@@ -150,14 +151,15 @@ func (r *Repo) registerImage(ctx context.Context, path string) (int, error) {
 		res, err := r.DB.Exec(`INSERT OR IGNORE INTO images (file_path, file_size, content_hash, source_fingerprint, source_revision)
 			SELECT ?, ?, ?, ?, 1 WHERE NOT EXISTS (SELECT 1 FROM import_intents WHERE file_path = ?)
 			AND NOT EXISTS (SELECT 1 FROM replacement_path_reservations WHERE path = ?)
-			AND COALESCE((SELECT value FROM settings WHERE scope='repo' AND key='discovery_generation'),'0') = ?`, path, stableInfo.Size(), marker, fingerprint, path, path, discoveryGeneration)
+			AND NOT EXISTS (SELECT 1 FROM replacement_incoming_attempts WHERE path = ? AND protected=1)
+			AND COALESCE((SELECT value FROM settings WHERE scope='repo' AND key='discovery_generation'),'0') = ?`, path, stableInfo.Size(), marker, fingerprint, path, path, path, discoveryGeneration)
 		if err != nil {
 			return 0, err
 		}
 		n, err := res.RowsAffected()
 		return int(n), err
 	}
-	res, err := r.DB.Exec(`UPDATE images SET file_size = ?, width = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN NULL ELSE width END, height = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN NULL ELSE height END, content_hash = ?, source_revision = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN source_revision + 1 WHEN source_revision = 0 THEN 1 ELSE source_revision END, source_fingerprint = ? WHERE file_path = ? AND NOT EXISTS (SELECT 1 FROM import_recovery ir WHERE ir.image_id = images.id AND ir.retained = 1) AND NOT EXISTS (SELECT 1 FROM import_intents WHERE file_path = images.file_path) AND NOT EXISTS (SELECT 1 FROM replacement_path_reservations WHERE path = images.file_path) AND COALESCE((SELECT value FROM settings WHERE scope='repo' AND key='discovery_generation'),'0') = ?`, stableInfo.Size(), fingerprint, fingerprint, marker, fingerprint, fingerprint, path, discoveryGeneration)
+	res, err := r.DB.Exec(`UPDATE images SET file_size = ?, width = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN NULL ELSE width END, height = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN NULL ELSE height END, content_hash = ?, source_revision = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN source_revision + 1 WHEN source_revision = 0 THEN 1 ELSE source_revision END, source_fingerprint = ? WHERE file_path = ? AND NOT EXISTS (SELECT 1 FROM import_recovery ir WHERE ir.image_id = images.id AND ir.retained = 1) AND NOT EXISTS (SELECT 1 FROM import_intents WHERE file_path = images.file_path) AND NOT EXISTS (SELECT 1 FROM replacement_path_reservations WHERE path = images.file_path) AND NOT EXISTS (SELECT 1 FROM replacement_incoming_attempts WHERE path=images.file_path AND protected=1) AND COALESCE((SELECT value FROM settings WHERE scope='repo' AND key='discovery_generation'),'0') = ?`, stableInfo.Size(), fingerprint, fingerprint, marker, fingerprint, fingerprint, path, discoveryGeneration)
 	if err != nil {
 		return 0, err
 	}
@@ -189,7 +191,7 @@ func (r *Repo) EnsureSourceFingerprint(ctx context.Context, imageID int64) (Imag
 		return image, fmt.Errorf("fingerprint %s: %w", image.FilePath, err)
 	}
 	marker := fmt.Sprintf("stat:%d:%d", stableInfo.Size(), stableInfo.ModTime().UnixNano())
-	if _, err := r.DB.Exec(`UPDATE images SET file_size = ?, width = NULL, height = NULL, content_hash = ?, source_fingerprint = ?, source_revision = CASE WHEN source_revision = 0 THEN 1 ELSE source_revision END WHERE id = ? AND file_path = ? AND (source_fingerprint IS NULL OR source_fingerprint = '') AND NOT EXISTS (SELECT 1 FROM replacement_path_reservations WHERE path = images.file_path) AND COALESCE((SELECT value FROM settings WHERE scope='repo' AND key='discovery_generation'),'0') = ?`, stableInfo.Size(), marker, fingerprint, imageID, image.FilePath, discoveryGeneration); err != nil {
+	if _, err := r.DB.Exec(`UPDATE images SET file_size = ?, width = NULL, height = NULL, content_hash = ?, source_fingerprint = ?, source_revision = CASE WHEN source_revision = 0 THEN 1 ELSE source_revision END WHERE id = ? AND file_path = ? AND (source_fingerprint IS NULL OR source_fingerprint = '') AND NOT EXISTS (SELECT 1 FROM replacement_path_reservations WHERE path = images.file_path) AND NOT EXISTS (SELECT 1 FROM replacement_incoming_attempts WHERE path=images.file_path AND protected=1) AND COALESCE((SELECT value FROM settings WHERE scope='repo' AND key='discovery_generation'),'0') = ?`, stableInfo.Size(), marker, fingerprint, imageID, image.FilePath, discoveryGeneration); err != nil {
 		return image, err
 	}
 	image, err = r.GetImageByID(imageID)
@@ -261,7 +263,8 @@ func (r *Repo) scanAndRegisterImagesWithFingerprint(ctx context.Context, advance
 		res, err := r.DB.Exec(`INSERT OR IGNORE INTO images (file_path, file_size, content_hash, source_fingerprint, source_revision)
 			SELECT ?, ?, ?, ?, 1 WHERE NOT EXISTS (SELECT 1 FROM import_intents WHERE file_path = ?)
 			AND NOT EXISTS (SELECT 1 FROM replacement_path_reservations WHERE path = ?)
-			AND COALESCE((SELECT value FROM settings WHERE scope='repo' AND key='discovery_generation'),'0') = ?`, item.path, item.info.Size(), statMarker, item.fingerprint, item.path, item.path, discoveryGeneration)
+			AND NOT EXISTS (SELECT 1 FROM replacement_incoming_attempts WHERE path = ? AND protected=1)
+			AND COALESCE((SELECT value FROM settings WHERE scope='repo' AND key='discovery_generation'),'0') = ?`, item.path, item.info.Size(), statMarker, item.fingerprint, item.path, item.path, item.path, discoveryGeneration)
 		if err != nil {
 			return changed, err
 		}
@@ -277,7 +280,7 @@ func (r *Repo) scanAndRegisterImagesWithFingerprint(ctx context.Context, advance
 		if advanceRevision {
 			increment = 1
 		}
-		res, err = r.DB.Exec(`UPDATE images SET file_size = ?, width = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN NULL ELSE width END, height = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN NULL ELSE height END, content_hash = ?, source_revision = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN source_revision + ? WHEN source_revision = 0 THEN 1 ELSE source_revision END, source_fingerprint = ? WHERE file_path = ? AND NOT EXISTS (SELECT 1 FROM import_recovery ir WHERE ir.image_id = images.id AND ir.retained = 1) AND NOT EXISTS (SELECT 1 FROM import_intents WHERE file_path = images.file_path) AND NOT EXISTS (SELECT 1 FROM replacement_path_reservations WHERE path = images.file_path) AND COALESCE((SELECT value FROM settings WHERE scope='repo' AND key='discovery_generation'),'0') = ? AND (file_size IS NOT ? OR COALESCE(content_hash, '') != ? OR source_fingerprint IS NOT ? OR source_revision = 0)`, item.info.Size(), item.fingerprint, item.fingerprint, statMarker, item.fingerprint, increment, item.fingerprint, item.path, discoveryGeneration, item.info.Size(), statMarker, item.fingerprint)
+		res, err = r.DB.Exec(`UPDATE images SET file_size = ?, width = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN NULL ELSE width END, height = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN NULL ELSE height END, content_hash = ?, source_revision = CASE WHEN source_fingerprint IS NOT NULL AND source_fingerprint != ? THEN source_revision + ? WHEN source_revision = 0 THEN 1 ELSE source_revision END, source_fingerprint = ? WHERE file_path = ? AND NOT EXISTS (SELECT 1 FROM import_recovery ir WHERE ir.image_id = images.id AND ir.retained = 1) AND NOT EXISTS (SELECT 1 FROM import_intents WHERE file_path = images.file_path) AND NOT EXISTS (SELECT 1 FROM replacement_path_reservations WHERE path = images.file_path) AND NOT EXISTS (SELECT 1 FROM replacement_incoming_attempts WHERE path=images.file_path AND protected=1) AND COALESCE((SELECT value FROM settings WHERE scope='repo' AND key='discovery_generation'),'0') = ? AND (file_size IS NOT ? OR COALESCE(content_hash, '') != ? OR source_fingerprint IS NOT ? OR source_revision = 0)`, item.info.Size(), item.fingerprint, item.fingerprint, statMarker, item.fingerprint, increment, item.fingerprint, item.path, discoveryGeneration, item.info.Size(), statMarker, item.fingerprint)
 		if err != nil {
 			return changed, err
 		}
@@ -296,7 +299,8 @@ func (r *Repo) scanAndRegisterImagesWithFingerprint(ctx context.Context, advance
 func (r *Repo) mediaFiles(ctx context.Context) ([]string, error) {
 	rows, err := r.DB.QueryContext(ctx, `SELECT file_path FROM import_recovery WHERE retained = 1
 		UNION SELECT file_path FROM import_intents
-		UNION SELECT path FROM replacement_path_reservations`)
+		UNION SELECT path FROM replacement_path_reservations
+		UNION SELECT path FROM replacement_incoming_attempts WHERE protected=1`)
 	if err != nil {
 		return nil, err
 	}
@@ -800,7 +804,8 @@ func (r *Repo) availableMovePath(imageID int64, requested string, exact bool) (s
 		var reserved bool
 		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images WHERE file_path=? AND id!=?)
 			OR EXISTS(SELECT 1 FROM import_intents WHERE file_path=?)
-			OR EXISTS(SELECT 1 FROM replacement_path_reservations WHERE path=?)`, candidate, imageID, candidate, candidate).Scan(&reserved); err != nil {
+			OR EXISTS(SELECT 1 FROM replacement_path_reservations WHERE path=?)
+			OR EXISTS(SELECT 1 FROM replacement_incoming_attempts WHERE path=? AND protected=1)`, candidate, imageID, candidate, candidate, candidate).Scan(&reserved); err != nil {
 			return "", err
 		}
 		if reserved {

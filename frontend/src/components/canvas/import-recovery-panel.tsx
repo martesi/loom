@@ -1,6 +1,6 @@
 import { Dialog } from '@base-ui-components/react/dialog'
 import { Trans } from '@lingui/react/macro'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   ImageService,
   ImportResolutionStatus,
@@ -10,6 +10,7 @@ import {
   type ReplacementResult,
   type RetainedImportResolutionRequest,
   type RetainedImportResolutionResult,
+  type UnverifiedReplacementRedoTail,
 } from '../../../bindings/loom/internal/service'
 import { Button } from '../ui/button'
 import { ImportRecoverySections } from './import-recovery-sections'
@@ -18,19 +19,37 @@ interface Props {
   path: string
   refresh: number
   onRecovered: () => Promise<unknown>
+  className?: string
 }
 
 type ReplaceRequest =
   | { kind: 'pending'; request: PendingImportResolutionRequest }
   | { kind: 'retained'; request: RetainedImportResolutionRequest }
 
-export function ImportRecoveryPanel({ path, refresh, onRecovered }: Props) {
+export function ImportRecoveryPanel({
+  path,
+  refresh,
+  onRecovered,
+  className,
+}: Props) {
   const [open, setOpen] = useState(false)
   const [pending, setPending] = useState<PendingImportBatch[]>([])
   const [retained, setRetained] = useState<RecoverableImport[]>([])
   const [pendingReplacements, setPendingReplacements] = useState<
     ReplacementResult[]
   >([])
+  const [legacyRedoTail, setLegacyRedoTail] =
+    useState<UnverifiedReplacementRedoTail | null>(null)
+  const [legacyTailRequest, setLegacyTailRequest] = useState<{
+    confirmation: string
+    requestId: string
+  } | null>(null)
+  const [listErrors, setListErrors] = useState({
+    pending: '',
+    retained: '',
+    replacements: '',
+    legacyTail: '',
+  })
   const [loading, setLoading] = useState(false)
   const [working, setWorking] = useState<string | null>(null)
   const [error, setError] = useState('')
@@ -58,42 +77,130 @@ export function ImportRecoveryPanel({ path, refresh, onRecovered }: Props) {
     null
   )
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: repository mutations explicitly refresh the recovery ledger.
+  const applyListResults = useCallback(
+    (
+      results: [
+        PromiseSettledResult<PendingImportBatch[] | null>,
+        PromiseSettledResult<RecoverableImport[] | null>,
+        PromiseSettledResult<ReplacementResult[] | null>,
+        PromiseSettledResult<UnverifiedReplacementRedoTail | null>,
+      ]
+    ) => {
+      const [batches, imports, replacements, legacyTail] = results
+      setPending(batches.status === 'fulfilled' ? (batches.value ?? []) : [])
+      setRetained(imports.status === 'fulfilled' ? (imports.value ?? []) : [])
+      setPendingReplacements(
+        replacements.status === 'fulfilled' ? (replacements.value ?? []) : []
+      )
+      if (legacyTail.status === 'fulfilled') {
+        setLegacyRedoTail(legacyTail.value ?? null)
+        setLegacyTailRequest((current) =>
+          current?.confirmation === legacyTail.value?.confirmation
+            ? current
+            : null
+        )
+      } else {
+        setLegacyRedoTail(null)
+      }
+      setListErrors({
+        pending:
+          batches.status === 'rejected' ? errorMessage(batches.reason) : '',
+        retained:
+          imports.status === 'rejected' ? errorMessage(imports.reason) : '',
+        replacements:
+          replacements.status === 'rejected'
+            ? errorMessage(replacements.reason)
+            : '',
+        legacyTail:
+          legacyTail.status === 'rejected'
+            ? errorMessage(legacyTail.reason)
+            : '',
+      })
+    },
+    []
+  )
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh is an explicit recovery-ledger invalidation token.
   useEffect(() => {
     let cancelled = false
     setLoading(true)
-    void Promise.all([
+    void Promise.allSettled([
       ImageService.ListPendingImportBatches(path),
       ImageService.ListRecoverableImports(path),
       ImageService.ListPendingReplacementRecoveries(path),
-    ])
-      .then(([batches, imports, replacements]) => {
-        if (cancelled) return
-        setPending(batches ?? [])
-        setRetained(imports ?? [])
-        setPendingReplacements(replacements ?? [])
-        setLoading(false)
-      })
-      .catch((cause: unknown) => {
-        if (cancelled) return
-        setError(errorMessage(cause))
-        setLoading(false)
-      })
+      ImageService.GetUnverifiedReplacementRedoTail(path),
+    ]).then((results) => {
+      if (cancelled) return
+      applyListResults(results)
+      setLoading(false)
+    })
     return () => {
       cancelled = true
     }
-  }, [path, refresh])
+  }, [applyListResults, path, refresh])
 
-  function refreshLists() {
-    return Promise.all([
+  async function refreshLists() {
+    setLoading(true)
+    const results = await Promise.allSettled([
       ImageService.ListPendingImportBatches(path),
       ImageService.ListRecoverableImports(path),
       ImageService.ListPendingReplacementRecoveries(path),
-    ]).then(([batches, imports, replacements]) => {
-      setPending(batches ?? [])
-      setRetained(imports ?? [])
-      setPendingReplacements(replacements ?? [])
-    })
+      ImageService.GetUnverifiedReplacementRedoTail(path),
+    ])
+    applyListResults(results)
+    setLoading(false)
+  }
+
+  function retryReplacement(requestID: string) {
+    setWorking(`replacement:${requestID || 'status'}`)
+    setListErrors((current) => ({ ...current, replacements: '' }))
+    void ImageService.ListPendingReplacementRecoveries(path)
+      .then(async (replacements) => {
+        const latest = replacements ?? []
+        setPendingReplacements(latest)
+        if (
+          !requestID ||
+          !latest.some((item) => item.requestId === requestID)
+        ) {
+          await onRecovered()
+        }
+      })
+      .catch((cause: unknown) =>
+        setListErrors((current) => ({
+          ...current,
+          replacements: errorMessage(cause),
+        }))
+      )
+      .finally(() => setWorking(null))
+  }
+
+  function resolveLegacyRedoTail() {
+    if (!legacyRedoTail?.available || !legacyRedoTail.confirmation) return
+    const request =
+      legacyTailRequest?.confirmation === legacyRedoTail.confirmation
+        ? legacyTailRequest
+        : {
+            confirmation: legacyRedoTail.confirmation,
+            requestId: crypto.randomUUID(),
+          }
+    setLegacyTailRequest(request)
+    setWorking('legacy-redo-tail')
+    setError('')
+    void (async () => {
+      const result = await ImageService.ResolveUnverifiedReplacementRedoTail(
+        path,
+        request.requestId,
+        request.confirmation
+      )
+      if (!result?.applied)
+        throw new Error(result?.message || 'History resolution was not applied')
+      setLegacyTailRequest(null)
+      setLegacyRedoTail(null)
+      await onRecovered()
+      await refreshLists()
+    })()
+      .catch((cause: unknown) => setError(errorMessage(cause)))
+      .finally(() => setWorking(null))
   }
 
   function completePending(request: PendingImportResolutionRequest) {
@@ -302,10 +409,15 @@ export function ImportRecoveryPanel({ path, refresh, onRecovered }: Props) {
     recoverRetained(request)
   }
 
-  const count = pending.length + retained.length + pendingReplacements.length
+  const count =
+    pending.length +
+    retained.length +
+    pendingReplacements.length +
+    Number(legacyRedoTail?.available ?? false)
+  const hasListError = Object.values(listErrors).some(Boolean)
 
   return (
-    <div data-testid="import-recovery-panel">
+    <div className={className} data-testid="import-recovery-panel">
       <div className="px-2 pb-2">
         <Button
           type="button"
@@ -314,14 +426,14 @@ export function ImportRecoveryPanel({ path, refresh, onRecovered }: Props) {
           data-testid="import-recovery-trigger"
           onClick={() => {
             setError('')
-            void refreshLists().catch((cause: unknown) =>
-              setError(errorMessage(cause))
-            )
+            void refreshLists()
             setOpen(true)
           }}
         >
           {loading ? (
             <Trans>Checking import recovery…</Trans>
+          ) : hasListError ? (
+            <Trans>Recovery status needs review</Trans>
           ) : count > 0 ? (
             <Trans>Import recovery ({count})</Trans>
           ) : (
@@ -332,6 +444,13 @@ export function ImportRecoveryPanel({ path, refresh, onRecovered }: Props) {
       {error && !open && (
         <div role="alert" className="px-3 pb-2 text-xs text-danger">
           {error}
+        </div>
+      )}
+      {hasListError && !open && (
+        <div role="alert" className="px-3 pb-2 text-xs text-danger">
+          <Trans>
+            Some recovery status could not be loaded. Open to retry.
+          </Trans>
         </div>
       )}
       <Dialog.Root open={open} onOpenChange={setOpen}>
@@ -505,6 +624,11 @@ export function ImportRecoveryPanel({ path, refresh, onRecovered }: Props) {
               pending={pending}
               retained={retained}
               replacementRecoveries={pendingReplacements}
+              legacyRedoTail={legacyRedoTail}
+              legacyTailLoadError={listErrors.legacyTail}
+              pendingLoadError={listErrors.pending}
+              retainedLoadError={listErrors.retained}
+              replacementLoadError={listErrors.replacements}
               selectedItems={selectedItems}
               releasedItems={releasedItems}
               releaseConfirmationBatch={releaseConfirmation?.batchID ?? null}
@@ -524,6 +648,9 @@ export function ImportRecoveryPanel({ path, refresh, onRecovered }: Props) {
               onCancelRelease={() => setReleaseConfirmation(null)}
               onRestoreVerified={(item) => startRetainedResolution(item, false)}
               onShowUnverified={(item) => startRetainedResolution(item, true)}
+              onRetryReplacement={retryReplacement}
+              onRetryLegacyTail={() => void refreshLists()}
+              onResolveLegacyTail={resolveLegacyRedoTail}
             />
             <div className="mt-5 flex justify-end">
               <Dialog.Close

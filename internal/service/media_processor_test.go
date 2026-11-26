@@ -240,8 +240,8 @@ func TestReplaceMediaPreservesIdentityAndUndoRedo(t *testing.T) {
 	if err := images.PurgeImages(repoPath, []int64{imageID}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(stashDir); !os.IsNotExist(err) {
-		t.Fatalf("replacement stash remains after purge: %v", err)
+	if _, err := os.Stat(stashDir); err != nil {
+		t.Fatalf("replacement stash was removed instead of preserved: %v", err)
 	}
 	if _, err := os.Stat(previewFile); !os.IsNotExist(err) {
 		t.Fatalf("preview cache remains after purge: %v", err)

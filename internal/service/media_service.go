@@ -11,6 +11,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -60,6 +61,11 @@ func (s *MediaService) Transcode(repoPath string, imageID int64, request MediaTr
 		unlockOperations()
 		return nil, err
 	}
+	if err := rejectPendingHistoryReplay(r); err != nil {
+		r.Close()
+		unlockOperations()
+		return nil, err
+	}
 	releaseImageLock, ok := acquireReplacementImageLock(r.Path, imageID)
 	if !ok {
 		r.Close()
@@ -67,6 +73,8 @@ func (s *MediaService) Transcode(repoPath string, imageID int64, request MediaTr
 		return nil, fmt.Errorf("asset %d is busy in a preview or replacement", imageID)
 	}
 	defer releaseImageLock()
+	unlockRenditionRepository := lockRenditionRepositoryRead(r.Path)
+	defer unlockRenditionRepository()
 	unlockOperations()
 	defer r.Close()
 	if pending, err := pendingReplacementForImage(r, imageID); err != nil {
@@ -107,12 +115,42 @@ func (s *MediaService) Transcode(repoPath string, imageID int64, request MediaTr
 
 // CopyMedia transports original bytes rather than preview thumbnails or paths.
 func (s *ImageService) CopyMedia(repoPath string, ids []int64, converted bool) ([]ClipboardMedia, error) {
-	r, err := store.Bootstrap(repoPath)
+	r, unlockOperations, err := openOperationRepoRaw(repoPath)
 	if err != nil {
 		return nil, err
 	}
+	if err := recoverReplacementJournals(r); err != nil {
+		r.Close()
+		unlockOperations()
+		return nil, err
+	}
+	if err := rejectPendingHistoryReplay(r); err != nil {
+		r.Close()
+		unlockOperations()
+		return nil, err
+	}
+	imageIDs := uniqueImageIDs(ids)
+	sort.Slice(imageIDs, func(i, j int) bool { return imageIDs[i] < imageIDs[j] })
+	var releases []func()
+	defer func() {
+		for index := len(releases) - 1; index >= 0; index-- {
+			releases[index]()
+		}
+	}()
+	for _, id := range imageIDs {
+		release, ok := acquirePreviewLock(context.Background(), fmt.Sprintf("%s\x00%d", r.Path, id))
+		if !ok {
+			r.Close()
+			unlockOperations()
+			return nil, fmt.Errorf("asset %d is busy in a preview or replacement", id)
+		}
+		releases = append(releases, release)
+	}
+	unlockRenditionRepository := lockRenditionRepositoryRead(r.Path)
+	defer unlockRenditionRepository()
+	unlockOperations()
 	defer r.Close()
-	images, err := r.ListImagesByIDs(uniqueImageIDs(ids))
+	images, err := r.ListImagesByIDs(imageIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -207,6 +245,13 @@ func (s *ImageService) ReplaceMedia(repoPath string, imageID int64, item Clipboa
 		return nil, fmt.Errorf("replacement media exceeds %d bytes", maxClipboardItemBytes)
 	}
 	requestHash := replacementRequestHash(r.Path, imageID, name, data)
+	var historyRequestUsed bool
+	if err := r.DB.QueryRow(`SELECT EXISTS(SELECT 1 FROM history_replay_requests WHERE request_id=?)`, requestID).Scan(&historyRequestUsed); err != nil {
+		return nil, err
+	}
+	if historyRequestUsed {
+		return nil, fmt.Errorf("replacement request ID was already used for history replay")
+	}
 	if result, found, err := readReplacementReceipt(r, requestID, requestHash); err != nil {
 		return nil, err
 	} else if found && !result.PendingRecovery {
@@ -222,15 +267,6 @@ func (s *ImageService) ReplaceMedia(repoPath string, imageID int64, item Clipboa
 			return pendingReplacementResult(journal, "The image is busy in a preview."), nil
 		}
 		defer release()
-		incomingState, stateErr := replacementPathState(r.Path, journal.IncomingPath)
-		if stateErr != nil {
-			return pendingReplacementResult(journal, stateErr.Error()), nil
-		}
-		if !incomingState.exists && canResumeIncomingCreation(r.Path, journal) {
-			if err := ensureIncomingReplacementFile(r.Path, journal, data); err != nil {
-				return pendingReplacementResult(journal, err.Error()), nil
-			}
-		}
 		return finishReplacementRequest(r, journal)
 	}
 	if err != sql.ErrNoRows {
@@ -241,6 +277,9 @@ func (s *ImageService) ReplaceMedia(repoPath string, imageID int64, item Clipboa
 		if errors.As(err, &pending) {
 			return pendingReplacementResult(pending.Journal, pending.Cause.Error()), nil
 		}
+		return nil, err
+	}
+	if err := rejectPendingHistoryReplay(r); err != nil {
 		return nil, err
 	}
 	if err := r.PrepareOperationLog(); err != nil {
@@ -270,7 +309,7 @@ func (s *ImageService) ReplaceMedia(repoPath string, imageID int64, item Clipboa
 	if err := replacementFault("after-intent-commit"); err != nil {
 		return pendingReplacementResult(journal, err.Error()), nil
 	}
-	if err := ensureIncomingReplacementFile(r.Path, journal, data); err != nil {
+	if err := ensureIncomingMetadata(r, journal); err != nil {
 		return pendingReplacementResult(journal, err.Error()), nil
 	}
 	replacementCrash("after-incoming-create")
@@ -399,11 +438,28 @@ func purgeImages(r *store.Repo, ids []int64) error {
 	if err := rejectPurgeWithPendingReplacement(r, images); err != nil {
 		return err
 	}
+	if err := rejectPurgeWithProtectedReplacementEvidence(r, images); err != nil {
+		return err
+	}
 	for _, img := range images {
 		rel, err := filepath.Rel(r.Path, img.FilePath)
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return fmt.Errorf("asset is outside repository")
 		}
+	}
+	sort.Slice(images, func(i, j int) bool { return images[i].ID < images[j].ID })
+	var releases []func()
+	defer func() {
+		for index := len(releases) - 1; index >= 0; index-- {
+			releases[index]()
+		}
+	}()
+	for _, img := range images {
+		release, ok := acquirePreviewLock(context.Background(), fmt.Sprintf("%s\x00%d", r.Path, img.ID))
+		if !ok {
+			return fmt.Errorf("image %d is busy in a preview or replacement", img.ID)
+		}
+		releases = append(releases, release)
 	}
 	for _, img := range images {
 		if err := os.Remove(img.FilePath); err != nil && !os.IsNotExist(err) {
@@ -414,21 +470,47 @@ func purgeImages(r *store.Repo, ids []int64) error {
 				return err
 			}
 		}
-		if err := os.RemoveAll(filepath.Join(r.Path, ".loom", "trash", "replacements", fmt.Sprint(img.ID))); err != nil {
-			return err
-		}
-		releasePreviewLocks, err := lockAndRemovePreviewCacheForImage(r.Path, img.ID)
-		if err != nil {
+		if err := removePreviewCacheForImageLocked(r.Path, img.ID); err != nil {
 			return fmt.Errorf("purge preview cache: %w", err)
 		}
 		_, deleteErr := r.DB.Exec("DELETE FROM images WHERE id = ?", img.ID)
-		releasePreviewLocks()
 		if deleteErr != nil {
 			return deleteErr
 		}
 	}
 	_, err := r.DB.Exec("DELETE FROM groups WHERE NOT EXISTS (SELECT 1 FROM images WHERE group_id = groups.id)")
 	return err
+}
+
+// This preflight is deliberately read-only. Purge may remove only its explicit
+// image and thumbnail paths; it must not erase a path retained as replacement
+// recovery evidence.
+func rejectPurgeWithProtectedReplacementEvidence(r *store.Repo, images []store.Image) error {
+	for _, image := range images {
+		rows, err := r.DB.Query(`SELECT path FROM replacement_incoming_attempts WHERE image_id=? AND protected=1`, image.ID)
+		if err != nil {
+			return fmt.Errorf("inspect protected replacement evidence for image %d: %w", image.ID, err)
+		}
+		for rows.Next() {
+			var path string
+			if err := rows.Scan(&path); err != nil {
+				rows.Close()
+				return err
+			}
+			if path == image.FilePath || image.ThumbPath != "" && path == image.ThumbPath {
+				rows.Close()
+				return fmt.Errorf("cannot purge image %d because %s contains protected replacement evidence", image.ID, filepath.Base(path))
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func rejectPurgeWithPendingReplacement(r *store.Repo, images []store.Image) error {

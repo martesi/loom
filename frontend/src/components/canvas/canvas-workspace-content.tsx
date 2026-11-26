@@ -25,6 +25,7 @@ import { CanvasOverlays } from './canvas-overlays'
 import { CanvasToolbar } from './canvas-toolbar'
 import { DetailPanel } from './detail-panel'
 import { ImageNode } from './image-node'
+import { ImportRecoveryPanel } from './import-recovery-panel'
 import { LibraryPanel } from './library-panel'
 import { ShelfPanel } from './shelf-panel'
 import type { useCanvasAssetOperations } from './use-canvas-asset-operations'
@@ -307,6 +308,12 @@ export function CanvasWorkspaceContent(props: Props) {
           </button>
         </div>
       )}
+      <ImportRecoveryPanel
+        className="absolute bottom-2 left-2 z-50"
+        path={repo.path}
+        refresh={workspaceState.refresh}
+        onRecovered={repository.initialize}
+      />
       <div className="absolute inset-0">
         <ShelfPanel
           title={t`Assets`}

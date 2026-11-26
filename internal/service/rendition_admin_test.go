@@ -129,8 +129,7 @@ func TestRevisionLookupCannotRepopulateAfterInvalidationClear(t *testing.T) {
 	// holder, but returns false once the clearing writer is queued. Do not
 	// release the lookup until that state proves the writer has reached Lock.
 	deadline := time.Now().Add(2 * time.Second)
-	for renditionRepositoryState.TryRLock() {
-		renditionRepositoryState.RUnlock()
+	for renditionRepositoryReadAvailable(repoPath) {
 		if time.Now().After(deadline) {
 			t.Fatal("metadata-clearing writer never queued behind the lookup")
 		}
@@ -143,6 +142,23 @@ func TestRevisionLookupCannotRepopulateAfterInvalidationClear(t *testing.T) {
 	<-writerDone
 	if got := cachedImageRevision(key, func() (int64, error) { return 2, nil }); got != 2 {
 		t.Fatalf("revision after clear = %d, want fresh value 2", got)
+	}
+}
+
+func TestRenditionRepositoryLocksDoNotSerializeIndependentRepos(t *testing.T) {
+	firstUnlock := lockRenditionRepository(t.TempDir())
+	defer firstUnlock()
+	secondRepo := t.TempDir()
+	secondDone := make(chan struct{})
+	go func() {
+		unlock := lockRenditionRepositoryRead(secondRepo)
+		unlock()
+		close(secondDone)
+	}()
+	select {
+	case <-secondDone:
+	case <-time.After(time.Second):
+		t.Fatal("one repository's rendition writer blocked an independent repository")
 	}
 }
 
@@ -183,8 +199,7 @@ func TestConcurrentRescanCannotRaceRenditionPublication(t *testing.T) {
 		rescanDone <- err
 	}()
 	deadline := time.Now().Add(2 * time.Second)
-	for renditionRepositoryState.TryRLock() {
-		renditionRepositoryState.RUnlock()
+	for renditionRepositoryReadAvailable(repoPath) {
 		if time.Now().After(deadline) {
 			t.Fatal("rescan never queued behind publication lock")
 		}

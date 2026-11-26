@@ -1,6 +1,6 @@
 import type { ReactFlowInstance } from '@xyflow/react'
 import type { Dispatch, SetStateAction } from 'react'
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import {
   type CanvasData,
   type ImageInfo,
@@ -39,6 +39,8 @@ export function useCanvasRepository({
   setReady,
   setAssetSelectionRecords,
 }: Props) {
+  const initialization = useRef(0)
+  const fitTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const report = useCallback(
     (error: unknown) => {
       console.error('canvas operation failed', error)
@@ -53,6 +55,37 @@ export function useCanvasRepository({
     const result = await executor.refresh()
     return result?.data ?? null
   }, [executor])
+  const initialize = useCallback(async (): Promise<void> => {
+    const request = ++initialization.current
+    if (fitTimer.current) clearTimeout(fitTimer.current)
+    setReady(false)
+    const [result, viewport] = await Promise.all([
+      executor.refresh(),
+      ImageService.GetViewport(repoPath),
+    ])
+    if (request !== initialization.current || executor.isActive?.() === false)
+      return
+    if (viewport) {
+      updateZoomCompensation(viewport.zoom)
+      await flow.setViewport(viewport)
+    }
+    setReady(true)
+    if (
+      !viewport &&
+      (result?.data.images ?? []).some(
+        (image) => image.placed && !image.trashed
+      )
+    ) {
+      fitTimer.current = setTimeout(() => {
+        if (
+          request === initialization.current &&
+          executor.isActive?.() !== false
+        ) {
+          void flow.fitView({ padding: 0.2, maxZoom: 1 })
+        }
+      }, 100)
+    }
+  }, [executor, flow, repoPath, setReady, updateZoomCompensation])
   useEffect(
     () => executor.subscribe(() => setRefresh((current) => current + 1)),
     [executor, setRefresh]
@@ -102,36 +135,13 @@ export function useCanvasRepository({
     [executor, reload, report]
   )
   useEffect(() => {
-    let cancelled = false
-    let fitTimer: ReturnType<typeof setTimeout> | undefined
-    void Promise.all([executor.refresh(), ImageService.GetViewport(repoPath)])
-      .then(([result, viewport]) => {
-        if (cancelled) return
-        if (viewport) {
-          updateZoomCompensation(viewport.zoom)
-          void flow.setViewport(viewport)
-        }
-        setReady(true)
-        if (
-          !viewport &&
-          (result?.data.images ?? []).some(
-            (image) => image.placed && !image.trashed
-          )
-        )
-          fitTimer = setTimeout(
-            () => void flow.fitView({ padding: 0.2, maxZoom: 1 }),
-            100
-          )
-      })
-      .catch((error) => {
-        if (!cancelled) report(error)
-      })
+    void initialize().catch(report)
     return () => {
-      cancelled = true
-      if (fitTimer) clearTimeout(fitTimer)
+      initialization.current++
+      if (fitTimer.current) clearTimeout(fitTimer.current)
     }
-  }, [executor, repoPath, flow, updateZoomCompensation, setReady, report])
-  return { report, reload, reloadForData, run, assetSelectionKey }
+  }, [initialize, report])
+  return { report, reload, reloadForData, initialize, run, assetSelectionKey }
 }
 
 function isMissingImageError(cause: unknown) {

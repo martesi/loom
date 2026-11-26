@@ -138,70 +138,16 @@ func replacementStashPath(repo *store.Repo, imageID int64, requestID, prefix, ex
 	return filepath.Join(repo.Path, ".loom", "trash", "replacements", fmt.Sprint(imageID), prefix+hex.EncodeToString(requestDigest[:])+ext)
 }
 
+func replacementIncomingAttemptPath(repo *store.Repo, imageID int64, attemptID, ext string) string {
+	return filepath.Join(repo.Path, ".loom", "recovery", "replacements", fmt.Sprint(imageID), attemptID+ext)
+}
+
 func newReplacementRequestID() (string, error) {
 	var random [16]byte
 	if _, err := rand.Read(random[:]); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(random[:]), nil
-}
-
-func ensureIncomingReplacementFile(root string, journal replacementJournal, data []byte) error {
-	if fingerprintBytes(data) != journal.IncomingFingerprint {
-		return fmt.Errorf("replacement retry bytes do not match the reserved request")
-	}
-	state, err := replacementPathState(root, journal.IncomingPath)
-	if err != nil {
-		return err
-	}
-	if state.exists {
-		if state.fingerprint != journal.IncomingFingerprint {
-			return fmt.Errorf("reserved incoming file exists with different bytes; it was not overwritten")
-		}
-		return nil
-	}
-	file, err := os.OpenFile(journal.IncomingPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return fmt.Errorf("create reserved incoming replacement file: %w", err)
-	}
-	if err := replacementFault("incoming-after-exclusive-create"); err != nil {
-		if closeErr := file.Close(); closeErr != nil {
-			return errors.Join(err, closeErr)
-		}
-		return fmt.Errorf("incoming replacement was created but left incomplete: %w", err)
-	}
-	_, writeErr := file.Write(data)
-	if writeErr == nil {
-		writeErr = file.Sync()
-	}
-	closeErr := file.Close()
-	if writeErr != nil {
-		return fmt.Errorf("write reserved incoming replacement file; partial bytes were preserved: %w", writeErr)
-	}
-	if closeErr != nil {
-		return fmt.Errorf("close reserved incoming replacement file; bytes were preserved: %w", closeErr)
-	}
-	return nil
-}
-
-func canResumeIncomingCreation(root string, journal replacementJournal) bool {
-	if journal.Action != "initial" {
-		return false
-	}
-	current, err := replacementPathState(root, journal.CurrentPath)
-	if err != nil || !fileMatches(current, journal.CurrentFingerprint) {
-		return false
-	}
-	outgoing, err := replacementPathState(root, journal.OutgoingPath)
-	if err != nil || outgoing.exists {
-		return false
-	}
-	active, err := replacementPathState(root, journal.ActivePath)
-	if err != nil {
-		return false
-	}
-	return journal.ActivePath == journal.CurrentPath && samePathState(current, active) ||
-		journal.ActivePath != journal.CurrentPath && !active.exists
 }
 
 func finishReplacementRequest(repo *store.Repo, journal replacementJournal) (*ReplacementResult, error) {
@@ -306,7 +252,11 @@ func reserveReplacementJournal(repo *store.Repo, image store.Image, requestID, r
 	if err := os.MkdirAll(stashDir, 0o755); err != nil {
 		return replacementJournal{}, err
 	}
-	incomingPath := replacementStashPath(repo, image.ID, requestID, "incoming-", filepath.Ext(name))
+	attemptID, err := newReplacementRequestID()
+	if err != nil {
+		return replacementJournal{}, err
+	}
+	incomingPath := replacementIncomingAttemptPath(repo, image.ID, attemptID, filepath.Ext(name))
 	outgoingPath := replacementStashPath(repo, image.ID, requestID, "original-", filepath.Ext(image.FilePath))
 	if err := validateReplacementPathSet(repo.Path, image.FilePath, outgoingPath, incomingPath, image.FilePath); err != nil {
 		return replacementJournal{}, err
@@ -324,6 +274,13 @@ func reserveReplacementJournal(repo *store.Repo, image store.Image, requestID, r
 	defer tx.Rollback()
 	if _, err := tx.Exec(`UPDATE operation_log SET seq=seq WHERE 0`); err != nil {
 		return replacementJournal{}, fmt.Errorf("lock replacement reservation: %w", err)
+	}
+	var historyRequestUsed bool
+	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM history_replay_requests WHERE request_id=?)`, requestID).Scan(&historyRequestUsed); err != nil {
+		return replacementJournal{}, err
+	}
+	if historyRequestUsed {
+		return replacementJournal{}, fmt.Errorf("replacement request ID was already used for history replay")
 	}
 	row, err := replacementImageSnapshot(tx, image.ID)
 	if err != nil {
@@ -377,6 +334,10 @@ func reserveReplacementJournal(repo *store.Repo, image store.Image, requestID, r
 	journal.HistoryForward, journal.HistoryInverse = forwardJSON, inverseJSON
 	if err := insertReplacementJournalTx(tx, journal); err != nil {
 		return replacementJournal{}, err
+	}
+	if _, err := tx.Exec(`INSERT INTO replacement_incoming_attempts(attempt_id,request_id,image_id,path,phase,protected)
+		VALUES(?,?,?,?, 'reserved',1)`, attemptID, requestID, image.ID, incomingPath); err != nil {
+		return replacementJournal{}, fmt.Errorf("reserve replacement incoming attempt: %w", err)
 	}
 	for _, path := range uniqueStrings([]string{image.FilePath, outgoingPath, incomingPath, activePath}) {
 		if _, err := tx.Exec(`INSERT INTO replacement_path_reservations(path,request_id) VALUES (?,?)`, path, requestID); err != nil {

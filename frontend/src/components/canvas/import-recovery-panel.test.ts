@@ -19,6 +19,7 @@ function Trans({ children }: { children: ReactNode }) {
 
 mock.module('@lingui/react/macro', () => ({ Trans }))
 const { ImportRecoveryPanel } = await import('./import-recovery-panel')
+let legacyTailMock: { resolveOnce: (result: unknown) => void }
 
 afterEach(() => {
   cleanup()
@@ -29,6 +30,16 @@ beforeEach(() => {
   spyOn(ImageService, 'ListPendingReplacementRecoveries').mockResolvedValue(
     [] as never
   )
+  const tailSpy = spyOn(
+    ImageService,
+    'GetUnverifiedReplacementRedoTail'
+  ).mockResolvedValue({
+    available: false,
+    cursor: 0,
+  } as never)
+  legacyTailMock = {
+    resolveOnce: (result) => tailSpy.mockResolvedValueOnce(result as never),
+  }
 })
 
 it('resolves only selected verified items and confirms safe reservation release', async () => {
@@ -257,6 +268,107 @@ it('requires separate evidence and redo confirmations to show an untrusted ident
     redoTailConfirmation: 'branch-token',
   })
   await waitFor(() => expect(onRecovered).toHaveBeenCalledTimes(1))
+})
+
+it('loads replacement evidence independently when other recovery lists fail', async () => {
+  spyOn(ImageService, 'ListPendingImportBatches').mockResolvedValue([
+    {
+      id: 'independent-batch',
+      files: [
+        {
+          itemIndex: 0,
+          path: '/repo/kept-file.png',
+          fingerprint: 'verified',
+          status: ImportResolutionStatus.ImportStatusVerified,
+          recordedFingerprint: 'verified',
+          currentFingerprint: 'verified',
+          filePresent: true,
+          verified: true,
+        },
+      ],
+    },
+  ] as never)
+  spyOn(ImageService, 'ListRecoverableImports').mockRejectedValue(
+    new Error('retained list unavailable')
+  )
+  spyOn(ImageService, 'ListPendingReplacementRecoveries').mockRejectedValue(
+    new Error('replacement list unavailable')
+  )
+  render(
+    createElement(ImportRecoveryPanel, {
+      path: '/repo',
+      refresh: 0,
+      onRecovered: mock(async () => {}),
+      className: 'workspace-recovery-entry',
+    })
+  )
+  const entry = screen.getByTestId('import-recovery-panel')
+  expect(entry.className).toContain('workspace-recovery-entry')
+  fireEvent.click(
+    await screen.findByRole('button', {
+      name: /recovery status needs review/i,
+    })
+  )
+  expect(await screen.findByText('/repo/kept-file.png')).toBeTruthy()
+  expect(await screen.findByText('replacement list unavailable')).toBeTruthy()
+  expect(screen.queryByText(/no interrupted imports/i)).toBeNull()
+  expect(
+    screen.getByRole('button', {
+      name: /retry replacement status and recovery/i,
+    })
+  ).toBeTruthy()
+})
+
+it('offers an explicit full redo-tail discard without changing files', async () => {
+  spyOn(ImageService, 'ListPendingImportBatches').mockResolvedValue([] as never)
+  spyOn(ImageService, 'ListRecoverableImports').mockResolvedValue([] as never)
+  spyOn(ImageService, 'ListPendingReplacementRecoveries').mockResolvedValue(
+    [] as never
+  )
+  const availableTail = {
+    available: true,
+    status: 'unverified',
+    cursor: 1,
+    startSeq: 2,
+    endSeq: 4,
+    operationCount: 3,
+    confirmation: 'exact-full-tail-token',
+    warning:
+      'Discard all 3 redo operations from 2 through 4. No files will be deleted.',
+  }
+  legacyTailMock.resolveOnce(availableTail)
+  legacyTailMock.resolveOnce(availableTail)
+  legacyTailMock.resolveOnce({ available: false, cursor: 1 })
+  const resolve = spyOn(
+    ImageService,
+    'ResolveUnverifiedReplacementRedoTail'
+  ).mockResolvedValue({
+    applied: true,
+    requestId: 'legacy-tail-request',
+    cursor: 1,
+    discardedCount: 3,
+  } as never)
+  const onRecovered = mock(async () => {})
+  render(
+    createElement(ImportRecoveryPanel, {
+      path: '/repo',
+      refresh: 0,
+      onRecovered,
+    })
+  )
+  fireEvent.click(
+    await screen.findByRole('button', { name: /import recovery \(1\)/i })
+  )
+  expect(await screen.findByTestId('unverified-legacy-redo-tail')).toBeTruthy()
+  expect(screen.getByText(/all 3 redo operations/i)).toBeTruthy()
+  fireEvent.click(screen.getByTestId('discard-unverified-redo-tail'))
+  await waitFor(() => expect(resolve).toHaveBeenCalledTimes(1))
+  expect(resolve).toHaveBeenCalledWith(
+    '/repo',
+    expect.any(String),
+    'exact-full-tail-token'
+  )
+  expect(onRecovered).toHaveBeenCalledTimes(1)
 })
 
 it('requires fresh explicit consent after stale evidence and keeps uncertain retries idempotent', async () => {

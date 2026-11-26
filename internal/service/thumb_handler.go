@@ -2,8 +2,10 @@ package service
 
 import (
 	"encoding/base64"
+	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,19 +26,67 @@ var renditionMetadata = struct {
 	revisions map[string]int64
 }{revisions: make(map[string]int64)}
 
-// This lock coordinates persisted revision reads, DB updates, cache clears,
-// and cache publication. A single lock is deliberate: SQLite updates are
-// short, and stale revision publication is worse than brief cross-repo waits.
-var renditionRepositoryState sync.RWMutex
+// This keyed lock coordinates persisted revision reads, DB updates, cache
+// clears, and cache publication without serializing independent repositories.
+var renditionRepositoryLocks = struct {
+	sync.Mutex
+	byPath map[string]*renditionRepositoryLock
+}{byPath: make(map[string]*renditionRepositoryLock)}
 
-func lockRenditionRepository(_ string) func() {
-	renditionRepositoryState.Lock()
-	return renditionRepositoryState.Unlock
+type renditionRepositoryLock struct {
+	mu   sync.RWMutex
+	refs int
 }
 
-func lockRenditionRepositoryRead(_ string) func() {
-	renditionRepositoryState.RLock()
-	return renditionRepositoryState.RUnlock
+func lockRenditionRepository(repoPath string) func() {
+	entry, unlockReference := acquireRenditionRepositoryLock(repoPath)
+	entry.mu.Lock()
+	return func() {
+		entry.mu.Unlock()
+		unlockReference()
+	}
+}
+
+func lockRenditionRepositoryRead(repoPath string) func() {
+	entry, unlockReference := acquireRenditionRepositoryLock(repoPath)
+	entry.mu.RLock()
+	return func() {
+		entry.mu.RUnlock()
+		unlockReference()
+	}
+}
+
+func renditionRepositoryReadAvailable(repoPath string) bool {
+	entry, unlockReference := acquireRenditionRepositoryLock(repoPath)
+	available := entry.mu.TryRLock()
+	if available {
+		entry.mu.RUnlock()
+	}
+	unlockReference()
+	return available
+}
+
+func acquireRenditionRepositoryLock(repoPath string) (*renditionRepositoryLock, func()) {
+	key, err := filepath.Abs(repoPath)
+	if err != nil {
+		key = filepath.Clean(repoPath)
+	}
+	renditionRepositoryLocks.Lock()
+	entry := renditionRepositoryLocks.byPath[key]
+	if entry == nil {
+		entry = &renditionRepositoryLock{}
+		renditionRepositoryLocks.byPath[key] = entry
+	}
+	entry.refs++
+	renditionRepositoryLocks.Unlock()
+	return entry, func() {
+		renditionRepositoryLocks.Lock()
+		entry.refs--
+		if entry.refs == 0 {
+			delete(renditionRepositoryLocks.byPath, key)
+		}
+		renditionRepositoryLocks.Unlock()
+	}
 }
 
 func thumbURL(repoPath string, imageID int64, filePath string) string {
@@ -85,8 +135,9 @@ func persistedImageRevision(repoPath string, imageID int64) int64 {
 }
 
 func cachedImageRevision(key string, lookup func() (int64, error)) int64 {
-	renditionRepositoryState.RLock()
-	defer renditionRepositoryState.RUnlock()
+	repoPath, _, _ := strings.Cut(key, "\x00")
+	unlockRepository := lockRenditionRepositoryRead(repoPath)
+	defer unlockRepository()
 	renditionMetadata.RLock()
 	revision, ok := renditionMetadata.revisions[key]
 	renditionMetadata.RUnlock()
@@ -193,18 +244,58 @@ func ServeFull(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repo, err := store.Bootstrap(string(repoPathBytes))
+	repo, unlockOperations, err := openOperationRepoRaw(string(repoPathBytes))
 	if err != nil {
 		http.Error(w, "repo unavailable", http.StatusInternalServerError)
 		return
 	}
-	defer repo.Close()
+	if err := recoverReplacementJournals(repo); err != nil {
+		repo.Close()
+		unlockOperations()
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	if err := rejectPendingHistoryReplay(repo); err != nil {
+		repo.Close()
+		unlockOperations()
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	key := fmt.Sprintf("%s\x00%d", repo.Path, imageID)
+	releaseImage, ok := acquirePreviewLock(r.Context(), key)
+	if !ok {
+		repo.Close()
+		unlockOperations()
+		http.Error(w, "asset is busy in a preview or replacement", http.StatusServiceUnavailable)
+		return
+	}
 
 	filePath, err := repo.GetFilePath(imageID)
 	if err != nil {
+		releaseImage()
+		repo.Close()
+		unlockOperations()
 		http.NotFound(w, r)
 		return
 	}
+	if pending, err := pendingReplacementForImage(repo, imageID); err != nil {
+		releaseImage()
+		repo.Close()
+		unlockOperations()
+		http.Error(w, "cannot inspect replacement recovery state", http.StatusInternalServerError)
+		return
+	} else if pending != nil {
+		releaseImage()
+		repo.Close()
+		unlockOperations()
+		http.Error(w, pendingReplacementResult(*pending, "Full media is blocked until replacement recovery is resolved.").Message, http.StatusConflict)
+		return
+	}
+	unlockRenditionRepository := lockRenditionRepositoryRead(repo.Path)
+	unlockOperations()
+	defer repo.Close()
+	defer unlockRenditionRepository()
+	defer releaseImage()
 
 	w.Header().Set("Cache-Control", "no-cache")
 	http.ServeFile(w, r, filePath)

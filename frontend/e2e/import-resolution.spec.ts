@@ -104,6 +104,23 @@ test('Assets can partially recover and explicitly release changed pending files'
   await expect(remaining).toContainText('e2e-pending-missing.png')
 })
 
+test('workspace recovery remains reachable with the Assets shelf closed', async ({
+  page,
+}) => {
+  const repoPath = await fixturePath('clipboard-fixtures')
+  await seedFixture(repoPath, 'pending')
+  await openFixtureRepo(page, 'clipboard-fixtures', { drawers: 'closed' })
+  const recoveryTrigger = page.getByTestId('import-recovery-trigger')
+  await expect(recoveryTrigger).toBeVisible()
+  await expect(page.locator('aside[aria-label="Assets"]')).toHaveAttribute(
+    'data-visible',
+    'false'
+  )
+  await recoveryTrigger.click()
+  await expect(page.getByTestId('import-recovery-dialog')).toBeVisible()
+  await expect(page.getByTestId('pending-import-file').first()).toBeVisible()
+})
+
 test('Canvas loads and recovery remains visible with expired trash linked to a retained import', async ({
   page,
 }) => {

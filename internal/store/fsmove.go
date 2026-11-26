@@ -93,6 +93,22 @@ func moveFileOnDisk(src, dst string) error {
 	return nil
 }
 
+// MovePathNoReplace moves one existing file by an atomic hard-link create and
+// source unlink. It never truncates or replaces a destination and has no
+// cross-device copy fallback. Callers must retain a journal if unlink fails.
+func MovePathNoReplace(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return fmt.Errorf("create destination directory: %w", err)
+	}
+	if err := os.Link(src, dst); err != nil {
+		return err
+	}
+	if err := os.Remove(src); err != nil {
+		return fmt.Errorf("linked destination %s but could not unlink source %s: %w", dst, src, err)
+	}
+	return nil
+}
+
 func copyFileContents(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {

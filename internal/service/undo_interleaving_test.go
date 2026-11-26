@@ -37,8 +37,8 @@ func TestStaleAtomicReplayDoesNotRewindNewerOperation(t *testing.T) {
 	if err := other.CommitOperation(tx, previousCursor); err != nil {
 		t.Fatal(err)
 	}
-	handled, selected, _, err := replayAtomicHistory(repo, false)
-	if err != nil || !handled || selected == nil || selected.Seq != 2 || selected.Kind != "newer" {
+	handled, selected, result, err := replayAtomicHistory(repo, false, "interleave-request")
+	if err != nil || !handled || selected == nil || selected.Seq != 2 || selected.Kind != "newer" || result == nil || !result.Applied {
 		t.Fatalf("replay selected %+v, handled %v, err %v; want newer operation", selected, handled, err)
 	}
 	cursor, err := repo.UndoCursor()

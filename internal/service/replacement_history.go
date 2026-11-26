@@ -32,7 +32,7 @@ func beginReplacementHistoryReplay(repo *store.Repo, op *store.Operation, redo b
 		return nil, err
 	}
 	if payload.ImageID <= 0 || payload.CurrentFingerprint == "" || payload.IncomingFingerprint == "" {
-		return nil, fmt.Errorf("replacement history entry %d has no verified fingerprints; replay was refused", op.Seq)
+		return nil, fmt.Errorf("replacement history entry %d is an unverified legacy replacement with no content fingerprints; replay was refused and no file or cursor was changed. Review its paths and fingerprints. If it is at the start of the redo tail, the recovery panel can show the full tail and offer an explicit history-only discard; Loom will keep every file and will not invent provenance.", op.Seq)
 	}
 	release, ok := acquireReplacementImageLock(repo.Path, payload.ImageID)
 	if !ok {
@@ -73,6 +73,15 @@ func beginReplacementHistoryReplay(repo *store.Repo, op *store.Operation, redo b
 	defer tx.Rollback()
 	if _, err := tx.Exec(`UPDATE operation_log SET seq=seq WHERE 0`); err != nil {
 		return nil, err
+	}
+	if receipt, found, err := readHistoryReplayRequest(tx, requestID, repo.Path, redo); err != nil || found {
+		if err != nil {
+			return nil, err
+		}
+		if receipt.PendingRecovery {
+			return &ReplacementResult{PendingRecovery: true, RequestID: requestID, Kind: op.Kind, Message: "Replacement history recovery is pending."}, nil
+		}
+		return &ReplacementResult{Applied: receipt.Applied, RequestID: requestID, Kind: receipt.Kind, Message: receipt.Error}, nil
 	}
 	selected, err := repo.PeekHistoryInTx(tx, redo)
 	if err != nil {
@@ -123,6 +132,9 @@ func beginReplacementHistoryReplay(repo *store.Repo, op *store.Operation, redo b
 	}
 	if err := insertReplacementJournalTx(tx, journal); err != nil {
 		return nil, err
+	}
+	if err := persistHistoryReplayRequestTx(tx, repo.Path, requestID, redo, op, "pending", nil); err != nil {
+		return nil, fmt.Errorf("reserve history replay request: %w", err)
 	}
 	for _, path := range uniqueStrings([]string{image.FilePath, payload.OutgoingStash, payload.IncomingPath, payload.ActivePath}) {
 		if _, err := tx.Exec(`INSERT INTO replacement_path_reservations(path,request_id) VALUES (?,?)`, path, requestID); err != nil {

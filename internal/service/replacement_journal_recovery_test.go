@@ -43,7 +43,7 @@ func TestReplacementJournalCrashChild(t *testing.T) {
 }
 
 func TestReplacementJournalRecoversAcrossProcessExitLayouts(t *testing.T) {
-	for _, phase := range []string{"after-intent-commit", "after-incoming-create", "after-current-move", "after-no-replace-link", "after-current-receipt", "after-incoming-move", "after-incoming-receipt", "before-final-commit", "after-final-commit"} {
+	for _, phase := range []string{"after-intent-commit", "after-attempt-create", "after-attempt-receipt", "after-attempt-write", "after-incoming-create", "after-current-move", "after-no-replace-link", "after-current-receipt", "after-incoming-move", "after-incoming-receipt", "before-final-commit", "after-final-commit"} {
 		t.Run(phase, func(t *testing.T) {
 			root, imageID := seedReplacementJournalRepo(t, "original bytes")
 			requestID := "crash-" + strings.ReplaceAll(phase, "-", "_")
@@ -139,10 +139,76 @@ func TestReplacementJournalPreservesPartialIncomingBytes(t *testing.T) {
 	retry, err := (&ImageService{}).ReplaceMedia(root, imageID, ClipboardMedia{
 		Name: "replacement.png", Data: base64.StdEncoding.EncodeToString([]byte("replacement bytes")),
 	}, "partial-incoming-request")
-	if err != nil || retry == nil || !retry.PendingRecovery {
-		t.Fatalf("partial file should remain fenced, not be overwritten: result=%+v err=%v", retry, err)
+	if err != nil || retry == nil || !retry.Applied {
+		t.Fatalf("recovery should select one fresh verified attempt: result=%+v err=%v", retry, err)
 	}
-	assertJournalOriginalState(t, root, imageID)
+	if preserved, err := os.ReadFile(journal.IncomingPath); err != nil || len(preserved) != 0 {
+		t.Fatalf("unreceipted partial evidence changed: bytes=%q err=%v", preserved, err)
+	}
+	assertJournalReplacementState(t, root, imageID)
+	repo, err := store.Bootstrap(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var protected int
+	if err := repo.DB.QueryRow(`SELECT COUNT(*) FROM replacement_incoming_attempts WHERE request_id=? AND path=? AND phase='untrusted' AND protected=1`, result.RequestID, journal.IncomingPath).Scan(&protected); err != nil || protected != 1 {
+		repo.Close()
+		t.Fatalf("partial evidence was not durably protected: count=%d err=%v", protected, err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPurgePreflightPreservesProtectedEvidenceAndOldReplacementStashes(t *testing.T) {
+	t.Run("protected-target-refused", func(t *testing.T) {
+		root, imageID := seedReplacementJournalRepo(t, "original bytes")
+		result, err := (&ImageService{}).ReplaceMedia(root, imageID, ClipboardMedia{
+			Name: "replacement.png", Data: base64.StdEncoding.EncodeToString([]byte("replacement bytes")),
+		}, "purge-evidence-request")
+		if err != nil || result == nil || !result.Applied {
+			t.Fatalf("replace: result=%+v err=%v", result, err)
+		}
+		repo, err := store.Bootstrap(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		image, err := repo.GetImageByID(imageID)
+		if err != nil {
+			repo.Close()
+			t.Fatal(err)
+		}
+		if _, err := repo.DB.Exec(`INSERT INTO replacement_incoming_attempts(attempt_id,request_id,image_id,path,phase,protected)
+			VALUES('protected-target-test',?,?,?,'untrusted',1)`, result.RequestID, imageID, image.FilePath); err != nil {
+			repo.Close()
+			t.Fatal(err)
+		}
+		if err := repo.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := (&ImageService{}).PurgeImages(root, []int64{imageID}); err == nil {
+			t.Fatal("purge removed a path with protected replacement evidence")
+		}
+		if data, err := os.ReadFile(image.FilePath); err != nil || string(data) != "replacement bytes" {
+			t.Fatalf("protected target was removed: bytes=%q err=%v", data, err)
+		}
+	})
+	t.Run("completed-stash-preserved", func(t *testing.T) {
+		root, imageID := seedReplacementJournalRepo(t, "original bytes")
+		result, err := (&ImageService{}).ReplaceMedia(root, imageID, ClipboardMedia{
+			Name: "replacement.png", Data: base64.StdEncoding.EncodeToString([]byte("replacement bytes")),
+		}, "purge-stash-request")
+		if err != nil || result == nil || !result.Applied {
+			t.Fatalf("replace: result=%+v err=%v", result, err)
+		}
+		journal := readActiveReplacementForTest(t, root, result.RequestID)
+		if err := (&ImageService{}).PurgeImages(root, []int64{imageID}); err != nil {
+			t.Fatalf("purge image: %v", err)
+		}
+		if data, err := os.ReadFile(journal.OutgoingPath); err != nil || string(data) != "original bytes" {
+			t.Fatalf("completed replacement stash was removed: bytes=%q err=%v", data, err)
+		}
+	})
 }
 
 func TestReplacementJournalRetriesUndoAndRedoCursorFailures(t *testing.T) {

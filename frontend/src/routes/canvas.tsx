@@ -151,7 +151,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     setReveal,
     target,
   } = workspaceState
-  const { report, reload, reloadForData, run, assetSelectionKey } =
+  const { report, reload, reloadForData, initialize, run, assetSelectionKey } =
     useCanvasRepository({
       repoPath: repo.path,
       executor: boardOwner,
@@ -266,7 +266,14 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       setExpanded={setExpanded}
       modifiedMarquee={modifiedMarquee}
       workspaceState={workspaceState}
-      repository={{ report, reload, reloadForData, run, assetSelectionKey }}
+      repository={{
+        report,
+        reload,
+        reloadForData,
+        initialize,
+        run,
+        assetSelectionKey,
+      }}
       assetOperations={assetOperations}
       selectAssets={selectAssets}
       groupMembers={groupMembers}

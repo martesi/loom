@@ -36,7 +36,10 @@ var previewLocks = struct {
 	sync.Mutex
 	byKey map[string]*previewLockEntry
 }{byKey: make(map[string]*previewLockEntry)}
-var previewCacheFiles sync.RWMutex
+var previewCacheFileLocks = struct {
+	sync.Mutex
+	byRepo map[string]*renditionRepositoryLock
+}{byRepo: make(map[string]*renditionRepositoryLock)}
 
 type previewLockEntry struct {
 	lock          chan struct{}
@@ -125,27 +128,35 @@ func serveRendition(w http.ResponseWriter, r *http.Request, processor media.Proc
 		http.NotFound(w, r)
 		return
 	}
-	repo, err := store.Bootstrap(repoPath)
+	requestDeadline := stillRenditionDeadline
+	if tier == 320 {
+		requestDeadline = videoRenditionDeadline
+	}
+	ctx, cancel := newRenditionRequestContext(r.Context(), requestDeadline)
+	defer cancel()
+	repo, unlockOperations, err := openOperationRepoRaw(repoPath)
 	if err != nil {
 		http.Error(w, "repo unavailable", http.StatusInternalServerError)
 		return
 	}
-	defer repo.Close()
-	unlockOperations := store.LockRepoOperations(repo.Path)
-	recoveryErr := recoverReplacementJournals(repo)
-	unlockOperations()
-	if recoveryErr != nil {
-		http.Error(w, recoveryErr.Error(), http.StatusConflict)
+	operationsLocked := true
+	defer func() {
+		if operationsLocked {
+			unlockOperations()
+		}
+	}()
+	if err := recoverReplacementJournals(repo); err != nil {
+		repo.Close()
+		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
-
-	deadline := stillRenditionDeadline
-	if store.IsVideoFile(mustImagePath(repo, id)) {
-		deadline = videoRenditionDeadline
-	} // 30 s is conservative pending measurement.
-	ctx, cancel := newRenditionRequestContext(r.Context(), deadline)
-	defer cancel()
+	if err := rejectPendingHistoryReplay(repo); err != nil {
+		repo.Close()
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
 	if !acquireRenditionAdmission() {
+		repo.Close()
 		if r.Context().Err() != nil {
 			return
 		}
@@ -155,8 +166,9 @@ func serveRendition(w http.ResponseWriter, r *http.Request, processor media.Proc
 	}
 	defer func() { <-renditionAdmissions }()
 	lockKey := fmt.Sprintf("%s\x00%d", repo.Path, id)
-	lease, ok := acquireRenditionLease(ctx, lockKey)
+	lease, ok := reserveRenditionLease(lockKey)
 	if !ok {
+		repo.Close()
 		if r.Context().Err() == nil {
 			w.Header().Set("Retry-After", "1")
 			http.Error(w, "rendition generation busy", http.StatusServiceUnavailable)
@@ -164,13 +176,35 @@ func serveRendition(w http.ResponseWriter, r *http.Request, processor media.Proc
 		return
 	}
 	defer lease.Release()
+	defer repo.Close()
+	unlockSourceRevision := lockRenditionRepositoryRead(repo.Path)
+	imagePath, err := repo.GetFilePath(id)
+	if err != nil {
+		unlockSourceRevision()
+		http.NotFound(w, r)
+		return
+	}
+	deadline := stillRenditionDeadline
+	if store.IsVideoFile(imagePath) {
+		deadline = videoRenditionDeadline
+	} // 30 s is conservative pending measurement.
 	pendingReplacement, err := pendingReplacementForImage(repo, id)
+	unlockSourceRevision()
 	if err != nil {
 		http.Error(w, "cannot inspect replacement recovery state", http.StatusInternalServerError)
 		return
 	}
 	if pendingReplacement != nil {
 		http.Error(w, pendingReplacementResult(*pendingReplacement, "Preview is blocked until replacement recovery is resolved.").Message, http.StatusConflict)
+		return
+	}
+	unlockOperations()
+	operationsLocked = false
+	if !lease.Acquire(ctx) {
+		if r.Context().Err() == nil {
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "rendition generation busy", http.StatusServiceUnavailable)
+		}
 		return
 	}
 
@@ -221,7 +255,7 @@ func serveRendition(w http.ResponseWriter, r *http.Request, processor media.Proc
 			return
 		}
 		cachePath := renditionCachePath(cacheDir, id, tier, source)
-		served, err := serveCachedPreview(w, r, cachePath)
+		served, err := serveCachedPreview(w, r, repo.Path, cachePath)
 		if err != nil {
 			http.Error(w, "preview cache unavailable", http.StatusInternalServerError)
 			return
@@ -361,10 +395,10 @@ func generateRendition(ctx context.Context, repoPath string, id int64, tier int,
 	if err := os.Rename(tmpPath, cachePath); err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
-	previewCacheFiles.Lock()
+	unlockPreviewCache := lockPreviewCacheFiles(repoPath)
 	prunePreviewRevisions(cacheDir, id, previewRevision(source.path, source.size, source.modTime, source.revision))
 	prunePreviewCache(cacheDir, time.Now())
-	previewCacheFiles.Unlock()
+	unlockPreviewCache()
 	file, err := os.Open(cachePath)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
@@ -427,32 +461,32 @@ func samePreviewSource(left, right previewSource) bool {
 	return left.path == right.path && left.size == right.size && left.modTime.Equal(right.modTime) && left.revision == right.revision
 }
 
-func serveCachedPreview(w http.ResponseWriter, r *http.Request, path string) (bool, error) {
-	previewCacheFiles.RLock()
+func serveCachedPreview(w http.ResponseWriter, r *http.Request, repoPath, path string) (bool, error) {
+	unlockPreviewCache := lockPreviewCacheFilesRead(repoPath)
 	info, err := os.Stat(path)
 	if os.IsNotExist(err) {
-		previewCacheFiles.RUnlock()
+		unlockPreviewCache()
 		return false, nil
 	}
 	if err != nil {
-		previewCacheFiles.RUnlock()
+		unlockPreviewCache()
 		return false, err
 	}
 	if !info.Mode().IsRegular() {
-		previewCacheFiles.RUnlock()
+		unlockPreviewCache()
 		return false, fmt.Errorf("preview cache entry is not a regular file")
 	}
 	if info.Size() == 0 {
-		previewCacheFiles.RUnlock()
-		previewCacheFiles.Lock()
+		unlockPreviewCache()
+		unlockPreviewCache = lockPreviewCacheFiles(repoPath)
 		if current, statErr := os.Stat(path); statErr == nil && current.Size() == 0 && current.Mode().IsRegular() {
 			_ = os.Remove(path)
 		}
-		previewCacheFiles.Unlock()
+		unlockPreviewCache()
 		return false, nil
 	}
 	err = servePreviewFileLocked(w, r, path)
-	previewCacheFiles.RUnlock()
+	unlockPreviewCache()
 	return true, err
 }
 
@@ -507,17 +541,7 @@ func lockAndRemovePreviewCacheForImage(repoPath string, imageID int64) (func(), 
 		return nil, fmt.Errorf("preview lock unavailable")
 	}
 	releases = append(releases, release)
-	previewCacheFiles.Lock()
-	matches, err := filepath.Glob(filepath.Join(repoPath, ".loom", "thumbs", fmt.Sprintf("%d-*.webp", imageID)))
-	if err == nil {
-		for _, match := range matches {
-			if removeErr := os.Remove(match); removeErr != nil && !os.IsNotExist(removeErr) {
-				err = removeErr
-				break
-			}
-		}
-	}
-	previewCacheFiles.Unlock()
+	err := removePreviewCacheForImageLocked(repoPath, imageID)
 	if err != nil {
 		for i := len(releases) - 1; i >= 0; i-- {
 			releases[i]()
@@ -529,6 +553,62 @@ func lockAndRemovePreviewCacheForImage(repoPath string, imageID int64) (func(), 
 			releases[i]()
 		}
 	}, nil
+}
+
+func removePreviewCacheForImageLocked(repoPath string, imageID int64) error {
+	unlockPreviewCache := lockPreviewCacheFiles(repoPath)
+	defer unlockPreviewCache()
+	matches, err := filepath.Glob(filepath.Join(repoPath, ".loom", "thumbs", fmt.Sprintf("%d-*.webp", imageID)))
+	if err != nil {
+		return err
+	}
+	for _, match := range matches {
+		if err := os.Remove(match); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+func lockPreviewCacheFiles(repoPath string) func() {
+	return acquirePreviewCacheFileLock(repoPath, false)
+}
+
+func lockPreviewCacheFilesRead(repoPath string) func() {
+	return acquirePreviewCacheFileLock(repoPath, true)
+}
+
+func acquirePreviewCacheFileLock(repoPath string, readOnly bool) func() {
+	key, err := filepath.Abs(repoPath)
+	if err != nil {
+		key = filepath.Clean(repoPath)
+	}
+	previewCacheFileLocks.Lock()
+	entry := previewCacheFileLocks.byRepo[key]
+	if entry == nil {
+		entry = &renditionRepositoryLock{}
+		previewCacheFileLocks.byRepo[key] = entry
+	}
+	entry.refs++
+	previewCacheFileLocks.Unlock()
+	if readOnly {
+		entry.mu.RLock()
+	} else {
+		entry.mu.Lock()
+	}
+	return func() {
+		if readOnly {
+			entry.mu.RUnlock()
+		} else {
+			entry.mu.Unlock()
+		}
+		previewCacheFileLocks.Lock()
+		entry.refs--
+		if entry.refs == 0 {
+			delete(previewCacheFileLocks.byRepo, key)
+		}
+		previewCacheFileLocks.Unlock()
+	}
 }
 
 func prunePreviewRevisions(dir string, id int64, revision string) {
@@ -624,6 +704,18 @@ func acquireRenditionLock(ctx context.Context, key string) (func(), bool) {
 }
 
 func acquireRenditionLease(ctx context.Context, key string) (*renditionLease, bool) {
+	lease, ok := reserveRenditionLease(key)
+	if !ok {
+		return nil, false
+	}
+	if !lease.Acquire(ctx) {
+		lease.Release()
+		return nil, false
+	}
+	return lease, true
+}
+
+func reserveRenditionLease(key string) (*renditionLease, bool) {
 	previewLocks.Lock()
 	entry := previewLocks.byKey[key]
 	if entry == nil {
@@ -636,21 +728,26 @@ func acquireRenditionLease(ctx context.Context, key string) (*renditionLease, bo
 	}
 	entry.renditionRefs++
 	previewLocks.Unlock()
+	return &renditionLease{key: key, entry: entry}, true
+}
+
+func (lease *renditionLease) Acquire(ctx context.Context) bool {
+	if lease == nil || lease.released || lease.ownsToken {
+		return false
+	}
 	if ctx.Err() != nil {
-		releasePreviewLockRef(key, entry, false)
-		return nil, false
+		return false
 	}
 	select {
-	case entry.lock <- struct{}{}:
+	case lease.entry.lock <- struct{}{}:
 		if ctx.Err() != nil {
-			<-entry.lock
-			releasePreviewLockRef(key, entry, false)
-			return nil, false
+			<-lease.entry.lock
+			return false
 		}
-		return &renditionLease{key: key, entry: entry, ownsToken: true}, true
+		lease.ownsToken = true
+		return true
 	case <-ctx.Done():
-		releasePreviewLockRef(key, entry, false)
-		return nil, false
+		return false
 	}
 }
 

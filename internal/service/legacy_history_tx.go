@@ -103,7 +103,141 @@ func applyLegacyHistoryTx(tx *sql.Tx, s OpStep) (bool, error) {
 		}
 		_, err := tx.Exec(`UPDATE images SET prompt_id = ? WHERE id = ?`, prompt, p.ImageID)
 		return true, err
+	case stepGroupExistence:
+		var p groupExistenceStepPayload
+		if err := json.Unmarshal(s.Payload, &p); err != nil {
+			return true, err
+		}
+		if !p.Exists {
+			if _, err := tx.Exec(`UPDATE images SET group_id=NULL WHERE group_id=?`, p.GroupID); err != nil {
+				return true, err
+			}
+			_, err := tx.Exec(`DELETE FROM groups WHERE id=?`, p.GroupID)
+			return true, err
+		}
+		if p.GroupID <= 0 || len(p.MemberIDs) < 1 {
+			return true, fmt.Errorf("invalid group history for group %d", p.GroupID)
+		}
+		var exists bool
+		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM groups WHERE id=?)`, p.GroupID).Scan(&exists); err != nil {
+			return true, err
+		}
+		if exists {
+			return true, fmt.Errorf("group %d already exists while replaying history", p.GroupID)
+		}
+		seen := make(map[int64]struct{}, len(p.MemberIDs))
+		for _, id := range p.MemberIDs {
+			if id <= 0 {
+				return true, fmt.Errorf("invalid member %d for group %d", id, p.GroupID)
+			}
+			if _, duplicate := seen[id]; duplicate {
+				return true, fmt.Errorf("duplicate member %d for group %d", id, p.GroupID)
+			}
+			seen[id] = struct{}{}
+			if err := imageExists(id); err != nil {
+				return true, err
+			}
+			var member bool
+			if err := tx.QueryRow(`SELECT group_id IS NOT NULL FROM images WHERE id=?`, id).Scan(&member); err != nil {
+				return true, err
+			}
+			if member {
+				return true, fmt.Errorf("image %d already belongs to a group", id)
+			}
+		}
+		if p.CoverImageID != 0 {
+			if _, ok := seen[p.CoverImageID]; !ok {
+				return true, fmt.Errorf("group %d cover image %d is not a member", p.GroupID, p.CoverImageID)
+			}
+		}
+		var cover any
+		if p.CoverImageID != 0 {
+			cover = p.CoverImageID
+		}
+		if _, err := tx.Exec(`INSERT INTO groups(id,name,kind,cover_image_id) VALUES(?,?,?,?)`, p.GroupID, nullableHistoryString(p.Name), nullableHistoryString(p.Kind), cover); err != nil {
+			return true, err
+		}
+		for _, id := range p.MemberIDs {
+			if _, err := tx.Exec(`UPDATE images SET group_id=? WHERE id=? AND group_id IS NULL`, p.GroupID, id); err != nil {
+				return true, err
+			}
+		}
+		return true, nil
+	case stepGroupMemberAdd, stepGroupMemberRemove:
+		var p groupMemberStepPayload
+		if err := json.Unmarshal(s.Payload, &p); err != nil {
+			return true, err
+		}
+		if err := imageExists(p.ImageID); err != nil {
+			return true, err
+		}
+		var groupExists bool
+		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM groups WHERE id=?)`, p.GroupID).Scan(&groupExists); err != nil {
+			return true, err
+		}
+		if !groupExists {
+			return true, fmt.Errorf("group %d does not exist", p.GroupID)
+		}
+		var result sql.Result
+		var err error
+		if s.Kind == stepGroupMemberAdd {
+			result, err = tx.Exec(`UPDATE images SET group_id=? WHERE id=? AND group_id IS NULL`, p.GroupID, p.ImageID)
+		} else {
+			result, err = tx.Exec(`UPDATE images SET group_id=NULL WHERE id=? AND group_id=?`, p.ImageID, p.GroupID)
+		}
+		if err != nil {
+			return true, err
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			return true, err
+		}
+		if changed != 1 {
+			return true, fmt.Errorf("group %d membership changed before replay", p.GroupID)
+		}
+		if s.Kind == stepGroupMemberRemove {
+			var remaining int
+			if err := tx.QueryRow(`SELECT COUNT(*) FROM images WHERE group_id=?`, p.GroupID).Scan(&remaining); err != nil {
+				return true, err
+			}
+			if remaining < 2 {
+				return true, fmt.Errorf("removing image %d would leave group %d with fewer than two members", p.ImageID, p.GroupID)
+			}
+			if _, err := tx.Exec(`UPDATE groups SET cover_image_id=(SELECT MIN(id) FROM images WHERE group_id=?)
+				WHERE id=? AND NOT EXISTS(SELECT 1 FROM images WHERE id=cover_image_id AND group_id=?)`, p.GroupID, p.GroupID, p.GroupID); err != nil {
+				return true, err
+			}
+		}
+		return true, nil
+	case stepGroupSetCover:
+		var p groupCoverStepPayload
+		if err := json.Unmarshal(s.Payload, &p); err != nil {
+			return true, err
+		}
+		if err := imageExists(p.CoverImageID); err != nil {
+			return true, err
+		}
+		updated, err := tx.Exec(`UPDATE groups SET cover_image_id=? WHERE id=? AND cover_image_id IS NOT ?
+			AND EXISTS(SELECT 1 FROM images WHERE id=? AND group_id=?)`, p.CoverImageID, p.GroupID, p.CoverImageID, p.CoverImageID, p.GroupID)
+		if err != nil {
+			return true, err
+		}
+		count, err := updated.RowsAffected()
+		if err != nil {
+			return true, err
+		}
+		if count != 1 {
+			return true, fmt.Errorf("group %d or its cover membership changed before replay", p.GroupID)
+		}
+		return true, nil
 	default:
 		return false, nil
 	}
+}
+
+func nullableHistoryString(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
 }
