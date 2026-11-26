@@ -3,6 +3,7 @@ import { access, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { runtimeMethodID } from './bindings'
+import { legacyServiceCall } from './legacy-service'
 import { expect, test } from './test-fixtures'
 import { fixturePath, openAssetsShelf, openFixtureRepo } from './test-helpers'
 
@@ -215,4 +216,95 @@ test('legacy retained identity needs two confirmations and has guarded undo/redo
     'untrusted'
   )
   await access(filePath)
+})
+
+test('replacement discovery preserves import undo and redo history', async ({
+  page,
+}) => {
+  const repoPath = await fixturePath('clipboard-fixtures')
+  await openFixtureRepo(page, 'clipboard-fixtures', { drawers: 'assets' })
+  const [imageID] = await legacyServiceCall<number[]>(
+    page,
+    'imageservice.ts',
+    'ImportMedia',
+    [
+      repoPath,
+      [
+        {
+          name: 'e2e-original.png',
+          data: Buffer.from('original').toString('base64'),
+        },
+      ],
+      true,
+      31,
+      47,
+    ]
+  )
+  expect(imageID).toBeGreaterThan(0)
+  await legacyServiceCall<void>(page, 'imageservice.ts', 'ReplaceMedia', [
+    repoPath,
+    imageID,
+    {
+      name: 'e2e-replacement.png',
+      data: Buffer.from('replacement').toString('base64'),
+    },
+  ])
+  await legacyServiceCall(page, 'imageservice.ts', 'LoadCanvas', [repoPath])
+  await page.reload()
+  await openAssetsShelf(page)
+  const original = page
+    .locator('[data-asset-id]')
+    .filter({ hasText: 'e2e-original.png' })
+  const replacement = page
+    .locator('[data-asset-id]')
+    .filter({ hasText: 'e2e-replacement.png' })
+  await expect(replacement).toHaveAttribute('data-asset-id', String(imageID))
+  const originalPath = await fixturePath(
+    'clipboard-fixtures',
+    'e2e-original.png'
+  )
+  const replacementPath = await fixturePath(
+    'clipboard-fixtures',
+    'e2e-replacement.png'
+  )
+
+  const undoReplacement = await legacyServiceCall<{
+    applied: boolean
+    error?: string
+  }>(page, 'undoservice.ts', 'Undo', [repoPath])
+  expect(undoReplacement?.applied, JSON.stringify(undoReplacement)).toBe(true)
+  await page.reload()
+  await openAssetsShelf(page)
+  await expect(original).toHaveAttribute('data-asset-id', String(imageID))
+  expect(await readFile(originalPath, 'utf8')).toBe('original')
+
+  const undoImport = await legacyServiceCall<{
+    applied: boolean
+    error?: string
+  }>(page, 'undoservice.ts', 'Undo', [repoPath])
+  expect(undoImport?.applied, JSON.stringify(undoImport)).toBe(true)
+  await page.reload()
+  await openAssetsShelf(page)
+  await expect(original).toHaveCount(0)
+  await access(originalPath)
+
+  const redoImport = await legacyServiceCall<{
+    applied: boolean
+    error?: string
+  }>(page, 'undoservice.ts', 'Redo', [repoPath])
+  expect(redoImport?.applied, JSON.stringify(redoImport)).toBe(true)
+  await page.reload()
+  await openAssetsShelf(page)
+  await expect(original).toHaveAttribute('data-asset-id', String(imageID))
+  expect(await readFile(originalPath, 'utf8')).toBe('original')
+
+  const redoReplacement = await legacyServiceCall<{
+    applied: boolean
+    error?: string
+  }>(page, 'undoservice.ts', 'Redo', [repoPath])
+  expect(redoReplacement?.applied, JSON.stringify(redoReplacement)).toBe(true)
+  await page.reload()
+  await openAssetsShelf(page)
+  await expect(replacement).toHaveAttribute('data-asset-id', String(imageID))
+  expect(await readFile(replacementPath, 'utf8')).toBe('replacement')
 })
