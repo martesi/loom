@@ -3,6 +3,22 @@ import type { Viewport } from '@xyflow/react'
 const KEY_PREFIX = 'loom.canvas.viewport.v1'
 type ViewportStorage = Pick<Storage, 'getItem' | 'setItem'>
 
+export interface CanvasModeViewports {
+  view: Viewport
+  edit: Viewport
+}
+
+export function resolveCanvasModeViewports(
+  repositoryViewport: Viewport,
+  savedView: Viewport | null,
+  savedEdit: Viewport | null
+): CanvasModeViewports {
+  return {
+    view: savedView ?? repositoryViewport,
+    edit: savedEdit ?? repositoryViewport,
+  }
+}
+
 export function readCanvasModeViewport(
   repoPath: string,
   mode: 'view' | 'edit',

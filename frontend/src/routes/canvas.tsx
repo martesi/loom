@@ -19,6 +19,10 @@ import type {
 } from '../../bindings/loom/internal/service'
 import { canvasCenter } from '../components/canvas/canvas-board-operations'
 import { useCanvasBoardOwner } from '../components/canvas/canvas-board-owner'
+import {
+  advanceCanvasSelectionIntent,
+  type CanvasSelectionIntentState,
+} from '../components/canvas/canvas-selection-intent'
 import { CanvasWorkspaceContent } from '../components/canvas/canvas-workspace-content'
 import { useCanvasAssetOperations } from '../components/canvas/use-canvas-asset-operations'
 import { useCanvasBoardModel } from '../components/canvas/use-canvas-board-model'
@@ -117,20 +121,18 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   }, [data.relationships])
   const selectionRef = useRef(selection)
   selectionRef.current = selection
-  const submissionScope = `${repo.path}\u0000${selection.surface}\u0000${selection.ids
+  const selectionScope = `${repo.path}\u0000${selection.surface}\u0000${selection.ids
     .slice()
     .sort((a, b) => a - b)
     .join(',')}\u0000${selection.edges
     .slice()
     .sort((a, b) => a - b)
     .join(',')}\u0000${selection.group ?? ''}`
-  const submissionScopeRef = useRef({ key: submissionScope, revision: 0 })
-  if (submissionScopeRef.current.key !== submissionScope) {
-    submissionScopeRef.current = {
-      key: submissionScope,
-      revision: submissionScopeRef.current.revision + 1,
-    }
-  }
+  const selectionIntentRef = useRef<CanvasSelectionIntentState>({
+    key: selectionScope,
+    revision: 0,
+  })
+  advanceCanvasSelectionIntent(selectionIntentRef, selectionScope)
   const [assetSelectionRecords, setAssetSelectionRecords] = useState<{
     key: string
     records: ImageInfo[]
@@ -212,8 +214,8 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     selectionRef,
     groupMembers,
     reload,
+    submissionScopeRef: selectionIntentRef,
     fieldSubmissionPending,
-    submissionScopeRef,
   })
   const undoActions = useUndoActions(
     repo.path,
@@ -280,8 +282,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       undoActions={undoActions}
       assetSelectionRecords={assetSelectionRecords}
       updateZoomCompensation={updateZoomCompensation}
-      submissionScopeRef={submissionScopeRef}
-      selectionIntentRevision={submissionScopeRef.current.revision}
+      selectionIntentRef={selectionIntentRef}
     />
   )
 }

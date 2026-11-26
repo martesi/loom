@@ -275,38 +275,43 @@ test('a cancelled target gesture cannot commit after the D tool is re-entered', 
   await page.keyboard.press('Escape')
 })
 
-test('an uncertain LinkSource response fences writes until retry, then queue progress resumes', async ({
+test('an uncertain LinkSource response stays fenced without authoritative status', async ({
   page,
 }) => {
   await openFixtureRepo(page, 'group-fixtures', { drawers: 'closed' })
   await page.getByTestId('canvas-mode-edit').click()
   let failFirst = true
+  let calls = 0
   await page.route('**/wails/runtime', async (route) => {
     if (
       failFirst &&
       route.request().postData()?.includes(`"methodID":${linkSourceMethodID}`)
     ) {
       failFirst = false
+      calls++
       await route.abort()
       return
     }
     await route.continue()
   })
 
-  const target = await startKeyboardDerivative(page)
+  await startKeyboardDerivative(page)
   await page.keyboard.press('Enter')
   await expect(page.getByTestId('canvas-mutation-fence')).toBeVisible()
   await expect(page.getByTestId('canvas-mutation-fence')).toContainText(
-    'may still be running'
+    'outcome is unknown'
   )
-  await page.getByRole('button', { name: 'Retry reconciliation' }).click()
-  await expect(page.getByTestId('canvas-mutation-fence')).toHaveCount(0)
+  await expect(
+    page.getByTestId('canvas-mutation-fence').getByRole('button')
+  ).toHaveCount(0)
 
-  // A second target proves the serialized queue advances after reconciliation.
-  const secondId = await imageNodes(page).nth(2).getAttribute('data-id')
-  if (!secondId) throw new Error('second target node is missing its ID')
-  await tabTo(page, `.react-flow__node[data-id="${secondId}"]`)
-  await page.keyboard.press('Enter')
-  await expect(page.locator('.react-flow__edge')).toHaveCount(1)
-  await expect(target).toBeVisible()
+  await page.keyboard.press('Escape')
+  await imageNodes(page)
+    .nth(0)
+    .click({ position: { x: 20, y: 20 } })
+  await page.keyboard.press('d')
+  await expect(page.getByTestId('canvas-mutation-fence')).toBeVisible()
+  await expect.poll(() => calls).toBe(1)
+  await expect(page.locator('.react-flow__edge')).toHaveCount(0)
+  await expect(page.getByTestId('connection-tool-status')).toHaveCount(0)
 })

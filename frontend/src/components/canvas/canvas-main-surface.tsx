@@ -22,6 +22,11 @@ import { CanvasConnectionToolStatus } from './canvas-connection-tool-status'
 import { CanvasDock } from './canvas-dock'
 import { CanvasFlow } from './canvas-flow'
 import type { CanvasCapability, CanvasInternalMode } from './canvas-mode-policy'
+import {
+  type CanvasSelectionIntentRef,
+  captureCanvasSelectionIntent,
+  isCanvasSelectionIntentCurrent,
+} from './canvas-selection-intent'
 import { PerfHud } from './perf-hud'
 import type { CanvasAssetIntent } from './use-canvas-asset-operations'
 import { useCanvasConnectionTool } from './use-canvas-connection-tool'
@@ -69,7 +74,7 @@ interface Props {
   setEdges: Dispatch<SetStateAction<Edge[]>>
   setSelection: Dispatch<SetStateAction<Selection>>
   selectionRef: MutableRefObject<Selection>
-  selectionIntentRevision: number
+  selectionIntentRef: CanvasSelectionIntentRef
   setExpanded: Dispatch<SetStateAction<number | null>>
   space: boolean
   ready: boolean
@@ -150,7 +155,7 @@ export function CanvasMainSurface(props: Props) {
     setEdges,
     setSelection,
     selectionRef,
-    selectionIntentRevision,
+    selectionIntentRef,
     setExpanded,
     space,
     ready,
@@ -216,7 +221,7 @@ export function CanvasMainSurface(props: Props) {
       setConnectionAnchorId(null)
     },
     getSelection: () => selectionRef.current,
-    selectionRevision: selectionIntentRevision,
+    selectionIntentRef,
   })
   const dropHandlers = useCanvasDropHandlers({
     repoPath,
@@ -264,15 +269,16 @@ export function CanvasMainSurface(props: Props) {
         if (!owner.allows('relationship')) return
         const id = targetAt(event.clientX, event.clientY)
         if ((event.ctrlKey || event.metaKey) && id) {
+          const { revision, operation } = captureCanvasSelectionIntent(
+            owner,
+            selectionIntentRef
+          )
           relation.current = {
             source: Number(id),
             x: event.clientX,
             y: event.clientY,
-            intent: owner.captureIntent(
-              'relationship',
-              selectionIntentRevision
-            ),
-            intentRevision: selectionIntentRevision,
+            intent: operation,
+            intentRevision: revision,
           }
           event.stopPropagation()
           event.preventDefault()
@@ -326,7 +332,10 @@ export function CanvasMainSurface(props: Props) {
         updateTarget(null)
         if (!owner.allows('relationship')) return
         const userIntentCurrent = () =>
-          selectionIntentRevision === drag.intentRevision
+          isCanvasSelectionIntentCurrent(
+            selectionIntentRef,
+            drag.intentRevision
+          )
         if (!owner.isIntentCurrent(drag.intent, userIntentCurrent)) return
         const id = targetAt(event.clientX, event.clientY)
         if (!isRelationshipDrag(drag, event.clientX, event.clientY)) {

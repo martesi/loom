@@ -13,6 +13,7 @@ import type {
   CanvasOperationIntent,
 } from './canvas-board-owner'
 import type { CanvasInternalMode } from './canvas-mode-policy'
+import type { CanvasSelectionIntentRef } from './canvas-selection-intent'
 import type { CanvasConnectionTool } from './use-canvas-workspace-state'
 
 interface Preview {
@@ -54,7 +55,7 @@ interface Props {
   updateTarget: (target: Target | null) => void
   exitTool: () => void
   getSelection: () => Selection
-  selectionRevision: number
+  selectionIntentRef: CanvasSelectionIntentRef
 }
 
 interface PendingConnection {
@@ -78,22 +79,10 @@ export function useCanvasConnectionTool(props: Props) {
   const interaction = useRef({
     tool: props.tool,
     selection: props.getSelection(),
-    selectionRevision: props.selectionRevision,
+    selectionRevision: props.selectionIntentRef.current.revision,
     revision: 0,
   })
-  const renderedSelection = props.getSelection()
-  if (
-    interaction.current.tool !== props.tool ||
-    interaction.current.selectionRevision !== props.selectionRevision ||
-    !sameSelection(interaction.current.selection, renderedSelection)
-  ) {
-    interaction.current = {
-      tool: props.tool,
-      selection: renderedSelection,
-      selectionRevision: props.selectionRevision,
-      revision: interaction.current.revision + 1,
-    }
-  }
+  synchronizeInteraction()
 
   useEffect(() => {
     const changed = previousTool.current !== props.tool
@@ -119,6 +108,7 @@ export function useCanvasConnectionTool(props: Props) {
   }
 
   function onKeyDownCapture(event: ReactKeyboardEvent<HTMLElement>) {
+    const intentRevision = synchronizeInteraction()
     const { tool, mode, owner } = current.current
     if (!tool) return false
     if (event.key === 'Escape') {
@@ -147,7 +137,7 @@ export function useCanvasConnectionTool(props: Props) {
         0,
         tool,
         { edgeId: Number(edge.dataset.id) },
-        owner.captureIntent('relationship', interaction.current.revision)
+        owner.captureIntent('relationship', intentRevision)
       )
       event.preventDefault()
       event.stopPropagation()
@@ -162,7 +152,7 @@ export function useCanvasConnectionTool(props: Props) {
       current.current.anchorId,
       tool,
       { targetId },
-      owner.captureIntent('relationship', interaction.current.revision)
+      owner.captureIntent('relationship', intentRevision)
     )
     event.preventDefault()
     event.stopPropagation()
@@ -171,6 +161,7 @@ export function useCanvasConnectionTool(props: Props) {
   }
 
   function onPointerDownCapture(event: ReactPointerEvent<HTMLElement>) {
+    const intentRevision = synchronizeInteraction()
     const { owner, repoPath, mode, tool, anchorId, targetAt, setError } =
       current.current
     if (
@@ -203,11 +194,8 @@ export function useCanvasConnectionTool(props: Props) {
         repoPath,
         modeRevision: owner.getModeRevision(),
         selection: current.current.getSelection(),
-        intent: owner.captureIntent(
-          'relationship',
-          interaction.current.revision
-        ),
-        intentRevision: interaction.current.revision,
+        intent: owner.captureIntent('relationship', intentRevision),
+        intentRevision,
         edgeId: Number(edge.dataset.id),
       }
       event.stopPropagation()
@@ -237,8 +225,8 @@ export function useCanvasConnectionTool(props: Props) {
       repoPath,
       modeRevision: owner.getModeRevision(),
       selection: current.current.getSelection(),
-      intent: owner.captureIntent('relationship', interaction.current.revision),
-      intentRevision: interaction.current.revision,
+      intent: owner.captureIntent('relationship', intentRevision),
+      intentRevision,
     }
     return true
   }
@@ -299,7 +287,7 @@ export function useCanvasConnectionTool(props: Props) {
     target: Pick<PendingConnection, 'targetId' | 'edgeId'>,
     intent = current.current.owner.captureIntent(
       'relationship',
-      interaction.current.revision
+      synchronizeInteraction()
     )
   ): PendingConnection {
     const { owner, repoPath } = current.current
@@ -347,13 +335,15 @@ export function useCanvasConnectionTool(props: Props) {
   }
 
   function isCurrent(connection: PendingConnection) {
+    synchronizeInteraction()
     const latest = current.current
     return (
       latest.owner === connection.owner &&
       latest.repoPath === connection.repoPath &&
       latest.tool === connection.tool &&
       sameSelection(latest.getSelection(), connection.selection) &&
-      latest.selectionRevision === interaction.current.selectionRevision &&
+      latest.selectionIntentRef.current.revision ===
+        interaction.current.selectionRevision &&
       connection.intentRevision === interaction.current.revision &&
       latest.mode === 'edit' &&
       connection.owner.isActive?.() !== false &&
@@ -372,10 +362,30 @@ export function useCanvasConnectionTool(props: Props) {
   }
 
   function cancel() {
+    synchronizeInteraction()
     interaction.current.revision++
     pending.current = null
     current.current.setPreview(null)
     current.current.updateTarget(null)
+  }
+
+  function synchronizeInteraction() {
+    const latest = current.current
+    const selection = latest.getSelection()
+    const selectionRevision = latest.selectionIntentRef.current.revision
+    if (
+      interaction.current.tool !== latest.tool ||
+      interaction.current.selectionRevision !== selectionRevision ||
+      !sameSelection(interaction.current.selection, selection)
+    ) {
+      interaction.current = {
+        tool: latest.tool,
+        selection,
+        selectionRevision,
+        revision: interaction.current.revision + 1,
+      }
+    }
+    return interaction.current.revision
   }
 
   function previewLinkTarget(x: number, y: number) {

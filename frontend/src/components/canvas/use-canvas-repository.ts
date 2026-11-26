@@ -1,4 +1,4 @@
-import type { ReactFlowInstance } from '@xyflow/react'
+import type { ReactFlowInstance, Viewport } from '@xyflow/react'
 import type { Dispatch, SetStateAction } from 'react'
 import { useCallback, useEffect, useRef } from 'react'
 import {
@@ -118,21 +118,32 @@ export function useCanvasRepository({
   useEffect(() => {
     let cancelled = false
     let fitTimer: ReturnType<typeof setTimeout> | undefined
-    void Promise.all([executor.refresh(), ImageService.GetViewport(repoPath)])
-      .then(([result, viewport]) => {
-        if (cancelled) return
-        const hasModeViewport =
-          modeViewports &&
-          (readCanvasModeViewport(repoPath, 'view') !== null ||
-            readCanvasModeViewport(repoPath, 'edit') !== null)
-        if (viewport && !hasModeViewport) {
-          updateZoomCompensation(viewport.zoom)
-          void flow.setViewport(viewport)
-        }
+    let repositoryViewport: Viewport | null = null
+    const isCurrent = () =>
+      !cancelled &&
+      executor.repoPath === repoPath &&
+      executor.isActive?.() !== false
+    void ImageService.GetViewport(repoPath)
+      .then(async (viewport) => {
+        if (!isCurrent()) return null
+        repositoryViewport = viewport
+        executor.setRepositoryViewport(viewport)
+        const initialView = modeViewports
+          ? (readCanvasModeViewport(repoPath, 'view') ?? viewport)
+          : viewport
+        if (initialView) updateZoomCompensation(initialView.zoom)
+        if (viewport && !modeViewports) await flow.setViewport(viewport)
+        if (!isCurrent()) return null
+        return executor.refresh()
+      })
+      .then((result) => {
+        if (!isCurrent()) return
         setReady(true)
+        const hasSavedView =
+          modeViewports && readCanvasModeViewport(repoPath, 'view') !== null
         if (
-          !viewport &&
-          (!modeViewports || !hasModeViewport) &&
+          !repositoryViewport &&
+          (!modeViewports || !hasSavedView) &&
           (result?.data.images ?? []).some(
             (image) => image.placed && !image.trashed
           )

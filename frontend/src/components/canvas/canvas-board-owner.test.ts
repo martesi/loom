@@ -266,8 +266,10 @@ describe('canvas board owner', () => {
     owner.dispose()
   })
 
-  it('keeps an uncertain transport fenced until an explicit stable retry', async () => {
-    const owner = createCanvasBoardOwner('/intent-uncertain-retry')
+  it('keeps an uncertain transport fenced across reads and owner replacement', async () => {
+    const repoPath = '/intent-uncertain-retry'
+    const lane = createCanvasRepositoryQueue()
+    const owner = createCanvasBoardOwner(repoPath, lane)
     owner.setMode('edit')
     const refresh = spyOn(owner, 'refresh').mockResolvedValue({
       snapshot: { revision: 'uncertain', images: [], relationships: [] },
@@ -286,9 +288,17 @@ describe('canvas board owner', () => {
     ).rejects.toThrow('fetch failed')
     expect(owner.getMutationFence()?.uncertain).toBe(true)
     expect(await owner.retryReconciliation()).toBe(false)
-    expect(await owner.retryReconciliation(true)).toBe(true)
-    expect(refresh).toHaveBeenCalledTimes(3)
+    expect(refresh).toHaveBeenCalledTimes(1)
+    const replacement = createCanvasBoardOwner(repoPath, lane)
     owner.dispose()
+    expect(replacement.getMutationFence()?.uncertain).toBe(true)
+    await expect(replacement.execute(async () => undefined)).rejects.toThrow(
+      'Canvas write outcome is unknown'
+    )
+    const replacementRefresh = spyOn(replacement, 'refresh')
+    expect(await replacement.retryReconciliation()).toBe(false)
+    expect(replacementRefresh).not.toHaveBeenCalled()
+    replacement.dispose()
   })
 
   it('waits for the real resize commit and its reload before undo, then waits for undo reload before redo', async () => {

@@ -9,7 +9,10 @@ import type {
   CanvasBoardOwner,
 } from './canvas-board-owner'
 import type { CanvasInternalMode } from './canvas-mode-policy'
-import { readCanvasModeViewport } from './canvas-mode-viewport'
+import {
+  readCanvasModeViewport,
+  resolveCanvasModeViewports,
+} from './canvas-mode-viewport'
 import {
   arrangeEditProjection,
   arrangeEditSelection,
@@ -59,8 +62,11 @@ export function useCanvasProjectionController(props: Props) {
   )
   const nodesBeforePublication = useRef<Node[] | null>(null)
   const lifetime = useRef<{ owner: CanvasBoardOwner } | null>(null)
+  const initialViewportFrame = useRef(0)
   const [mode, setMode] = useState<CanvasInternalMode>('legacy')
   useEffect(() => {
+    if (initialViewportFrame.current)
+      cancelAnimationFrame(initialViewportFrame.current)
     const active = { owner: props.owner }
     lifetime.current = active
     state.current = null
@@ -69,6 +75,9 @@ export function useCanvasProjectionController(props: Props) {
     props.owner.setMode('legacy')
     setMode('legacy')
     return () => {
+      if (initialViewportFrame.current)
+        cancelAnimationFrame(initialViewportFrame.current)
+      initialViewportFrame.current = 0
       if (lifetime.current === active) lifetime.current = null
     }
   }, [props.owner])
@@ -98,25 +107,48 @@ export function useCanvasProjectionController(props: Props) {
       state.current = setProjectionViewport(state.current, viewport, size())
     }
   }
+  function scheduleInitialViewport(
+    projection: CanvasProjectionState,
+    active: { owner: CanvasBoardOwner }
+  ) {
+    if (!current.current.flow) return
+    if (initialViewportFrame.current)
+      cancelAnimationFrame(initialViewportFrame.current)
+    initialViewportFrame.current = requestAnimationFrame(() => {
+      initialViewportFrame.current = 0
+      if (
+        lifetime.current !== active ||
+        current.current.owner !== active.owner ||
+        state.current !== projection
+      )
+        return
+      void current.current.flow
+        ?.setViewport(projection.viewViewport)
+        .catch(current.current.report)
+    })
+  }
   function createProjection(
     graph: Graph,
     board: AcceptedCanvasBoard,
     viewport: Viewport
   ) {
     const repoPath = current.current.owner.repoPath
-    const viewViewport = readCanvasModeViewport(repoPath, 'view')
-    const editViewport = readCanvasModeViewport(repoPath, 'edit')
+    const modeViewports = resolveCanvasModeViewports(
+      current.current.owner.getRepositoryViewport() ?? viewport,
+      readCanvasModeViewport(repoPath, 'view'),
+      readCanvasModeViewport(repoPath, 'edit')
+    )
     const initial = createCanvasProjection({
       ...graph,
       geometry: (board.snapshot.images ?? []).map((item) => item.geometry),
-      viewport: viewViewport ?? editViewport ?? viewport,
+      viewport: modeViewports.view,
       viewportSize: size(),
     })
     return {
       ...initial,
-      viewViewport: viewViewport ?? initial.viewViewport,
-      editViewport: editViewport ?? initial.editViewport,
-      editInitialized: editViewport !== null || initial.editInitialized,
+      viewViewport: modeViewports.view,
+      editViewport: modeViewports.edit,
+      editInitialized: true,
     }
   }
   function setAnchor(anchor: XYPosition | null) {
@@ -247,6 +279,9 @@ export function useCanvasProjectionController(props: Props) {
       const initial = createProjection(graph, board, viewport)
       current.current.owner.setMode('view')
       publish(initial)
+      const active = lifetime.current
+      if (active && current.current.owner === active.owner)
+        scheduleInitialViewport(initial, active)
       return true
     }
     const before = capture(state.current)

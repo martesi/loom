@@ -1,6 +1,7 @@
 import { expect, it } from 'bun:test'
 import {
   readCanvasModeViewport,
+  resolveCanvasModeViewports,
   writeCanvasModeViewport,
 } from './canvas-mode-viewport'
 
@@ -36,4 +37,27 @@ it('ignores invalid stored viewport data', () => {
     '{"x":0,"y":0,"zoom":0}'
   )
   expect(readCanvasModeViewport('/repo', 'view', storage)).toBeNull()
+})
+
+it('falls back each missing mode to the repository viewport independently', () => {
+  const repository = { x: -300, y: 125, zoom: 1.4 }
+  const view = { x: -90, y: 30, zoom: 2 }
+  const edit = { x: 40, y: -75, zoom: 0.8 }
+
+  expect(resolveCanvasModeViewports(repository, null, null)).toEqual({
+    view: repository,
+    edit: repository,
+  })
+  expect(resolveCanvasModeViewports(repository, view, null)).toEqual({
+    view,
+    edit: repository,
+  })
+  expect(resolveCanvasModeViewports(repository, null, edit)).toEqual({
+    view: repository,
+    edit,
+  })
+  expect(resolveCanvasModeViewports(repository, view, edit)).toEqual({
+    view,
+    edit,
+  })
 })

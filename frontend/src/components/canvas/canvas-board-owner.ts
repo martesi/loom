@@ -1,3 +1,4 @@
+import type { Viewport } from '@xyflow/react'
 import { useEffect, useRef } from 'react'
 import {
   type CanvasData,
@@ -115,6 +116,8 @@ function uncertainTransport(error: unknown) {
 
 export interface CanvasBoardOwner extends CanvasBoardExecutor {
   readonly repoPath: string
+  getRepositoryViewport(): Viewport | null
+  setRepositoryViewport(viewport: Viewport | null): void
   getMode(): CanvasInternalMode
   getModeRevision(): number
   getModeRequestRevision(): number
@@ -138,7 +141,7 @@ export interface CanvasBoardOwner extends CanvasBoardExecutor {
   /** Dispatch a write from inside the repository queue and reconcile afterward. */
   write<T>(action: () => Promise<T>): Promise<T>
   getMutationFence(): { error: unknown; uncertain: boolean } | null
-  retryReconciliation(confirmUncertain?: boolean): Promise<boolean>
+  retryReconciliation(): Promise<boolean>
   refresh(): Promise<AcceptedCanvasBoard | null>
   applyHistory(result: UndoResult): Promise<void>
   takeHistory(): UndoResult[]
@@ -202,6 +205,7 @@ export function createCanvasBoardOwner(
   let modeRevision = 0
   let modeRequestRevision = 0
   let requestedMode: CanvasInternalMode = 'legacy'
+  let repositoryViewport: Viewport | null = null
   let accepted: AcceptedCanvasBoard | null = null
   let acceptedGeneration = -1
   let gesture: ResizeGesture | DragGesture | null = null
@@ -314,6 +318,10 @@ export function createCanvasBoardOwner(
   }
   const owner: CanvasBoardOwner = {
     repoPath,
+    getRepositoryViewport: () => repositoryViewport,
+    setRepositoryViewport: (viewport) => {
+      repositoryViewport = viewport
+    },
     getMode: () => mode,
     getModeRevision: () => modeRevision,
     getModeRequestRevision: () => modeRequestRevision,
@@ -368,7 +376,7 @@ export function createCanvasBoardOwner(
         if (lane.needsReconciliation && active) {
           if (lane.fence?.uncertain)
             throw new Error(
-              'Canvas mutation outcome is uncertain. Retry reconciliation before editing.'
+              'Canvas write outcome is unknown. Editing remains blocked.'
             )
           const reconciled = await owner.refresh()
           if (!reconciled)
@@ -423,17 +431,12 @@ export function createCanvasBoardOwner(
     },
     getMutationFence: () => lane.fence,
     write: writeAndReconcile,
-    async retryReconciliation(confirmUncertain = false) {
+    async retryReconciliation() {
       return enqueueRepository(lane, async () => {
         if (!active) return false
-        if (lane.fence?.uncertain && !confirmUncertain) return false
+        if (lane.fence?.uncertain) return false
         const first = await owner.refresh()
         if (!first) return false
-        if (lane.fence?.uncertain) {
-          const second = await owner.refresh()
-          if (!second || second.snapshot.revision !== first.snapshot.revision)
-            return false
-        }
         lane.needsReconciliation = false
         lane.fence = null
         return true
@@ -445,7 +448,7 @@ export function createCanvasBoardOwner(
         if (lane.needsReconciliation && active) {
           if (lane.fence?.uncertain)
             throw new Error(
-              'Canvas mutation outcome is uncertain. Retry reconciliation before editing.'
+              'Canvas write outcome is unknown. Editing remains blocked.'
             )
           const reconciled = await owner.refresh()
           if (!reconciled)

@@ -3,6 +3,7 @@ import { act, cleanup, renderHook } from '@testing-library/react'
 import { ImageService } from '../../../bindings/loom/internal/service'
 import { emptySelection, type Selection } from '../../lib/selection'
 import { createCanvasBoardOwner } from './canvas-board-owner'
+import { advanceCanvasSelectionIntent } from './canvas-selection-intent'
 import { useCanvasConnectionTool } from './use-canvas-connection-tool'
 
 afterEach(() => {
@@ -18,6 +19,9 @@ function setup(valid = true) {
     ids: [1],
     edges: [],
     group: null,
+  }
+  const selectionIntentRef = {
+    current: { key: 'selection-a', revision: 0 },
   }
   const queued: Array<{
     action: () => Promise<unknown>
@@ -43,6 +47,7 @@ function setup(valid = true) {
       updateTarget: mock(),
       exitTool,
       getSelection: () => selection,
+      selectionIntentRef,
     })
   )
   return {
@@ -53,6 +58,9 @@ function setup(valid = true) {
     exitTool,
     changeSelection(next: Selection) {
       selection = next
+    },
+    changeIntentKey(key: string) {
+      advanceCanvasSelectionIntent(selectionIntentRef, key)
     },
   }
 }
@@ -80,6 +88,18 @@ it('queues a keyboard link and rejects execution after selection intent changes'
   expect(state.queued[0].guard?.()).toBe(true)
 
   state.changeSelection({ ...emptySelection, ids: [3] })
+  expect(state.queued[0].guard?.()).toBe(false)
+})
+
+it('rejects a queued keyboard link after an A→B→A intent change', () => {
+  const state = setup()
+  const event = enterOnNode(2)
+  act(() => state.result.current.onKeyDownCapture(event as never))
+  expect(state.queued).toHaveLength(1)
+  expect(state.queued[0].guard?.()).toBe(true)
+
+  state.changeIntentKey('selection-b')
+  state.changeIntentKey('selection-a')
   expect(state.queued[0].guard?.()).toBe(false)
 })
 

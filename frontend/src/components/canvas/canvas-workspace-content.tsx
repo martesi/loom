@@ -23,6 +23,7 @@ import {
 } from './canvas-board-operations'
 import { CanvasMainSurface } from './canvas-main-surface'
 import { CanvasOverlays } from './canvas-overlays'
+import type { CanvasSelectionIntentRef } from './canvas-selection-intent'
 import { CanvasToolbar } from './canvas-toolbar'
 import { DetailPanel } from './detail-panel'
 import { ImageNode } from './image-node'
@@ -65,8 +66,7 @@ interface Props {
   undoActions: ReturnType<typeof useUndoActions>
   assetSelectionRecords: { key: string; records: ImageInfo[] }
   updateZoomCompensation: (zoom: number) => void
-  submissionScopeRef: MutableRefObject<{ key: string; revision: number }>
-  selectionIntentRevision: number
+  selectionIntentRef: CanvasSelectionIntentRef
 }
 
 export function CanvasWorkspaceContent(props: Props) {
@@ -98,8 +98,7 @@ export function CanvasWorkspaceContent(props: Props) {
     undoActions,
     assetSelectionRecords,
     updateZoomCompensation,
-    submissionScopeRef,
-    selectionIntentRevision,
+    selectionIntentRef,
   } = props
   const { report, reload, run, assetSelectionKey } = repository
   const {
@@ -363,26 +362,28 @@ export function CanvasWorkspaceContent(props: Props) {
         >
           <span>
             {mutationFence.uncertain
-              ? 'A Canvas write may still be running. Wait until it has stopped, then retry reconciliation before editing.'
+              ? 'Canvas write outcome is unknown. Editing remains blocked. Do not repeat the write; only an authoritative operation-status check can clear this block.'
               : 'Canvas edits are paused until the latest repository state is reconciled.'}
           </span>
-          <button
-            type="button"
-            onClick={() => {
-              void boardModel.owner
-                .retryReconciliation(mutationFence.uncertain)
-                .then((reconciled) => {
-                  if (!reconciled)
-                    setError(
-                      'Canvas reconciliation is still pending. The repository state remains fenced.'
-                    )
-                })
-                .catch(report)
-            }}
-            className="rounded px-2 py-1 text-ink-muted hover:bg-accent hover:text-ink focus-visible:ring-2 focus-visible:ring-primary/40"
-          >
-            Retry reconciliation
-          </button>
+          {!mutationFence.uncertain && (
+            <button
+              type="button"
+              onClick={() => {
+                void boardModel.owner
+                  .retryReconciliation()
+                  .then((reconciled) => {
+                    if (!reconciled)
+                      setError(
+                        'Canvas reconciliation is still pending. The repository state remains fenced.'
+                      )
+                  })
+                  .catch(report)
+              }}
+              className="rounded px-2 py-1 text-ink-muted hover:bg-accent hover:text-ink focus-visible:ring-2 focus-visible:ring-primary/40"
+            >
+              Retry reconciliation
+            </button>
+          )}
         </div>
       )}
       <div className="absolute inset-0">
@@ -430,7 +431,7 @@ export function CanvasWorkspaceContent(props: Props) {
           setEdges={setEdges}
           setSelection={setSelection}
           selectionRef={selectionRef}
-          selectionIntentRevision={selectionIntentRevision}
+          selectionIntentRef={selectionIntentRef}
           setExpanded={setExpanded}
           space={space}
           ready={ready}
@@ -502,7 +503,7 @@ export function CanvasWorkspaceContent(props: Props) {
             onCommandRequestHandled={handleInspectorCommandRequest}
             onAction={runDockAction}
             onSubmitField={submitInspectorField}
-            selectionRevision={submissionScopeRef.current.revision}
+            selectionRevision={selectionIntentRef.current.revision}
             restoreEnabled={
               actionById.get('restore-from-trash')?.enabled ?? false
             }
