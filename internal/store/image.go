@@ -107,6 +107,23 @@ func (r *Repo) registerImage(ctx context.Context, path string) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
+	var discardedHash string
+	err := r.DB.QueryRow(`SELECT sha256 FROM discarded_import_files WHERE file_path = ?`, path).Scan(&discardedHash)
+	if err != nil && err != sql.ErrNoRows {
+		return 0, err
+	}
+	if err == nil {
+		fingerprint, _, err := fingerprintFile(ctx, path)
+		if err != nil {
+			return 0, err
+		}
+		if fingerprint == discardedHash {
+			return 0, nil
+		}
+		if _, err := r.DB.Exec(`DELETE FROM discarded_import_files WHERE file_path = ?`, path); err != nil {
+			return 0, err
+		}
+	}
 	info, err := os.Stat(path)
 	if err != nil {
 		return 0, err

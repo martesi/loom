@@ -99,6 +99,10 @@ func pruneUndoneImportRedoTx(tx *sql.Tx) (discardedImportRedo, error) {
 		if err != nil {
 			return result, err
 		}
+		if _, err := tx.Exec(`INSERT INTO discarded_import_files (file_path, sha256) VALUES (?, ?)
+			ON CONFLICT(file_path) DO UPDATE SET sha256 = excluded.sha256`, path, entry.SHA256); err != nil {
+			return result, err
+		}
 		if _, err := tx.Exec(`DELETE FROM images WHERE id = ? AND import_undone = 1`, entry.ImageID); err != nil {
 			return result, err
 		}
@@ -108,24 +112,43 @@ func pruneUndoneImportRedoTx(tx *sql.Tx) (discardedImportRedo, error) {
 }
 
 func cleanupDiscardedImportRedoBestEffort(repo *store.Repo, discarded discardedImportRedo, operation string) {
+	cleanupDiscardedImportRedoBestEffortWith(repo, discarded, operation, os.Remove)
+}
+
+func cleanupDiscardedImportRedoBestEffortWith(repo *store.Repo, discarded discardedImportRedo, operation string, remove func(string) error) {
 	for _, file := range discarded.active {
 		before, err := os.Stat(file.path)
 		if err != nil {
+			if os.IsNotExist(err) {
+				clearDiscardedImportSuppression(repo, file.path, operation)
+			}
 			continue
 		}
 		data, err := os.ReadFile(file.path)
-		if err != nil || fmt.Sprintf("%x", sha256.Sum256(data)) != file.hash {
+		if err != nil {
+			continue
+		}
+		if fmt.Sprintf("%x", sha256.Sum256(data)) != file.hash {
+			clearDiscardedImportSuppression(repo, file.path, operation)
 			continue
 		}
 		after, err := os.Stat(file.path)
 		if err != nil || !os.SameFile(before, after) {
 			continue
 		}
-		if err := os.Remove(file.path); err != nil && !os.IsNotExist(err) {
+		if err := remove(file.path); err != nil && !os.IsNotExist(err) {
 			log.Printf("%s: unable to clean up discarded import file %q: %v", operation, file.path, err)
+			continue
 		}
+		clearDiscardedImportSuppression(repo, file.path, operation)
 	}
 	cleanupImportRedoBestEffort(repo, discarded.snapshots, operation)
+}
+
+func clearDiscardedImportSuppression(repo *store.Repo, path, operation string) {
+	if _, err := repo.DB.Exec(`DELETE FROM discarded_import_files WHERE file_path = ?`, path); err != nil {
+		log.Printf("%s: unable to clear discarded-import suppression for %q: %v", operation, path, err)
+	}
 }
 
 func collectImportRedoTail(repo *store.Repo) (map[string]string, error) {

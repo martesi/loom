@@ -18,9 +18,13 @@ type failingExclusiveFile struct {
 	statErr   error
 	writeSize int
 	writeErr  error
+	onStat    func()
 }
 
 func (f failingExclusiveFile) Stat() (os.FileInfo, error) {
+	if f.onStat != nil {
+		f.onStat()
+	}
 	if f.statErr != nil {
 		return nil, f.statErr
 	}
@@ -45,9 +49,10 @@ func TestWriteExclusiveModeCleansPartialWritesAndStatFailures(t *testing.T) {
 		name      string
 		statErr   error
 		writeSize int
+		replace   bool
 	}{
 		{name: "partial write", writeSize: 3},
-		{name: "stat failure", statErr: errors.New("stat failed"), writeSize: 0},
+		{name: "stat failure replacement", statErr: errors.New("stat failed"), writeSize: 0, replace: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "exclusive.bin")
@@ -57,12 +62,28 @@ func TestWriteExclusiveModeCleansPartialWritesAndStatFailures(t *testing.T) {
 				if err != nil {
 					return nil, err
 				}
-				return failingExclusiveFile{file: file, statErr: tc.statErr, writeSize: tc.writeSize, writeErr: errors.New("short write")}, nil
+				return failingExclusiveFile{
+					file: file, statErr: tc.statErr, writeSize: tc.writeSize, writeErr: errors.New("short write"),
+					onStat: func() {
+						if tc.replace {
+							if err := os.Remove(path); err != nil {
+								t.Fatal(err)
+							}
+							if err := os.WriteFile(path, nil, 0o600); err != nil {
+								t.Fatal(err)
+							}
+						}
+					},
+				}, nil
 			})
 			if err == nil {
 				t.Fatal("writeExclusiveModeUsing unexpectedly succeeded")
 			}
-			if _, err := os.Stat(path); !os.IsNotExist(err) {
+			if tc.replace {
+				if got, err := os.ReadFile(path); err != nil || len(got) != 0 {
+					t.Fatalf("replacement file did not survive stat failure cleanup: bytes=%q err=%v", got, err)
+				}
+			} else if _, err := os.Stat(path); !os.IsNotExist(err) {
 				t.Fatalf("failed exclusive write left path behind, stat err=%v", err)
 			}
 		})
@@ -417,6 +438,108 @@ func TestRedoCleanupFailureDoesNotFailCommittedGraphMutation(t *testing.T) {
 	relationships, err := repo.ListRelationships()
 	if err != nil || len(relationships) != 1 {
 		t.Fatalf("relationships after cleanup failure = %+v, err=%v", relationships, err)
+	}
+}
+
+func TestActiveFileCleanupFailureDoesNotRediscoverDiscardedImport(t *testing.T) {
+	repoPath := t.TempDir()
+	service := &ImageService{}
+	seedIDs, err := service.ImportMedia(repoPath, []ClipboardMedia{
+		{Name: "seed-a.png", Data: base64.StdEncoding.EncodeToString([]byte("seed a"))},
+		{Name: "seed-b.png", Data: base64.StdEncoding.EncodeToString([]byte("seed b"))},
+	}, false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids, err := service.ImportMedia(repoPath, []ClipboardMedia{{Name: "cleanup-fails.png", Data: base64.StdEncoding.EncodeToString([]byte("keep suppressed"))}}, false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	image, err := repo.GetImageByID(ids[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&UndoService{}).Undo(repoPath); err != nil {
+		t.Fatal(err)
+	}
+	repo, err = store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.PrepareOperationLog(); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := repo.DB.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := tx.Exec(`INSERT INTO relationships (source_image_id, derived_image_id) VALUES (?, ?)`, seedIDs[0], seedIDs[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	relationshipID, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	relationship, err := relationshipTx(tx, relationshipID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := graphPayload{Relationships: []store.Relationship{relationship}}
+	forward, err := json.Marshal(step(stepGraphInsert, payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inverse, err := json.Marshal(step(stepGraphDelete, payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	discarded, err := recordOperationInTx(repo, tx, stepGraphInsert, string(forward), string(inverse))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	cleanupDiscardedImportRedoBestEffortWith(repo, discarded, "test active-file cleanup failure", func(string) error {
+		return errors.New("simulated remove failure")
+	})
+	var opCount, suppressionCount int
+	if err := repo.DB.QueryRow(`SELECT count(*) FROM operation_log WHERE kind = ?`, stepGraphInsert).Scan(&opCount); err != nil || opCount != 1 {
+		t.Fatalf("committed graph operation count = %d, err=%v", opCount, err)
+	}
+	if err := repo.DB.QueryRow(`SELECT count(*) FROM discarded_import_files WHERE file_path = ?`, image.FilePath).Scan(&suppressionCount); err != nil || suppressionCount != 1 {
+		t.Fatalf("active-file suppression count = %d, err=%v", suppressionCount, err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(image.FilePath); err != nil {
+		t.Fatalf("simulated cleanup failure should leave imported bytes on disk: %v", err)
+	}
+	canvas, err := service.LoadCanvas(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, found := range canvas.Images {
+		if found.ID == ids[0] || found.FilePath == image.FilePath {
+			t.Fatalf("failed-cleanup import was rediscovered: %+v", found)
+		}
+	}
+	repo, err = store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	if err := repo.DB.QueryRow(`SELECT count(*) FROM images WHERE file_path = ?`, image.FilePath).Scan(&opCount); err != nil || opCount != 0 {
+		t.Fatalf("discarded import image rows after discovery = %d, err=%v", opCount, err)
 	}
 }
 
