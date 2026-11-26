@@ -1,4 +1,4 @@
-import type { Locator } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
 import { expect, test } from './test-fixtures'
 import {
   imageNodes,
@@ -11,6 +11,17 @@ async function positions(nodes: Locator) {
   return nodes.evaluateAll((elements) =>
     elements.map((element) => (element as HTMLElement).style.transform)
   )
+}
+
+async function moveNode(page: Page, node: Locator) {
+  const box = await node.boundingBox()
+  if (!box) throw new Error('Canvas node has no bounding box')
+  const x = box.x + box.width / 2
+  const y = box.y + box.height / 2
+  await page.mouse.move(x, y)
+  await page.mouse.down()
+  await page.mouse.move(x + 100, y + 80, { steps: 5 })
+  await page.mouse.up()
 }
 
 test('dock subgraph arrangement leaves unselected items in place', async ({
@@ -100,12 +111,19 @@ test('auto-arrange can be rebound, executed, persisted, and reset', async ({
   await expect.poll(() => positions(nodes)).toEqual(before)
 
   await page.reload()
+  await page.getByTestId('canvas-mode-edit').click()
+  await expect(page.getByTestId('canvas-mode-edit')).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
   await expect(nodes).toHaveCount(3)
+  await moveNode(page, nodes.nth(2))
+  const beforeReloadArrange = await positions(nodes)
   await page.getByRole('main', { name: 'Canvas' }).focus()
   await page.keyboard.press('Alt+Shift+J')
   await expect
     .poll(async () => (await positions(nodes))[2])
-    .not.toEqual(before[2])
+    .not.toEqual(beforeReloadArrange[2])
   await page.keyboard.press('ControlOrMeta+,')
   await dialog.getByRole('button', { name: 'Keyboard', exact: true }).click()
   await row.getByTestId('shortcut-reset').click()
@@ -116,11 +134,11 @@ test('auto-arrange can be rebound, executed, persisted, and reset', async ({
   await expect(dialog).toHaveCount(0)
   await page.getByRole('main', { name: 'Canvas' }).focus()
   await page.keyboard.press('ControlOrMeta+z')
-  await expect.poll(() => positions(nodes)).toEqual(before)
+  await expect.poll(() => positions(nodes)).toEqual(beforeReloadArrange)
   await page.keyboard.press('Shift+A')
   await expect
     .poll(async () => (await positions(nodes))[2])
-    .not.toEqual(before[2])
+    .not.toEqual(beforeReloadArrange[2])
 })
 
 for (const id of ['auto-arrange-active', 'auto-arrange-canvas']) {
@@ -139,8 +157,14 @@ for (const id of ['auto-arrange-active', 'auto-arrange-canvas']) {
       )
     }, id)
     await page.reload()
+    await page.getByTestId('canvas-mode-edit').click()
+    await expect(page.getByTestId('canvas-mode-edit')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
     const nodes = imageNodes(page)
     await expect(nodes).toHaveCount(3)
+    await moveNode(page, nodes.nth(2))
     const before = await positions(nodes)
     await page.getByRole('main', { name: 'Canvas' }).focus()
     await page.keyboard.press('Alt+Shift+J')

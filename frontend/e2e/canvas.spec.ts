@@ -1,13 +1,16 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from './test-fixtures'
 import {
+  asset,
   assets,
   autoArrangeCanvas,
   imageNodes as canvasNodes,
+  ctrlDrag,
   dropAsset,
   fixturePath,
   openFixtureRepo as open,
   openAssetsShelf,
+  selectImageNodes,
 } from './test-helpers'
 
 async function drop(page: Page, name: string, x: number, y: number) {
@@ -133,6 +136,7 @@ test('canvas context menus and auto-arrange preserve the canvas origin', async (
     y: Math.min(...before.map((position) => position.y)),
   }
 
+  await selectImageNodes(page, [0, 1])
   await autoArrangeCanvas(page)
   await expect
     .poll(async () => {
@@ -300,11 +304,42 @@ test('Select all excludes unplaced assets without hiding them from Assets', asyn
   page,
 }) => {
   await open(page, 'partial-set-fixtures')
-  await drop(page, 'partial-alpha.png', 80, 100)
-  await expect(canvasNodes(page)).toHaveCount(1)
+  await expect(page.getByTestId('canvas-mode-view')).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+  await asset(page, 'partial-alpha.png').dragTo(
+    page.locator('.react-flow__pane'),
+    { targetPosition: { x: 700, y: 300 } }
+  )
+  await expect(canvasNodes(page)).toHaveCount(0)
+  await page.getByTestId('canvas-mode-edit').click()
+  await expect(page.getByTestId('canvas-mode-edit')).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+  await expect(canvasNodes(page)).toHaveCount(2)
+  await ctrlDrag(page, canvasNodes(page).nth(0), canvasNodes(page).nth(1))
+  await expect(page.locator('.react-flow__edge')).toHaveCount(1)
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'partial-unplaced.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64'
+    ),
+  })
+  await expect(canvasNodes(page)).toHaveCount(2)
+  await page.getByTestId('canvas-mode-view').click()
+  await expect(page.getByTestId('canvas-mode-view')).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+  await expect(canvasNodes(page)).toHaveCount(2)
+  await page.getByTestId('toggle-assets-shelf').click()
   await canvasNodes(page).first().click()
   await page.keyboard.press('Control+a')
-  await expect(page.locator('.react-flow__node.selected')).toHaveCount(1)
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
   await expect(page.locator('.react-flow__node-group')).toHaveCount(0)
   await page.locator('.react-flow__pane').click({ position: { x: 10, y: 10 } })
 
@@ -316,10 +351,10 @@ test('Select all excludes unplaced assets without hiding them from Assets', asyn
     .getByRole('menu')
     .getByRole('menuitem', { name: 'Select all' })
     .click()
-  await expect(page.locator('.react-flow__node.selected')).toHaveCount(1)
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(2)
   await page.getByTestId('toggle-assets-shelf').click()
   await expect(
-    assets(page).filter({ hasText: 'partial-beta.png' })
+    assets(page).filter({ hasText: 'partial-unplaced.png' })
   ).toBeVisible()
 })
 test('marquee selection replaces the Canvas selection', async ({ page }) => {
