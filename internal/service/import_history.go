@@ -189,7 +189,7 @@ func applyImportBatchTx(tx *sql.Tx, payload importBatchPayload, created, validat
 		}
 		item := validatedEntry{entry: entry, currentPath: currentPath}
 		if payload.Active {
-			data, info, err := readOwnedImportCopy(entry.RetainedPath, entry.SHA256)
+			data, info, err := readOwnedImportCopy(entry.RetainedPath, entry.SHA256, entry.RetainedIdentity)
 			if err != nil {
 				return fmt.Errorf("read retained import bytes for image %d: %w", entry.ImageID, err)
 			}
@@ -314,7 +314,7 @@ func verifyOwnedImportFile(file ownedImportFile) error {
 	return nil
 }
 
-func readOwnedImportCopy(path, expectedHash string) ([]byte, os.FileInfo, error) {
+func readOwnedImportCopy(path, expectedHash, expectedIdentity string) ([]byte, os.FileInfo, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, nil, err
@@ -338,8 +338,12 @@ func readOwnedImportCopy(path, expectedHash string) ([]byte, os.FileInfo, error)
 	if err != nil {
 		return nil, nil, err
 	}
-	if !os.SameFile(before, after) || !os.SameFile(after, pathInfo) || store.FileIdentityAt(path, after) == "" {
+	identity := store.FileIdentityAt(path, after)
+	if !os.SameFile(before, after) || !os.SameFile(after, pathInfo) || identity == "" {
 		return nil, nil, fmt.Errorf("retained import copy changed while reading")
+	}
+	if expectedIdentity == "" || identity != expectedIdentity {
+		return nil, nil, fmt.Errorf("retained import copy identity changed")
 	}
 	if fmt.Sprintf("%x", sha256.Sum256(data)) != expectedHash {
 		return nil, nil, fmt.Errorf("retained import copy content changed")

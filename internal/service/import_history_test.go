@@ -563,6 +563,81 @@ func TestRedoRejectsRetainedCopyChangedAfterRead(t *testing.T) {
 	}
 }
 
+func TestRedoRejectsSameBytesRetainedReplacementBeforeReplay(t *testing.T) {
+	repoPath := t.TempDir()
+	captured := []byte("same bytes but a different retained file")
+	ids, err := (&ImageService{}).ImportMedia(repoPath, []ClipboardMedia{{
+		Name: "retained-identity.png", Data: base64.StdEncoding.EncodeToString(captured),
+	}}, false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var forward string
+	if err := repo.DB.QueryRow(`SELECT forward FROM operation_log WHERE kind = 'import_batch'`).Scan(&forward); err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var operation OpStep
+	var payload importBatchPayload
+	if err := json.Unmarshal([]byte(forward), &operation); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(operation.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Entries) != 1 || payload.Entries[0].RetainedIdentity == "" {
+		t.Fatalf("initial retained identity = %+v", payload.Entries)
+	}
+	if _, err := (&UndoService{}).Undo(repoPath); err != nil {
+		t.Fatal(err)
+	}
+	retainedPath := payload.Entries[0].RetainedPath
+	replacement := retainedPath + ".external"
+	if err := os.WriteFile(replacement, captured, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(retainedPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacement, retainedPath); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(retainedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity := store.FileIdentityAt(retainedPath, info); identity == "" || identity == payload.Entries[0].RetainedIdentity {
+		t.Fatalf("replacement identity = %q, initial retained identity = %q", identity, payload.Entries[0].RetainedIdentity)
+	}
+	if got, err := os.ReadFile(retainedPath); err != nil || !bytes.Equal(got, captured) {
+		t.Fatalf("retained replacement bytes = %q err=%v", got, err)
+	}
+	result, err := (&UndoService{}).Redo(repoPath)
+	if err != nil || result.Applied || result.Error == "" {
+		t.Fatalf("redo with same-bytes retained replacement = %+v err=%v", result, err)
+	}
+	state, err := (&UndoService{}).State(repoPath)
+	if err != nil || !state.CanRedo || state.CanUndo {
+		t.Fatalf("history after rejected redo = %+v err=%v", state, err)
+	}
+	repo, err = store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	image, err := repo.GetImageByID(ids[0])
+	if err != nil || !image.ImportUndone {
+		t.Fatalf("image after rejected redo = %+v err=%v", image, err)
+	}
+}
+
 func TestUnverifiedSuppressionCannotHideIdenticalExternalBytes(t *testing.T) {
 	repoPath := t.TempDir()
 	repo, err := store.Bootstrap(repoPath)
