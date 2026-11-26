@@ -104,10 +104,12 @@ type moveFileStepPayload struct {
 }
 
 type representationStepPayload struct {
-	ImageID       int64  `json:"imageId"`
-	OutgoingStash string `json:"outgoingStash"`
-	IncomingPath  string `json:"incomingPath"`
-	ActivePath    string `json:"activePath"`
+	ImageID             int64  `json:"imageId"`
+	OutgoingStash       string `json:"outgoingStash"`
+	IncomingPath        string `json:"incomingPath"`
+	ActivePath          string `json:"activePath"`
+	CurrentFingerprint  string `json:"currentFingerprint"`
+	IncomingFingerprint string `json:"incomingFingerprint"`
 }
 
 // groupExistenceStepPayload is shared by CreateGroup and Ungroup — see
@@ -384,7 +386,7 @@ func applyStep(repo *store.Repo, s OpStep) error {
 		} else if !ok {
 			return purgedErr(p.ImageID)
 		}
-		return repo.SwapRepresentation(p.ImageID, p.OutgoingStash, p.IncomingPath, p.ActivePath)
+		return repo.SwapRepresentation(p.ImageID, p.OutgoingStash, p.IncomingPath, p.ActivePath, p.CurrentFingerprint, p.IncomingFingerprint)
 
 	case stepGroupExistence:
 		var p groupExistenceStepPayload

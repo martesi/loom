@@ -27,6 +27,7 @@ type RetainedImportResolutionResult struct {
 	CurrentFingerprint          string                 `json:"currentFingerprint,omitempty"`
 	ResolutionError             string                 `json:"resolutionError,omitempty"`
 	NeedsUnverifiedConfirmation bool                   `json:"needsUnverifiedConfirmation"`
+	EvidenceConfirmationStale   bool                   `json:"evidenceConfirmationStale"`
 	EvidenceConfirmation        string                 `json:"evidenceConfirmation,omitempty"`
 	NeedsRedoConfirmation       bool                   `json:"needsRedoConfirmation"`
 	RedoTailConfirmation        string                 `json:"redoTailConfirmation,omitempty"`
@@ -117,7 +118,11 @@ func (s *ImageService) ResolveRetainedImport(repoPath string, request RetainedIm
 			return result, nil
 		}
 		if request.EvidenceConfirmation == "" || request.EvidenceConfirmation != confirmation {
-			return nil, fmt.Errorf("unverified evidence changed; review the current item state and confirm again")
+			result.NeedsUnverifiedConfirmation = true
+			result.EvidenceConfirmationStale = true
+			result.EvidenceConfirmation = confirmation
+			result.ResolutionError = "unverified evidence changed; review the current item state and confirm again"
+			return result, nil
 		}
 	}
 	cursor, tailHash, hasTail, err := redoTailSnapshot(tx)

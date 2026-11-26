@@ -226,6 +226,7 @@ export function ImportRecoverySections({
                 data-testid="retained-import"
                 data-image-id={item.imageId}
                 data-recovery-status={item.status}
+                data-current-fingerprint={item.currentFingerprint ?? ''}
                 className="grid gap-2 rounded border border-border p-3"
               >
                 <p className="break-all text-xs font-medium">{item.filePath}</p>

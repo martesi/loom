@@ -742,7 +742,7 @@ func (r *Repo) MoveFile(imageID int64, newRelPath string) (oldPath, newPath stri
 // SwapRepresentation replaces the active file for an image while keeping the
 // outgoing and incoming representations on disk so undo/redo can swap them
 // back without duplicating media bytes in the operation log.
-func (r *Repo) SwapRepresentation(imageID int64, outgoingStash, incomingPath, activePath string) error {
+func (r *Repo) SwapRepresentation(imageID int64, outgoingStash, incomingPath, activePath, currentFingerprint, incomingFingerprint string) error {
 	image, err := r.GetImageByID(imageID)
 	if err != nil {
 		return err
@@ -755,6 +755,17 @@ func (r *Repo) SwapRepresentation(imageID int64, outgoingStash, incomingPath, ac
 	}
 	if _, err := os.Stat(incomingPath); err != nil {
 		return fmt.Errorf("incoming representation: %w", err)
+	}
+	if currentFingerprint == "" || incomingFingerprint == "" {
+		return fmt.Errorf("representation replay is missing content fingerprints")
+	}
+	actualCurrent, _, err := FingerprintFile(context.Background(), currentPath)
+	if err != nil || actualCurrent != currentFingerprint {
+		return fmt.Errorf("active representation changed; replacement replay was refused")
+	}
+	actualIncoming, _, err := FingerprintFile(context.Background(), incomingPath)
+	if err != nil || actualIncoming != incomingFingerprint {
+		return fmt.Errorf("stashed representation changed; replacement replay was refused")
 	}
 	if activePath != currentPath {
 		if _, err := os.Stat(activePath); err == nil {
@@ -783,11 +794,14 @@ func (r *Repo) SwapRepresentation(imageID int64, outgoingStash, incomingPath, ac
 		_ = moveFileOnDisk(outgoingStash, currentPath)
 		return err
 	}
+	marker := fmt.Sprintf("stat:%d:%d", info.Size(), info.ModTime().UnixNano())
 	if _, err := r.DB.Exec(`
 		UPDATE images
-		SET file_path = ?, file_size = ?, thumb_path = NULL, width = NULL, height = NULL,
+		SET file_path = ?, file_size = ?, content_hash = ?,
+		    source_revision = CASE WHEN source_fingerprint != ? THEN source_revision + 1 ELSE source_revision END,
+		    source_fingerprint = ?, thumb_path = NULL, width = NULL, height = NULL,
 		    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-		WHERE id = ?`, activePath, info.Size(), imageID); err != nil {
+		WHERE id = ?`, activePath, info.Size(), marker, incomingFingerprint, incomingFingerprint, imageID); err != nil {
 		rollbackIncoming := moveFileOnDisk(activePath, incomingPath)
 		rollbackCurrent := moveFileOnDisk(outgoingStash, currentPath)
 		if rollbackIncoming != nil || rollbackCurrent != nil {

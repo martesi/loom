@@ -174,11 +174,36 @@ export function ImportRecoveryPanel({ path, refresh, onRecovered }: Props) {
       const result = await ImageService.ResolveRetainedImport(path, request)
       if (!result) throw new Error('Recovery returned no result')
       if (result.needsUnverifiedConfirmation) {
-        setAdoptionRequest({
+        const refreshedRequest = {
           ...request,
           confirmUnverified: true,
           evidenceConfirmation: result.evidenceConfirmation,
-        })
+        }
+        if (result.evidenceConfirmationStale) {
+          setRetainedRequests((current) => {
+            const next = { ...current }
+            delete next[requestKey]
+            next[requestKey] = refreshedRequest
+            return next
+          })
+          setRetained((current) =>
+            current.map((item) =>
+              item.imageId === request.imageId
+                ? {
+                    ...item,
+                    status: result.status,
+                    currentFingerprint: result.currentFingerprint,
+                    verified: false,
+                  }
+                : item
+            )
+          )
+          setError(
+            result.resolutionError ||
+              'Evidence changed. Review it and confirm the current state again.'
+          )
+        }
+        setAdoptionRequest(refreshedRequest)
         return
       }
       if (result.needsRedoConfirmation) {
@@ -401,7 +426,16 @@ export function ImportRecoveryPanel({ path, refresh, onRecovered }: Props) {
                     variant="secondary"
                     data-testid="cancel-show-unverified"
                     disabled={working !== null}
-                    onClick={() => setAdoptionRequest(null)}
+                    onClick={() => {
+                      setRetainedRequests((current) => {
+                        const next = { ...current }
+                        delete next[
+                          `${adoptionRequest.imageId}:${adoptionRequest.showUnverified}`
+                        ]
+                        return next
+                      })
+                      setAdoptionRequest(null)
+                    }}
                   >
                     <Trans>Keep hidden</Trans>
                   </Button>

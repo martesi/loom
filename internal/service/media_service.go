@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"encoding/base64"
 	"fmt"
@@ -221,13 +222,25 @@ func (s *ImageService) ReplaceMedia(repoPath string, imageID int64, item Clipboa
 	if activePath != image.FilePath {
 		activePath = availableMediaPath(activePath)
 	}
+	currentFingerprint, _, err := store.FingerprintFile(context.Background(), image.FilePath)
+	if err != nil {
+		os.Remove(incomingPath)
+		return fmt.Errorf("fingerprint current representation: %w", err)
+	}
+	incomingFingerprint, _, err := store.FingerprintFile(context.Background(), incomingPath)
+	if err != nil {
+		os.Remove(incomingPath)
+		return fmt.Errorf("fingerprint replacement representation: %w", err)
+	}
 	forward := representationStepPayload{
 		ImageID: imageID, OutgoingStash: outgoingPath, IncomingPath: incomingPath, ActivePath: activePath,
+		CurrentFingerprint: currentFingerprint, IncomingFingerprint: incomingFingerprint,
 	}
 	inverse := representationStepPayload{
 		ImageID: imageID, OutgoingStash: incomingPath, IncomingPath: outgoingPath, ActivePath: image.FilePath,
+		CurrentFingerprint: incomingFingerprint, IncomingFingerprint: currentFingerprint,
 	}
-	if err := r.SwapRepresentation(imageID, forward.OutgoingStash, forward.IncomingPath, forward.ActivePath); err != nil {
+	if err := r.SwapRepresentation(imageID, forward.OutgoingStash, forward.IncomingPath, forward.ActivePath, forward.CurrentFingerprint, forward.IncomingFingerprint); err != nil {
 		os.Remove(incomingPath)
 		return err
 	}

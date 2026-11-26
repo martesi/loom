@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { access, readFile } from 'node:fs/promises'
+import { access, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { runtimeMethodID } from './bindings'
@@ -162,6 +162,28 @@ test('legacy retained identity needs two confirmations and has guarded undo/redo
   ).toHaveCount(0)
 
   await retained.getByTestId('show-unverified-retained').click()
+  await expect(dialog.getByTestId('show-unverified-confirmation')).toBeVisible()
+  const filePath = await fixturePath(
+    'clipboard-fixtures',
+    'e2e-legacy-retained.png'
+  )
+  const reviewedFingerprint = await retained.getAttribute(
+    'data-current-fingerprint'
+  )
+  await writeFile(filePath, 'changed after the evidence review')
+  await dialog.getByTestId('confirm-show-unverified').click()
+  await expect(dialog.getByTestId('show-unverified-confirmation')).toBeVisible()
+  await expect(retained).not.toHaveAttribute(
+    'data-current-fingerprint',
+    reviewedFingerprint ?? ''
+  )
+  await expect(
+    page
+      .locator('[data-asset-id]')
+      .filter({ hasText: 'e2e-legacy-retained.png' })
+  ).toHaveCount(0)
+  // The stale confirmation only refreshes the request. A second explicit click
+  // is required before the separate redo-history confirmation appears.
   await dialog.getByTestId('confirm-show-unverified').click()
   await expect(
     dialog.getByTestId('redo-replacement-confirmation')
@@ -172,10 +194,6 @@ test('legacy retained identity needs two confirmations and has guarded undo/redo
     .filter({ hasText: 'e2e-legacy-retained.png' })
   await expect(activeRow).toBeVisible()
   await expect(activeRow).toHaveAttribute('data-asset-id', identity ?? '')
-  const filePath = await fixturePath(
-    'clipboard-fixtures',
-    'e2e-legacy-retained.png'
-  )
   await access(filePath)
 
   await page.keyboard.press('ControlOrMeta+z')

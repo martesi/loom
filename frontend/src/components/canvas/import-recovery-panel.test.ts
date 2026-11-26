@@ -252,3 +252,71 @@ it('requires separate evidence and redo confirmations to show an untrusted ident
   })
   await waitFor(() => expect(onRecovered).toHaveBeenCalledTimes(1))
 })
+
+it('requires fresh explicit consent after stale evidence and keeps uncertain retries idempotent', async () => {
+  spyOn(ImageService, 'ListPendingImportBatches').mockResolvedValue([] as never)
+  spyOn(ImageService, 'ListRecoverableImports').mockResolvedValue([
+    {
+      imageId: 45,
+      filePath: '/repo/legacy.png',
+      fingerprint: '',
+      recordedFingerprint: '',
+      currentFingerprint: 'observed-old',
+      trusted: false,
+      status: ImportResolutionStatus.ImportStatusUntrusted,
+      filePresent: true,
+      verified: false,
+    },
+  ] as never)
+  const resolve = spyOn(ImageService, 'ResolveRetainedImport')
+    .mockResolvedValueOnce({
+      applied: false,
+      status: ImportResolutionStatus.ImportStatusUntrusted,
+      needsUnverifiedConfirmation: true,
+      evidenceConfirmation: 'token-old',
+    } as never)
+    .mockResolvedValueOnce({
+      applied: false,
+      status: ImportResolutionStatus.ImportStatusChanged,
+      currentFingerprint: 'observed-new',
+      resolutionError:
+        'unverified evidence changed; review the current item state and confirm again',
+      needsUnverifiedConfirmation: true,
+      evidenceConfirmationStale: true,
+      evidenceConfirmation: 'token-new',
+    } as never)
+    .mockRejectedValueOnce(new Error('transport disconnected'))
+    .mockResolvedValueOnce({
+      applied: true,
+      status: ImportResolutionStatus.ImportStatusChanged,
+    } as never)
+  const onRecovered = mock(async () => {})
+  render(
+    createElement(ImportRecoveryPanel, {
+      path: '/repo',
+      refresh: 0,
+      onRecovered,
+    })
+  )
+  await act(async () => Promise.resolve())
+  fireEvent.click(screen.getByRole('button', { name: /import recovery/i }))
+  fireEvent.click(await screen.findByTestId('show-unverified-retained'))
+  fireEvent.click(await screen.findByTestId('confirm-show-unverified'))
+  await waitFor(() => expect(resolve).toHaveBeenCalledTimes(2))
+  expect(await screen.findByText(/observed-new/)).toBeTruthy()
+  expect(screen.getByTestId('show-unverified-confirmation')).toBeTruthy()
+  expect(onRecovered).not.toHaveBeenCalled()
+  const oldRequest = resolve.mock.calls[1]?.[1]
+  fireEvent.click(screen.getByTestId('confirm-show-unverified'))
+  await waitFor(() => expect(resolve).toHaveBeenCalledTimes(3))
+  expect(resolve.mock.calls[2]?.[1]).toEqual({
+    ...oldRequest,
+    evidenceConfirmation: 'token-new',
+  })
+  // A transport error does not prove the request was rejected. The next
+  // explicit attempt reuses its request ID and confirmation token.
+  fireEvent.click(screen.getByTestId('confirm-show-unverified'))
+  await waitFor(() => expect(resolve).toHaveBeenCalledTimes(4))
+  expect(resolve.mock.calls[3]?.[1]).toEqual(resolve.mock.calls[2]?.[1])
+  await waitFor(() => expect(onRecovered).toHaveBeenCalledTimes(1))
+})
