@@ -4,8 +4,9 @@ import type {
   CanvasData,
   GeometryUpdate,
 } from '../../../bindings/loom/internal/service'
-import { ImageService } from '../../../bindings/loom/internal/service'
 import { computeSubgraphLayout, placeCluster } from '../../lib/layout'
+import type { CanvasOperationContext } from './canvas-operation'
+import { canvasEffects } from './canvas-operation-effects'
 
 const RELATION_DRAG_THRESHOLD = 5
 
@@ -91,11 +92,11 @@ export function validateRelationshipTarget(
 }
 
 export async function arrangeCanvas(
+  context: CanvasOperationContext,
   repoPath: string,
   nodes: Node[],
   edges: Edge[],
   data: CanvasData,
-  reload: () => Promise<void>,
   requestedNodeIds?: string[]
 ) {
   const nodeIds = requestedNodeIds ?? nodes.map((node) => node.id)
@@ -138,11 +139,11 @@ export async function arrangeCanvas(
   const uniqueUpdates = [
     ...new Map(updates.map((update) => [update.imageId, update])).values(),
   ]
-  await ImageService.SetGeometry(
+  await canvasEffects.setGeometry(
+    context,
     repoPath,
     arrangeGeometryUpdates(uniqueUpdates, data)
   )
-  await reload()
 }
 
 export function arrangeGeometryUpdates(
@@ -164,11 +165,11 @@ export function arrangeGeometryUpdates(
 }
 
 export async function alignCanvas(
+  context: CanvasOperationContext,
   axis: 'horizontal' | 'vertical',
   repoPath: string,
   nodes: Node[],
-  _data: CanvasData,
-  reload: () => Promise<void>
+  _data: CanvasData
 ) {
   const selected = nodes.filter((node) => node.selected)
   if (selected.length < 2) return
@@ -182,10 +183,9 @@ export async function alignCanvas(
     x: axis === 'vertical' ? average : node.position.x,
     y: axis === 'horizontal' ? average : node.position.y,
   }))
-  await ImageService.SetPositions(repoPath, [
+  await canvasEffects.setPositions(context, repoPath, [
     ...new Map(updates.map((update) => [update.imageId, update])).values(),
   ])
-  await reload()
 }
 
 export function canvasCenter(
@@ -200,16 +200,19 @@ export function canvasCenter(
 }
 
 export async function fitCanvas(
+  context: CanvasOperationContext,
   flow: ReactFlowInstance,
   repoPath: string,
   nodes?: Node[],
   persist = true
 ) {
   await flow.fitView(nodes ? { nodes, padding: 0.2 } : { padding: 0.2 })
-  if (persist) await ImageService.SetViewport(repoPath, flow.getViewport())
+  if (persist)
+    await canvasEffects.setViewport(context, repoPath, flow.getViewport())
 }
 
 export async function resetCanvasZoom(
+  context: CanvasOperationContext,
   flow: ReactFlowInstance,
   host: { current: HTMLDivElement | null },
   repoPath: string,
@@ -217,10 +220,12 @@ export async function resetCanvasZoom(
 ) {
   const center = canvasCenter(flow, host)
   await flow.setCenter(center.x, center.y, { zoom: 1 })
-  if (persist) await ImageService.SetViewport(repoPath, flow.getViewport())
+  if (persist)
+    await canvasEffects.setViewport(context, repoPath, flow.getViewport())
 }
 
 export async function zoomCanvas(
+  context: CanvasOperationContext,
   flow: ReactFlowInstance,
   repoPath: string,
   factor: number,
@@ -230,5 +235,6 @@ export async function zoomCanvas(
     ...flow.getViewport(),
     zoom: Math.max(0.05, Math.min(4, flow.getZoom() * factor)),
   })
-  if (persist) await ImageService.SetViewport(repoPath, flow.getViewport())
+  if (persist)
+    await canvasEffects.setViewport(context, repoPath, flow.getViewport())
 }

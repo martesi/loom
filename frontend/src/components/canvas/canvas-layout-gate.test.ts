@@ -1,6 +1,7 @@
 import { afterEach, expect, it, mock, spyOn } from 'bun:test'
 import { ImageService } from '../../../bindings/loom/internal/service'
 import { createCanvasBoardOwner } from './canvas-board-owner'
+import { unwrapCanvasOutcome } from './canvas-operation'
 
 afterEach(() => mock.restore())
 
@@ -33,11 +34,13 @@ it('blocks new geometry gestures until a pending layout settles', async () => {
     }
   )
   const owner = createCanvasBoardOwner('/repo')
-  const board = await owner.refresh()
+  const board = unwrapCanvasOutcome(await owner.refresh())
   if (!board) throw new Error('missing board')
   owner.setMode('edit')
-  const operation = owner.execute(() =>
-    owner.commitDisplayedLayout(board, [before], [after], () => {})
+  const operation = owner.submit(
+    { kind: 'mutation', capability: 'geometry', board },
+    (context) =>
+      owner.commitDisplayedLayout(context, board, [before], [after], () => {})
   )
   await writing
   const drag = owner.beginDrag(board, [before])
@@ -50,7 +53,7 @@ it('blocks new geometry gestures until a pending layout settles', async () => {
     () => {}
   )
   release()
-  await operation
+  unwrapCanvasOutcome(await operation)
   expect(drag).toBeNull()
   expect(resize).toBeNull()
   expect(owner.beginDrag(owner.getSnapshot(), [after])).not.toBeNull()

@@ -6,6 +6,8 @@ import type {
   CanvasBoardOwner,
 } from './canvas-board-owner'
 import type { CanvasInternalMode } from './canvas-mode-policy'
+import type { CanvasOperationContext } from './canvas-operation'
+import { unwrapCanvasOutcome } from './canvas-operation'
 import {
   arrangeEditProjection,
   type CanvasProjectionState,
@@ -59,7 +61,6 @@ export function useCanvasProjectionController(props: Props) {
     state.current = null
     source.current = null
     nodesBeforePublication.current = null
-    props.owner.setMode('legacy')
     setMode('legacy')
     return () => {
       if (lifetime.current === active) lifetime.current = null
@@ -94,7 +95,7 @@ export function useCanvasProjectionController(props: Props) {
     if (state.current) state.current = setViewAnchor(state.current, anchor)
   }
   /** The action system calls this inside the owner's serialized queue. */
-  async function arrangeEdit() {
+  async function arrangeEdit(context: CanvasOperationContext) {
     const { owner } = current.current
     if (owner.getMode() !== 'edit') return
     const input = source.current
@@ -112,6 +113,7 @@ export function useCanvasProjectionController(props: Props) {
         h: node.height ?? node.measured?.height ?? 110,
       }))
     await owner.commitDisplayedLayout(
+      context,
       input.board,
       geometry(before.editNodes),
       geometry(next.editNodes),
@@ -149,9 +151,10 @@ export function useCanvasProjectionController(props: Props) {
       lifetime.current === active &&
       current.current.owner === owner &&
       active.owner === owner
-    try {
-      await owner.admit(async () => {
-        if (!isCurrent()) return
+    const outcome = await owner.submit(
+      { kind: 'mode', target },
+      async (context) => {
+        if (!isCurrent()) context.assertCurrent()
         const input = source.current
         if (!input || owner.getSnapshot() !== input.board)
           throw new Error('Canvas snapshot is not ready for a mode transition')
@@ -175,16 +178,18 @@ export function useCanvasProjectionController(props: Props) {
         } else next = capture(next)
         next = target === 'edit' ? enterEdit(next) : enterView(next)
         if (!isCurrent()) return
-        owner.setMode(target)
+        context.setMode(target)
         publish(next)
         const viewport =
           target === 'edit' ? next.editViewport : next.viewViewport
-        if (!isCurrent()) return
+        if (!isCurrent()) context.assertCurrent()
         await current.current.flow?.setViewport(viewport)
-      }, false)
-    } catch (error) {
+      }
+    )
+    if (outcome.status !== 'success') {
       owner.cancelModeTransition(modeTicket)
-      throw error
+      if (outcome.status === 'cancelled') return
+      return unwrapCanvasOutcome(outcome)
     }
   }
   function reconcile(

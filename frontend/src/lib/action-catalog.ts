@@ -1,3 +1,5 @@
+import type { CanvasOperationContext } from '../components/canvas/canvas-operation'
+
 export interface CanvasAction {
   id: string
   label: string
@@ -12,7 +14,7 @@ export interface CanvasAction {
   dangerous?: boolean
   /** Opt-in: listed in Settings for rebinding plus a Control-mode switch. */
   customizable?: boolean
-  execute: () => void | Promise<void>
+  execute: (context?: CanvasOperationContext) => unknown | Promise<unknown>
 }
 
 export interface FuzzyMatch {

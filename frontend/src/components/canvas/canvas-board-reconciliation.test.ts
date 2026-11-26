@@ -5,13 +5,16 @@ import {
   ImageService,
 } from '../../../bindings/loom/internal/service'
 import { createCanvasBoardOwner } from './canvas-board-owner'
+import { isCanvasRepositoryDirty } from './canvas-operation'
+import { canvasEffects } from './canvas-operation-effects'
+import { queueCanvasHistory, refreshBoard } from './canvas-operation-test-utils'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
-  let reject!: (error: unknown) => void
-  const promise = new Promise<T>((ok, fail) => {
-    resolve = ok
-    reject = fail
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes
+    reject = no
   })
   return { promise, resolve, reject }
 }
@@ -21,7 +24,7 @@ const data: CanvasData = {
     {
       id: 1,
       fileName: 'image.png',
-      filePath: '',
+      filePath: 'image.png',
       thumbUrl: '',
       previewUrl: '',
       fullUrl: '',
@@ -43,20 +46,34 @@ const data: CanvasData = {
   relationships: [],
   groups: [],
 }
-const rect = (x: number) => ({ imageId: 1, x, y: 20, w: null, h: null })
-const replay = { applied: true, kind: 'geometry', geometry: [rect(20)] }
+
+const rect = (x: number) => ({ imageId: 1, x, y: 20, w: 150, h: 110 })
+const replay = {
+  applied: true,
+  kind: 'geometry',
+  geometry: [rect(20)],
+} as never
 const owners: ReturnType<typeof createCanvasBoardOwner>[] = []
-function ownerFor(path = '/repo') {
-  const owner = createCanvasBoardOwner(path)
+
+function ownerFor(path = '/repo', shared = false) {
+  const owner = createCanvasBoardOwner(path, shared)
   owners.push(owner)
   return owner
 }
-function snapshot(x: number) {
+
+function snapshot(revision: string, x = 10) {
   return {
-    revision: String(x),
+    revision,
     images: [{ id: 1, width: 640, height: 480, geometry: rect(x) }],
     relationships: [],
   }
+}
+
+function mockBoard() {
+  spyOn(ImageService, 'LoadCanvas').mockResolvedValue(data as never)
+  spyOn(ImageService, 'GetLayoutSnapshot').mockResolvedValue(
+    snapshot('1') as never
+  )
 }
 
 afterEach(() => {
@@ -64,228 +81,144 @@ afterEach(() => {
   mock.restore()
 })
 
-it('removes disposal waiters after completed replays and wakes a pending waiter', async () => {
-  const pending = deferred<CanvasData>()
-  const load = spyOn(ImageService, 'LoadCanvas').mockResolvedValue(
-    data as never
-  )
-  spyOn(ImageService, 'GetLayoutSnapshot').mockResolvedValue(
-    snapshot(20) as never
-  )
-  const added = spyOn(AbortSignal.prototype, 'addEventListener')
-  const removed = spyOn(AbortSignal.prototype, 'removeEventListener')
+it('keeps repeated replay publication ordered and retains each applied entry', async () => {
+  mockBoard()
+  const load = ImageService.LoadCanvas
   const owner = ownerFor()
+  await refreshBoard(owner)
 
-  for (let i = 0; i < 1000; i++) await owner.applyHistory(replay)
+  for (let index = 0; index < 100; index++)
+    await queueCanvasHistory(owner, {
+      ...replay,
+      geometry: [rect(index)],
+    } as never)
 
-  const waiters = () => {
-    const listeners = new Set<EventListenerOrEventListenerObject | null>()
-    for (const [type, listener] of added.mock.calls) {
-      if (type === 'abort') listeners.add(listener)
-    }
-    for (const [type, listener] of removed.mock.calls) {
-      if (type === 'abort') listeners.delete(listener)
-    }
-    return listeners.size
-  }
-  expect(waiters()).toBe(0)
-  expect(added).toHaveBeenCalledTimes(1000)
-  expect(removed).toHaveBeenCalledTimes(1000)
-  load.mockImplementationOnce(() => pending.promise as never)
-  const history = owner.applyHistory(replay)
-  expect(waiters()).toBe(1)
-  owner.dispose()
-  await history
-  expect(waiters()).toBe(0)
+  expect(owner.takeHistory()).toHaveLength(100)
+  expect(load).toHaveBeenCalledTimes(101)
 })
 
-it('unblocks replay and queued work when a newer refresh accepts while the original never settles', async () => {
-  const added = spyOn(AbortSignal.prototype, 'addEventListener')
-  const removed = spyOn(AbortSignal.prototype, 'removeEventListener')
-  const obsolete = deferred<CanvasData>()
-  spyOn(ImageService, 'LoadCanvas')
-    .mockImplementationOnce(() => obsolete.promise as never)
-    .mockResolvedValue(data as never)
-  let x = 20
-  spyOn(ImageService, 'GetLayoutSnapshot').mockImplementation(
-    () => Promise.resolve(snapshot(x)) as never
-  )
-  const owner = ownerFor()
-  const reconciled = mock()
-  const committed = mock()
-  const history = owner.execute(async () => {
-    await owner.applyHistory(replay)
-    reconciled()
-  })
-  const queued = owner.execute(async () => {
-    committed()
-    x = 90
-    await owner.refresh()
-  })
-  await waitFor(() => expect(ImageService.LoadCanvas).toHaveBeenCalledTimes(1))
-  expect(committed).not.toHaveBeenCalled()
-  await owner.refresh()
-  await waitFor(() => expect(committed).toHaveBeenCalledTimes(1), {
-    timeout: 500,
-  })
-  await Promise.all([history, queued])
-  expect(added).toHaveBeenCalledTimes(1)
-  expect(removed).toHaveBeenCalledTimes(1)
-  expect(removed.mock.calls[0][1]).toBe(added.mock.calls[0][1])
-  expect(reconciled).toHaveBeenCalledTimes(1)
-  expect(owner.getSnapshot()?.snapshot.images?.[0].geometry).toEqual(rect(90))
-  expect(owner.takeHistory()).toEqual([{ ...replay, geometry: [rect(90)] }])
-  obsolete.reject(new Error('obsolete refresh failed late'))
-  await Promise.resolve()
-})
-
-it('ignores a stale newer refresh that completes before the current refresh', async () => {
-  const obsolete = deferred<CanvasData>()
-  const stale = deferred<CanvasData>()
-  const current = deferred<CanvasData>()
-  spyOn(ImageService, 'LoadCanvas')
-    .mockImplementationOnce(() => obsolete.promise as never)
-    .mockImplementationOnce(() => stale.promise as never)
-    .mockImplementationOnce(() => current.promise as never)
-  const snapshots = spyOn(ImageService, 'GetLayoutSnapshot').mockResolvedValue(
-    snapshot(20) as never
-  )
-  const owner = ownerFor()
-  const history = owner.execute(() => owner.applyHistory(replay))
-  const done = mock()
-  const queued = owner.execute(async () => {
-    done()
-  })
-  await waitFor(() => expect(ImageService.LoadCanvas).toHaveBeenCalledTimes(1))
-  const staleRefresh = owner.refresh()
-  const currentRefresh = owner.refresh()
-  stale.resolve(data)
-  expect(await staleRefresh).toBeNull()
-  expect(snapshots).not.toHaveBeenCalled()
-  expect(owner.takeHistory()).toEqual([])
-  expect(done).not.toHaveBeenCalled()
-  current.resolve(data)
-  await currentRefresh
-  await waitFor(() => expect(done).toHaveBeenCalledTimes(1), { timeout: 500 })
-  await Promise.all([history, queued])
-  expect(owner.takeHistory()).toEqual([replay])
-})
-
-it('ignores a failed stale newer refresh and waits for the current refresh', async () => {
-  const obsolete = deferred<CanvasData>()
-  const stale = deferred<CanvasData>()
-  const current = deferred<CanvasData>()
-  spyOn(ImageService, 'LoadCanvas')
-    .mockImplementationOnce(() => obsolete.promise as never)
-    .mockImplementationOnce(() => stale.promise as never)
-    .mockImplementationOnce(() => current.promise as never)
-  spyOn(ImageService, 'GetLayoutSnapshot').mockResolvedValue(
-    snapshot(20) as never
-  )
-  const owner = ownerFor()
-  const done = mock()
-  const history = owner.execute(() => owner.applyHistory(replay))
-  const queued = owner.execute(async () => {
-    done()
-  })
-  await waitFor(() => expect(ImageService.LoadCanvas).toHaveBeenCalledTimes(1))
-  const staleRefresh = owner.refresh().catch((error: unknown) => error)
-  const currentRefresh = owner.refresh()
-  const error = new Error('stale load failed')
-  stale.reject(error)
-  expect(await staleRefresh).toBe(error)
-  await Promise.resolve()
-  expect(done).not.toHaveBeenCalled()
-  current.resolve(data)
-  await currentRefresh
-  await waitFor(() => expect(done).toHaveBeenCalledTimes(1), { timeout: 500 })
-  await Promise.all([history, queued])
-  expect(owner.takeHistory()).toEqual([replay])
-})
-
-it('propagates the current refresh failure and releases queued work without replaying later', async () => {
-  const added = spyOn(AbortSignal.prototype, 'addEventListener')
-  const removed = spyOn(AbortSignal.prototype, 'removeEventListener')
-  const obsolete = deferred<CanvasData>()
-  const failing = deferred<CanvasData>()
-  spyOn(ImageService, 'LoadCanvas')
-    .mockImplementationOnce(() => obsolete.promise as never)
-    .mockImplementationOnce(() => failing.promise as never)
+it('rejects geometry captured before a queued history reconciliation publishes', async () => {
+  const delayed = deferred<CanvasData | null>()
+  const load = spyOn(ImageService, 'LoadCanvas')
+    .mockResolvedValueOnce(data as never)
+    .mockImplementationOnce(() => delayed.promise as never)
     .mockResolvedValue(data as never)
   spyOn(ImageService, 'GetLayoutSnapshot').mockResolvedValue(
-    snapshot(90) as never
+    snapshot('1', 20) as never
+  )
+  const write = spyOn(ImageService, 'SetGeometry').mockResolvedValue(
+    undefined as never
   )
   const owner = ownerFor()
-  const history = owner
-    .execute(() => owner.applyHistory(replay))
-    .catch((error: unknown) => error)
-  const done = mock()
-  const queued = owner.execute(async () => {
-    done()
-  })
-  await waitFor(() => expect(ImageService.LoadCanvas).toHaveBeenCalledTimes(1))
-  const refresh = owner.refresh().catch((error: unknown) => error)
-  await waitFor(() => expect(added).toHaveBeenCalledTimes(2))
-  expect(removed).toHaveBeenCalledTimes(1)
-  expect(removed.mock.calls[0][1]).toBe(added.mock.calls[0][1])
-  const error = new Error('current load failed')
-  failing.reject(error)
-  expect(await refresh).toBe(error)
-  await waitFor(() => expect(done).toHaveBeenCalledTimes(1), { timeout: 500 })
-  expect(await history).toBe(error)
-  expect(removed).toHaveBeenCalledTimes(2)
-  expect(removed.mock.calls[1][1]).toBe(added.mock.calls[1][1])
-  await queued
-  await owner.refresh()
-  expect(owner.takeHistory()).toEqual([])
+  await refreshBoard(owner)
+  const original = owner.getSnapshot()
+  const history = queueCanvasHistory(owner, replay)
+  await waitFor(() => expect(load).toHaveBeenCalledTimes(2))
+  let attempted = false
+  const geometry = owner.submit(
+    { kind: 'mutation', capability: 'geometry', board: original },
+    async (context) => {
+      attempted = true
+      await canvasEffects.setGeometry(context, '/repo', [rect(90)])
+    }
+  )
+
+  delayed.resolve(data)
+  expect((await history).status).toBe('success')
+  expect(await geometry).toMatchObject({ status: 'rejected' })
+  expect(attempted).toBe(false)
+  expect(write).not.toHaveBeenCalled()
+  expect(owner.getSnapshot()?.snapshot.images?.[0].geometry).toEqual(rect(20))
 })
 
-it('releases reconciliation on disposal even when all requests stay unresolved', async () => {
-  const obsolete = deferred<CanvasData>()
-  const newer = deferred<CanvasData>()
-  spyOn(ImageService, 'LoadCanvas')
-    .mockImplementationOnce(() => obsolete.promise as never)
-    .mockImplementationOnce(() => newer.promise as never)
-  const owner = ownerFor()
-  const history = owner.execute(() => owner.applyHistory(replay))
-  const done = mock()
-  const queued = owner.execute(async () => {
-    done()
+it('serializes two refreshes and publishes them in FIFO order', async () => {
+  const firstResponse = deferred<CanvasData | null>()
+  let call = 0
+  const load = spyOn(ImageService, 'LoadCanvas').mockImplementation(() => {
+    call++
+    if (call === 2) return firstResponse.promise as never
+    return Promise.resolve(data) as never
   })
-  await waitFor(() => expect(ImageService.LoadCanvas).toHaveBeenCalledTimes(1))
-  const refresh = owner.refresh().catch((error: unknown) => error)
+  let snapshotIndex = 0
+  spyOn(ImageService, 'GetLayoutSnapshot').mockImplementation(() => {
+    snapshotIndex++
+    return Promise.resolve(
+      snapshot(String(snapshotIndex), snapshotIndex)
+    ) as never
+  })
+  const owner = ownerFor()
+  await refreshBoard(owner)
+  const first = owner.refresh()
+  await waitFor(() => expect(load).toHaveBeenCalledTimes(2))
+  const second = owner.refresh()
+  expect(load).toHaveBeenCalledTimes(2)
+
+  firstResponse.resolve(data)
+  expect((await first).status).toBe('success')
+  expect((await second).status).toBe('success')
+  expect(load).toHaveBeenCalledTimes(3)
+  expect(owner.getSnapshot()?.snapshot.revision).toBe('3')
+  expect(owner.getSnapshot()?.snapshot.images?.[0].geometry).toEqual(rect(3))
+})
+
+it('keeps the repository dirty after failed reconciliation and rejects the next command', async () => {
+  mockBoard()
+  const owner = ownerFor('/repo', true)
+  await refreshBoard(owner)
+  const board = owner.getSnapshot()
+  const reload = spyOn(ImageService, 'LoadCanvas').mockRejectedValueOnce(
+    new Error('reload failed') as never
+  )
+  const partialWrite = owner.submit(
+    { kind: 'mutation', capability: 'geometry', board },
+    (context) =>
+      context.effect(async () => {
+        throw new Error('backend write failed')
+      })
+  )
+  expect(await partialWrite).toMatchObject({ status: 'failed' })
+  expect(reload).toHaveBeenCalledTimes(2)
+  expect(isCanvasRepositoryDirty('/repo')).toBe(true)
+
+  let wrote = false
+  expect(
+    await owner.submit(
+      { kind: 'mutation', capability: 'geometry', board: owner.getSnapshot() },
+      async () => {
+        wrote = true
+      }
+    )
+  ).toMatchObject({ status: 'rejected' })
+  expect(wrote).toBe(false)
+  expect(isCanvasRepositoryDirty('/repo')).toBe(false)
+})
+
+it('cancels prepared work after disposal and does not publish its late result', async () => {
+  mockBoard()
+  const owner = ownerFor()
+  const board = await refreshBoard(owner)
+  const prepared = deferred<void>()
+  let signalStarted = () => {}
+  const started = new Promise<void>((resolve) => {
+    signalStarted = resolve
+  })
+  const write = spyOn(ImageService, 'SetGeometry').mockResolvedValue(
+    undefined as never
+  )
+  const operation = owner.submit(
+    { kind: 'mutation', capability: 'geometry', board },
+    async (context) => {
+      await context.prepare(async () => {
+        signalStarted()
+        await prepared.promise
+      })
+      await canvasEffects.setGeometry(context, '/repo', [rect(90)])
+    }
+  )
+  await started
   owner.dispose()
-  await waitFor(() => expect(done).toHaveBeenCalledTimes(1), { timeout: 500 })
-  await Promise.all([history, queued])
-  expect(owner.takeHistory()).toEqual([])
+  prepared.resolve()
+  expect(await operation).toMatchObject({ status: 'cancelled' })
+  expect(write).not.toHaveBeenCalled()
   expect(owner.getSnapshot()).toBeNull()
-  obsolete.reject(new Error('disposed refresh failed late'))
-  const error = new Error('superseding refresh failed late')
-  newer.reject(error)
-  expect(await refresh).toBe(error)
-  await Promise.resolve()
-})
-
-it('does not carry a disposed reconciliation into a reactivated lifetime', async () => {
-  const old = deferred<CanvasData>()
-  const current = deferred<CanvasData>()
-  spyOn(ImageService, 'LoadCanvas')
-    .mockImplementationOnce(() => old.promise as never)
-    .mockImplementationOnce(() => current.promise as never)
-  spyOn(ImageService, 'GetLayoutSnapshot').mockResolvedValue(
-    snapshot(20) as never
-  )
-  const owner = ownerFor()
-  const first = owner.applyHistory(replay)
-  owner.dispose()
-  owner.activate()
-  const second = owner.applyHistory(replay)
-  const settled = mock()
-  void first.then(settled)
-  await waitFor(() => expect(settled).toHaveBeenCalledTimes(1), {
-    timeout: 500,
-  })
-  current.resolve(data)
-  await Promise.all([first, second])
-  expect(owner.takeHistory()).toEqual([replay])
 })

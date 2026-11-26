@@ -10,6 +10,7 @@ import type { Selection } from '../../lib/selection'
 import type { useUndoActions } from '../../lib/use-undo'
 import type { CanvasActionsContext } from '../../routes/canvas-actions-context'
 import { createCanvasMenuItems } from './canvas-context-menu-items'
+import type { CanvasOperationContext } from './canvas-operation'
 import { useCanvasActionSystem } from './use-canvas-action-system'
 import type { useCanvasAssetOperations } from './use-canvas-asset-operations'
 import type { useCanvasBoardModel } from './use-canvas-board-model'
@@ -27,17 +28,19 @@ interface Props {
   boardModel: ReturnType<typeof useCanvasBoardModel>
   assetOperations: ReturnType<typeof useCanvasAssetOperations>
   report: (error: unknown) => void
-  reload: () => Promise<void>
   assetSelectionKey: string
   assetSelectionRecords: { key: string; records: ImageInfo[] }
   view: {
-    fitAll: () => Promise<void>
-    fitSelection: () => Promise<void>
-    resetZoom: () => Promise<void>
-    zoomBy: (factor: number) => Promise<void>
-    arrange: (nodeIds?: string[]) => Promise<void>
-    alignHorizontal: () => Promise<void>
-    alignVertical: () => Promise<void>
+    fitAll: (operation: CanvasOperationContext) => Promise<void>
+    fitSelection: (operation: CanvasOperationContext) => Promise<void>
+    resetZoom: (operation: CanvasOperationContext) => Promise<void>
+    zoomBy: (operation: CanvasOperationContext, factor: number) => Promise<void>
+    arrange: (
+      operation: CanvasOperationContext,
+      nodeIds?: string[]
+    ) => Promise<void>
+    alignHorizontal: (operation: CanvasOperationContext) => Promise<void>
+    alignVertical: (operation: CanvasOperationContext) => Promise<void>
     toggleFocusMode: () => void
   }
   selectionActions: {
@@ -62,7 +65,6 @@ export function useCanvasWorkspaceCommands(props: Props) {
     boardModel,
     assetOperations,
     report,
-    reload,
     assetSelectionKey,
     assetSelectionRecords,
     view,
@@ -87,7 +89,6 @@ export function useCanvasWorkspaceCommands(props: Props) {
     repoPath: repo.path,
     data,
     selection,
-    reload,
     ...selectionActions,
   }
   const {

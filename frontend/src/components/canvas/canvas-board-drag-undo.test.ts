@@ -1,12 +1,13 @@
 import { afterEach, expect, it, mock, spyOn } from 'bun:test'
 import { Toast } from '@base-ui-components/react/toast'
-import { act, cleanup, renderHook } from '@testing-library/react'
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { createElement } from 'react'
 import {
   ImageService,
   UndoService,
 } from '../../../bindings/loom/internal/service'
 import { createCanvasBoardOwner } from './canvas-board-owner'
+import { refreshBoard } from './canvas-operation-test-utils'
 
 mock.module('@lingui/core/macro', () => ({
   t: (parts: TemplateStringsArray) => parts.join(''),
@@ -46,13 +47,12 @@ it('cancels an unfinished drag before undo and rejects its late stop', async () 
     ImageService,
     'SetGeometryFromDisplayAtRevision'
   ).mockImplementation(() => Promise.resolve() as never)
-  const board = await owner.refresh()
+  const board = await refreshBoard(owner)
   const gesture = owner.beginDrag(board, [rectangle])
   if (!gesture) throw new Error('missing drag')
-  const { result } = renderHook(
-    () => useUndoActions('/repo', () => owner.refresh().then(() => {}), owner),
-    { wrapper }
-  )
+  const { result } = renderHook(() => useUndoActions('/repo', owner), {
+    wrapper,
+  })
   await act(async () => {
     await result.current.undo()
     await owner.endDrag(gesture, [{ ...rectangle, x: 50 }])
@@ -73,23 +73,21 @@ it('runs undo only after a completed drag write and refresh', async () => {
         release = resolve
       }) as never
   )
-  const board = await owner.refresh()
+  const board = await refreshBoard(owner)
   const gesture = owner.beginDrag(board, [rectangle])
   if (!gesture) throw new Error('missing drag')
   const pending = owner.endDrag(gesture, [{ ...rectangle, x: 50 }])
-  const { result } = renderHook(
-    () => useUndoActions('/repo', () => owner.refresh().then(() => {}), owner),
-    { wrapper }
-  )
+  const { result } = renderHook(() => useUndoActions('/repo', owner), {
+    wrapper,
+  })
   const undone = result.current.undo()
-  await Promise.resolve()
-  expect(write).toHaveBeenCalledTimes(1)
+  await waitFor(() => expect(write).toHaveBeenCalledTimes(1))
   expect(undo).not.toHaveBeenCalled()
   await act(async () => {
     release()
     await pending
     await undone
   })
-  expect(ImageService.LoadCanvas).toHaveBeenCalledTimes(2)
+  expect(ImageService.LoadCanvas).toHaveBeenCalledTimes(3)
   expect(undo).toHaveBeenCalledTimes(1)
 })

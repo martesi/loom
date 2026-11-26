@@ -1,6 +1,6 @@
 import { afterEach, expect, it, mock, spyOn } from 'bun:test'
 import { Toast } from '@base-ui-components/react/toast'
-import { act, cleanup, renderHook } from '@testing-library/react'
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import type { Edge, Node } from '@xyflow/react'
 import { createElement, useRef, useState, useSyncExternalStore } from 'react'
 import {
@@ -12,6 +12,11 @@ import {
 import { emptySelection } from '../../lib/selection'
 import { useCanvasBoardOwner } from './canvas-board-owner'
 import { enqueueCanvasMutation } from './canvas-mutation-queue'
+import {
+  refreshBoard,
+  reserveCanvasOperation,
+  reserveCanvasRead,
+} from './canvas-operation-test-utils'
 import type { ResizeDirection } from './canvas-resize-geometry'
 import { useCanvasBoardModel } from './use-canvas-board-model'
 
@@ -144,18 +149,30 @@ it('keeps a submitted resize queued across rendition changes', async () => {
     ({ generation }) => useBoard(generation),
     { initialProps: { generation: 0 } }
   )
+  if (result.error) throw result.error
   await act(async () => {
-    await result.current.owner.refresh()
+    await refreshBoard(result.current.owner)
+  })
+  const { start, end } = resizeCallbacks(result.current.nodes[0])
+  let token = 0
+  act(() => {
+    token = start(rectangle) ?? 0
   })
   let release = () => {}
   const blocked = new Promise<void>((resolve) => {
     release = resolve
   })
-  const first = result.current.owner.execute(() => blocked)
-  const { start, end } = resizeCallbacks(result.current.nodes[0])
-  let token = 0
+  let signalStarted = () => {}
+  const started = new Promise<void>((resolve) => {
+    signalStarted = resolve
+  })
+  const first = reserveCanvasRead(result.current.owner, async () => {
+    signalStarted()
+    await blocked
+  })
+  await started
+  await Promise.resolve()
   act(() => {
-    token = start(rectangle) ?? 0
     end(token, 1, resized)
   })
   rerender({ generation: 1 })
@@ -163,9 +180,9 @@ it('keeps a submitted resize queued across rendition changes', async () => {
   expect(write).not.toHaveBeenCalled()
   await act(async () => {
     release()
-    await first
-    await result.current.owner.execute(async () => {})
+    expect((await first).status).toBe('success')
   })
+  await waitFor(() => expect(write).toHaveBeenCalledTimes(1))
   expect(write).toHaveBeenCalledTimes(1)
   expect(write).toHaveBeenCalledWith(
     '/repo',
@@ -182,30 +199,40 @@ for (const invalidation of ['refresh', 'dispose'] as const) {
     const write = setupServices()
     const { result, unmount } = renderHook(() => useBoard(0, null))
     await act(async () => {
-      await result.current.owner.refresh()
+      await refreshBoard(result.current.owner)
     })
     const owner = result.current.owner
-    let release = () => {}
-    const blocked = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    const first = owner.execute(() => blocked)
     const { start, end } = resizeCallbacks(result.current.nodes[0])
     let token = 0
     act(() => {
       token = start(rectangle) ?? 0
+    })
+    let release = () => {}
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let signalStarted = () => {}
+    const started = new Promise<void>((resolve) => {
+      signalStarted = resolve
+    })
+    const first = reserveCanvasRead(owner, async () => {
+      signalStarted()
+      await blocked
+    })
+    await started
+    await Promise.resolve()
+    act(() => {
       end(token, 1, resized)
     })
-    if (invalidation === 'refresh') {
-      await act(async () => {
-        await owner.refresh()
-      })
-    } else unmount()
+    const refresh = invalidation === 'refresh' ? owner.refresh() : null
+    if (invalidation === 'dispose') unmount()
     await act(async () => {
       release()
-      await first
-      await owner.execute(async () => {})
+      expect((await first).status).toBe(
+        invalidation === 'refresh' ? 'success' : 'cancelled'
+      )
     })
+    if (refresh) await refresh
     if (invalidation === 'refresh') expect(write).toHaveBeenCalledTimes(1)
     else expect(write).not.toHaveBeenCalled()
   })
@@ -218,7 +245,7 @@ it('cancels an unfinished resize when the renderer is rebuilt', async () => {
     { initialProps: { generation: 0 } }
   )
   await act(async () => {
-    await result.current.owner.refresh()
+    await refreshBoard(result.current.owner)
   })
   const { start, end } = resizeCallbacks(result.current.nodes[0])
   const cancel = spyOn(result.current.owner, 'cancelResize')
@@ -230,7 +257,7 @@ it('cancels an unfinished resize when the renderer is rebuilt', async () => {
   expect(cancel).toHaveBeenCalledTimes(1)
   act(() => end(token, 1, resized))
   await act(async () => {
-    await result.current.owner.execute(async () => {})
+    await reserveCanvasOperation(result.current.owner, async () => {})
   })
   expect(write).not.toHaveBeenCalled()
   const current = resizeCallbacks(result.current.nodes[0])
@@ -240,7 +267,7 @@ it('cancels an unfinished resize when the renderer is rebuilt', async () => {
     current.end(currentToken, 1, resized)
   })
   await act(async () => {
-    await result.current.owner.execute(async () => {})
+    await reserveCanvasOperation(result.current.owner, async () => {})
   })
   expect(write).toHaveBeenCalledTimes(1)
 })
@@ -249,12 +276,18 @@ it('rejects resize starts during a pending layout and accepts a fresh pointer la
   const write = setupServices()
   const { result } = renderHook(() => useBoard(0))
   await act(async () => {
-    await result.current.owner.refresh()
+    await refreshBoard(result.current.owner)
   })
-  const releaseLayout = result.current.owner.reserveLayout()
+  let releaseLayout = () => {}
+  const layoutGate = new Promise<void>((resolve) => {
+    releaseLayout = resolve
+  })
+  const layout = reserveCanvasOperation(result.current.owner, () => layoutGate)
+  await Promise.resolve()
   const { start, cancel } = resizeCallbacks(result.current.nodes[0])
   expect(start(rectangle, 7)).toBeNull()
   releaseLayout()
+  expect((await layout).status).toBe('success')
   expect(result.current.owner.isLayoutPending()).toBe(false)
   const token = start(rectangle, 8)
   expect(token).not.toBeNull()
@@ -270,9 +303,12 @@ for (const capability of ['relationship', 'geometry'] as const) {
     const write = setupServices()
     const { result } = renderHook(() => useBoard(0))
     await act(async () => {
-      await result.current.owner.refresh()
+      await refreshBoard(result.current.owner)
     })
-    result.current.owner.setMode('edit')
+    await result.current.owner.submit(
+      { kind: 'mode', target: 'edit' },
+      async (context) => context.setMode('edit')
+    )
     const { start, move, end } = resizeCallbacks(result.current.nodes[0])
     let token = 0
     act(() => {
@@ -307,9 +343,12 @@ it('undo cancels an active resize and prevents its final dimensions from writing
   } as never)
   const { result } = renderHook(() => useBoard(0))
   await act(async () => {
-    await result.current.owner.refresh()
+    await refreshBoard(result.current.owner)
   })
-  result.current.owner.setMode('edit')
+  await result.current.owner.submit(
+    { kind: 'mode', target: 'edit' },
+    async (context) => context.setMode('edit')
+  )
   const { start, move, end } = resizeCallbacks(result.current.nodes[0])
   let token = 0
   act(() => {
@@ -317,7 +356,7 @@ it('undo cancels an active resize and prevents its final dimensions from writing
     move(token, 12, resized)
   })
   const actions = renderHook(
-    () => useUndoActions('/repo', async () => {}, result.current.owner),
+    () => useUndoActions('/repo', result.current.owner),
     { wrapper: toastWrapper }
   )
   await act(async () => actions.result.current.undo())

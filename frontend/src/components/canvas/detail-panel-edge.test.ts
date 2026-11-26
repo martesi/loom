@@ -14,6 +14,7 @@ import {
   TagService,
 } from '../../../bindings/loom/internal/service'
 import { createCanvasBoardOwner } from './canvas-board-owner'
+import { refreshBoard, reserveCanvasRead } from './canvas-operation-test-utils'
 
 mock.module('@lingui/core/macro', () => ({
   plural: (count: number, messages: { one: string; other: string }) =>
@@ -74,20 +75,40 @@ function renderEdge(
   return { ...render(createElement(DetailPanel, props)), props, change }
 }
 
+async function readyOwner() {
+  spyOn(ImageService, 'LoadCanvas').mockResolvedValue({
+    images: [],
+    relationships: [{ id: 7, sourceImageId: 1, derivedImageId: 2 }],
+    groups: [],
+  } as never)
+  spyOn(ImageService, 'GetLayoutSnapshot').mockResolvedValue({
+    revision: '1',
+    images: [],
+    relationships: [{ id: 7, sourceImageId: 1, derivedImageId: 2 }],
+  } as never)
+  const owner = createCanvasBoardOwner('/repo')
+  await refreshBoard(owner)
+  return owner
+}
+
 it('serializes Inspector confirmation with pending board writes', async () => {
   const unlink = spyOn(ImageService, 'UnlinkSource').mockResolvedValue(
     undefined as never
   )
-  const owner = createCanvasBoardOwner('/repo')
+  const owner = await readyOwner()
   owner.setMode('edit')
   let release = () => {}
-  const pending = owner.execute(
-    () =>
-      new Promise<void>((resolve) => {
-        release = resolve
-      })
-  )
-  await Promise.resolve()
+  let signalStarted = () => {}
+  const started = new Promise<void>((resolve) => {
+    signalStarted = resolve
+  })
+  const pending = reserveCanvasRead(owner, async () => {
+    signalStarted()
+    await new Promise<void>((resolve) => {
+      release = resolve
+    })
+  })
+  await started
   renderEdge(() => owner.allows('relationship'), owner)
   await act(async () => {})
   fireEvent.click(screen.getByRole('button', { name: 'Remove relationship' }))
@@ -100,8 +121,8 @@ it('serializes Inspector confirmation with pending board writes', async () => {
   const callsBeforeRelease = unlink.mock.calls.length
   await act(async () => {
     release()
-    await pending
-    await owner.execute(async () => {})
+    expect((await pending).status).toBe('success')
+    await waitFor(() => expect(unlink).toHaveBeenCalledTimes(1))
   })
   expect(callsBeforeRelease).toBe(0)
   expect(unlink).toHaveBeenCalledTimes(1)
@@ -112,7 +133,8 @@ it('Escape cancels edge removal without mutation', async () => {
   const unlink = spyOn(ImageService, 'UnlinkSource').mockResolvedValue(
     undefined as never
   )
-  renderEdge(() => true)
+  const owner = await readyOwner()
+  renderEdge(() => true, owner)
   await act(async () => {})
   fireEvent.click(screen.getByRole('button', { name: 'Remove relationship' }))
   const dialog = screen.getByRole('dialog', { name: 'Remove relationship?' })
@@ -125,7 +147,8 @@ it('confirms exactly one unlink', async () => {
   const unlink = spyOn(ImageService, 'UnlinkSource').mockResolvedValue(
     undefined as never
   )
-  const { change } = renderEdge(() => true)
+  const owner = await readyOwner()
+  renderEdge(() => true, owner)
   await act(async () => {})
   fireEvent.click(screen.getByRole('button', { name: 'Remove relationship' }))
   fireEvent.click(
@@ -133,7 +156,7 @@ it('confirms exactly one unlink', async () => {
       name: 'Remove relationship',
     })
   )
-  await waitFor(() => expect(change).toHaveBeenCalledTimes(1))
+  await waitFor(() => expect(unlink).toHaveBeenCalledTimes(1))
   expect(unlink).toHaveBeenCalledTimes(1)
   expect(unlink).toHaveBeenCalledWith('/repo', 7)
 })
@@ -142,7 +165,7 @@ it('rechecks the current hidden mode at confirmation', async () => {
   const unlink = spyOn(ImageService, 'UnlinkSource').mockResolvedValue(
     undefined as never
   )
-  const owner = createCanvasBoardOwner('/repo')
+  const owner = await readyOwner()
   owner.setMode('edit')
   renderEdge(() => owner.allows('relationship'))
   await act(async () => {})

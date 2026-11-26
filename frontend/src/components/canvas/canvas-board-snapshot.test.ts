@@ -10,6 +10,7 @@ import {
   createCanvasBoardOwner,
   useCanvasBoardOwner,
 } from './canvas-board-owner'
+import { refreshBoard } from './canvas-operation-test-utils'
 
 const image = {
   id: 1,
@@ -82,7 +83,7 @@ describe('board snapshot publication', () => {
       snapshot as never
     )
     const owner = createCanvasBoardOwner('/repo')
-    const result = await owner.refresh()
+    const result = await refreshBoard(owner)
     expect(result?.snapshot).toEqual(snapshot)
     expect(result?.data.relationships).toEqual(snapshot.relationships)
     expect(result?.data.images?.[0]).toMatchObject({
@@ -107,15 +108,19 @@ describe('board snapshot publication', () => {
       snapshot as never
     )
     const owner = createCanvasBoardOwner('/repo')
-    await expect(owner.refresh()).rejects.toThrow(
-      'metadata missing for image 2'
-    )
+    expect(await owner.refresh()).toMatchObject({
+      status: 'failed',
+      error: {
+        message: expect.stringContaining('metadata missing for image 2'),
+      },
+    })
     expect(owner.getSnapshot()).toBeNull()
   })
 
   it('uses snapshot membership and keeps the last accepted value on mismatch', async () => {
     spyOn(ImageService, 'LoadCanvas').mockResolvedValue(data as never)
     spyOn(ImageService, 'GetLayoutSnapshot')
+      .mockResolvedValueOnce(snapshot as never)
       .mockResolvedValueOnce({
         ...snapshot,
         images: snapshot.images?.slice(1) ?? [],
@@ -133,44 +138,62 @@ describe('board snapshot publication', () => {
         ],
       } as never)
     const owner = createCanvasBoardOwner('/repo')
-    const accepted = await owner.refresh()
+    await refreshBoard(owner)
+    const accepted = await refreshBoard(owner)
     expect(accepted?.data.images?.map((item) => item.id)).toEqual([2])
-    await expect(owner.refresh()).rejects.toThrow(
-      'metadata missing for image 3'
-    )
+    expect(await owner.refresh()).toMatchObject({
+      status: 'failed',
+      error: {
+        message: expect.stringContaining('metadata missing for image 3'),
+      },
+    })
     expect(owner.getSnapshot()).toBe(accepted)
   })
 
-  it('never lets an older request replace a newer publication', async () => {
+  it('serializes refresh requests and publishes them in FIFO order', async () => {
     const old = deferred<CanvasData | null>()
     spyOn(ImageService, 'LoadCanvas')
+      .mockResolvedValueOnce(data as never)
       .mockImplementationOnce(() => old.promise as never)
       .mockResolvedValue(data as never)
     spyOn(ImageService, 'GetLayoutSnapshot').mockResolvedValue(
       snapshot as never
     )
     const owner = createCanvasBoardOwner('/repo')
+    await refreshBoard(owner)
     const first = owner.refresh()
-    const second = await owner.refresh()
+    const second = owner.refresh()
+    await Promise.resolve()
     old.resolve(data)
-    expect(await first).toBeNull()
-    expect(owner.getSnapshot()).toBe(second)
-    expect(ImageService.GetLayoutSnapshot).toHaveBeenCalledTimes(1)
+    const [firstOutcome, secondOutcome] = await Promise.all([first, second])
+    expect(firstOutcome.status).toBe('success')
+    expect(secondOutcome.status).toBe('success')
+    expect(owner.getSnapshot()).toBe(
+      secondOutcome.status === 'success' ? secondOutcome.value : null
+    )
+    expect(ImageService.GetLayoutSnapshot).toHaveBeenCalledTimes(3)
   })
 
-  it('discards a snapshot that finishes after a newer request', async () => {
+  it('queues a newer refresh behind a snapshot that is already loading', async () => {
     const old = deferred<LayoutSnapshot | null>()
     spyOn(ImageService, 'LoadCanvas').mockResolvedValue(data as never)
     spyOn(ImageService, 'GetLayoutSnapshot')
+      .mockResolvedValueOnce(snapshot as never)
       .mockImplementationOnce(() => old.promise as never)
       .mockResolvedValue(snapshot as never)
     const owner = createCanvasBoardOwner('/repo')
+    await refreshBoard(owner)
     const first = owner.refresh()
     await Promise.resolve()
-    const latest = await owner.refresh()
+    const latest = owner.refresh()
+    await Promise.resolve()
     old.resolve({ ...snapshot, revision: '2' })
-    expect(await first).toBeNull()
-    expect(owner.getSnapshot()).toBe(latest)
+    const [firstOutcome, latestOutcome] = await Promise.all([first, latest])
+    expect(firstOutcome.status).toBe('success')
+    expect(latestOutcome.status).toBe('success')
+    expect(owner.getSnapshot()).toBe(
+      latestOutcome.status === 'success' ? latestOutcome.value : null
+    )
   })
 
   it('unsubscribes notifications and prevents publication after disposal', async () => {
@@ -182,14 +205,14 @@ describe('board snapshot publication', () => {
     const owner = createCanvasBoardOwner('/repo')
     const listener = mock()
     const unsubscribe = owner.subscribe(listener)
-    await owner.refresh()
+    await refreshBoard(owner)
     expect(listener).toHaveBeenCalledTimes(1)
     unsubscribe()
     const refresh = owner.refresh()
     await Promise.resolve()
     owner.dispose()
     pending.resolve(snapshot)
-    expect(await refresh).toBeNull()
+    expect((await refresh).status).toBe('cancelled')
     expect(listener).toHaveBeenCalledTimes(1)
   })
 
@@ -212,8 +235,8 @@ describe('board snapshot publication', () => {
     const loadingSecond = second.refresh()
     unmount()
     pending.resolve(data)
-    expect(await loading).toBeNull()
-    expect(await loadingSecond).toBeNull()
+    expect((await loading).status).toBe('cancelled')
+    expect((await loadingSecond).status).toBe('cancelled')
     expect(first.getSnapshot()).toBeNull()
     expect(second.getSnapshot()).toBeNull()
   })

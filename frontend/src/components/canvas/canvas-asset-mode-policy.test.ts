@@ -3,6 +3,7 @@ import { act, cleanup, renderHook } from '@testing-library/react'
 import { ImageService } from '../../../bindings/loom/internal/service'
 import type { Selection } from '../../lib/selection'
 import { createCanvasBoardOwner } from './canvas-board-owner'
+import { refreshBoard, reserveCanvasRead } from './canvas-operation-test-utils'
 import { useCanvasAssetOperations } from './use-canvas-asset-operations'
 
 afterEach(() => {
@@ -84,6 +85,7 @@ it('rechecks mode after a delayed paste and imports without Canvas geometry in V
     images: [],
     relationships: [],
   } as never)
+  await refreshBoard(owner)
   const setSelection = mock()
   const props = {
     owner,
@@ -96,13 +98,17 @@ it('rechecks mode after a delayed paste and imports without Canvas geometry in V
   } as unknown as Parameters<typeof useCanvasAssetOperations>[0]
   const { result } = renderHook(() => useCanvasAssetOperations(props))
   let release = () => {}
-  const blocker = owner.execute(
-    () =>
-      new Promise<void>((resolve) => {
-        release = resolve
-      })
-  )
-  await Promise.resolve()
+  let signalStarted = () => {}
+  const started = new Promise<void>((resolve) => {
+    signalStarted = resolve
+  })
+  const blocker = reserveCanvasRead(owner, async () => {
+    signalStarted()
+    await new Promise<void>((resolve) => {
+      release = resolve
+    })
+  })
+  await started
   const pending = result.current.paste([])
   owner.setMode('view')
   await act(async () => {
@@ -140,6 +146,7 @@ it('does not unlink or open purge from a Canvas selection in View', async () => 
     setPurgeIds,
   } as unknown as Parameters<typeof useCanvasAssetOperations>[0]
   const { result } = renderHook(() => useCanvasAssetOperations(props))
+  if (result.error) throw result.error
   await result.current.remove(false)
   await result.current.remove(true)
   expect(unlink).not.toHaveBeenCalled()
@@ -148,6 +155,24 @@ it('does not unlink or open purge from a Canvas selection in View', async () => 
 
 it('does not confirm a legacy Canvas purge after entering View', async () => {
   const owner = createCanvasBoardOwner('/repo')
+  spyOn(ImageService, 'LoadCanvas').mockResolvedValue({
+    images: [{ id: 1 }],
+    relationships: [],
+    groups: [],
+  } as never)
+  spyOn(ImageService, 'GetLayoutSnapshot').mockResolvedValue({
+    revision: '1',
+    images: [
+      {
+        id: 1,
+        width: 640,
+        height: 480,
+        geometry: { imageId: 1, x: 0, y: 0, w: 150, h: 110 },
+      },
+    ],
+    relationships: [],
+  } as never)
+  await refreshBoard(owner)
   const purge = spyOn(ImageService, 'PurgeImages').mockResolvedValue(
     undefined as never
   )

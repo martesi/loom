@@ -27,7 +27,10 @@ export function canvasViewActions(
       context: t`Canvas`,
       enabled: displayNodes.length > 0,
       disabledReason: t`There are no placed items`,
-      execute: fitAll,
+      execute: (operation) => {
+        if (!operation) throw new Error('Canvas operation context is required.')
+        return fitAll(operation)
+      },
     },
     {
       id: 'fit-selection',
@@ -39,7 +42,10 @@ export function canvasViewActions(
       context: t`Canvas selection`,
       enabled: canFitSelection,
       disabledReason: t`Select a Canvas item`,
-      execute: fitSelection,
+      execute: (operation) => {
+        if (!operation) throw new Error('Canvas operation context is required.')
+        return fitSelection(operation)
+      },
     },
     {
       id: 'reset-zoom',
@@ -50,7 +56,10 @@ export function canvasViewActions(
       shortcut: 'Mod+0',
       context: t`Canvas`,
       enabled: true,
-      execute: resetZoom,
+      execute: (operation) => {
+        if (!operation) throw new Error('Canvas operation context is required.')
+        return resetZoom(operation)
+      },
     },
     {
       id: 'zoom-in',
@@ -61,7 +70,10 @@ export function canvasViewActions(
       shortcut: 'Mod+=',
       context: t`Canvas`,
       enabled: true,
-      execute: () => zoomBy(1.2),
+      execute: (operation) => {
+        if (!operation) throw new Error('Canvas operation context is required.')
+        return zoomBy(operation, 1.2)
+      },
     },
     {
       id: 'zoom-out',
@@ -72,7 +84,10 @@ export function canvasViewActions(
       shortcut: 'Mod+-',
       context: t`Canvas`,
       enabled: true,
-      execute: () => zoomBy(1 / 1.2),
+      execute: (operation) => {
+        if (!operation) throw new Error('Canvas operation context is required.')
+        return zoomBy(operation, 1 / 1.2)
+      },
     },
     {
       id: 'auto-arrange-active',
@@ -85,7 +100,10 @@ export function canvasViewActions(
       context: t`Canvas`,
       enabled: displayNodes.length > 0,
       disabledReason: t`There are no placed items`,
-      execute: () => arrange(),
+      execute: (operation) => {
+        if (!operation) throw new Error('Canvas operation context is required.')
+        return arrange(operation)
+      },
     },
     {
       id: 'auto-arrange-selection',
@@ -96,7 +114,10 @@ export function canvasViewActions(
       context: t`Canvas selection`,
       enabled: canArrangeSelection,
       disabledReason: t`Select Canvas items`,
-      execute: () => arrange(selectedCanvasNodeIds),
+      execute: (operation) => {
+        if (!operation) throw new Error('Canvas operation context is required.')
+        return arrange(operation, selectedCanvasNodeIds)
+      },
     },
   ]
 }

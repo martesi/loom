@@ -4,6 +4,7 @@ import type { Edge, Node, Viewport } from '@xyflow/react'
 import { StrictMode, useEffect, useState } from 'react'
 import { ImageService } from '../../../bindings/loom/internal/service'
 import { createCanvasBoardOwner } from './canvas-board-owner'
+import { unwrapCanvasOutcome } from './canvas-operation'
 import { useCanvasProjectionController } from './use-canvas-projection-controller'
 
 afterEach(() => {
@@ -46,11 +47,26 @@ function setupOwner() {
   return createCanvasBoardOwner('/repo')
 }
 
+async function loadBoard(owner: ReturnType<typeof createCanvasBoardOwner>) {
+  const board = unwrapCanvasOutcome(await owner.refresh())
+  if (!board) throw new Error('missing board')
+  return board
+}
+
+function reserveGeometry(
+  owner: ReturnType<typeof createCanvasBoardOwner>,
+  action: () => Promise<void>
+) {
+  return owner.submit(
+    { kind: 'mutation', capability: 'geometry', board: owner.getSnapshot() },
+    action
+  )
+}
+
 for (const explicit of [false, true])
   it(`${explicit ? 'preserves an explicit anchor' : 'uses the current viewport center'} after panning between compensated layouts`, async () => {
     const owner = setupOwner()
-    const board = await owner.refresh()
-    if (!board) throw new Error('missing board')
+    const board = await loadBoard(owner)
     let viewport: Viewport = { x: 0, y: 0, zoom: 1 }
     const flow = {
       getViewport: () => viewport,
@@ -117,8 +133,7 @@ for (const ending of ['unmount', 'owner change'] as const) {
   for (const strict of [false, true]) {
     it(`drops a transition queued behind refresh on ${ending}${strict ? ' in StrictMode' : ''}`, async () => {
       const owner = setupOwner()
-      const board = await owner.refresh()
-      if (!board) throw new Error('missing board')
+      const board = await loadBoard(owner)
       const setNodes = mock(() => {})
       const setEdges = mock(() => {})
       const setViewport = mock(async (_viewport: Viewport) => true)
@@ -160,7 +175,7 @@ for (const ending of ['unmount', 'owner change'] as const) {
             release = resolve
           })
       )
-      const refresh = owner.execute(() => owner.refresh())
+      const refresh = owner.refresh()
       await act(async () => {
         await Promise.resolve()
       })
@@ -182,10 +197,10 @@ for (const ending of ['unmount', 'owner change'] as const) {
 
 it('invalidates the first StrictMode effect lifetime without cancelling the second', async () => {
   const owner = setupOwner()
-  const board = await owner.refresh()
-  if (!board) throw new Error('missing board')
+  const board = await loadBoard(owner)
   let release = () => {}
-  const blocker = owner.execute(
+  const blocker = reserveGeometry(
+    owner,
     () =>
       new Promise<void>((resolve) => {
         release = resolve
@@ -226,7 +241,7 @@ it('invalidates the first StrictMode effect lifetime without cancelling the seco
   expect(transitions).toHaveLength(2)
   await act(async () => {
     release()
-    await blocker
+    expect((await blocker).status).toBe('success')
     await Promise.all(transitions)
   })
   expect(setNodes).toHaveBeenCalledTimes(1)

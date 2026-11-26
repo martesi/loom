@@ -1,6 +1,10 @@
 import { afterEach, expect, it, mock, spyOn } from 'bun:test'
 import { ImageService } from '../../../bindings/loom/internal/service'
 import { createCanvasBoardOwner } from './canvas-board-owner'
+import {
+  refreshBoard,
+  reserveCanvasOperation,
+} from './canvas-operation-test-utils'
 
 afterEach(() => mock.restore())
 
@@ -23,30 +27,41 @@ it('serializes layout with mode changes and rejects an obsolete board', async ()
     'SetGeometryFromDisplayAtRevision'
   ).mockResolvedValue(undefined as never)
   const owner = createCanvasBoardOwner('/repo')
-  const board = await owner.refresh()
-  if (!board) throw new Error('missing board')
+  const board = await refreshBoard(owner)
   owner.setMode('edit')
-  await owner.execute(() =>
-    owner.commitDisplayedLayout(board, [before], [before], () => {
+  const noOp = await reserveCanvasOperation(owner, (context) =>
+    owner.commitDisplayedLayout(context, board, [before], [before], () => {
       throw new Error('no-op published')
     })
   )
+  expect(noOp.status).toBe('success')
   expect(write).not.toHaveBeenCalled()
-  const toView = owner.execute(async () => owner.setMode('view'))
-  const arrange = owner.execute(() =>
-    owner.commitDisplayedLayout(board, [before], [after], () => {
+  const toView = owner.submit(
+    { kind: 'mode', target: 'view' },
+    async (context) => context.setMode('view')
+  )
+  const arrange = reserveCanvasOperation(owner, (context) =>
+    owner.commitDisplayedLayout(context, board, [before], [after], () => {
       throw new Error('View published')
     })
   )
-  await Promise.all([toView, arrange])
+  expect((await toView).status).toBe('success')
+  expect(await arrange).toMatchObject({ status: 'rejected' })
   expect(write).not.toHaveBeenCalled()
-  owner.setMode('edit')
-  await owner.refresh()
-  await expect(
-    owner.execute(() =>
-      owner.commitDisplayedLayout(board, [before], [after], () => {})
-    )
-  ).rejects.toThrow('Canvas changed')
+  const toEdit = await owner.submit(
+    { kind: 'mode', target: 'edit' },
+    async (context) => context.setMode('edit')
+  )
+  expect(toEdit.status).toBe('success')
+  await refreshBoard(owner)
+  const obsolete = await reserveCanvasOperation(
+    owner,
+    (context) =>
+      owner.commitDisplayedLayout(context, board, [before], [after], () => {}),
+    'geometry',
+    board
+  )
+  expect(obsolete).toMatchObject({ status: 'rejected' })
   expect(write).not.toHaveBeenCalled()
   owner.dispose()
 })
@@ -85,18 +100,18 @@ it('rejects a graph change while a guarded layout write is pending', async () =>
     }
   )
   const owner = createCanvasBoardOwner('/repo')
-  const board = await owner.refresh()
-  if (!board) throw new Error('missing board')
+  const board = await refreshBoard(owner)
   owner.setMode('edit')
   const accept = mock(() => {})
-  const operation = owner.execute(() =>
-    owner.commitDisplayedLayout(board, [stored], [after], accept)
+  const operation = reserveCanvasOperation(owner, (context) =>
+    owner.commitDisplayedLayout(context, board, [stored], [after], accept)
   )
   await writing
   revision = 'changed graph'
-  await owner.refresh()
+  const refresh = owner.refresh()
   release()
-  await expect(operation).rejects.toThrow('stale revision')
+  expect(await operation).toMatchObject({ status: 'failed' })
+  await refresh
   expect(accept).not.toHaveBeenCalled()
   expect(owner.getSnapshot()?.snapshot.revision).toBe('changed graph')
   owner.dispose()

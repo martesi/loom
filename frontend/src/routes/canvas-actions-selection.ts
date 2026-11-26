@@ -1,5 +1,5 @@
 import { t } from '@lingui/core/macro'
-import { ImageService } from '../../bindings/loom/internal/service'
+import { canvasEffects } from '../components/canvas/canvas-operation-effects'
 import type { CanvasAction } from '../lib/action-catalog'
 import { emptySelection } from '../lib/selection'
 import type { CanvasActionsContext } from './canvas-actions-context'
@@ -125,7 +125,10 @@ export function canvasSelectionActions(
       context: t`Canvas selection`,
       enabled: selectedCanvasNodeIds.length > 1,
       disabledReason: t`Select at least two Canvas items`,
-      execute: alignHorizontal,
+      execute: (operation) => {
+        if (!operation) throw new Error('Canvas operation context is required.')
+        return alignHorizontal(operation)
+      },
     },
     {
       id: 'align-vertical',
@@ -136,7 +139,10 @@ export function canvasSelectionActions(
       context: t`Canvas selection`,
       enabled: selectedCanvasNodeIds.length > 1,
       disabledReason: t`Select at least two Canvas items`,
-      execute: alignVertical,
+      execute: (operation) => {
+        if (!operation) throw new Error('Canvas operation context is required.')
+        return alignVertical(operation)
+      },
     },
     {
       id: 'trash-selection',
@@ -162,14 +168,19 @@ export function canvasSelectionActions(
       enabled: selectedImageRecords.some((image) => !image.archived),
       disabledReason: t`Select an unarchived Asset`,
       execute: () =>
-        context.owner.admit(async () => {
-          await Promise.all(
-            selectedIds().map((id) =>
-              ImageService.SetArchived(repoPath, id, true)
-            )
-          )
-          await context.owner.reconcile()
-        }),
+        context.owner.submit(
+          {
+            kind: 'mutation',
+            capability: 'metadata',
+            board: context.owner.getSnapshot(),
+          },
+          (operation) =>
+            Promise.all(
+              selectedIds().map((id) =>
+                canvasEffects.setArchived(operation, repoPath, id, true)
+              )
+            ).then(() => undefined)
+        ),
     },
     {
       id: 'unarchive-selection',
@@ -181,14 +192,19 @@ export function canvasSelectionActions(
       enabled: selectedImageRecords.some((image) => image.archived),
       disabledReason: t`Select an archived Asset`,
       execute: () =>
-        context.owner.admit(async () => {
-          await Promise.all(
-            selectedIds().map((id) =>
-              ImageService.SetArchived(repoPath, id, false)
-            )
-          )
-          await context.owner.reconcile()
-        }),
+        context.owner.submit(
+          {
+            kind: 'mutation',
+            capability: 'metadata',
+            board: context.owner.getSnapshot(),
+          },
+          (operation) =>
+            Promise.all(
+              selectedIds().map((id) =>
+                canvasEffects.setArchived(operation, repoPath, id, false)
+              )
+            ).then(() => undefined)
+        ),
     },
   ]
 }

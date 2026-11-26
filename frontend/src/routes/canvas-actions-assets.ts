@@ -1,5 +1,5 @@
 import { t } from '@lingui/core/macro'
-import { ImageService } from '../../bindings/loom/internal/service'
+import { canvasEffects } from '../components/canvas/canvas-operation-effects'
 import type { CanvasAction } from '../lib/action-catalog'
 import { copyMedia } from '../lib/clipboard'
 import type { CanvasActionsContext } from './canvas-actions-context'
@@ -105,14 +105,23 @@ export function canvasAssetActions(
       enabled: selectedImageRecords.some((image) => image.trashed),
       disabledReason: t`Select a trashed Asset`,
       execute: () =>
-        context.owner.admit(async () => {
-          await Promise.all(
-            selectedImageRecords
-              .filter((image) => image.trashed)
-              .map((image) => ImageService.RestoreImage(repoPath, image.id))
-          )
-          await context.owner.reconcile()
-        }),
+        context.owner.submit(
+          {
+            kind: 'mutation',
+            capability: 'lifecycle',
+            board: context.owner.getSnapshot(),
+          },
+          (operation) =>
+            Promise.all(
+              selectedImageRecords
+                .filter((image) => image.trashed)
+                .map((image) =>
+                  operation.effect(() =>
+                    canvasEffects.restoreImage(operation, repoPath, image.id)
+                  )
+                )
+            ).then(() => undefined)
+        ),
     },
     {
       id: 'compress-selection',
@@ -181,10 +190,19 @@ export function canvasAssetActions(
       execute: () => {
         const relationship = selectedRelationships[0]
         if (selectedRelationships.length !== 1 || !relationship) return
-        return context.owner.admit(async () => {
-          await ImageService.ReverseRelationship(repoPath, relationship.id)
-          await context.owner.reconcile()
-        })
+        return context.owner.submit(
+          {
+            kind: 'mutation',
+            capability: 'relationship',
+            board: context.owner.getSnapshot(),
+          },
+          (operation) =>
+            canvasEffects.reverseRelationship(
+              operation,
+              repoPath,
+              relationship.id
+            )
+        )
       },
     },
     {
@@ -200,10 +218,15 @@ export function canvasAssetActions(
       execute: () => {
         const relationship = relationshipActions[0]
         return relationship
-          ? context.owner.admit(async () => {
-              await ImageService.UnlinkSource(repoPath, relationship.id)
-              await context.owner.reconcile()
-            })
+          ? context.owner.submit(
+              {
+                kind: 'mutation',
+                capability: 'relationship',
+                board: context.owner.getSnapshot(),
+              },
+              (operation) =>
+                canvasEffects.unlinkSource(operation, repoPath, relationship.id)
+            )
           : undefined
       },
     },

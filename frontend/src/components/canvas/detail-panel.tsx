@@ -13,6 +13,8 @@ import { Button } from '../ui/button'
 import { ShortcutKeys } from '../ui/tooltip'
 import type { CanvasBoardOwner } from './canvas-board-owner'
 import { enqueueCanvasMutation } from './canvas-mutation-queue'
+import { canvasOutcomeError } from './canvas-operation'
+import { canvasEffects } from './canvas-operation-effects'
 import { DetailPanelDialogs } from './detail-panel-dialogs'
 import { DetailPanelFields } from './detail-panel-fields'
 import { DetailPanelRelations } from './detail-panel-relations'
@@ -23,7 +25,6 @@ interface Props {
   path: string
   data: CanvasData
   selection: Selection
-  change: () => Promise<void>
   go: (id: number, folder?: boolean) => void
   onError: (e: unknown) => void
   commandRequest: {
@@ -54,7 +55,6 @@ export const DetailPanel = memo(function DetailPanel({
   path,
   data,
   selection,
-  change,
   go,
   onError,
   commandRequest,
@@ -199,15 +199,14 @@ export const DetailPanel = memo(function DetailPanel({
   }, [path, key, data])
   const tagLists = tagResult?.scope === scope ? tagResult.lists : []
   const removeRelationship = (id: number) => {
-    void enqueueCanvasMutation(
-      owner,
-      'relationship',
-      async () => {
-        await ImageService.UnlinkSource(path, id)
-        await change()
-      },
-      () => owner.allowsAdmitted('relationship')
-    ).catch(errors.current)
+    void enqueueCanvasMutation(owner, 'relationship', (context) =>
+      canvasEffects.unlinkSource(context, path, id)
+    )
+      .then((outcome) => {
+        const error = canvasOutcomeError(outcome)
+        if (error) errors.current(error)
+      })
+      .catch(errors.current)
   }
   const unavailableCount = selection.ids.length - images.length
   const dialogs = (

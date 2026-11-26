@@ -1,6 +1,7 @@
 import { afterEach, expect, it, mock, spyOn } from 'bun:test'
 import { ImageService } from '../../../bindings/loom/internal/service'
 import { createCanvasBoardOwner } from './canvas-board-owner'
+import { refreshBoard, reserveCanvasRead } from './canvas-operation-test-utils'
 
 const rectangle = { imageId: 1, x: 10, y: 20, w: 150, h: 110 }
 const resized = { imageId: 1, x: 1, y: 2, w: 300, h: 200 }
@@ -28,12 +29,12 @@ afterEach(() => mock.restore())
 it('preserves a submitted resize across a graph refresh before dispatch', async () => {
   const write = mockSnapshot()
   const owner = createCanvasBoardOwner('/repo')
-  const board = await owner.refresh()
+  const board = await refreshBoard(owner)
   let release = () => {}
   const blocked = new Promise<void>((resolve) => {
     release = resolve
   })
-  const first = owner.execute(() => blocked)
+  const first = reserveCanvasRead(owner, () => blocked)
   const token = owner.beginResize(
     board,
     rectangle,
@@ -45,16 +46,18 @@ it('preserves a submitted resize across a graph refresh before dispatch', async 
   expect(token).not.toBeNull()
   if (token === null) throw new Error('missing gesture')
   const pending = owner.endResize(token, 1, resized)
-  await owner.refresh()
+  const refresh = owner.refresh()
   release()
-  await Promise.all([first, pending])
+  expect((await first).status).toBe('success')
+  expect((await pending).status).toBe('success')
+  await refresh
   expect(write).toHaveBeenCalledTimes(1)
 })
 
 it('ignores resize callbacks after the repository owner is disposed', async () => {
   const write = mockSnapshot()
   const owner = createCanvasBoardOwner('/one')
-  const board = await owner.refresh()
+  const board = await refreshBoard(owner)
   const token = owner.beginResize(
     board,
     rectangle,
@@ -67,7 +70,9 @@ it('ignores resize callbacks after the repository owner is disposed', async () =
   if (token === null) throw new Error('missing gesture')
   owner.dispose()
   const next = createCanvasBoardOwner('/two')
-  await next.refresh()
-  await owner.endResize(token, 1, resized)
+  await refreshBoard(next)
+  expect(await owner.endResize(token, 1, resized)).toMatchObject({
+    status: 'cancelled',
+  })
   expect(write).not.toHaveBeenCalled()
 })

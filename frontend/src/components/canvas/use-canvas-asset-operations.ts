@@ -5,6 +5,8 @@ import { ImageService } from '../../../bindings/loom/internal/service'
 import { readMedia } from '../../lib/clipboard'
 import type { Selection } from '../../lib/selection'
 import type { CanvasBoardOwner } from './canvas-board-owner'
+import { unwrapCanvasOutcome } from './canvas-operation'
+import { canvasEffects } from './canvas-operation-effects'
 import type { RevealRequest } from './use-canvas-workspace-state'
 
 type Media = Awaited<ReturnType<typeof readMedia>>
@@ -136,23 +138,40 @@ export function useCanvasAssetOperations({
     surface = selection.surface
   ) {
     const point = center()
-    const { ids, canvas } = await owner.admit(async () => {
-      const assets = media
-        ? typeof media === 'function'
-          ? await media()
-          : media
-        : await readMedia()
-      const canvas = surface === 'canvas' && owner.allowsAdmitted('canvas-drop')
-      const ids = await ImageService.ImportMedia(
-        repoPath,
-        assets,
-        canvas,
-        point.x,
-        point.y
-      )
-      await owner.reconcile()
-      return { ids, canvas }
-    })
+    let prepared: Promise<Media> | null = null
+    const outcome = await owner.submit(
+      {
+        kind: 'mutation',
+        capability: 'lifecycle',
+        board: owner.getSnapshot(),
+      },
+      async (context) => {
+        const source = prepared
+        if (!source) throw new Error('Clipboard preparation did not start.')
+        const assets = await context.prepare(() => source)
+        const canvas = surface === 'canvas' && owner.getMode() !== 'view'
+        const ids = await canvasEffects.importMedia(
+          context,
+          repoPath,
+          assets,
+          canvas,
+          point.x,
+          point.y
+        )
+        return { ids, canvas }
+      },
+      {
+        onReserved: () => {
+          prepared = media
+            ? typeof media === 'function'
+              ? media()
+              : Promise.resolve(media)
+            : readMedia()
+        },
+      }
+    )
+    if (outcome.status === 'cancelled') return
+    const { ids, canvas } = unwrapCanvasOutcome(outcome)
     setSelection({
       surface: canvas ? 'canvas' : 'assets',
       ids: ids ?? [],
@@ -163,18 +182,21 @@ export function useCanvasAssetOperations({
   }
 
   async function importMedia(media: Media | (() => Promise<Media>)) {
-    const ids = await owner.admit(async () => {
-      const assets = typeof media === 'function' ? await media() : media
-      const imported = await ImageService.ImportMedia(
-        repoPath,
-        assets,
-        false,
-        0,
-        0
-      )
-      await owner.reconcile()
-      return imported
-    })
+    const outcome = await owner.submit(
+      {
+        kind: 'mutation',
+        capability: 'lifecycle',
+        board: owner.getSnapshot(),
+      },
+      async (context) => {
+        const assets = await context.prepare(() =>
+          typeof media === 'function' ? media() : Promise.resolve(media)
+        )
+        return canvasEffects.importMedia(context, repoPath, assets, false, 0, 0)
+      }
+    )
+    if (outcome.status === 'cancelled') return
+    const ids = unwrapCanvasOutcome(outcome)
     setSelection({ surface: 'assets', ids: ids ?? [], edges: [], group: null })
     if (ids?.length) setReveal({ id: ids[0], folder: null })
   }
@@ -195,10 +217,17 @@ export function useCanvasAssetOperations({
     }
     if (selection.edges.length) {
       if (!owner.allows('relationship')) return
-      await owner.admit(async () => {
-        await ImageService.UnlinkSources(repoPath, selection.edges)
-        await owner.reconcile()
-      })
+      const outcome = await owner.submit(
+        {
+          kind: 'mutation',
+          capability: 'relationship',
+          board: owner.getSnapshot(),
+        },
+        (context) =>
+          canvasEffects.unlinkSources(context, repoPath, selection.edges)
+      )
+      if (outcome.status === 'cancelled') return
+      unwrapCanvasOutcome(outcome)
     } else return
     setSelection({ ...selection, ids: [], edges: [], group: null })
   }
@@ -211,19 +240,29 @@ export function useCanvasAssetOperations({
     if (!trashIds?.length || lifecyclePendingRef.current) return
     lifecyclePendingRef.current = true
     setLifecyclePending(true)
-    const { outcomes, refreshError } = await owner.admit(async () => {
-      const outcomes = await Promise.allSettled(
-        trashIds.map((id) => ImageService.TrashImage(repoPath, id))
-      )
-      let refreshError: unknown
-      await owner
-        .reconcile()
-        .then(() => undefined)
-        .catch((cause: unknown) => {
-          refreshError = cause
-        })
-      return { outcomes, refreshError }
-    })
+    const operation = await owner.submit(
+      {
+        kind: 'mutation',
+        capability: 'lifecycle',
+        board: owner.getSnapshot(),
+      },
+      async (context) => {
+        const results: PromiseSettledResult<void>[] = []
+        for (const id of trashIds) {
+          const result = await canvasEffects
+            .trashImage(context, repoPath, id)
+            .then(
+              (value) => ({ status: 'fulfilled' as const, value }),
+              (reason: unknown) => ({ status: 'rejected' as const, reason })
+            )
+          context.assertCurrent()
+          results.push(result)
+        }
+        return results
+      }
+    )
+    if (operation.status === 'cancelled') return
+    const outcomes = unwrapCanvasOutcome(operation)
     const failures = outcomes.flatMap((outcome, index) =>
       outcome.status === 'rejected'
         ? [{ id: trashIds[index], cause: outcome.reason }]
@@ -236,15 +275,13 @@ export function useCanvasAssetOperations({
         assetId: failure.id,
         cause: failure.cause,
       })
-    if (refreshError)
-      console.error('asset trash refresh failed', { cause: refreshError })
-    if (failures.length || refreshError) {
+    if (failures.length) {
       const details = failures.map(
         ({ id, cause }) =>
           `Asset ${id}: ${cause instanceof Error ? cause.message : String(cause)}`
       )
       setError(
-        `${trashIds.length - failures.length} of ${trashIds.length} assets moved to Trash.${details.length ? ` ${details.join('; ')}` : ''}${refreshError ? ' Refresh failed; the current state may be stale.' : ' The current state was refreshed.'}`
+        `${trashIds.length - failures.length} of ${trashIds.length} assets moved to Trash.${details.length ? ` ${details.join('; ')}` : ''} The current state was refreshed.`
       )
       return
     }
@@ -256,15 +293,22 @@ export function useCanvasAssetOperations({
     if (owner.getMode() !== 'legacy' && purgeOrigin.current !== 'assets') return
     lifecyclePendingRef.current = true
     setLifecyclePending(true)
-    const purged = await owner.admit(async () => {
-      if (owner.getMode() !== 'legacy' && purgeOrigin.current !== 'assets') {
-        await owner.reconcile()
-        return false
+    const outcome = await owner.submit(
+      {
+        kind: 'mutation',
+        capability: 'lifecycle',
+        board: owner.getSnapshot(),
+      },
+      (context) => {
+        if (owner.getMode() !== 'legacy' && purgeOrigin.current !== 'assets')
+          return Promise.resolve(false)
+        return canvasEffects
+          .purgeImages(context, repoPath, purgeIds)
+          .then(() => true)
       }
-      await ImageService.PurgeImages(repoPath, purgeIds)
-      await owner.reconcile()
-      return true
-    })
+    )
+    if (outcome.status === 'cancelled') return
+    const purged = unwrapCanvasOutcome(outcome)
     if (!purged) return
     purgeOrigin.current = null
     setPurgeIds(null)

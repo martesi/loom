@@ -1,7 +1,24 @@
+import type {
+  CanvasOperationContext,
+  CanvasOperationOutcome,
+  CanvasUserOperationRequest,
+} from './canvas-operation'
+
+export interface CanvasSubmitOptions {
+  onReserved?: () => void
+}
+
 export interface CanvasBoardExecutor {
-  execute<T>(action: () => Promise<T>): Promise<T>
-  admit?<T>(action: () => Promise<T>, boardMutation?: boolean): Promise<T>
+  submit<T>(
+    request: CanvasUserOperationRequest,
+    action: (context: CanvasOperationContext) => Promise<T>,
+    options?: CanvasSubmitOptions
+  ): Promise<CanvasOperationOutcome<T>>
+  getSnapshot(): object | null
+  stageHistory(result: UndoResult): void
   cancelGesture?(): void
   isActive?(): boolean
   getLifetimeRevision?(): number
 }
+
+import type { UndoResult } from '../../../bindings/loom/internal/service'

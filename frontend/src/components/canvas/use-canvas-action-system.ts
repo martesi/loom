@@ -17,6 +17,10 @@ import {
   canvasActionCapability,
 } from './canvas-mode-policy'
 import { enqueueCanvasMutation } from './canvas-mutation-queue'
+import {
+  isCanvasOperationOutcome,
+  unwrapCanvasOutcome,
+} from './canvas-operation'
 import type { PaletteAsset } from './command-palette'
 
 interface Props {
@@ -85,16 +89,31 @@ export function useCanvasActionSystem({
         )
           return action.execute()
         // Other actions may own their own queue, such as paste and history.
-        if (capability !== 'geometry' && capability !== 'relationship')
-          return action.execute()
+        const persistsViewport = [
+          'fit-all',
+          'fit-selection',
+          'reset-zoom',
+          'zoom-in',
+          'zoom-out',
+        ].includes(action.id)
+        const serializedCapability =
+          capability === 'geometry' || capability === 'relationship'
+            ? capability
+            : persistsViewport
+              ? 'navigate'
+              : null
+        if (!serializedCapability) return action.execute()
         return enqueueCanvasMutation(
           context.owner,
-          capability,
-          async () => {
-            await action.execute()
+          serializedCapability,
+          async (operation) => {
+            await action.execute(operation)
           },
           () => allowsCanvasAction(context.owner.getMode(), action.id)
-        )
+        ).then((outcome) => {
+          if (outcome.status === 'cancelled') return
+          unwrapCanvasOutcome(outcome)
+        })
       },
     }
   })
@@ -116,7 +135,14 @@ export function useCanvasActionSystem({
       !allowsCanvasAction(context.owner.getMode(), action.id)
     )
       return Promise.resolve()
-    return Promise.resolve(currentAction.execute()).catch(report)
+    return Promise.resolve(currentAction.execute())
+      .then((result) => {
+        if (isCanvasOperationOutcome(result)) {
+          if (result.status === 'cancelled') return
+          unwrapCanvasOutcome(result)
+        }
+      })
+      .catch(report)
   }
   function executeActionById(id: string) {
     const action = actionById.get(id)

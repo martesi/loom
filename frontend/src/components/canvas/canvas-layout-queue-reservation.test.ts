@@ -4,6 +4,7 @@ import {
   ImageService,
 } from '../../../bindings/loom/internal/service'
 import { createCanvasBoardOwner } from './canvas-board-owner'
+import { refreshBoard, reserveCanvasRead } from './canvas-operation-test-utils'
 
 const before: GeometryUpdate = { imageId: 1, x: 10, y: 20, w: 150, h: 110 }
 const after: GeometryUpdate = { ...before, x: 40, w: 180 }
@@ -39,7 +40,7 @@ function makeQueueBlock(owner: ReturnType<typeof createCanvasBoardOwner>) {
   const gate = new Promise<void>((resolve) => {
     release = resolve
   })
-  const blocked = owner.execute(async () => {
+  const blocked = reserveCanvasRead(owner, async () => {
     started()
     await gate
   })
@@ -68,13 +69,22 @@ function submitGeometry(
   return owner.endResize(token, 7, after)
 }
 
+async function setMode(
+  owner: ReturnType<typeof createCanvasBoardOwner>,
+  mode: 'view' | 'edit'
+) {
+  return owner.submit({ kind: 'mode', target: mode }, async (context) =>
+    context.setMode(mode)
+  )
+}
+
 afterEach(() => mock.restore())
 
 for (const kind of ['resize', 'drag'] as const) {
   it(`reserves layout as soon as a queued ${kind} is submitted`, async () => {
     const { owner, write } = setup()
-    const board = await owner.refresh()
-    owner.setMode('edit')
+    const board = await refreshBoard(owner)
+    expect((await setMode(owner, 'edit')).status).toBe('success')
     const block = makeQueueBlock(owner)
     await block.ready
     const submitted = submitGeometry(owner, board, kind)
@@ -91,17 +101,27 @@ for (const kind of ['resize', 'drag'] as const) {
       )
     ).toBeNull()
     expect(owner.beginDrag(board, [before])).toBeNull()
-    owner.beginModeTransition()
-    owner.setMode('view')
-    await owner.refresh()
+    owner.beginModeTransition('view')
+    const mode = owner.submit(
+      { kind: 'mode', target: 'view' },
+      async (context) => context.setMode('view')
+    )
+    const refresh = owner.refresh()
     block.release()
-    await Promise.all([block.blocked, submitted])
-    expect(write).toHaveBeenCalledTimes(1)
+    expect((await block.blocked).status).toBe('success')
+    expect((await submitted).status).toBe('cancelled')
+    expect((await mode).status).toBe('success')
+    await refresh
+    expect(write).not.toHaveBeenCalled()
     expect(owner.isLayoutPending()).toBe(false)
     let continued = false
-    await owner.execute(async () => {
-      continued = true
-    })
+    expect(
+      (
+        await reserveCanvasRead(owner, async () => {
+          continued = true
+        })
+      ).status
+    ).toBe('success')
     expect(continued).toBe(true)
     owner.dispose()
   })
@@ -109,8 +129,8 @@ for (const kind of ['resize', 'drag'] as const) {
 
 it('reconciles a replacement owner after an old in-flight write settles', async () => {
   const { owner: oldOwner, write, load } = setup(true)
-  const board = await oldOwner.refresh()
-  oldOwner.setMode('edit')
+  const board = await refreshBoard(oldOwner)
+  expect((await setMode(oldOwner, 'edit')).status).toBe('success')
   let signalWriteStarted = () => {}
   let releaseWrite = () => {}
   const writeStarted = new Promise<void>((resolve) => {
@@ -138,7 +158,7 @@ it('reconciles a replacement owner after an old in-flight write settles', async 
 
   const replacement = createCanvasBoardOwner('/repo', true)
   const initialLoads = load.mock.calls.length
-  const refreshed = replacement.refresh()
+  const refreshed = replacement.activate()
   await Promise.resolve()
   expect(load).toHaveBeenCalledTimes(initialLoads)
   expect(
@@ -152,11 +172,12 @@ it('reconciles a replacement owner after an old in-flight write settles', async 
     )
   ).toBeNull()
   releaseWrite()
-  await submitted
-  const freshBoard = await refreshed
+  expect((await submitted).status).toBe('cancelled')
+  expect((await refreshed).status).toBe('success')
+  const freshBoard = replacement.getSnapshot()
   expect(freshBoard).not.toBeNull()
   expect(load).toHaveBeenCalledTimes(initialLoads + 1)
-  replacement.setMode('edit')
+  expect((await setMode(replacement, 'edit')).status).toBe('success')
   expect(
     replacement.beginResize(
       freshBoard,
@@ -172,8 +193,8 @@ it('reconciles a replacement owner after an old in-flight write settles', async 
 
 it('keeps a reactivated owner fenced until its old in-flight write settles', async () => {
   const { owner, write, load } = setup(true)
-  const board = await owner.refresh()
-  owner.setMode('edit')
+  const board = await refreshBoard(owner)
+  expect((await setMode(owner, 'edit')).status).toBe('success')
   let signalWriteStarted = () => {}
   let releaseWrite = () => {}
   const writeStarted = new Promise<void>((resolve) => {
@@ -198,7 +219,7 @@ it('keeps a reactivated owner fenced until its old in-flight write settles', asy
   const submitted = owner.endResize(token, 7, after)
   await writeStarted
   owner.dispose()
-  owner.activate()
+  const activation = owner.activate()
   expect(
     owner.beginResize(
       board,
@@ -210,11 +231,12 @@ it('keeps a reactivated owner fenced until its old in-flight write settles', asy
     )
   ).toBeNull()
   releaseWrite()
-  await submitted
-  const refreshed = await owner.refresh()
+  expect((await submitted).status).toBe('cancelled')
+  expect((await activation).status).toBe('success')
+  const refreshed = owner.getSnapshot()
   expect(refreshed).not.toBeNull()
   expect(load.mock.calls.length).toBeGreaterThanOrEqual(2)
-  owner.setMode('edit')
+  expect((await setMode(owner, 'edit')).status).toBe('success')
   expect(
     owner.beginResize(
       refreshed,
@@ -230,18 +252,23 @@ it('keeps a reactivated owner fenced until its old in-flight write settles', asy
 
 it('blocks gestures after reconciliation failure until a later refresh succeeds', async () => {
   const { owner, load } = setup()
-  const board = await owner.refresh()
-  owner.setMode('edit')
+  const board = await refreshBoard(owner)
+  expect((await setMode(owner, 'edit')).status).toBe('success')
   load.mockRejectedValueOnce(new Error('reconciliation failed'))
-  await expect(
-    owner.admit(async () => {
-      throw new Error('backend write failed')
-    })
-  ).rejects.toThrow('Canvas could not be reconciled')
+  const outcome = await owner.submit(
+    { kind: 'mutation', capability: 'geometry', board },
+    (context) =>
+      context.effect(async () => {
+        throw new Error('backend write failed')
+      })
+  )
+  expect(outcome).toMatchObject({ status: 'failed' })
+  if (outcome.status === 'failed')
+    expect(outcome.error.message).toContain('reconciliation failed')
   expect(owner.beginDrag(board, [before])).toBeNull()
-  const fresh = await owner.refresh()
+  const fresh = await refreshBoard(owner)
   expect(fresh).not.toBeNull()
-  owner.setMode('edit')
+  expect((await setMode(owner, 'edit')).status).toBe('success')
   expect(
     owner.beginResize(
       fresh,
@@ -257,8 +284,8 @@ it('blocks gestures after reconciliation failure until a later refresh succeeds'
 
 it('records View intent synchronously and preserves rapid View-to-Edit FIFO', async () => {
   const { owner } = setup()
-  const board = await owner.refresh()
-  owner.setMode('edit')
+  const board = await refreshBoard(owner)
+  expect((await setMode(owner, 'edit')).status).toBe('success')
   let release = () => {}
   let started = () => {}
   const gate = new Promise<void>((resolve) => {
@@ -267,13 +294,13 @@ it('records View intent synchronously and preserves rapid View-to-Edit FIFO', as
   const ready = new Promise<void>((resolve) => {
     started = resolve
   })
-  const blocker = owner.execute(async () => {
+  const blocker = reserveCanvasRead(owner, async () => {
     started()
     await gate
   })
   await ready
   const viewTicket = owner.beginModeTransition('view')
-  const view = owner.admit(async () => owner.setMode('view'), false)
+  const view = setMode(owner, 'view')
   expect(
     owner.beginResize(
       board,
@@ -285,9 +312,11 @@ it('records View intent synchronously and preserves rapid View-to-Edit FIFO', as
     )
   ).toBeNull()
   owner.beginModeTransition('edit')
-  const edit = owner.admit(async () => owner.setMode('edit'), false)
+  const edit = setMode(owner, 'edit')
   release()
-  await Promise.all([blocker, view, edit])
+  expect((await blocker).status).toBe('success')
+  expect((await view).status).toBe('success')
+  expect((await edit).status).toBe('success')
   expect(owner.getMode()).toBe('edit')
   expect(owner.allows('geometry')).toBe(true)
   owner.cancelModeTransition(viewTicket)
@@ -296,14 +325,14 @@ it('records View intent synchronously and preserves rapid View-to-Edit FIFO', as
 
 it('clears a failed pending mode intent so later geometry can recover', async () => {
   const { owner } = setup()
-  const board = await owner.refresh()
-  owner.setMode('edit')
+  const board = await refreshBoard(owner)
+  expect((await setMode(owner, 'edit')).status).toBe('success')
   const ticket = owner.beginModeTransition('view')
-  await expect(
-    owner.admit(async () => {
+  expect(
+    await owner.submit({ kind: 'mode', target: 'view' }, async () => {
       throw new Error('projection failed')
-    }, false)
-  ).rejects.toThrow('projection failed')
+    })
+  ).toMatchObject({ status: 'failed' })
   owner.cancelModeTransition(ticket)
   expect(owner.getMode()).toBe('edit')
   expect(
@@ -322,8 +351,8 @@ it('clears a failed pending mode intent so later geometry can recover', async ()
 for (const kind of ['resize', 'drag'] as const) {
   it(`releases a queued ${kind} reservation after write failure and continues`, async () => {
     const { owner, write } = setup()
-    const board = await owner.refresh()
-    owner.setMode('edit')
+    const board = await refreshBoard(owner)
+    expect((await setMode(owner, 'edit')).status).toBe('success')
     let release = () => {}
     let started = () => {}
     const gate = new Promise<void>((resolve) => {
@@ -332,7 +361,7 @@ for (const kind of ['resize', 'drag'] as const) {
     const ready = new Promise<void>((resolve) => {
       started = resolve
     })
-    const blocker = owner.execute(async () => {
+    const blocker = reserveCanvasRead(owner, async () => {
       started()
       await gate
     })
@@ -341,13 +370,17 @@ for (const kind of ['resize', 'drag'] as const) {
     const submitted = submitGeometry(owner, board, kind)
     expect(owner.isLayoutPending()).toBe(true)
     release()
-    await blocker
-    await expect(submitted).rejects.toThrow('write failed')
+    expect((await blocker).status).toBe('success')
+    expect(await submitted).toMatchObject({ status: 'failed' })
     expect(owner.isLayoutPending()).toBe(false)
     let continued = false
-    await owner.execute(async () => {
-      continued = true
-    })
+    expect(
+      (
+        await reserveCanvasRead(owner, async () => {
+          continued = true
+        })
+      ).status
+    ).toBe('success')
     expect(continued).toBe(true)
     owner.dispose()
   })
@@ -356,16 +389,16 @@ for (const kind of ['resize', 'drag'] as const) {
 for (const kind of ['resize', 'drag'] as const) {
   it(`releases a queued ${kind} reservation when owner disposal cancels dispatch`, async () => {
     const { owner, write } = setup()
-    const board = await owner.refresh()
+    const board = await refreshBoard(owner)
     const block = makeQueueBlock(owner)
     await block.ready
     const submitted = submitGeometry(owner, board, kind)
     expect(owner.isLayoutPending()).toBe(true)
     owner.dispose()
-    expect(owner.isLayoutPending()).toBe(false)
+    expect(owner.isLayoutPending()).toBe(true)
     block.release()
-    await block.blocked
-    await submitted
+    expect((await block.blocked).status).toBe('cancelled')
+    expect(await submitted).toMatchObject({ status: 'cancelled' })
     expect(write).not.toHaveBeenCalled()
     expect(owner.isLayoutPending()).toBe(false)
   })

@@ -1,9 +1,12 @@
-import { describe, expect, it } from 'bun:test'
+import { describe, expect, it, mock } from 'bun:test'
 import type { CanvasData } from '../../../bindings/loom/internal/service'
-import {
-  arrangeGeometryUpdates,
-  validateRelationshipTarget,
-} from './canvas-board-operations'
+
+mock.module('@lingui/core/macro', () => ({
+  t: (parts: TemplateStringsArray) => parts.join(''),
+}))
+const { arrangeGeometryUpdates, validateRelationshipTarget } = await import(
+  './canvas-board-operations'
+)
 
 const data = {
   images: [

@@ -15,6 +15,7 @@ import {
 } from '../../../bindings/loom/internal/service'
 import { emptySelection } from '../../lib/selection'
 import { useCanvasBoardOwner } from './canvas-board-owner'
+import { reserveCanvasRead } from './canvas-operation-test-utils'
 import { useCanvasAssetOperations } from './use-canvas-asset-operations'
 import { useCanvasBoardModel } from './use-canvas-board-model'
 import { useCanvasPreview } from './use-canvas-preview'
@@ -329,15 +330,17 @@ it('uses the projected graph for navigation and preview in View and Edit', async
       })
   )
   let releaseBlocker = () => {}
-  const blocker = current().owner.execute(
-    () =>
-      new Promise<void>((resolve) => {
-        releaseBlocker = resolve
-      })
-  )
-  await act(async () => {
-    await Promise.resolve()
+  let signalBlocker = () => {}
+  const blockerStarted = new Promise<void>((resolve) => {
+    signalBlocker = resolve
   })
+  const blocker = reserveCanvasRead(current().owner, async () => {
+    signalBlocker()
+    await new Promise<void>((resolve) => {
+      releaseBlocker = resolve
+    })
+  })
+  await blockerStarted
   const pendingNavigation = current().operations.go(1)
   const transition = current().model.transitionMode('edit')
   const beforeNavigation = current().flow.getViewport()
@@ -349,7 +352,7 @@ it('uses the projected graph for navigation and preview in View and Edit', async
   expect(current().flow.getViewport()).toEqual(beforeNavigation)
   await act(async () => {
     releaseBlocker()
-    await blocker
+    expect((await blocker).status).toBe('success')
     await transition
   })
   expect(writeGeometry).not.toHaveBeenCalled()

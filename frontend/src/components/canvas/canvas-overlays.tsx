@@ -6,13 +6,14 @@ import type {
   CanvasData,
   ImageInfo,
 } from '../../../bindings/loom/internal/service'
-import { ImageService } from '../../../bindings/loom/internal/service'
 import type { CanvasAction } from '../../lib/action-catalog'
 import { renditionGenerationUrl } from '../../lib/preview-tier'
 import { CompressionDialog } from '../compression-dialog'
 import { SettingsDialog } from '../settings-dialog'
 import { Button } from '../ui/button'
 import type { CanvasBoardOwner } from './canvas-board-owner'
+import { unwrapCanvasOutcome } from './canvas-operation'
+import { canvasEffects } from './canvas-operation-effects'
 import type { PaletteAsset } from './command-palette'
 import { CommandPalette } from './command-palette'
 import { LightboxViewer } from './lightbox'
@@ -136,14 +137,28 @@ export function CanvasOverlays({
           defaultShortcuts={defaultShortcuts}
           repoPath={repoPath || null}
           rescanRepository={(path) =>
-            owner.admit(async () => {
-              const result = await ImageService.RescanRepository(path)
-              await owner.reconcile()
-              return result
-            })
+            owner
+              .submit(
+                {
+                  kind: 'mutation',
+                  capability: 'lifecycle',
+                  board: owner.getSnapshot(),
+                },
+                (context) => canvasEffects.rescanRepository(context, path)
+              )
+              .then(unwrapCanvasOutcome<number>)
           }
           invalidateRenditions={(path) =>
-            ImageService.InvalidateRenditions(path)
+            owner
+              .submit(
+                {
+                  kind: 'mutation',
+                  capability: 'metadata',
+                  board: owner.getSnapshot(),
+                },
+                (context) => canvasEffects.invalidateRenditions(context, path)
+              )
+              .then(unwrapCanvasOutcome)
           }
           refreshRepository={reload}
           onRenditionsInvalidated={onRenditionsInvalidated}
@@ -204,9 +219,6 @@ export function CanvasOverlays({
           path={repoPath}
           assetIds={compressIds}
           onClose={() => setCompressIds(null)}
-          onChange={async () => {
-            await owner.reconcile()
-          }}
         />
       )}
       <Dialog.Root

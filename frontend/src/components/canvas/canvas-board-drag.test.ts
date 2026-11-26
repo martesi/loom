@@ -1,9 +1,10 @@
 import { afterEach, expect, it, mock, spyOn } from 'bun:test'
-import { act, cleanup, renderHook } from '@testing-library/react'
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import type { Node } from '@xyflow/react'
 import { useState } from 'react'
 import { ImageService } from '../../../bindings/loom/internal/service'
 import { createCanvasBoardOwner } from './canvas-board-owner'
+import { refreshBoard, reserveCanvasRead } from './canvas-operation-test-utils'
 import { useCanvasBoardDrag } from './use-canvas-board-drag'
 
 const first = { imageId: 1, x: 10, y: 20, w: 150, h: 110 }
@@ -44,7 +45,7 @@ afterEach(() => {
 it('commits all displayed rectangles in one guarded drag batch', async () => {
   const write = setup()
   const owner = createCanvasBoardOwner('/repo')
-  const board = await owner.refresh()
+  const board = await refreshBoard(owner)
   const drag = owner.beginDrag(board, [first, second])
   expect(drag).not.toBeNull()
   if (!drag) throw new Error('missing drag')
@@ -66,31 +67,24 @@ it('commits all displayed rectangles in one guarded drag batch', async () => {
 it('rejects a late stop after cancellation or refresh', async () => {
   const write = setup()
   const owner = createCanvasBoardOwner('/repo')
-  const board = await owner.refresh()
+  const board = await refreshBoard(owner)
   const cancelled = owner.beginDrag(board, [first])
   if (!cancelled) throw new Error('missing drag')
   owner.cancelGesture()
   await owner.endDrag(cancelled, [{ ...first, x: 30 }])
   const stale = owner.beginDrag(board, [first])
   if (!stale) throw new Error('missing drag')
-  await owner.refresh()
-  await owner.endDrag(stale, [{ ...first, x: 30 }])
+  await refreshBoard(owner)
+  expect(await owner.endDrag(stale, [{ ...first, x: 30 }])).toMatchObject({
+    status: 'cancelled',
+  })
   expect(write).not.toHaveBeenCalled()
 })
 
 it('keeps a completed drag queued across a renderer-only rerender', async () => {
   const write = setup()
   const owner = createCanvasBoardOwner('/repo')
-  const board = await owner.refresh()
-  if (!board) throw new Error('missing board')
-  let release = () => {}
-  const blocked = owner.execute(
-    () =>
-      new Promise<void>((resolve) => {
-        release = resolve
-      })
-  )
-  await Promise.resolve()
+  const board = await refreshBoard(owner)
   const nodes: Node[] = [
     {
       id: '1',
@@ -116,25 +110,40 @@ it('keeps a completed drag queued across a renderer-only rerender', async () => 
     },
     { initialProps: { generation: 0 } }
   )
+  let drag: ReturnType<typeof owner.beginDrag> = null
   act(() => {
     result.current.start(nodes)
-    const gesture = result.current.take()
-    if (!gesture) throw new Error('missing gesture')
+    drag = result.current.take()
+  })
+  if (!drag) throw new Error('missing drag')
+  let release = () => {}
+  let signalStarted = () => {}
+  const started = new Promise<void>((resolve) => {
+    signalStarted = resolve
+  })
+  const blocked = reserveCanvasRead(owner, async () => {
+    signalStarted()
+    await new Promise<void>((resolve) => {
+      release = resolve
+    })
+  })
+  await started
+  act(() => {
     result.current.finish(
-      gesture,
+      drag,
       nodes.map((node) => ({
         ...node,
         position: { x: node.position.x + 25, y: node.position.y + 15 },
       }))
     )
   })
-  rerender({ generation: 1 })
+  act(() => rerender({ generation: 1 }))
   expect(write).not.toHaveBeenCalled()
   await act(async () => {
     release()
-    await blocked
-    await owner.execute(async () => {})
+    expect((await blocked).status).toBe('success')
   })
+  await waitFor(() => expect(write).toHaveBeenCalledTimes(1))
   expect(write).toHaveBeenCalledWith(
     '/repo',
     '5',
@@ -151,28 +160,34 @@ it('keeps a completed drag queued across a renderer-only rerender', async () => 
 it('preserves a completed queued drag when refresh wins before dispatch', async () => {
   const write = setup()
   const owner = createCanvasBoardOwner('/repo')
-  const board = await owner.refresh()
-  let release = () => {}
-  const blocked = owner.execute(
-    () =>
-      new Promise<void>((resolve) => {
-        release = resolve
-      })
-  )
+  const board = await refreshBoard(owner)
   const drag = owner.beginDrag(board, [first])
   if (!drag) throw new Error('missing drag')
+  let release = () => {}
+  let signalStarted = () => {}
+  const started = new Promise<void>((resolve) => {
+    signalStarted = resolve
+  })
+  const blocked = reserveCanvasRead(owner, async () => {
+    signalStarted()
+    await new Promise<void>((resolve) => {
+      release = resolve
+    })
+  })
+  await started
   const pending = owner.endDrag(drag, [{ ...first, x: 30 }])
-  await owner.refresh()
+  const refresh = owner.refresh()
   release()
-  await Promise.all([blocked, pending])
+  expect((await blocked).status).toBe('success')
+  expect((await pending).status).toBe('success')
+  await refresh
   expect(write).toHaveBeenCalledTimes(1)
 })
 
 it('restores cancelled displayed positions and ignores later pointer changes', async () => {
   setup()
   const owner = createCanvasBoardOwner('/repo')
-  const board = await owner.refresh()
-  if (!board) throw new Error('missing board')
+  const board = await refreshBoard(owner)
   const initial: Node[] = [
     {
       id: '1',
@@ -207,9 +222,12 @@ it('reloads and reports a rejected stale drag write', async () => {
   const error = new Error('stale layout revision')
   write.mockImplementation(() => Promise.reject(error) as never)
   const owner = createCanvasBoardOwner('/repo')
-  const board = await owner.refresh()
+  const board = await refreshBoard(owner)
   const drag = owner.beginDrag(board, [first])
   if (!drag) throw new Error('missing drag')
-  await expect(owner.endDrag(drag, [{ ...first, x: 30 }])).rejects.toBe(error)
+  const outcome = await owner.endDrag(drag, [{ ...first, x: 30 }])
+  expect(outcome).toMatchObject({ status: 'failed' })
+  if (outcome.status === 'failed')
+    expect(outcome.error.message).toContain(error.message)
   expect(ImageService.LoadCanvas).toHaveBeenCalledTimes(2)
 })

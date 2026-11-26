@@ -22,6 +22,8 @@ import { Button } from '../ui/button'
 import { AssetGallery } from './asset-gallery'
 import { AssetList } from './asset-list'
 import type { CanvasBoardOwner } from './canvas-board-owner'
+import { unwrapCanvasOutcome } from './canvas-operation'
+import { canvasEffects } from './canvas-operation-effects'
 import {
   type AssetContextMenuState,
   LibraryContextMenu,
@@ -231,51 +233,54 @@ export const LibraryPanel = memo(function LibraryPanel({
   const tagName = tags.find((tag) => tag.id === tagId)?.name
   async function moveAssets(ids: number[], targetFolder: string) {
     const uniqueIds = [...new Set(ids)]
-    await owner.admit(async () => {
-      const outcomes = await Promise.allSettled(
-        uniqueIds.map(async (id) => {
-          const row = rows.find((item) => item.id === id)
-          if (!row) throw new Error(`Asset ${id} is not in the current folder`)
-          await ImageService.MoveFile(
-            path,
-            id,
-            [targetFolder, row.fileName].filter(Boolean).join('/')
+    const outcome = await owner.submit(
+      {
+        kind: 'mutation',
+        capability: 'metadata',
+        board: owner.getSnapshot(),
+      },
+      async (context) => {
+        const outcomes = await context.prepare(() =>
+          Promise.allSettled(
+            uniqueIds.map((id) => {
+              const row = rows.find((item) => item.id === id)
+              if (!row)
+                return Promise.reject(
+                  new Error(`Asset ${id} is not in the current folder`)
+                )
+              return canvasEffects.moveFile(
+                context,
+                path,
+                id,
+                [targetFolder, row.fileName].filter(Boolean).join('/')
+              )
+            })
           )
-        })
-      )
-      const failures = outcomes.flatMap((result, index) =>
-        result.status === 'rejected'
-          ? [{ id: uniqueIds[index], cause: result.reason }]
-          : []
-      )
-      let refreshError: unknown
-      await owner.reconcile().then(
-        () => undefined,
-        (error: unknown) => {
-          refreshError = error
-        }
-      )
-      if (failures.length || refreshError) {
-        for (const failure of failures) {
-          console.error('asset move failed', {
-            assetId: failure.id,
-            cause: failure.cause,
-          })
-        }
-        if (refreshError)
-          console.error('asset move refresh failed', { cause: refreshError })
-        const contexts = failures.map(
-          ({ id, cause }) =>
-            `Asset ${id}: ${cause instanceof Error ? cause.message : String(cause)}`
         )
-        const refreshed = refreshError
-          ? ` Refresh failed: ${refreshError instanceof Error ? refreshError.message : String(refreshError)}`
-          : ' The current state was refreshed.'
-        throw new Error(
-          `${uniqueIds.length - failures.length} of ${uniqueIds.length} assets moved.${contexts.length ? ` ${contexts.join('; ')}` : ''}${refreshed}`
+        const failures = outcomes.flatMap((result, index) =>
+          result.status === 'rejected'
+            ? [{ id: uniqueIds[index], cause: result.reason }]
+            : []
         )
+        if (failures.length) {
+          for (const failure of failures) {
+            console.error('asset move failed', {
+              assetId: failure.id,
+              cause: failure.cause,
+            })
+          }
+          const contexts = failures.map(
+            ({ id, cause }) =>
+              `Asset ${id}: ${cause instanceof Error ? cause.message : String(cause)}`
+          )
+          throw new Error(
+            `${uniqueIds.length - failures.length} of ${uniqueIds.length} assets moved.${contexts.length ? ` ${contexts.join('; ')}` : ''} The current state was refreshed.`
+          )
+        }
       }
-    })
+    )
+    if (outcome.status === 'cancelled') return
+    unwrapCanvasOutcome(outcome)
   }
   function dropInto(event: DragEvent, targetFolder: string) {
     const raw = event.dataTransfer.getData('application/x-loom-assets')
@@ -298,15 +303,26 @@ export const LibraryPanel = memo(function LibraryPanel({
       return
     }
     void owner
-      .admit(async () => {
-        const row = rows.find((item) => item.id === id)
-        if (!row || !name || name === row.fileName) return
-        await ImageService.MoveFile(
-          path,
-          id,
-          [folder, name].filter(Boolean).join('/')
-        )
-        await owner.reconcile()
+      .submit(
+        {
+          kind: 'mutation',
+          capability: 'metadata',
+          board: owner.getSnapshot(),
+        },
+        async (context) => {
+          const row = rows.find((item) => item.id === id)
+          if (!row || !name || name === row.fileName) return
+          await canvasEffects.moveFile(
+            context,
+            path,
+            id,
+            [folder, name].filter(Boolean).join('/')
+          )
+        }
+      )
+      .then((outcome) => {
+        if (outcome.status === 'cancelled') return
+        unwrapCanvasOutcome(outcome)
       })
       .catch(onError)
   }

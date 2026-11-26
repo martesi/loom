@@ -6,6 +6,7 @@ import type {
 } from '../../../bindings/loom/internal/service'
 import type { DragGesture } from './canvas-board-gestures'
 import type { CanvasBoardOwner } from './canvas-board-owner'
+import { canvasOutcomeError } from './canvas-operation'
 
 export function useCanvasBoardDrag(
   owner: CanvasBoardOwner,
@@ -74,7 +75,13 @@ export function useCanvasBoardDrag(
       }
       after.push({ ...before, ...node.position })
     }
-    void owner.endDrag(gesture, after).catch(report)
+    void owner
+      .endDrag(gesture, after)
+      .then((outcome) => {
+        const error = canvasOutcomeError(outcome)
+        if (error) report(error)
+      })
+      .catch(report)
   }
 
   function filterChanges(changes: NodeChange[]) {

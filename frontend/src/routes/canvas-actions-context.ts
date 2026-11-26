@@ -6,6 +6,7 @@ import type {
   RelationshipInfo,
 } from '../../bindings/loom/internal/service'
 import type { CanvasBoardOwner } from '../components/canvas/canvas-board-owner'
+import type { CanvasOperationContext } from '../components/canvas/canvas-operation'
 import type { AssetLayout } from '../lib/asset-views'
 import type { Selection } from '../lib/selection'
 
@@ -40,26 +41,28 @@ export interface CanvasActionsContext {
   toggleFocusMode: () => void
   openSettings: (section?: 'appearance' | 'keyboard') => void
   openPalette: (shortcuts?: boolean, initialQuery?: string) => void
-  reload: () => Promise<void>
   setRepoOpenRequest: Dispatch<SetStateAction<number>>
   setNavigatorModeRequest: Dispatch<SetStateAction<NavigatorModeRequest | null>>
   setSearchFocusRequest: Dispatch<SetStateAction<number>>
   displayNodes: Node[]
   canFitSelection: boolean
   canArrangeSelection: boolean
-  fitAll: () => Promise<void>
-  fitSelection: () => Promise<void>
-  resetZoom: () => Promise<void>
-  zoomBy: (factor: number) => Promise<void>
-  arrange: (nodeIds?: string[]) => Promise<void>
+  fitAll: (operation: CanvasOperationContext) => Promise<void>
+  fitSelection: (operation: CanvasOperationContext) => Promise<void>
+  resetZoom: (operation: CanvasOperationContext) => Promise<void>
+  zoomBy: (operation: CanvasOperationContext, factor: number) => Promise<void>
+  arrange: (
+    operation: CanvasOperationContext,
+    nodeIds?: string[]
+  ) => Promise<void>
   selectedCanvasNodeIds: string[]
   visible: { current: number[] }
   selection: Selection
   selectAssets: (ids: number[]) => void
   setSelection: Dispatch<SetStateAction<Selection>>
   data: CanvasData
-  alignHorizontal: () => Promise<void>
-  alignVertical: () => Promise<void>
+  alignHorizontal: (operation: CanvasOperationContext) => Promise<void>
+  alignVertical: (operation: CanvasOperationContext) => Promise<void>
   selectedIds: () => number[]
   confirmTrash: (ids: number[]) => void
   remove: (purge: boolean) => Promise<void>

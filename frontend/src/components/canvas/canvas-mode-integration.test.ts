@@ -10,6 +10,11 @@ import {
 import { emptySelection } from '../../lib/selection'
 import { useCanvasBoardOwner } from './canvas-board-owner'
 import { data, empty, images, relationships } from './canvas-mode-test-fixtures'
+import {
+  refreshBoard,
+  replayCanvasHistory,
+  reserveCanvasOperation,
+} from './canvas-operation-test-utils'
 import { useCanvasBoardModel } from './use-canvas-board-model'
 
 const ignoreSelection = () => {}
@@ -81,7 +86,7 @@ it('arranges the displayed Edit graph as one guarded batch, not stored coordinat
     return { owner, nodes, setNodes, model }
   })
   await act(async () => {
-    await result.current.owner.refresh()
+    await refreshBoard(result.current.owner)
   })
   await act(async () => {
     await result.current.model.transitionMode('edit')
@@ -103,7 +108,7 @@ it('arranges the displayed Edit graph as one guarded batch, not stored coordinat
   )
   links = [{ ...relationships[0], sourceImageId: 2, derivedImageId: 1 }]
   await act(async () => {
-    await result.current.owner.refresh()
+    await refreshBoard(result.current.owner)
   })
   const before = result.current.nodes.map((node) => ({
     imageId: Number(node.id),
@@ -111,17 +116,19 @@ it('arranges the displayed Edit graph as one guarded batch, not stored coordinat
     w: node.width ?? 150,
     h: node.height ?? 110,
   }))
-  let arranging: Promise<void> = Promise.resolve()
+  let arranging: Promise<unknown> = Promise.resolve()
+  let queuedRefresh: Promise<unknown> = Promise.resolve()
   await act(async () => {
-    arranging = result.current.owner.execute(() =>
-      result.current.model.arrangeEdit()
+    arranging = reserveCanvasOperation(result.current.owner, (context) =>
+      result.current.model.arrangeEdit(context)
     )
     await started
-    await result.current.owner.refresh()
+    queuedRefresh = result.current.owner.refresh()
   })
   await act(async () => {
     releaseWrite()
-    await arranging
+    expect(await arranging).toMatchObject({ status: 'success' })
+    expect(await queuedRefresh).toMatchObject({ status: 'success' })
   })
   expect(write).toHaveBeenCalledTimes(1)
   expect(write.mock.calls[0][2][0]).toEqual({
@@ -138,14 +145,16 @@ it('arranges the displayed Edit graph as one guarded batch, not stored coordinat
   expect(arranged).toEqual(geometry.map(({ x, y }) => ({ x, y })))
   expect(arranged[1].x).toBeLessThan(arranged[0].x)
   await act(async () => {
-    await result.current.owner.execute(() => result.current.model.arrangeEdit())
+    await reserveCanvasOperation(result.current.owner, (context) =>
+      result.current.model.arrangeEdit(context)
+    )
   })
   expect(write).toHaveBeenCalledTimes(1)
   expect(result.current.nodes.map((node) => node.position)).toEqual(arranged)
   const after = write.mock.calls[0][4]
   geometry = before
   await act(async () => {
-    await result.current.owner.applyHistory({
+    await replayCanvasHistory(result.current.owner, {
       applied: true,
       kind: 'geometry',
       geometry,
@@ -156,7 +165,7 @@ it('arranges the displayed Edit graph as one guarded batch, not stored coordinat
   )
   geometry = after
   await act(async () => {
-    await result.current.owner.applyHistory({
+    await replayCanvasHistory(result.current.owner, {
       applied: true,
       kind: 'geometry',
       geometry,
@@ -172,16 +181,22 @@ it('arranges the displayed Edit graph as one guarded batch, not stored coordinat
   )
   write.mockRejectedValueOnce(new Error('stale revision'))
   await act(async () => {
-    await expect(
-      result.current.owner.execute(() => result.current.model.arrangeEdit())
-    ).rejects.toThrow('stale revision')
+    const outcome = await reserveCanvasOperation(
+      result.current.owner,
+      (context) => result.current.model.arrangeEdit(context)
+    )
+    expect(outcome).toMatchObject({ status: 'failed' })
   })
   expect(result.current.nodes[0].position).toEqual({ x: 1234, y: 5678 })
   await act(async () => {
     await result.current.model.transitionMode('view')
   })
   await act(async () => {
-    await result.current.owner.execute(() => result.current.model.arrangeEdit())
+    expect(
+      await reserveCanvasOperation(result.current.owner, (context) =>
+        result.current.model.arrangeEdit(context)
+      )
+    ).toMatchObject({ status: 'rejected' })
   })
   expect(write).toHaveBeenCalledTimes(2)
 })
@@ -241,7 +256,7 @@ it('uses accepted snapshots for internal View and Edit while preserving Edit geo
     return { owner, nodes, setNodes, model }
   })
   await act(async () => {
-    await result.current.owner.refresh()
+    await refreshBoard(result.current.owner)
   })
   await act(async () => {
     await result.current.model.transitionMode('view')
@@ -415,7 +430,7 @@ it('replays snapshot geometry in Edit and compensates the View anchor while keep
     return { owner, nodes, setNodes, model }
   })
   await act(async () => {
-    await result.current.owner.refresh()
+    await refreshBoard(result.current.owner)
   })
   await act(async () => {
     await result.current.model.transitionMode('view')
@@ -433,7 +448,7 @@ it('replays snapshot geometry in Edit and compensates the View anchor while keep
   }
   links = links.filter((link) => link.id === 7)
   await act(async () => {
-    await result.current.owner.applyHistory({
+    await replayCanvasHistory(result.current.owner, {
       applied: true,
       kind: 'unlink',
       geometry: null,
@@ -459,7 +474,7 @@ it('replays snapshot geometry in Edit and compensates the View anchor while keep
   )
   links = []
   await act(async () => {
-    await result.current.owner.applyHistory({
+    await replayCanvasHistory(result.current.owner, {
       applied: true,
       kind: 'unlink',
       geometry: null,
@@ -470,7 +485,7 @@ it('replays snapshot geometry in Edit and compensates the View anchor while keep
     row.imageId === 1 ? { ...row, x: 25, y: 35, w: null, h: null } : row
   )
   await act(async () => {
-    await result.current.owner.applyHistory({
+    await replayCanvasHistory(result.current.owner, {
       applied: true,
       kind: 'geometry',
       geometry: [geometry[0]],
@@ -481,7 +496,7 @@ it('replays snapshot geometry in Edit and compensates the View anchor while keep
     row.imageId === 1 ? { ...row, x: null, y: null } : row
   )
   await act(async () => {
-    await result.current.owner.applyHistory({
+    await replayCanvasHistory(result.current.owner, {
       applied: true,
       kind: 'geometry',
       geometry: [geometry[0]],

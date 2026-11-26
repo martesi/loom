@@ -18,6 +18,8 @@ import type { CanvasBoardOwner } from './canvas-board-owner'
 import { CanvasDock } from './canvas-dock'
 import { CanvasFlow } from './canvas-flow'
 import type { CanvasInternalMode } from './canvas-mode-policy'
+import type { CanvasOperationContext } from './canvas-operation'
+import { canvasEffects } from './canvas-operation-effects'
 import { PerfHud } from './perf-hud'
 
 interface MenuState {
@@ -82,7 +84,7 @@ interface Props {
   setRelationshipPreview: Dispatch<SetStateAction<RelationshipPreview | null>>
   updateTarget: (target: DropTarget | null) => void
   target: DropTarget | null
-  run: (action: () => Promise<unknown>) => void
+  run: (action: (context: CanvasOperationContext) => Promise<unknown>) => void
   paste: (
     media?:
       | Awaited<ReturnType<typeof readMedia>>
@@ -261,10 +263,8 @@ export function CanvasMainSurface(props: Props) {
           group: null,
         })
         if (id && validTarget(drag.source, id).valid)
-          run(() =>
-            owner.allowsAdmitted('relationship')
-              ? ImageService.LinkSource(repoPath, drag.source, Number(id))
-              : owner.reconcile().then(() => undefined)
+          run((context) =>
+            canvasEffects.linkSource(context, repoPath, drag.source, Number(id))
           )
         else if (id) {
           const result = validTarget(drag.source, id)
@@ -278,8 +278,8 @@ export function CanvasMainSurface(props: Props) {
       onDrop={(e) => {
         e.preventDefault()
         const raw = e.dataTransfer.getData('application/x-loom-assets')
+        const droppedFiles = Array.from(e.dataTransfer.files)
         if (raw) {
-          if (!owner.allows('canvas-drop')) return
           const payload = parseAssetDragPayload(raw)
           if (!payload) {
             report(new Error('Invalid asset drag'))
@@ -296,27 +296,42 @@ export function CanvasMainSurface(props: Props) {
               y: e.clientY,
             })
             void (async () => {
-              const placed = await owner.admit(async () => {
-                if (!owner.allowsAdmitted('canvas-drop')) {
-                  await owner.reconcile()
-                  return false
+              const outcome = await owner.submit(
+                {
+                  kind: 'mutation',
+                  capability: 'canvas-drop',
+                  board: owner.getSnapshot(),
+                },
+                async (context) => {
+                  const images = await context.prepare(() =>
+                    Promise.all(
+                      uniqueIds.map((id) => ImageService.GetImage(repoPath, id))
+                    )
+                  )
+                  if (
+                    images.some(
+                      (image) => !image || image.missing || image.trashed
+                    )
+                  )
+                    throw new Error(
+                      'Missing or trashed assets cannot be placed. Refine the selection and try again.'
+                    )
+                  await canvasEffects.placeImages(
+                    context,
+                    repoPath,
+                    uniqueIds,
+                    p.x,
+                    p.y
+                  )
+                  return true
                 }
-                const images = await Promise.all(
-                  uniqueIds.map((id) => ImageService.GetImage(repoPath, id))
-                )
-                if (
-                  images.some(
-                    (image) => !image || image.missing || image.trashed
-                  )
-                )
-                  throw new Error(
-                    'Missing or trashed assets cannot be placed. Refine the selection and try again.'
-                  )
-                await ImageService.PlaceImages(repoPath, uniqueIds, p.x, p.y, 0)
-                await owner.reconcile()
-                return true
-              })
-              if (!placed) return
+              )
+              if (outcome.status !== 'success') {
+                if (outcome.status === 'failed') throw outcome.error
+                if (outcome.status === 'rejected')
+                  throw new Error(outcome.reason)
+                return
+              }
               if (!assetsPinned) {
                 closeAssets(false)
                 requestAnimationFrame(() => host.current?.focus())
@@ -330,10 +345,7 @@ export function CanvasMainSurface(props: Props) {
             })().catch(report)
           }
         } else
-          void paste(
-            () => filesToMedia(Array.from(e.dataTransfer.files)),
-            'canvas'
-          ).catch(report)
+          void paste(() => filesToMedia(droppedFiles), 'canvas').catch(report)
       }}
     >
       <CanvasFlow

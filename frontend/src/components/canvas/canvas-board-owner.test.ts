@@ -25,7 +25,17 @@ import {
 } from '../../../bindings/loom/internal/service'
 import { emptySelection } from '../../lib/selection'
 import { Toaster } from '../ui/toast'
-import { useCanvasBoardOwner } from './canvas-board-owner'
+import {
+  createCanvasBoardOwner,
+  useCanvasBoardOwner,
+} from './canvas-board-owner'
+import { isCanvasRepositoryDirty } from './canvas-operation'
+import { canvasEffects } from './canvas-operation-effects'
+import {
+  refreshBoard,
+  reserveCanvasOperation,
+  reserveCanvasRead,
+} from './canvas-operation-test-utils'
 import type { ResizeDirection } from './canvas-resize-geometry'
 import { useCanvasBoardModel } from './use-canvas-board-model'
 import { useCanvasRepository } from './use-canvas-repository'
@@ -150,7 +160,7 @@ function useBoard(repoPath: string) {
     target: null,
     host,
   })
-  const undo = useUndoActions(repoPath, owner.applyHistory, owner)
+  const undo = useUndoActions(repoPath, owner)
   return { owner, repository, nodes, undo, error }
 }
 
@@ -178,6 +188,120 @@ afterEach(() => {
 })
 
 describe('canvas board owner', () => {
+  it('keeps a held resize active across queued passive viewport saves', async () => {
+    const repoPath = '/repo-passive-viewport-resize'
+    spyOn(ImageService, 'LoadCanvas').mockResolvedValue(data as never)
+    spyOn(ImageService, 'GetViewport').mockResolvedValue(null as never)
+    const viewportResponse = deferred<void>()
+    const events: string[] = []
+    let viewportWrites = 0
+    const viewport = spyOn(ImageService, 'SetViewport').mockImplementation(
+      () => {
+        viewportWrites++
+        events.push(`viewport-${viewportWrites}`)
+        return viewportResponse.promise as never
+      }
+    )
+    const geometry = spyOn(
+      ImageService,
+      'SetGeometryFromDisplayAtRevision'
+    ).mockImplementation(() => {
+      events.push('geometry')
+      return Promise.resolve() as never
+    })
+    const { result } = renderHook(() => useBoard(repoPath), { wrapper })
+    await waitFor(() =>
+      expect(result.current.owner.getSnapshot()).not.toBeNull()
+    )
+    const owner = result.current.owner
+    const board = owner.getSnapshot()
+    const before = { imageId: 1, x: 10, y: 20, w: 150, h: 110 }
+    const after = { imageId: 1, x: 10, y: 20, w: 210, h: 160 }
+    const token = owner.beginResize(
+      board,
+      before,
+      'se',
+      4,
+      () => {},
+      () => {}
+    )
+    if (token === null) throw new Error('resize start rejected')
+
+    const passiveViewport = () =>
+      owner.submit({ kind: 'viewport', mode: 'legacy', board }, (context) =>
+        canvasEffects.setViewport(context, repoPath, {
+          x: 0,
+          y: 0,
+          zoom: 1.5,
+        })
+      )
+    const firstSave = passiveViewport()
+    await waitFor(() => expect(viewport).toHaveBeenCalledTimes(1))
+    const secondSave = passiveViewport()
+    expect(owner.updateResize(token, 4, after)).toBe(true)
+    expect(owner.isLayoutPending()).toBe(false)
+    expect(isCanvasRepositoryDirty(repoPath)).toBe(false)
+    expect(geometry).not.toHaveBeenCalled()
+
+    viewportResponse.resolve()
+    expect((await firstSave).status).toBe('success')
+    await waitFor(() => expect(viewport).toHaveBeenCalledTimes(2))
+    expect((await secondSave).status).toBe('success')
+    expect(owner.updateResize(token, 4, after)).toBe(true)
+    expect(owner.isLayoutPending()).toBe(false)
+    expect(isCanvasRepositoryDirty(repoPath)).toBe(false)
+
+    const resize = owner.endResize(token, 4, after)
+    expect(geometry).not.toHaveBeenCalled()
+    expect((await resize).status).toBe('success')
+    expect(viewport).toHaveBeenCalledTimes(2)
+    expect(events).toEqual(['viewport-1', 'viewport-2', 'geometry'])
+    expect(isCanvasRepositoryDirty(repoPath)).toBe(false)
+    owner.dispose()
+  })
+
+  it('cancels a held resize when an explicit viewport action is admitted', async () => {
+    const repoPath = '/repo-explicit-viewport-resize'
+    spyOn(ImageService, 'LoadCanvas').mockResolvedValue(data as never)
+    spyOn(ImageService, 'GetViewport').mockResolvedValue(null as never)
+    const viewport = spyOn(ImageService, 'SetViewport').mockResolvedValue(
+      undefined as never
+    )
+    const owner = createCanvasBoardOwner(repoPath)
+    expect((await owner.activate()).status).toBe('success')
+    const before = { imageId: 1, x: 10, y: 20, w: 150, h: 110 }
+    const cancelled = mock()
+    const token = owner.beginResize(
+      owner.getSnapshot(),
+      before,
+      'se',
+      5,
+      () => {},
+      cancelled
+    )
+    if (token === null) throw new Error('resize start rejected')
+
+    const action = owner.submit(
+      {
+        kind: 'mutation',
+        capability: 'navigate',
+        board: owner.getSnapshot(),
+      },
+      (context) =>
+        canvasEffects.setViewport(context, repoPath, {
+          x: 20,
+          y: 30,
+          zoom: 1,
+        })
+    )
+
+    expect(cancelled).toHaveBeenCalledTimes(1)
+    expect(owner.updateResize(token, 5, { ...before, w: 190 })).toBe(false)
+    expect((await action).status).toBe('success')
+    expect(viewport).toHaveBeenCalledTimes(1)
+    owner.dispose()
+  })
+
   it('waits for the real resize commit and its reload before undo, then waits for undo reload before redo', async () => {
     spyOn(ImageService, 'GetLayoutSnapshot').mockImplementation(
       () =>
@@ -283,7 +407,10 @@ describe('canvas board owner', () => {
       h: 110,
     })
     if (token === null) throw new Error('resize start rejected')
-    const refreshing = result.current.repository.reload()
+    let refreshing!: Promise<void>
+    act(() => {
+      refreshing = result.current.repository.reload()
+    })
     act(() =>
       resizeEnd(node, token, { imageId: 1, x: 1, y: 2, w: 300, h: 200 })
     )
@@ -291,13 +418,12 @@ describe('canvas board owner', () => {
     await act(async () => {
       await refreshing
     })
+    expect(result.current.error).toBe('')
     act(() =>
       resizeEnd(node, token, { imageId: 1, x: 1, y: 2, w: 300, h: 200 })
     )
-    await act(async () => {
-      await result.current.owner.execute(async () => {})
-    })
     expect(write).not.toHaveBeenCalled()
+    expect(result.current.error).toBe('')
   })
 
   it('reloads and reports a stale resize without adding history', async () => {
@@ -372,14 +498,28 @@ describe('canvas board owner', () => {
   })
 
   it('preserves errors and continues after a rejected operation', async () => {
+    spyOn(ImageService, 'LoadCanvas').mockResolvedValue(data as never)
+    spyOn(ImageService, 'GetLayoutSnapshot').mockResolvedValue({
+      revision: '1',
+      images: [
+        {
+          id: 1,
+          width: 640,
+          height: 480,
+          geometry: { imageId: 1, x: 10, y: 20, w: 150, h: 110 },
+        },
+      ],
+      relationships: [],
+    } as never)
     const { result } = renderHook(() => useCanvasBoardOwner('/repo'))
+    await refreshBoard(result.current)
     const failure = deferred<number>()
-    const first = result.current.execute(() => failure.promise)
-    const second = result.current.execute(() => Promise.resolve(42))
+    const first = reserveCanvasOperation(result.current, () => failure.promise)
+    const second = reserveCanvasOperation(result.current, async () => 42)
     const error = new Error('commit failed')
     failure.reject(error)
-    await expect(first).rejects.toBe(error)
-    await expect(second).resolves.toBe(42)
+    expect(await first).toMatchObject({ status: 'failed', error })
+    expect(await second).toMatchObject({ status: 'success', value: 42 })
   })
 
   it('reports failed repository operations and still runs queued undo', async () => {
@@ -394,9 +534,20 @@ describe('canvas board owner', () => {
       () => Promise.resolve({ applied: false, error: '' }) as never
     )
     const { result } = renderHook(() => useBoard('/repo'), { wrapper })
+    await waitFor(() => expect(result.current.nodes).toHaveLength(1))
     const pending = deferred<void>()
+    let signalStarted = () => {}
+    const started = new Promise<void>((resolve) => {
+      signalStarted = resolve
+    })
     const error = new Error('resize failed')
-    act(() => result.current.repository.run(() => pending.promise))
+    act(() =>
+      result.current.repository.run(() => {
+        signalStarted()
+        return pending.promise
+      })
+    )
+    await started
     const undoDone = result.current.undo.undo()
     pending.reject(error)
     await act(async () => {
@@ -409,12 +560,13 @@ describe('canvas board owner', () => {
     expect(undo).toHaveBeenCalledTimes(1)
   })
 
-  it('propagates a failed undo reload and continues with queued redo', async () => {
+  it('fences queued redo after a failed history reload until recovery', async () => {
     const error = new Error('reload failed')
     const reload = deferred<CanvasData | null>()
     spyOn(ImageService, 'LoadCanvas')
       .mockImplementationOnce(() => Promise.resolve(data) as never)
       .mockImplementationOnce(() => reload.promise as never)
+      .mockResolvedValue(data as never)
     spyOn(ImageService, 'GetViewport').mockImplementation(
       () => Promise.resolve(null) as never
     )
@@ -437,14 +589,22 @@ describe('canvas board owner', () => {
     )
     expect(redo).not.toHaveBeenCalled()
     reload.reject(error)
-    expect(await failure).toBe(error)
-    await act(async () => {
-      await redoDone
+    expect(await failure).toMatchObject({
+      message: expect.stringContaining('reload failed'),
     })
-    expect(redo).toHaveBeenCalledTimes(1)
+    expect(
+      await redoDone.then(
+        () => null,
+        (reason: unknown) => reason
+      )
+    ).toMatchObject({
+      message: expect.stringContaining('Canvas was refreshed'),
+    })
+    expect(redo).not.toHaveBeenCalled()
+    expect(ImageService.LoadCanvas).toHaveBeenCalledTimes(3)
   })
 
-  it('keeps undo errors in a toast and does not reload when nothing applied', async () => {
+  it('keeps undo errors in a toast after reconciling a no-op result', async () => {
     spyOn(ImageService, 'LoadCanvas').mockImplementation(
       () => Promise.resolve(data) as never
     )
@@ -461,43 +621,70 @@ describe('canvas board owner', () => {
       await result.current.undo.undo()
     })
     expect(screen.getByText('asset was purged')).toBeTruthy()
-    expect(ImageService.LoadCanvas).toHaveBeenCalledTimes(1)
+    expect(ImageService.LoadCanvas).toHaveBeenCalledTimes(2)
   })
 
-  it('awaits callbacks without an executor and preserves callback rejection', async () => {
-    spyOn(UndoService, 'Undo').mockImplementation(
-      () => Promise.resolve({ applied: true, error: '' }) as never
+  it('preserves a history service error after authoritative recovery', async () => {
+    const error = new Error('undo failed')
+    const load = spyOn(ImageService, 'LoadCanvas').mockResolvedValue(
+      data as never
     )
-    const change = deferred<void>()
-    const { result } = renderHook(
-      () => useUndoActions('/repo', () => change.promise),
-      { wrapper }
-    )
-    const done = result.current.undo()
-    const error = new Error('reload failed')
-    change.reject(error)
-    await expect(done).rejects.toBe(error)
+    spyOn(ImageService, 'GetLayoutSnapshot').mockResolvedValue({
+      revision: '1',
+      images: [
+        {
+          id: 1,
+          width: 640,
+          height: 480,
+          geometry: { imageId: 1, x: 10, y: 20, w: 150, h: 110 },
+        },
+      ],
+      relationships: [],
+    } as never)
+    spyOn(UndoService, 'Undo').mockRejectedValue(error as never)
+    const owner = createCanvasBoardOwner('/repo')
+    await refreshBoard(owner)
+    const { result } = renderHook(() => useUndoActions('/repo', owner), {
+      wrapper,
+    })
+    await expect(result.current.undo()).rejects.toBe(error)
+    expect(load).toHaveBeenCalledTimes(2)
   })
 
   it('keeps an owner across renders and disposes its identity when the repository changes', async () => {
+    spyOn(ImageService, 'LoadCanvas').mockResolvedValue(data as never)
+    spyOn(ImageService, 'GetLayoutSnapshot').mockResolvedValue({
+      revision: '1',
+      images: [
+        {
+          id: 1,
+          width: 640,
+          height: 480,
+          geometry: { imageId: 1, x: 10, y: 20, w: 150, h: 110 },
+        },
+      ],
+      relationships: [],
+    } as never)
     const { result, rerender, unmount } = renderHook(
       ({ path }) => useCanvasBoardOwner(path),
       { initialProps: { path: '/one' } }
     )
     const first = result.current
+    await refreshBoard(first)
     const pending = deferred<void>()
-    const blocked = first.execute(() => pending.promise)
+    const blocked = reserveCanvasRead(first, () => pending.promise)
     rerender({ path: '/one' })
     expect(result.current).toBe(first)
     rerender({ path: '/two' })
     expect(result.current).not.toBe(first)
-    await expect(
-      result.current.execute(() => Promise.resolve('ready'))
-    ).resolves.toBe('ready')
+    await refreshBoard(result.current)
+    expect(
+      await reserveCanvasRead(result.current, async () => 'ready')
+    ).toMatchObject({ status: 'success', value: 'ready' })
     rerender({ path: '/one' })
     expect(result.current).not.toBe(first)
     unmount()
     pending.resolve()
-    await blocked
+    expect(await blocked).toMatchObject({ status: 'cancelled' })
   })
 })

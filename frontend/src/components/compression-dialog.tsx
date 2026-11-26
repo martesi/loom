@@ -1,12 +1,9 @@
 import { t } from '@lingui/core/macro'
 import { Plural, Trans } from '@lingui/react/macro'
 import { useEffect, useRef, useState } from 'react'
-import {
-  ImageService,
-  MediaService,
-  SettingsService,
-} from '../../bindings/loom/internal/service'
+import { SettingsService } from '../../bindings/loom/internal/service'
 import type { CanvasBoardOwner } from './canvas/canvas-board-owner'
+import { canvasEffects } from './canvas/canvas-operation-effects'
 
 type ImageFormat = 'avif' | 'webp' | 'jpeg' | 'png'
 type CompressionMode = 'copy' | 'replace'
@@ -18,16 +15,9 @@ interface Props {
   path: string
   assetIds: number[]
   onClose: () => void
-  onChange: () => Promise<void>
 }
 
-export function CompressionDialog({
-  owner,
-  path,
-  assetIds,
-  onClose,
-  onChange,
-}: Props) {
+export function CompressionDialog({ owner, path, assetIds, onClose }: Props) {
   const [mode, setMode] = useState<CompressionMode>('copy')
   const [format, setFormat] = useState<ImageFormat>('avif')
   const [quality, setQuality] = useState(60)
@@ -95,58 +85,98 @@ export function CompressionDialog({
     setRunning(true)
     setSummary('')
     setError('')
-    let compressed = 0
-    const failures: string[] = []
-
-    try {
-      await owner.admit(async () => {
-        await Promise.all([
-          SettingsService.Set(path, `${settingsPrefix}.mode`, mode),
-          SettingsService.Set(path, `${settingsPrefix}.format`, format),
-          SettingsService.Set(
-            path,
-            `${settingsPrefix}.quality`,
-            String(quality)
-          ),
-          SettingsService.Set(path, `${settingsPrefix}.max_width`, maxWidth),
-          SettingsService.Set(path, `${settingsPrefix}.max_height`, maxHeight),
-        ])
-
-        for (const id of assetIds) {
-          try {
-            const media = await MediaService.Transcode(path, id, {
-              targetExt: format === 'jpeg' ? '.jpg' : `.${format}`,
-              quality,
-              maxWidth: positiveInt(maxWidth) ?? 0,
-              maxHeight: positiveInt(maxHeight) ?? 0,
-            })
-            if (!media) throw new Error(t`Media transcode returned no result`)
-            if (mode === 'replace') {
-              await ImageService.ReplaceMedia(path, id, media)
-            } else {
-              await ImageService.ImportMedia(path, [media], false, 0, 0)
-            }
-            compressed++
-          } catch (cause) {
-            failures.push(
-              cause instanceof Error ? cause.message : String(cause)
+    const operation = await owner.submit(
+      {
+        kind: 'mutation',
+        capability: 'metadata',
+        board: owner.getSnapshot(),
+      },
+      async (context) => {
+        const settings = [
+          [`${settingsPrefix}.mode`, mode],
+          [`${settingsPrefix}.format`, format],
+          [`${settingsPrefix}.quality`, String(quality)],
+          [`${settingsPrefix}.max_width`, maxWidth],
+          [`${settingsPrefix}.max_height`, maxHeight],
+        ] as const
+        let settingsFailed = false
+        for (const [key, value] of settings) {
+          const error = await canvasEffects
+            .settingsSet(context, path, key, value)
+            .then(
+              () => null,
+              (reason: unknown) => reason
             )
-          }
+          context.assertCurrent()
+          if (error) settingsFailed = true
         }
-
-        await onChange()
-      })
-      setSummary(
-        failures.length
-          ? t`${compressed} compressed, ${failures.length} failed`
-          : t`${compressed} compressed`
-      )
-      if (failures.length) setError(failures.join('\n'))
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
+        if (settingsFailed)
+          throw new Error(t`Compression settings could not be saved.`)
+        const results: (
+          | { status: 'fulfilled' }
+          | { status: 'rejected'; reason: unknown }
+        )[] = []
+        for (const id of assetIds) {
+          const result = await Promise.resolve()
+            .then(async () => {
+              const media = await canvasEffects.transcode(context, path, id, {
+                targetExt: format === 'jpeg' ? '.jpg' : `.${format}`,
+                quality,
+                maxWidth: positiveInt(maxWidth) ?? 0,
+                maxHeight: positiveInt(maxHeight) ?? 0,
+              })
+              if (!media) throw new Error(t`Media transcode returned no result`)
+              if (mode === 'replace')
+                await canvasEffects.replaceMedia(context, path, id, media)
+              else
+                await canvasEffects.importMedia(
+                  context,
+                  path,
+                  [media],
+                  false,
+                  0,
+                  0
+                )
+            })
+            .then(
+              () => ({ status: 'fulfilled' as const }),
+              (reason: unknown) => ({ status: 'rejected' as const, reason })
+            )
+          context.assertCurrent()
+          results.push(result)
+        }
+        const failures = results.flatMap((result) =>
+          result.status === 'rejected' ? [result.reason] : []
+        )
+        return {
+          compressed: assetIds.length - failures.length,
+          failures: failures.map((cause) =>
+            cause instanceof Error ? cause.message : String(cause)
+          ),
+        }
+      }
+    )
+    if (operation.status === 'cancelled') {
       setRunning(false)
+      return
     }
+    if (operation.status !== 'success') {
+      setError(
+        operation.status === 'failed'
+          ? operation.error.message
+          : operation.reason
+      )
+      setRunning(false)
+      return
+    }
+    const { compressed, failures } = operation.value
+    setSummary(
+      failures.length
+        ? t`${compressed} compressed, ${failures.length} failed`
+        : t`${compressed} compressed`
+    )
+    if (failures.length) setError(failures.join('\n'))
+    setRunning(false)
   }
 
   return (

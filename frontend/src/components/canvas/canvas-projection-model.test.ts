@@ -8,7 +8,7 @@ import type {
   ImageInfo,
 } from '../../../bindings/loom/internal/service'
 import { emptySelection } from '../../lib/selection'
-import { useCanvasBoardOwner } from './canvas-board-owner'
+import { createCanvasBoardOwner } from './canvas-board-owner'
 import {
   createCanvasProjection,
   enterEdit,
@@ -93,11 +93,11 @@ describe('board projection mapping', () => {
         { id: 5, name: 'set', kind: '', coverImageId: 1, memberIds: [1, 2] },
       ],
     }
+    const owner = createCanvasBoardOwner('/test')
     const { result, unmount } = renderHook(() => {
       const [nodes, setNodes] = useState<Node[]>([])
       const [edges, setEdges] = useState<Edge[]>([])
       const callbacks = useRef({ report: (_error: unknown) => {} })
-      const owner = useCanvasBoardOwner('test')
       const host = useRef<HTMLDivElement | null>(null)
       useCanvasBoardModel({
         data: boardData,
@@ -126,6 +126,7 @@ describe('board projection mapping', () => {
       { id: '12', source: '1', target: '2' },
       { id: '14', source: '2', target: '3' },
     ])
+    owner.dispose()
     unmount()
   })
   it('keeps unplaced legacy members available to the Edit projection without adding them to View', () => {

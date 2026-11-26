@@ -8,6 +8,10 @@ import {
 } from '../../../bindings/loom/internal/service'
 import type { Selection } from '../../lib/selection'
 import type { CanvasBoardOwner } from './canvas-board-owner'
+import {
+  type CanvasOperationContext,
+  unwrapCanvasOutcome,
+} from './canvas-operation'
 
 interface AssetSelectionRecords {
   key: string
@@ -47,10 +51,10 @@ export function useCanvasRepository({
     [setError]
   )
   const reload = useCallback(async (): Promise<void> => {
-    await executor.refresh()
+    unwrapCanvasOutcome(await executor.refresh())
   }, [executor])
   const reloadForData = useCallback(async (): Promise<CanvasData | null> => {
-    const result = await executor.refresh()
+    const result = unwrapCanvasOutcome(await executor.refresh())
     return result?.data ?? null
   }, [executor])
   useEffect(
@@ -82,13 +86,28 @@ export function useCanvasRepository({
     }
   }, [assetSelectionKey, repoPath, report, setAssetSelectionRecords])
   const run = useCallback(
-    (action: () => Promise<unknown>) => {
+    (action: (context: CanvasOperationContext) => Promise<unknown>) => {
       void executor
-        .admit(async () => {
-          await action()
-          await executor.reconcile()
+        .submit(
+          {
+            kind: 'mutation',
+            capability: 'relationship',
+            board: executor.getSnapshot(),
+          },
+          async (context) => {
+            await action(context)
+            await context.reconcile()
+          }
+        )
+        .then((outcome) => {
+          if (outcome.status === 'success' || outcome.status === 'cancelled')
+            return
+          report(
+            outcome.status === 'failed'
+              ? outcome.error
+              : new Error(outcome.reason)
+          )
         })
-        .catch(report)
     },
     [executor, report]
   )
@@ -103,9 +122,10 @@ export function useCanvasRepository({
           void flow.setViewport(viewport)
         }
         setReady(true)
+        const board = unwrapCanvasOutcome(result)
         if (
           !viewport &&
-          (result?.data.images ?? []).some(
+          (board?.data.images ?? []).some(
             (image) => image.placed && !image.trashed
           )
         )

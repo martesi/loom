@@ -5,12 +5,15 @@ import { useEffect, useRef, useState } from 'react'
 import type { TagInfo } from '../../../bindings/loom/internal/service'
 import { TagService } from '../../../bindings/loom/internal/service'
 import { cn } from '../../lib/utils'
+import type { CanvasBoardOwner } from './canvas-board-owner'
+import { canvasEffects } from './canvas-operation-effects'
 
 interface TagPickerProps {
   x: number
   y: number
   repoPath: string
   imageId: number
+  owner: CanvasBoardOwner
   allTagNames: string[]
   onClose: () => void
   onChange: () => void
@@ -26,6 +29,7 @@ export function TagPicker({
   y,
   repoPath,
   imageId,
+  owner,
   allTagNames,
   onClose,
   onChange,
@@ -35,11 +39,30 @@ export function TagPicker({
   const ref = useRef<HTMLDivElement>(null)
 
   const refresh = () => {
-    TagService.TagsForImage(repoPath, imageId).then((tags) =>
-      setCurrentTags(tags ?? [])
-    )
+    void owner
+      .submit(
+        {
+          kind: 'read',
+          capability: 'metadata',
+          board: owner.getSnapshot(),
+        },
+        (context) =>
+          context.prepare(() => TagService.TagsForImage(repoPath, imageId))
+      )
+      .then((outcome) => {
+        if (outcome.status === 'success') setCurrentTags(outcome.value ?? [])
+        else if (outcome.status === 'failed') console.error(outcome.error)
+        else if (outcome.status === 'rejected')
+          console.error('tag list operation rejected', outcome.reason)
+      })
   }
-  useEffect(refresh, [repoPath, imageId])
+  useEffect(refresh, [
+    owner,
+    owner.getSnapshot,
+    owner.submit,
+    repoPath,
+    imageId,
+  ])
 
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
@@ -52,7 +75,15 @@ export function TagPicker({
   const submit = async () => {
     const name = value.trim()
     if (!name) return
-    await TagService.AddTag(repoPath, imageId, name)
+    const outcome = await owner.submit(
+      {
+        kind: 'mutation',
+        capability: 'metadata',
+        board: owner.getSnapshot(),
+      },
+      (context) => canvasEffects.addTag(context, repoPath, imageId, name)
+    )
+    if (outcome.status !== 'success') return
     setValue('')
     refresh()
     onChange()
@@ -75,7 +106,16 @@ export function TagPicker({
               type="button"
               aria-label={t`Remove tag ${tag.name}`}
               onClick={async () => {
-                await TagService.RemoveTag(repoPath, imageId, tag.id)
+                const outcome = await owner.submit(
+                  {
+                    kind: 'mutation',
+                    capability: 'metadata',
+                    board: owner.getSnapshot(),
+                  },
+                  (context) =>
+                    canvasEffects.removeTag(context, repoPath, imageId, tag.id)
+                )
+                if (outcome.status !== 'success') return
                 refresh()
                 onChange()
               }}

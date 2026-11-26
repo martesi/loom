@@ -6,22 +6,27 @@ import {
   type LayoutSnapshot,
   type UndoResult,
 } from '../../../bindings/loom/internal/service'
-import type { CanvasBoardExecutor } from './canvas-board-executor'
+import type {
+  CanvasBoardExecutor,
+  CanvasSubmitOptions,
+} from './canvas-board-executor'
 import type { DragGesture, ResizeGesture } from './canvas-board-gestures'
-import { createCanvasLayoutWriteGate } from './canvas-layout-write-gate'
 import {
   allowsCanvasCapability,
   type CanvasCapability,
   type CanvasInternalMode,
 } from './canvas-mode-policy'
-import { buildDisplayGeometry } from './canvas-projection-geometry'
 import {
-  canvasRepositoryBarrier,
-  enqueueCanvasRepositoryWork,
-  hasCanvasRepositoryWork,
-  hasOtherCanvasRepositoryWork,
-  isCanvasRepositoryBusy,
-} from './canvas-repository-queue'
+  type CanvasOperationContext,
+  type CanvasOperationOutcome,
+  type CanvasOperationRuntime,
+  type CanvasUserOperationRequest,
+  isCanvasOperationPending,
+  isCanvasRepositoryDirty,
+  submitCanvasOperation,
+} from './canvas-operation'
+import { canvasEffects } from './canvas-operation-effects'
+import { buildDisplayGeometry } from './canvas-projection-geometry'
 import type { ResizeDirection } from './canvas-resize-geometry'
 import { joinCanvasSnapshot } from './canvas-snapshot'
 
@@ -35,17 +40,17 @@ export interface CanvasBoardOwner extends CanvasBoardExecutor {
   getModeRevision(): number
   getLifetimeRevision(): number
   isLayoutPending(): boolean
-  guardLayout(action: () => Promise<void>): Promise<void>
-  reserveLayout(): () => void
-  admit<T>(action: () => Promise<T>, boardMutation?: boolean): Promise<T>
+  submit<T>(
+    request: CanvasUserOperationRequest,
+    action: (context: CanvasOperationContext) => Promise<T>,
+    options?: CanvasSubmitOptions
+  ): Promise<CanvasOperationOutcome<T>>
   beginModeTransition(target?: CanvasInternalMode): number
   cancelModeTransition(revision: number): void
   setMode(mode: CanvasInternalMode): void
   allows(capability: CanvasCapability): boolean
-  allowsAdmitted(capability: CanvasCapability): boolean
-  refresh(): Promise<AcceptedCanvasBoard | null>
-  reconcile(): Promise<AcceptedCanvasBoard | null>
-  applyHistory(result: UndoResult): Promise<void>
+  refresh(): Promise<CanvasOperationOutcome<AcceptedCanvasBoard | null>>
+  stageHistory(result: UndoResult): void
   takeHistory(): UndoResult[]
   getSnapshot(): AcceptedCanvasBoard | null
   beginResize(
@@ -61,16 +66,20 @@ export interface CanvasBoardOwner extends CanvasBoardExecutor {
     token: number,
     pointerId: number,
     after: GeometryUpdate
-  ): Promise<void>
+  ): Promise<CanvasOperationOutcome<void>>
   cancelResize(token: number, pointerId: number): void
   beginDrag(
     board: AcceptedCanvasBoard | null,
     before: GeometryUpdate[],
     onCancel?: () => void
   ): DragGesture | null
-  endDrag(gesture: DragGesture, after: GeometryUpdate[]): Promise<void>
+  endDrag(
+    gesture: DragGesture,
+    after: GeometryUpdate[]
+  ): Promise<CanvasOperationOutcome<void>>
   /** Called inside execute, alongside mode transitions and other mutations. */
   commitDisplayedLayout(
+    context: CanvasOperationContext,
     board: AcceptedCanvasBoard,
     before: GeometryUpdate[],
     after: GeometryUpdate[],
@@ -80,7 +89,7 @@ export interface CanvasBoardOwner extends CanvasBoardExecutor {
   isGestureActive(gesture: DragGesture): boolean
   subscribe(listener: () => void): () => void
   dispose(): void
-  activate(): void
+  activate(): Promise<CanvasOperationOutcome<void>>
 }
 
 export function useCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
@@ -93,7 +102,10 @@ export function useCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
   }
   const current = owner.current.executor
   useEffect(() => {
-    current.activate()
+    void current.activate().then((outcome) => {
+      if (outcome.status === 'failed')
+        console.error('canvas startup failed', outcome.error)
+    })
     return () => current.dispose()
   }, [current])
   return current
@@ -104,67 +116,36 @@ export function createCanvasBoardOwner(
   coordinateRepository = false
 ): CanvasBoardOwner {
   let requestedMode: CanvasInternalMode | null = null
-  let tail: Promise<void> = Promise.resolve()
-  let activeAdmissions = 0
-  let executingLifetime: number | null = null
-  let dirty = false
-  const queuedAdmissions = new Set<() => void>()
-  const repositoryQueueIdentity = { disposed: false }
+  const operationIdentity = coordinateRepository
+    ? repoPath
+    : `${repoPath}:${crypto.randomUUID()}`
+  const operationToken = {}
   let generation = 0
   let active = true
   let mode: CanvasInternalMode = 'legacy'
   let modeRevision = 0
   let lifetimeRevision = 0
   let nextGestureToken = 1
-  const layoutGate = createCanvasLayoutWriteGate()
   let accepted: AcceptedCanvasBoard | null = null
   let acceptedGeneration = -1
   let gesture: ResizeGesture | DragGesture | null = null
   let pendingHistory: UndoResult[] = []
   let readyHistory: UndoResult[] = []
-  let latestRefresh: Promise<AcceptedCanvasBoard | null> | null = null
-  let signalRefresh = () => {}
-  let refreshChanged = new Promise<void>((resolve) => {
-    signalRefresh = resolve
-  })
-  let lifetime = new AbortController()
   const listeners = new Set<() => void>()
-  function refresh() {
-    if (
-      activeAdmissions > 0 &&
-      executingLifetime !== null &&
-      executingLifetime !== lifetimeRevision
-    )
-      return Promise.resolve(null)
-    if (
-      coordinateRepository &&
-      hasOtherCanvasRepositoryWork(repoPath, repositoryQueueIdentity)
-    )
-      return canvasRepositoryBarrier(repoPath).then(() => requestRefresh())
-    return requestRefresh()
-  }
-  function requestRefresh(authoritative = false) {
-    const request = loadBoard(authoritative)
-    latestRefresh = request
-    const notify = signalRefresh
-    refreshChanged = new Promise<void>((resolve) => {
-      signalRefresh = resolve
-    })
-    notify()
-    return request
-  }
-  async function loadBoard(
-    authoritative: boolean
-  ): Promise<AcceptedCanvasBoard | null> {
-    if (!active) return null
+  async function loadBoard(context: CanvasOperationContext): Promise<void> {
+    if (!active) return
     const request = ++generation
     owner.cancelGesture()
     const isCurrent = () => active && request === generation
-    const metadata = await ImageService.LoadCanvas(repoPath)
-    if (!isCurrent()) return null
+    const metadata = await context.prepare(() =>
+      ImageService.LoadCanvas(repoPath)
+    )
+    if (!isCurrent()) return
     if (!metadata) throw new Error('Canvas metadata is unavailable')
-    const snapshot = await ImageService.GetLayoutSnapshot(repoPath)
-    if (!isCurrent()) return null
+    const snapshot = await context.prepare(() =>
+      ImageService.GetLayoutSnapshot(repoPath)
+    )
+    if (!isCurrent()) return
     if (!snapshot) throw new Error('Canvas layout snapshot is unavailable')
     const data = joinCanvasSnapshot(metadata, snapshot)
     // An intermediate publication may not have reached React before this one.
@@ -181,18 +162,64 @@ export function createCanvasBoardOwner(
     }))
     pendingHistory = []
     accepted = { snapshot, data }
-    if (authoritative || activeAdmissions === 0) dirty = false
     acceptedGeneration = generation
     for (const listener of listeners) listener()
-    return accepted
   }
-  const owner: CanvasBoardOwner = {
+  let owner: CanvasBoardOwner
+  const runtime: CanvasOperationRuntime = {
+    token: operationToken,
+    isCurrent: (revision) => active && revision === lifetimeRevision,
+    getLifetime: () => lifetimeRevision,
+    getMode: () => mode,
+    getRequestedMode: () => requestedMode,
+    setMode: (next) => {
+      if (mode !== next) modeRevision++
+      mode = next
+      requestedMode = null
+    },
+    getSnapshot: () => accepted,
+    recover: loadBoard,
+  }
+  let startup: Promise<CanvasOperationOutcome<void>> | null = null
+  let startupSettled = false
+  function queueStartup() {
+    if (!startup) {
+      const queued = submitCanvasOperation(
+        operationIdentity,
+        runtime,
+        { kind: 'startup' },
+        (context) => context.reconcile()
+      )
+      startup = queued
+      void queued.then(() => {
+        if (startup === queued) startupSettled = true
+      })
+    }
+    return startup
+  }
+  function submit<T>(
+    request: CanvasUserOperationRequest,
+    action: (context: CanvasOperationContext) => Promise<T>,
+    options: CanvasSubmitOptions = {}
+  ) {
+    if (request.kind === 'mutation' || request.kind === 'history')
+      owner.cancelGesture()
+    queueStartup()
+    const result = submitCanvasOperation(
+      operationIdentity,
+      runtime,
+      request,
+      action
+    )
+    options.onReserved?.()
+    return result
+  }
+  owner = {
     getMode: () => mode,
     getModeRevision: () => modeRevision,
     getLifetimeRevision: () => lifetimeRevision,
-    isLayoutPending: layoutGate.isPending,
-    guardLayout: layoutGate.guard,
-    reserveLayout: layoutGate.reserve,
+    isLayoutPending: () => isCanvasOperationPending(operationIdentity),
+    submit,
     beginModeTransition: (target) => {
       modeRevision++
       requestedMode = target ?? null
@@ -203,141 +230,31 @@ export function createCanvasBoardOwner(
       if (modeRevision === revision) requestedMode = null
     },
     setMode(next) {
+      if (coordinateRepository)
+        throw new Error(
+          'Use a queued Canvas mode transition for active owners.'
+        )
       owner.cancelGesture()
       if (mode !== next) modeRevision++
       mode = next
       requestedMode = null
     },
     allows: (capability) =>
-      !dirty &&
-      !layoutGate.isPending() &&
-      (!coordinateRepository || !isCanvasRepositoryBusy(repoPath)) &&
+      !isCanvasRepositoryDirty(operationIdentity) &&
+      !isCanvasOperationPending(operationIdentity) &&
       allowsCanvasCapability(requestedMode ?? mode, capability),
-    allowsAdmitted: (capability) =>
-      allowsCanvasCapability(requestedMode ?? mode, capability),
-    execute<T>(action: () => Promise<T>): Promise<T> {
-      // Internal FIFO for work already admitted by its public entry point.
-      const result = tail.then(action)
-      tail = result.then(
-        () => undefined,
-        () => undefined
-      )
-      return result
-    },
-    admit<T>(action: () => Promise<T>, boardMutation = true): Promise<T> {
-      // Admission happens synchronously before repository queue wait.
+    refresh() {
+      const wasStarting = !startup || !startupSettled
+      if (wasStarting)
+        return queueStartup().then((outcome) =>
+          outcome.status === 'success'
+            ? { status: 'success', value: accepted }
+            : outcome
+        )
       owner.cancelGesture()
-      const ticketLifetime = lifetimeRevision
-      const ticketRepo = repoPath
-      const release = layoutGate.reserve()
-      let dispatched = false
-      const releaseIfQueued = () => {
-        if (dispatched) return
-        queuedAdmissions.delete(releaseIfQueued)
-        release()
-      }
-      queuedAdmissions.add(releaseIfQueued)
-      const executeAdmitted = () =>
-        owner.execute(async () => {
-          if (
-            !active ||
-            lifetimeRevision !== ticketLifetime ||
-            repoPath !== ticketRepo
-          )
-            return undefined as T
-          dispatched = true
-          queuedAdmissions.delete(releaseIfQueued)
-          activeAdmissions++
-          executingLifetime = ticketLifetime
-          if (boardMutation) dirty = true
-          const startGeneration = generation
-          try {
-            const result = await action()
-            return result
-          } catch (error) {
-            if (
-              boardMutation &&
-              dirty &&
-              active &&
-              lifetimeRevision === ticketLifetime
-            ) {
-              if (generation === startGeneration) {
-                try {
-                  await requestRefresh(true)
-                } catch (reconcileError) {
-                  throw new Error(
-                    `The operation may have succeeded, but Canvas could not be reconciled: ${reconcileError instanceof Error ? reconcileError.message : String(reconcileError)}`
-                  )
-                }
-              }
-              if (dirty) {
-                throw new Error(
-                  `The operation may have succeeded, but Canvas could not be reconciled: ${error instanceof Error ? error.message : String(error)}`
-                )
-              }
-            }
-            throw error
-          } finally {
-            activeAdmissions--
-            executingLifetime = null
-          }
-        })
-      const result = coordinateRepository
-        ? enqueueCanvasRepositoryWork(
-            repoPath,
-            repositoryQueueIdentity,
-            () =>
-              active &&
-              lifetimeRevision === ticketLifetime &&
-              repoPath === ticketRepo,
-            executeAdmitted
-          )
-        : executeAdmitted()
-      return result
-        .then((value) => {
-          if (lifetimeRevision !== ticketLifetime) return undefined as T
-          return value
-        })
-        .finally(() => {
-          queuedAdmissions.delete(releaseIfQueued)
-          release()
-        })
-    },
-    refresh,
-    async applyHistory(result) {
-      if (!active || !result.applied) return
-      pendingHistory.push(result)
-      const signal = lifetime.signal
-      // Disposal can stop reconciliation before it observes this request.
-      void owner.reconcile().catch(() => {})
-      const reconcile = async () => {
-        while (active && !signal.aborted && pendingHistory.includes(result)) {
-          const request = latestRefresh
-          if (!request) return
-          let notifyDisposal = () => {}
-          const disposed = new Promise<void>((resolve) => {
-            notifyDisposal = resolve
-            signal.addEventListener('abort', notifyDisposal, { once: true })
-          })
-          const outcome = await Promise.race([
-            request.then(
-              () => ({ kind: 'settled' as const }),
-              (error: unknown) => ({ kind: 'failed' as const, error })
-            ),
-            refreshChanged.then(() => ({ kind: 'superseded' as const })),
-            disposed.then(() => ({ kind: 'disposed' as const })),
-          ]).finally(() => signal.removeEventListener('abort', notifyDisposal))
-          if (outcome.kind === 'disposed' || signal.aborted) return
-          if (!active || !pendingHistory.includes(result)) return
-          if (request !== latestRefresh) continue
-          if (outcome.kind === 'failed') throw outcome.error
-          if (outcome.kind === 'settled') return
-        }
-      }
-      await reconcile().catch((error: unknown) => {
-        pendingHistory = pendingHistory.filter((item) => item !== result)
-        throw error
-      })
+      return submit({ kind: 'recovery' }, (context) =>
+        context.reconcile().then(() => accepted)
+      )
     },
     takeHistory() {
       const ready = readyHistory
@@ -346,14 +263,8 @@ export function createCanvasBoardOwner(
     },
     isActive: () => active,
     getSnapshot: () => accepted,
-    reconcile() {
-      if (
-        activeAdmissions > 0 &&
-        executingLifetime !== null &&
-        executingLifetime !== lifetimeRevision
-      )
-        return Promise.resolve(null)
-      return requestRefresh(true)
+    stageHistory(result) {
+      if (result.applied) pendingHistory.push(result)
     },
     beginResize(board, before, direction, pointerId, onPreview, onCancel) {
       if (
@@ -363,8 +274,9 @@ export function createCanvasBoardOwner(
         !board ||
         board !== accepted ||
         acceptedGeneration !== generation
-      )
+      ) {
         return null
+      }
       const stored = board.snapshot.images?.find(
         (item) => item.id === before.imageId
       )?.geometry
@@ -393,8 +305,9 @@ export function createCanvasBoardOwner(
         current?.kind !== 'resize' ||
         current.token !== token ||
         current.pointerId !== pointerId
-      )
+      ) {
         return false
+      }
       if (
         current.cancelled ||
         !active ||
@@ -415,7 +328,10 @@ export function createCanvasBoardOwner(
         current.token !== token ||
         current.pointerId !== pointerId
       )
-        return Promise.resolve()
+        return Promise.resolve({
+          status: 'cancelled',
+          reason: 'The resize gesture is no longer active.',
+        })
       if (
         current.cancelled ||
         !active ||
@@ -424,7 +340,10 @@ export function createCanvasBoardOwner(
         current.generation !== generation
       ) {
         owner.cancelResize(token, pointerId)
-        return Promise.resolve()
+        return Promise.resolve({
+          status: 'cancelled',
+          reason: 'The resize gesture is stale.',
+        })
       }
       gesture = null
       current.onPreview(after)
@@ -433,25 +352,20 @@ export function createCanvasBoardOwner(
         [current.before],
         [after]
       )
-      if (!batch.changed) return Promise.resolve()
-      return owner.admit(async () => {
-        if (!active || current.lifetimeRevision !== lifetimeRevision) return
-        await ImageService.SetGeometryFromDisplayAtRevision(
-          repoPath,
-          current.revision,
-          batch.expected,
-          batch.before,
-          batch.after
-        ).catch(async (error: unknown) => {
-          await owner
-            .reconcile()
-            .catch((reloadError: unknown) =>
-              console.error('canvas resize reload failed', reloadError)
-            )
-          throw error
-        })
-        await owner.reconcile()
-      })
+      if (!batch.changed)
+        return Promise.resolve({ status: 'success', value: undefined })
+      return owner.submit(
+        { kind: 'mutation', capability: 'geometry', board: accepted },
+        (context) =>
+          canvasEffects.setDisplayGeometry(
+            context,
+            repoPath,
+            current.revision,
+            batch.expected,
+            batch.before,
+            batch.after
+          )
+      )
     },
     cancelResize(token, pointerId) {
       const current = gesture
@@ -504,7 +418,11 @@ export function createCanvasBoardOwner(
       return current
     },
     endDrag(current, after) {
-      if (gesture !== current) return Promise.resolve()
+      if (gesture !== current)
+        return Promise.resolve({
+          status: 'cancelled',
+          reason: 'The drag gesture is no longer active.',
+        })
       gesture = null
       const batch = buildDisplayGeometry(
         new Map(current.expected.map((item) => [item.imageId, item])),
@@ -517,32 +435,30 @@ export function createCanvasBoardOwner(
         current.generation !== generation ||
         current.modeRevision !== modeRevision ||
         current.lifetimeRevision !== lifetimeRevision ||
-        !allowsCanvasCapability(mode, 'geometry')
+        !owner.allows('geometry')
       ) {
         current.onCancel?.()
-        return Promise.resolve()
-      }
-      if (!batch.changed) return Promise.resolve()
-      return owner.admit(async () => {
-        if (!active || current.lifetimeRevision !== lifetimeRevision) return
-        await ImageService.SetGeometryFromDisplayAtRevision(
-          repoPath,
-          current.revision,
-          batch.expected,
-          batch.before,
-          batch.after
-        ).catch(async (error: unknown) => {
-          await owner
-            .reconcile()
-            .catch((reloadError: unknown) =>
-              console.error('canvas drag reload failed', reloadError)
-            )
-          throw error
+        return Promise.resolve({
+          status: 'cancelled',
+          reason: 'The drag gesture is stale.',
         })
-        await owner.reconcile()
-      })
+      }
+      if (!batch.changed)
+        return Promise.resolve({ status: 'success', value: undefined })
+      return owner.submit(
+        { kind: 'mutation', capability: 'geometry', board: accepted },
+        (context) =>
+          canvasEffects.setDisplayGeometry(
+            context,
+            repoPath,
+            current.revision,
+            batch.expected,
+            batch.before,
+            batch.after
+          )
+      )
     },
-    async commitDisplayedLayout(board, before, after, accept) {
+    async commitDisplayedLayout(context, board, before, after, accept) {
       if (mode !== 'edit' || !active) return
       if (board !== accepted || acceptedGeneration !== generation)
         throw new Error('Canvas changed during layout. Try again.')
@@ -554,42 +470,19 @@ export function createCanvasBoardOwner(
         after
       )
       if (!batch.changed) return
-      owner.cancelGesture()
-      dirty = true
       const requestMode = modeRevision
-      const signal = lifetime.signal
-      await layoutGate.guard(async () => {
-        await ImageService.SetGeometryFromDisplayAtRevision(
-          repoPath,
-          board.snapshot.revision,
-          batch.expected,
-          batch.before,
-          batch.after
-        ).catch(async (error: unknown) => {
-          await owner
-            .reconcile()
-            .catch((reloadError: unknown) =>
-              console.error('canvas arrange reload failed', reloadError)
-            )
-          throw error
-        })
-        if (!active || signal.aborted) return
-        if (
-          mode === 'edit' &&
-          modeRevision === requestMode &&
-          owner.getSnapshot() === board
-        ) {
-          accept()
-          await owner.reconcile()
-        } else {
-          // The write is already in history. Reconcile its rows without replaying it.
-          await owner.applyHistory({
-            applied: true,
-            kind: 'geometry',
-            geometry: batch.after,
-          })
-        }
-      })
+      await canvasEffects.setDisplayGeometry(
+        context,
+        repoPath,
+        board.snapshot.revision,
+        batch.expected,
+        batch.before,
+        batch.after
+      )
+      context.assertCurrent()
+      if (mode !== 'edit' || modeRevision !== requestMode || accepted !== board)
+        throw new Error('Canvas changed during layout. Try again.')
+      accept()
     },
     cancelGesture() {
       const current = gesture
@@ -612,36 +505,20 @@ export function createCanvasBoardOwner(
     },
     dispose() {
       active = false
-      repositoryQueueIdentity.disposed = true
       lifetimeRevision++
-      lifetime.abort()
-      for (const release of [...queuedAdmissions]) release()
+      startup = null
+      startupSettled = false
       generation++
+      accepted = null
+      acceptedGeneration = -1
       pendingHistory = []
       readyHistory = []
       owner.cancelGesture()
       listeners.clear()
     },
     activate() {
-      const wasInactive = !active
-      const needsFreshReconciliation =
-        coordinateRepository &&
-        hasCanvasRepositoryWork(repoPath, repositoryQueueIdentity)
-      repositoryQueueIdentity.disposed = false
-      if (!active) {
-        lifetimeRevision++
-        lifetime = new AbortController()
-      }
       active = true
-      if (wasInactive && needsFreshReconciliation)
-        void canvasRepositoryBarrier(repoPath)
-          .then(() => {
-            if (active) return requestRefresh(true)
-            return null
-          })
-          .catch((error: unknown) =>
-            console.error('canvas reactivation refresh failed', error)
-          )
+      return queueStartup()
     },
   }
   return owner

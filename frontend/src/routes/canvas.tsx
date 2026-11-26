@@ -210,11 +210,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     fieldSubmissionPending,
     submissionScopeRef,
   })
-  const undoActions = useUndoActions(
-    repo.path,
-    boardOwner.applyHistory,
-    boardOwner
-  )
+  const undoActions = useUndoActions(repo.path, boardOwner)
   useEffect(() => {
     const timer = window.setInterval(
       () => {

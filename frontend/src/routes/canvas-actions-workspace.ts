@@ -1,5 +1,5 @@
 import { t } from '@lingui/core/macro'
-import { ImageService } from '../../bindings/loom/internal/service'
+import { canvasEffects } from '../components/canvas/canvas-operation-effects'
 import type { CanvasAction } from '../lib/action-catalog'
 import type { CanvasActionsContext } from './canvas-actions-context'
 
@@ -208,10 +208,15 @@ export function canvasWorkspaceActions(
             context: t`Workspace`,
             enabled: true,
             execute: () =>
-              context.owner.admit(async () => {
-                await ImageService.RescanRepository(repoPath)
-                await context.owner.reconcile()
-              }),
+              context.owner.submit(
+                {
+                  kind: 'mutation',
+                  capability: 'lifecycle',
+                  board: context.owner.getSnapshot(),
+                },
+                (operation) =>
+                  canvasEffects.rescanRepository(operation, repoPath)
+              ),
           },
         ]
       : []),

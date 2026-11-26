@@ -17,11 +17,12 @@ import {
   useRef,
 } from 'react'
 import type { CanvasData } from '../../../bindings/loom/internal/service'
-import { ImageService } from '../../../bindings/loom/internal/service'
 import { applyCanvasNodeSelection } from '../../lib/canvas-selection'
 import { emptySelection, type Selection } from '../../lib/selection'
 import type { CanvasBoardOwner } from './canvas-board-owner'
 import type { CanvasInternalMode } from './canvas-mode-policy'
+import { unwrapCanvasOutcome } from './canvas-operation'
+import { canvasEffects } from './canvas-operation-effects'
 import { useCanvasBoardDrag } from './use-canvas-board-drag'
 
 interface MenuState {
@@ -279,7 +280,20 @@ export function CanvasFlow(props: Props) {
         onMoveEnd={(_, v) => {
           updateProjectionViewport(v)
           if (ready && mode === 'legacy')
-            void ImageService.SetViewport(repoPath, v).catch(report)
+            void owner
+              .submit(
+                {
+                  kind: 'viewport',
+                  mode: 'legacy',
+                  board: owner.getSnapshot(),
+                },
+                (context) => canvasEffects.setViewport(context, repoPath, v)
+              )
+              .then((outcome) => {
+                if (outcome.status === 'cancelled') return
+                unwrapCanvasOutcome(outcome)
+              })
+              .catch(report)
         }}
         onMove={(_, viewport) => {
           // Zoom badges read this once per frame at most; onMove fires

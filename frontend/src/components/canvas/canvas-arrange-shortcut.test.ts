@@ -2,6 +2,7 @@ import { afterEach, expect, it, mock } from 'bun:test'
 import { act, cleanup, fireEvent, renderHook } from '@testing-library/react'
 import { useRef } from 'react'
 import type { CanvasActionsContext } from '../../routes/canvas-actions-context'
+import type { CanvasOperationContext } from './canvas-operation'
 import { useCanvasKeyboardShortcuts } from './use-canvas-keyboard-shortcuts'
 
 mock.module('@lingui/core/macro', () => ({
@@ -18,7 +19,10 @@ const { canvasViewActions } = await import('../../routes/canvas-actions-view')
 afterEach(cleanup)
 
 it('Shift+A invokes whole-canvas arrangement with and without selection', () => {
-  const arrange = mock(async (_ids?: string[]) => {})
+  const arrange = mock(
+    async (_operation: CanvasOperationContext, _ids?: string[]) => {}
+  )
+  const operation = {} as CanvasOperationContext
   let selection: string[] = []
   const context = () =>
     ({
@@ -32,7 +36,7 @@ it('Shift+A invokes whole-canvas arrangement with and without selection', () => 
     actionRef.current = actions
     useCanvasKeyboardShortcuts({
       actionRef,
-      executeAction: async (action) => action.execute(),
+      executeAction: async (action) => action.execute(operation),
       selection: {
         surface: 'canvas',
         ids: selection.map(Number),
@@ -52,5 +56,5 @@ it('Shift+A invokes whole-canvas arrangement with and without selection', () => 
     fireEvent.keyDown(document.body, { key: 'A', code: 'KeyA', shiftKey: true })
   )
   expect(arrange).toHaveBeenCalledTimes(2)
-  expect(arrange.mock.calls).toEqual([[], []])
+  expect(arrange.mock.calls).toEqual([[operation], [operation]])
 })

@@ -14,6 +14,7 @@ import type {
 } from '../../../bindings/loom/internal/service'
 import type { Selection } from '../../lib/selection'
 import type { CanvasBoardOwner } from './canvas-board-owner'
+import { canvasOutcomeError } from './canvas-operation'
 import { applyHistoryToNodes } from './canvas-projection-geometry'
 import { canvasProjectionGraph } from './canvas-projection-model'
 import {
@@ -128,23 +129,22 @@ export function useCanvasBoardModel({
     let rendererActive = true
     const updateNodeGeometry = (imageId: number, geometry: GeometryUpdate) => {
       setNodes((current) =>
-        current.map((node) =>
-          node.id === String(imageId)
-            ? {
-                ...node,
-                position: {
-                  x: geometry.x ?? node.position.x,
-                  y: geometry.y ?? node.position.y,
-                },
-                width: geometry.w ?? node.width,
-                height: geometry.h ?? node.height,
-                measured:
-                  geometry.w === null || geometry.h === null
-                    ? node.measured
-                    : { width: geometry.w, height: geometry.h },
-              }
-            : node
-        )
+        current.map((node) => {
+          if (node.id !== String(imageId)) return node
+          return {
+            ...node,
+            position: {
+              x: geometry.x ?? node.position.x,
+              y: geometry.y ?? node.position.y,
+            },
+            width: geometry.w ?? node.width,
+            height: geometry.h ?? node.height,
+            measured:
+              geometry.w === null || geometry.h === null
+                ? node.measured
+                : { width: geometry.w, height: geometry.h },
+          }
+        })
       )
     }
     const graph = canvasProjectionGraph(
@@ -207,6 +207,10 @@ export function useCanvasBoardModel({
         activeGestures.delete(token)
         void owner
           .endResize(token, pointerId, geometry)
+          .then((outcome) => {
+            const error = canvasOutcomeError(outcome)
+            if (error) callbacks.current.report(error)
+          })
           .catch(callbacks.current.report)
       },
       (token, pointerId) => {

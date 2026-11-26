@@ -4,12 +4,15 @@ import { useEffect, useRef, useState } from 'react'
 import type { PromptInfo } from '../../../bindings/loom/internal/service'
 import { PromptService } from '../../../bindings/loom/internal/service'
 import { cn } from '../../lib/utils'
+import type { CanvasBoardOwner } from './canvas-board-owner'
+import { canvasEffects } from './canvas-operation-effects'
 
 interface PromptPickerProps {
   x: number
   y: number
   repoPath: string
   imageId: number
+  owner: CanvasBoardOwner
   onClose: () => void
   onChange: () => void
 }
@@ -25,6 +28,7 @@ export function PromptPicker({
   y,
   repoPath,
   imageId,
+  owner,
   onClose,
   onChange,
 }: PromptPickerProps) {
@@ -35,8 +39,22 @@ export function PromptPicker({
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    PromptService.ListPrompts(repoPath).then((list) => setPrompts(list ?? []))
-  }, [repoPath])
+    void owner
+      .submit(
+        {
+          kind: 'read',
+          capability: 'metadata',
+          board: owner.getSnapshot(),
+        },
+        (context) => context.prepare(() => PromptService.ListPrompts(repoPath))
+      )
+      .then((outcome) => {
+        if (outcome.status === 'success') setPrompts(outcome.value ?? [])
+        else if (outcome.status === 'failed') console.error(outcome.error)
+        else if (outcome.status === 'rejected')
+          console.error('prompt list operation rejected', outcome.reason)
+      })
+  }, [owner, repoPath])
 
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
@@ -47,7 +65,16 @@ export function PromptPicker({
   }, [onClose])
 
   const attach = async (promptId: number) => {
-    await PromptService.AttachPrompt(repoPath, imageId, promptId)
+    const outcome = await owner.submit(
+      {
+        kind: 'mutation',
+        capability: 'metadata',
+        board: owner.getSnapshot(),
+      },
+      (context) =>
+        canvasEffects.attachPrompt(context, repoPath, imageId, promptId)
+    )
+    if (outcome.status !== 'success') return
     onChange()
     onClose()
   }
@@ -55,13 +82,23 @@ export function PromptPicker({
   const createAndAttach = async () => {
     const trimmed = text.trim()
     if (!trimmed) return
-    await PromptService.CreateAndAttachPrompt(
-      repoPath,
-      imageId,
-      name.trim(),
-      trimmed,
-      negative.trim()
+    const outcome = await owner.submit(
+      {
+        kind: 'mutation',
+        capability: 'metadata',
+        board: owner.getSnapshot(),
+      },
+      (context) =>
+        canvasEffects.createAndAttachPrompt(
+          context,
+          repoPath,
+          imageId,
+          name.trim(),
+          trimmed,
+          negative.trim()
+        )
     )
+    if (outcome.status !== 'success') return
     onChange()
     onClose()
   }

@@ -9,6 +9,10 @@ import {
 import { emptySelection } from '../../lib/selection'
 import { useCanvasBoardOwner } from './canvas-board-owner'
 import { data, empty, images, relationships } from './canvas-mode-test-fixtures'
+import {
+  refreshBoard,
+  reserveCanvasOperation,
+} from './canvas-operation-test-utils'
 import { useCanvasBoardModel } from './use-canvas-board-model'
 
 afterEach(() => {
@@ -78,7 +82,7 @@ it('merges committed positions into the latest graph, not the graph used for lay
     return { owner, nodes, setNodes, edges, selection, setSelection, model }
   })
   await act(async () => {
-    await result.current.owner.refresh()
+    await refreshBoard(result.current.owner)
   })
   await act(async () => {
     await result.current.model.transitionMode('edit')
@@ -100,25 +104,27 @@ it('merges committed positions into the latest graph, not the graph used for lay
     })
   )
   expect(result.current.model.displayEdges[0].selected).toBe(true)
-  let operation: Promise<void> = Promise.resolve()
+  let operation: Promise<unknown> = Promise.resolve()
+  let refresh: Promise<unknown> = Promise.resolve()
   await act(async () => {
-    operation = result.current.owner.execute(() =>
-      result.current.model.arrangeEdit()
+    operation = reserveCanvasOperation(result.current.owner, (context) =>
+      result.current.model.arrangeEdit(context)
     )
     await writing
     links = []
-    await result.current.owner.refresh()
+    refresh = result.current.owner.refresh()
   })
-  expect(result.current.edges).toHaveLength(0)
+  expect(result.current.edges).toHaveLength(1)
   expect(result.current.selection).toEqual({
     surface: 'canvas',
     ids: [1, 2],
-    edges: [],
+    edges: [7],
     group: null,
   })
   await act(async () => {
     release()
-    await operation
+    expect(await operation).toMatchObject({ status: 'success' })
+    expect(await refresh).toMatchObject({ status: 'success' })
   })
   expect(result.current.edges).toHaveLength(0)
   expect(result.current.selection.ids).toEqual([1, 2])

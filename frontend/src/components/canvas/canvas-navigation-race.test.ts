@@ -1,4 +1,4 @@
-import { afterEach, expect, it, mock, spyOn } from 'bun:test'
+import { afterEach, beforeEach, expect, it, mock, spyOn } from 'bun:test'
 import { act, cleanup, renderHook } from '@testing-library/react'
 import { useState } from 'react'
 import { ImageService } from '../../../bindings/loom/internal/service'
@@ -13,6 +13,29 @@ afterEach(() => {
   cleanup()
   mock.restore()
 })
+
+beforeEach(() => {
+  spyOn(ImageService, 'LoadCanvas').mockResolvedValue({
+    images: [],
+    relationships: [],
+    groups: [],
+  } as never)
+  spyOn(ImageService, 'GetLayoutSnapshot').mockResolvedValue({
+    revision: '1',
+    images: [],
+    relationships: [],
+  } as never)
+})
+
+function requestMode(
+  owner: ReturnType<typeof createCanvasBoardOwner>,
+  target: 'legacy' | 'view' | 'edit'
+) {
+  owner.beginModeTransition(target)
+  return owner.submit({ kind: 'mode', target }, async (context) =>
+    context.setMode(target)
+  )
+}
 
 it('does not let an older navigation replace a newer selection or viewport', async () => {
   const pending = new Map<number, (value: never) => void>()
@@ -140,8 +163,8 @@ for (const strict of [false, true]) {
         { reactStrictMode: strict }
       )
       const retainedGo = hook.result.current.operations.go
-      hook.result.current.owner.setMode('view')
-      if (backToLegacy) hook.result.current.owner.setMode('legacy')
+      await requestMode(hook.result.current.owner, 'view')
+      if (backToLegacy) await requestMode(hook.result.current.owner, 'legacy')
       hook.rerender()
       const currentRequest = hook.result.current.operations.go(2)
       await act(async () => retainedGo(1))
@@ -240,7 +263,9 @@ for (const target of ['canvas', 'assets'] as const) {
     const hook = renderHook(() => {
       const owner = useCanvasBoardOwner('/repo')
       const [selection, setSelection] = useState(emptySelection)
-      const changeMode = () => owner.setMode('view')
+      const changeMode = () => {
+        void requestMode(owner, 'view')
+      }
       const operations = useCanvasAssetOperations({
         owner,
         repoPath: '/repo',
@@ -309,15 +334,19 @@ for (const interruption of [
           group: null,
         })
       )
-    if (interruption === 'mode') {
-      hook.result.current.owner.setMode('view')
-      hook.result.current.owner.setMode('legacy')
-    }
+    const modeChange =
+      interruption === 'mode'
+        ? Promise.all([
+            requestMode(hook.result.current.owner, 'view'),
+            requestMode(hook.result.current.owner, 'legacy'),
+          ])
+        : Promise.resolve([])
     if (interruption === 'repository') hook.rerender({ path: '/other' })
     if (interruption === 'unmount') hook.unmount()
     await act(async () => {
       resolveImage({ id: 1, placed: false, filePath: '/repo/1.png' } as never)
       await request
+      await modeChange
     })
     expect(openAssets).not.toHaveBeenCalled()
     expect(selectAssets).not.toHaveBeenCalled()

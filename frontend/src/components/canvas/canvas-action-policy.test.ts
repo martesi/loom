@@ -1,4 +1,4 @@
-import { afterEach, expect, it, mock, spyOn } from 'bun:test'
+import { afterEach, beforeEach, expect, it, mock, spyOn } from 'bun:test'
 import {
   act,
   cleanup,
@@ -19,6 +19,7 @@ import {
   type CanvasCapability,
   canvasActionCapability,
 } from './canvas-mode-policy'
+import { refreshBoard, reserveCanvasRead } from './canvas-operation-test-utils'
 import type { PaletteAsset } from './command-palette'
 import { useCanvasAssetOperations } from './use-canvas-asset-operations'
 
@@ -34,6 +35,38 @@ mock.module('@lingui/core/macro', () => ({
 }))
 const { useCanvasActionSystem } = await import('./use-canvas-action-system')
 const { CanvasDock } = await import('./canvas-dock')
+
+async function activateOwner(owner: ReturnType<typeof createCanvasBoardOwner>) {
+  await refreshBoard(owner)
+}
+
+beforeEach(() => {
+  spyOn(ImageService, 'LoadCanvas').mockResolvedValue({
+    images: [],
+    relationships: [],
+    groups: [],
+  } as never)
+  spyOn(ImageService, 'GetLayoutSnapshot').mockResolvedValue({
+    revision: '1',
+    images: [],
+    relationships: [],
+  } as never)
+})
+
+function blockQueue(owner: ReturnType<typeof createCanvasBoardOwner>) {
+  let release = () => {}
+  let signalStarted = () => {}
+  const started = new Promise<void>((resolve) => {
+    signalStarted = resolve
+  })
+  const blocked = reserveCanvasRead(owner, async () => {
+    signalStarted()
+    await new Promise<void>((resolve) => {
+      release = resolve
+    })
+  })
+  return { blocked, started, release: () => release() }
+}
 
 const expectedCapabilities: Record<
   Exclude<CanvasCapability, 'canvas-drop'>,
@@ -194,7 +227,8 @@ for (const interruption of ['repository', 'mode'] as const) {
         tags: [],
       })
     )
-    if (interruption === 'mode') hook.result.current.owner.setMode('view')
+    if (interruption === 'mode')
+      hook.result.current.owner.beginModeTransition('view')
     hook.rerender({ path: interruption === 'repository' ? '/b' : '/a' })
     const currentRequest = hook.result.current.operations.go(2)
     act(() => frame(0))
@@ -214,6 +248,7 @@ for (const interruption of ['repository', 'mode'] as const) {
 
 it('rechecks the current mode when a previously enabled action reaches the queue', async () => {
   const owner = createCanvasBoardOwner('/repo')
+  await activateOwner(owner)
   owner.setMode('edit')
   const arrange = mock(async () => {})
   const context = {
@@ -308,23 +343,28 @@ it('rechecks the current mode when a previously enabled action reaches the queue
   }
   if (!action) throw new Error('missing arrange action')
   expect(action.enabled).toBe(true)
-  let release = () => {}
-  const blocker = owner.execute(
-    () =>
-      new Promise<void>((resolve) => {
-        release = resolve
-      })
+  const blocker = blockQueue(owner)
+  await blocker.started
+  owner.beginModeTransition('view')
+  const view = owner.submit(
+    { kind: 'mode', target: 'view' },
+    async (operation) => operation.setMode('view')
   )
-  await Promise.resolve()
   const queued = result.current.executeAction(action)
-  owner.setMode('view')
   await act(async () => {
-    release()
-    await blocker
+    blocker.release()
+    expect((await blocker.blocked).status).toBe('success')
+    expect((await view).status).toBe('success')
     await queued
   })
   expect(arrange).not.toHaveBeenCalled()
-  owner.setMode('edit')
+  expect(
+    (
+      await owner.submit({ kind: 'mode', target: 'edit' }, async (operation) =>
+        operation.setMode('edit')
+      )
+    ).status
+  ).toBe('success')
   await act(async () => {
     await result.current.executeAction(action)
   })
@@ -347,6 +387,7 @@ for (const change of [
 ] as const) {
   it(`rejects queued geometry after ${change} and keeps the queue live`, async () => {
     const owner = createCanvasBoardOwner('/repo')
+    await activateOwner(owner)
     owner.setMode('edit')
     const arrange = mock(async () => {})
     const report = mock()
@@ -381,33 +422,53 @@ for (const change of [
         setPaletteAssetsError: mock(),
       })
     )
-    let release = () => {}
-    const blocker = owner.execute(
-      () =>
-        new Promise<void>((resolve) => {
-          release = resolve
-        })
-    )
-    await Promise.resolve()
+    const blocker = blockQueue(owner)
+    await blocker.started
     const action = result.current.actionById.get('auto-arrange-active')
     if (!action) throw new Error('missing action')
-    const queued = result.current.executeAction(action)
-    if (change === 'pending transition') owner.beginModeTransition()
-    else if (change === 'mode ABA') {
-      owner.setMode('view')
-      owner.setMode('edit')
+    let queued: Promise<void>
+    const transitions: Promise<unknown>[] = []
+    if (change === 'pending transition') {
+      queued = result.current.executeAction(action)
+      owner.beginModeTransition('view')
+      transitions.push(
+        owner.submit({ kind: 'mode', target: 'view' }, async (operation) =>
+          operation.setMode('view')
+        )
+      )
+    } else if (change === 'mode ABA') {
+      owner.beginModeTransition('view')
+      transitions.push(
+        owner.submit({ kind: 'mode', target: 'view' }, async (operation) =>
+          operation.setMode('view')
+        )
+      )
+      queued = result.current.executeAction(action)
+      owner.beginModeTransition('edit')
+      transitions.push(
+        owner.submit({ kind: 'mode', target: 'edit' }, async (operation) =>
+          operation.setMode('edit')
+        )
+      )
     } else {
+      queued = result.current.executeAction(action)
       owner.dispose()
-      owner.activate()
+      transitions.push(owner.activate())
     }
     await act(async () => {
-      release()
-      await Promise.all([blocker, queued])
-      await owner.execute(async () => {})
+      blocker.release()
+      expect((await blocker.blocked).status).toBe(
+        change === 'owner lifetime' ? 'cancelled' : 'success'
+      )
+      await Promise.all([queued, ...transitions])
     })
     expect(arrange).not.toHaveBeenCalled()
-    if (change === 'owner lifetime') expect(report).not.toHaveBeenCalled()
+    if (change !== 'mode ABA') expect(report).not.toHaveBeenCalled()
     else expect(report).toHaveBeenCalledWith(expect.any(Error))
+    if (change !== 'owner lifetime')
+      await owner.submit({ kind: 'mode', target: 'edit' }, async (operation) =>
+        operation.setMode('edit')
+      )
     await act(async () => result.current.executeAction(action))
     expect(arrange).toHaveBeenCalledTimes(1)
     owner.dispose()
@@ -421,6 +482,7 @@ it('rejects a palette geometry intent when mode changes before its frame', async
     return 1
   })
   const owner = createCanvasBoardOwner('/repo')
+  await activateOwner(owner)
   owner.setMode('edit')
   const arrange = mock(async () => {})
   const report = mock()
@@ -460,7 +522,6 @@ it('rejects a palette geometry intent when mode changes before its frame', async
   act(() => result.current.runPaletteAction(action))
   owner.beginModeTransition()
   act(() => frame(0))
-  await act(async () => owner.execute(async () => {}))
   expect(arrange).not.toHaveBeenCalled()
   expect(report).toHaveBeenCalledWith(expect.any(Error))
   owner.dispose()

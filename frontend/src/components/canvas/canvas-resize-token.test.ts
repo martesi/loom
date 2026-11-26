@@ -9,6 +9,7 @@ import {
   createCanvasBoardOwner,
   useCanvasBoardOwner,
 } from './canvas-board-owner'
+import { refreshBoard } from './canvas-operation-test-utils'
 
 const rectangle: GeometryUpdate = { imageId: 1, x: 10, y: 20, w: 150, h: 110 }
 const resized: GeometryUpdate = { ...rectangle, x: 1, y: 2, w: 300, h: 200 }
@@ -38,7 +39,7 @@ afterEach(() => {
 it('binds updates to one pointer and token, and allows a fresh resize after cancellation', async () => {
   const write = setup()
   const owner = createCanvasBoardOwner('/repo')
-  const board = await owner.refresh()
+  const board = await refreshBoard(owner)
   owner.setMode('edit')
   const cancel = mock()
   const preview = mock()
@@ -57,8 +58,9 @@ it('binds updates to one pointer and token, and allows a fresh resize after canc
   if (next === null) throw new Error('fresh resize was rejected')
   expect(next).toBeGreaterThan(first)
   expect(owner.updateResize(first, 44, resized)).toBe(false)
-  await owner.endResize(next, 44, resized)
-  await owner.execute(async () => {})
+  expect(await owner.endResize(next, 44, resized)).toMatchObject({
+    status: 'success',
+  })
   expect(write).toHaveBeenCalledTimes(1)
   owner.dispose()
 })
@@ -66,7 +68,7 @@ it('binds updates to one pointer and token, and allows a fresh resize after canc
 it('invalidates active tokens on transition, refresh, dispose, and StrictMode cleanup', async () => {
   const write = setup()
   const owner = createCanvasBoardOwner('/repo')
-  let board = await owner.refresh()
+  let board = await refreshBoard(owner)
   owner.setMode('edit')
   const cancelled = mock()
   const start = () =>
@@ -79,7 +81,7 @@ it('invalidates active tokens on transition, refresh, dispose, and StrictMode cl
 
   const refresh = start()
   if (refresh === null) throw new Error('refresh resize was rejected')
-  board = (await owner.refresh()) ?? null
+  board = await refreshBoard(owner)
   expect(owner.updateResize(refresh, 9, resized)).toBe(false)
 
   const strictWrapper = ({ children }: { children: React.ReactNode }) =>
@@ -88,7 +90,7 @@ it('invalidates active tokens on transition, refresh, dispose, and StrictMode cl
     wrapper: strictWrapper,
   })
   const strictOwner = hook.result.current
-  const strictBoard = await strictOwner.refresh()
+  const strictBoard = await refreshBoard(strictOwner)
   const strictToken = strictOwner.beginResize(
     strictBoard,
     rectangle,
@@ -101,7 +103,7 @@ it('invalidates active tokens on transition, refresh, dispose, and StrictMode cl
   await act(async () => hook.unmount())
   strictOwner.activate()
   expect(strictOwner.updateResize(strictToken, 9, resized)).toBe(false)
-  await strictOwner.refresh()
+  await refreshBoard(strictOwner)
   const reactivated = strictOwner.beginResize(
     strictOwner.getSnapshot(),
     rectangle,
@@ -118,7 +120,7 @@ it('invalidates active tokens on transition, refresh, dispose, and StrictMode cl
     initialProps: { path: '/one' },
   })
   const oldOwner = repoHook.result.current
-  const oldBoard = await oldOwner.refresh()
+  const oldBoard = await refreshBoard(oldOwner)
   const repositoryToken = oldOwner.beginResize(
     oldBoard,
     rectangle,
@@ -139,7 +141,7 @@ it('invalidates active tokens on transition, refresh, dispose, and StrictMode cl
   owner.dispose()
   owner.activate()
   expect(owner.updateResize(disposed, 9, resized)).toBe(false)
-  board = await owner.refresh()
+  board = await refreshBoard(owner)
   expect(start()).not.toBeNull()
   expect(write).not.toHaveBeenCalled()
   owner.dispose()

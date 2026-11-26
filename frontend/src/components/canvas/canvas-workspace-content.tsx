@@ -21,6 +21,7 @@ import {
   zoomCanvas,
 } from './canvas-board-operations'
 import { CanvasMainSurface } from './canvas-main-surface'
+import type { CanvasOperationContext } from './canvas-operation'
 import { CanvasOverlays } from './canvas-overlays'
 import { CanvasToolbar } from './canvas-toolbar'
 import { DetailPanel } from './detail-panel'
@@ -172,23 +173,20 @@ export function CanvasWorkspaceContent(props: Props) {
     setHoveredNodeId,
   } = boardModel
   const { paste, importMedia, finishTrash, confirmPurge } = assetOperations
-  const reconcile = async () => {
-    await boardModel.owner.reconcile()
-  }
   const validTarget = (source: number, id: string) =>
     validateRelationshipTarget(source, id, data, groupMembers)
-  const arrange = (nodeIds?: string[]) =>
+  const arrange = (operation: CanvasOperationContext, nodeIds?: string[]) =>
     boardModel.owner.getMode() === 'edit'
       ? nodeIds
         ? Promise.resolve()
-        : boardModel.arrangeEdit()
+        : boardModel.arrangeEdit(operation)
       : boardModel.owner.getMode() === 'legacy'
-        ? arrangeCanvas(repo.path, nodes, edges, data, reconcile, nodeIds)
+        ? arrangeCanvas(operation, repo.path, nodes, edges, data, nodeIds)
         : Promise.resolve()
-  const alignHorizontal = () =>
-    alignCanvas('horizontal', repo.path, displayNodes, data, reconcile)
-  const alignVertical = () =>
-    alignCanvas('vertical', repo.path, displayNodes, data, reconcile)
+  const alignHorizontal = (operation: CanvasOperationContext) =>
+    alignCanvas(operation, 'horizontal', repo.path, displayNodes, data)
+  const alignVertical = (operation: CanvasOperationContext) =>
+    alignCanvas(operation, 'vertical', repo.path, displayNodes, data)
   function handleLocate(node: Node) {
     setMenu(null)
     openAssets()
@@ -220,18 +218,20 @@ export function CanvasWorkspaceContent(props: Props) {
     setPreviewImageId(imageId)
   }
   const persistViewport = boardModel.mode === 'legacy'
-  const fitAll = () => fitCanvas(flow, repo.path, undefined, persistViewport)
-  const fitSelection = () =>
+  const fitAll = (operation: CanvasOperationContext) =>
+    fitCanvas(operation, flow, repo.path, undefined, persistViewport)
+  const fitSelection = (operation: CanvasOperationContext) =>
     fitCanvas(
+      operation,
       flow,
       repo.path,
       nodes.filter(isCanvasNodeSelected),
       persistViewport
     )
-  const resetZoom = () =>
-    resetCanvasZoom(flow, host, repo.path, persistViewport)
-  const zoomBy = (factor: number) =>
-    zoomCanvas(flow, repo.path, factor, persistViewport)
+  const resetZoom = (operation: CanvasOperationContext) =>
+    resetCanvasZoom(operation, flow, host, repo.path, persistViewport)
+  const zoomBy = (operation: CanvasOperationContext, factor: number) =>
+    zoomCanvas(operation, flow, repo.path, factor, persistViewport)
   function toggleFocusMode() {
     setFocusCanvas((focused) => !focused)
     requestAnimationFrame(() => host.current?.focus())
@@ -245,7 +245,6 @@ export function CanvasWorkspaceContent(props: Props) {
     boardModel,
     assetOperations,
     report,
-    reload,
     assetSelectionKey,
     assetSelectionRecords,
     view: {
@@ -407,9 +406,6 @@ export function CanvasWorkspaceContent(props: Props) {
             open={inspectorOpen}
             path={repo.path}
             data={data}
-            change={async () => {
-              await boardModel.owner.reconcile()
-            }}
             graphOrder={
               boardModel.mode === 'legacy' ? undefined : boardModel.graphOrder
             }

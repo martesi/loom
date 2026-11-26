@@ -1,12 +1,13 @@
 import { t } from '@lingui/core/macro'
 import { type MutableRefObject, useCallback } from 'react'
-import {
-  ImageService,
-  PromptService,
-  TagService,
-} from '../../../bindings/loom/internal/service'
+import { ImageService } from '../../../bindings/loom/internal/service'
 import type { Selection } from '../../lib/selection'
 import type { CanvasBoardOwner } from './canvas-board-owner'
+import {
+  type CanvasOperationContext,
+  unwrapCanvasOutcome,
+} from './canvas-operation'
+import { canvasEffects } from './canvas-operation-effects'
 
 interface Props {
   owner: CanvasBoardOwner
@@ -41,23 +42,28 @@ export function useInspectorFieldSubmission({
         throw new Error(t`A save is already in progress.`)
       fieldSubmissionPending.current = true
       return owner
-        .admit(() =>
-          submitFieldValue({
-            command,
-            value,
-            imageIds,
-            expected,
-            repoPath,
-            selection,
-            selectedIds,
-            selectionRef,
-            groupMembers,
-            reload: async () => {
-              await owner.reconcile()
-            },
-            submissionScopeRef,
-          })
+        .submit(
+          {
+            kind: 'mutation',
+            capability: 'metadata',
+            board: owner.getSnapshot(),
+          },
+          (context) =>
+            submitFieldValue({
+              context,
+              command,
+              value,
+              imageIds,
+              expected,
+              repoPath,
+              selection,
+              selectedIds,
+              selectionRef,
+              groupMembers,
+              submissionScopeRef,
+            })
         )
+        .then(unwrapCanvasOutcome)
         .finally(() => {
           fieldSubmissionPending.current = false
         })
@@ -76,6 +82,7 @@ export function useInspectorFieldSubmission({
 }
 
 interface SubmitFieldValueProps {
+  context: CanvasOperationContext
   command: 'move-rename-file' | 'add-tag' | 'save-prompt'
   value: string
   imageIds: number[]
@@ -85,12 +92,12 @@ interface SubmitFieldValueProps {
   selectedIds: number[]
   selectionRef: MutableRefObject<Selection>
   groupMembers: (id: number) => number[]
-  reload: () => Promise<void>
   submissionScopeRef: MutableRefObject<{ key: string; revision: number }>
 }
 
 async function submitFieldValue({
   command,
+  context,
   value,
   imageIds,
   expected,
@@ -99,7 +106,6 @@ async function submitFieldValue({
   selectedIds,
   selectionRef,
   groupMembers,
-  reload,
   submissionScopeRef,
 }: SubmitFieldValueProps) {
   const revision = submissionScopeRef.current.revision
@@ -115,8 +121,8 @@ async function submitFieldValue({
     throw new Error(
       t`The selection changed. Review the Inspector and try again.`
     )
-  const records = await Promise.all(
-    ids.map((id) => ImageService.GetImage(repoPath, id))
+  const records = await context.prepare(() =>
+    Promise.all(ids.map((id) => ImageService.GetImage(repoPath, id)))
   )
   const liveIds = [
     ...new Set([
@@ -139,22 +145,22 @@ async function submitFieldValue({
       t`The selection changed or some assets are unavailable. No changes were made.`
     )
   if (command === 'move-rename-file') {
-    await moveFile(value, ids, repoPath, records, reload)
+    await moveFile(context, value, ids, repoPath, records)
     return
   }
   if (command === 'add-tag') {
-    await addTag(value, ids, repoPath, reload)
+    await addTag(context, value, ids, repoPath)
     return
   }
-  await savePrompt(value, ids, repoPath, reload)
+  await savePrompt(context, value, ids, repoPath)
 }
 
 async function moveFile(
+  context: CanvasOperationContext,
   value: string,
   ids: number[],
   repoPath: string,
-  records: Awaited<ReturnType<typeof ImageService.GetImage>>[],
-  reload: () => Promise<void>
+  records: Awaited<ReturnType<typeof ImageService.GetImage>>[]
 ) {
   const path = value.trim()
   if (
@@ -162,34 +168,32 @@ async function moveFile(
     !path ||
     path === records[0]?.filePath.slice(repoPath.length + 1)
   ) {
-    await reload()
     return
   }
   const image = records[0]
   if (!image || image.missing || image.trashed)
     throw new Error(t`This file cannot be moved in its current state.`)
-  await ImageService.MoveFile(repoPath, ids[0], path)
-  await reload()
+  await canvasEffects.moveFile(context, repoPath, ids[0], path)
 }
 
 async function addTag(
+  context: CanvasOperationContext,
   value: string,
   ids: number[],
-  repoPath: string,
-  reload: () => Promise<void>
+  repoPath: string
 ) {
   const tag = value.trim()
   if (!tag) {
-    await reload()
     return
   }
-  const results = await Promise.allSettled(
-    ids.map((id) => TagService.AddTag(repoPath, id, tag))
+  const results = await context.prepare(() =>
+    Promise.allSettled(
+      ids.map((id) => canvasEffects.addTag(context, repoPath, id, tag))
+    )
   )
   const failedIds = results.flatMap((result, index) =>
     result.status === 'rejected' ? [ids[index]] : []
   )
-  await reload()
   if (failedIds.length)
     throw new Error(
       t`${ids.length - failedIds.length} of ${ids.length} assets updated; failed asset IDs: ${failedIds.join(', ')}. The current state was refreshed.`
@@ -197,22 +201,30 @@ async function addTag(
 }
 
 async function savePrompt(
+  context: CanvasOperationContext,
   value: string,
   ids: number[],
-  repoPath: string,
-  reload: () => Promise<void>
+  repoPath: string
 ) {
-  const results = await Promise.allSettled(
-    ids.map((id) =>
-      value === ''
-        ? PromptService.DetachPrompt(repoPath, id)
-        : PromptService.CreateAndAttachPrompt(repoPath, id, '', value, '')
+  const results = await context.prepare(() =>
+    Promise.allSettled(
+      ids.map((id) =>
+        value === ''
+          ? canvasEffects.detachPrompt(context, repoPath, id)
+          : canvasEffects.createAndAttachPrompt(
+              context,
+              repoPath,
+              id,
+              '',
+              value,
+              ''
+            )
+      )
     )
   )
   const failedIds = results.flatMap((result, index) =>
     result.status === 'rejected' ? [ids[index]] : []
   )
-  await reload()
   if (failedIds.length)
     throw new Error(
       t`${ids.length - failedIds.length} of ${ids.length} assets updated; failed asset IDs: ${failedIds.join(', ')}. The current state was refreshed.`
