@@ -68,9 +68,9 @@ it('navigates to live projected nodes and reveals hidden View assets', async () 
   expect(setCenter).toHaveBeenLastCalledWith(650, 660, { zoom: 2 })
 })
 
-it('rechecks mode after a delayed paste and imports without Canvas geometry in View', async () => {
+it('does not promote a delayed View drop into an Edit placement', async () => {
   const owner = createCanvasBoardOwner('/repo')
-  owner.setMode('edit')
+  owner.setMode('view')
   const imported = spyOn(ImageService, 'ImportMedia').mockResolvedValue([
     1,
   ] as never)
@@ -93,13 +93,36 @@ it('rechecks mode after a delayed paste and imports without Canvas geometry in V
       })
   )
   await Promise.resolve()
-  const pending = result.current.paste([])
-  owner.setMode('view')
+  const pending = result.current.paste([], 'canvas')
+  owner.setMode('edit')
   await act(async () => {
     release()
     await blocker
     await pending
   })
+  expect(imported).not.toHaveBeenCalled()
+  expect(setSelection).not.toHaveBeenCalled()
+})
+
+it('keeps a file drop unpaired when it starts in View', async () => {
+  const owner = createCanvasBoardOwner('/repo')
+  owner.setMode('view')
+  const imported = spyOn(ImageService, 'ImportMedia').mockResolvedValue([
+    1,
+  ] as never)
+  const setSelection = mock()
+  const setReveal = mock()
+  const props = {
+    owner,
+    repoPath: '/repo',
+    selection: { surface: 'canvas', ids: [], edges: [], group: null },
+    center: () => ({ x: 10, y: 20 }),
+    reload: async () => {},
+    setSelection,
+    setReveal,
+  } as unknown as Parameters<typeof useCanvasAssetOperations>[0]
+  const { result } = renderHook(() => useCanvasAssetOperations(props))
+  await act(async () => result.current.paste([], 'canvas'))
   expect(imported).toHaveBeenCalledWith('/repo', [], false, 10, 20)
   expect(setSelection).toHaveBeenCalledWith({
     surface: 'assets',
@@ -107,6 +130,42 @@ it('rechecks mode after a delayed paste and imports without Canvas geometry in V
     edges: [],
     group: null,
   })
+})
+
+it('does not run a queued file import after its repository owner is disposed', async () => {
+  const owner = createCanvasBoardOwner('/old-repo')
+  owner.setMode('edit')
+  const imported = spyOn(ImageService, 'ImportMedia').mockResolvedValue([
+    1,
+  ] as never)
+  const setSelection = mock()
+  const props = {
+    owner,
+    repoPath: '/old-repo',
+    selection: { surface: 'canvas', ids: [], edges: [], group: null },
+    center: () => ({ x: 10, y: 20 }),
+    reload: async () => {},
+    setSelection,
+    setReveal: mock(),
+  } as unknown as Parameters<typeof useCanvasAssetOperations>[0]
+  const { result } = renderHook(() => useCanvasAssetOperations(props))
+  let release = () => {}
+  const blocker = owner.execute(
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve
+      })
+  )
+  await Promise.resolve()
+  const pending = result.current.paste([], 'canvas')
+  owner.dispose()
+  await act(async () => {
+    release()
+    await blocker
+    await pending
+  })
+  expect(imported).not.toHaveBeenCalled()
+  expect(setSelection).not.toHaveBeenCalled()
 })
 
 it('does not unlink or open purge from a Canvas selection in View', async () => {

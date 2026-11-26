@@ -116,7 +116,14 @@ afterEach(() => {
   mock.restore()
 })
 
-for (const interruption of ['repository', 'mode'] as const) {
+for (const interruption of [
+  'repository',
+  'mode',
+  'selection',
+  'selection-aba',
+  'unchanged',
+  'superseded',
+] as const) {
   it(`discards a scheduled palette choice after a ${interruption} change`, async () => {
     let frame: FrameRequestCallback = () => {}
     spyOn(globalThis, 'requestAnimationFrame').mockImplementation(
@@ -185,7 +192,7 @@ for (const interruption of ['repository', 'mode'] as const) {
           setPaletteAssetsLoading: mock(),
           setPaletteAssetsError: mock(),
         })
-        return { actions, operations, owner, selection }
+        return { actions, operations, owner, selection, setSelection }
       },
       { initialProps: { path: '/a' } }
     )
@@ -197,7 +204,72 @@ for (const interruption of ['repository', 'mode'] as const) {
         tags: [],
       })
     )
+    if (interruption === 'superseded') {
+      const oldFrame = frame
+      act(() =>
+        hook.result.current.actions.choosePaletteAsset({
+          id: 2,
+          fileName: '2.png',
+          filePath: '/a/2.png',
+          tags: [],
+        })
+      )
+      act(() => oldFrame(0))
+      expect(getImage).not.toHaveBeenCalled()
+      act(() => frame(0))
+      expect(getImage).toHaveBeenCalledWith('/a', 2)
+      await act(async () => {
+        resolveImage({ id: 2, placed: true, canvasX: 200, canvasY: 0 } as never)
+        await Promise.resolve()
+      })
+      expect(hook.result.current.selection.ids).toEqual([2])
+      return
+    }
     if (interruption === 'mode') hook.result.current.owner.setMode('view')
+    if (interruption === 'selection' || interruption === 'selection-aba') {
+      const focus = document.createElement('button')
+      document.body.append(focus)
+      focus.focus()
+      act(() =>
+        hook.result.current.setSelection({
+          surface: 'canvas',
+          ids: [2],
+          edges: [],
+          group: null,
+        })
+      )
+      if (interruption === 'selection-aba')
+        act(() => hook.result.current.setSelection(emptySelection))
+      act(() => frame(0))
+      expect(getImage).not.toHaveBeenCalled()
+      expect(setCenter).not.toHaveBeenCalled()
+      expect(document.activeElement).toBe(focus)
+      focus.remove()
+      expect(hook.result.current.selection.ids).toEqual(
+        interruption === 'selection' ? [2] : []
+      )
+      return
+    }
+    if (interruption === 'unchanged') {
+      act(() =>
+        hook.result.current.setSelection({
+          ...emptySelection,
+          ids: [],
+          edges: [],
+        })
+      )
+      hook.rerender({ path: '/a' })
+      act(() => frame(0))
+      expect(getImage).toHaveBeenCalledTimes(1)
+      expect(getImage).toHaveBeenCalledWith('/a', 1)
+      await act(async () => {
+        resolveImage({ id: 1, placed: true, canvasX: 200, canvasY: 0 } as never)
+        await Promise.resolve()
+      })
+      expect(hook.result.current.selection.ids).toEqual([1])
+      expect(setCenter).toHaveBeenCalledTimes(1)
+      return
+    }
     hook.rerender({ path: interruption === 'repository' ? '/b' : '/a' })
     const currentRequest = hook.result.current.operations.go(2)
     act(() => frame(0))

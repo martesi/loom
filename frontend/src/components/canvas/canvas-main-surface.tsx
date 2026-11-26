@@ -20,6 +20,7 @@ import { CanvasDock } from './canvas-dock'
 import { CanvasFlow } from './canvas-flow'
 import type { CanvasInternalMode } from './canvas-mode-policy'
 import { PerfHud } from './perf-hud'
+import type { CanvasAssetIntent } from './use-canvas-asset-operations'
 import { useCanvasConnectionTool } from './use-canvas-connection-tool'
 import { useCanvasDropHandlers } from './use-canvas-drop-handlers'
 import type { CanvasConnectionTool } from './use-canvas-workspace-state'
@@ -92,12 +93,15 @@ interface Props {
   setRelationshipPreview: Dispatch<SetStateAction<RelationshipPreview | null>>
   updateTarget: (target: DropTarget | null) => void
   target: DropTarget | null
-  run: (action: () => Promise<unknown>) => void
+  run: (action: () => Promise<unknown>, guard?: () => boolean) => void
   paste: (
     media?: Awaited<ReturnType<typeof readMedia>>,
     surface?: Selection['surface'],
-    dropPosition?: XYPosition
+    dropPosition?: XYPosition,
+    intent?: CanvasAssetIntent
   ) => Promise<void>
+  captureAssetIntent: () => CanvasAssetIntent
+  isAssetIntentCurrent: (intent: CanvasAssetIntent) => boolean
   dragTargetRaf: MutableRefObject<number>
   pendingDragNode: MutableRefObject<Node | null>
   reloadForData: () => Promise<CanvasData | null>
@@ -160,6 +164,8 @@ export function CanvasMainSurface(props: Props) {
     target,
     run,
     paste,
+    captureAssetIntent,
+    isAssetIntentCurrent,
     dragTargetRaf,
     pendingDragNode,
     reloadForData,
@@ -201,6 +207,8 @@ export function CanvasMainSurface(props: Props) {
     owner,
     flow,
     paste,
+    captureIntent: captureAssetIntent,
+    isCurrentIntent: isAssetIntentCurrent,
     reloadForData,
     report,
     assetsPinned,
@@ -208,6 +216,13 @@ export function CanvasMainSurface(props: Props) {
     host,
     setSelection,
   })
+  const selectedIds = selectionRef.current.ids
+  const canStartConnection =
+    selectionRef.current.surface === 'canvas' &&
+    selectedIds.length === 1 &&
+    data.images?.some(
+      (image) => image.id === selectedIds[0] && !image.missing && !image.trashed
+    ) === true
   return (
     <main
       ref={host}
@@ -447,7 +462,7 @@ export function CanvasMainSurface(props: Props) {
           selectionCount={selectedCanvasNodeIds.length}
           canvasMode={mode}
           connectionTool={connectionTool}
-          canConnect={connectionAnchorId !== null}
+          canConnect={canStartConnection}
           canFitAll={displayNodes.length > 0}
           canFitSelection={selectedCanvasNodeIds.length > 0}
           canAutoArrange={

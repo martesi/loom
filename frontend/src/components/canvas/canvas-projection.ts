@@ -86,22 +86,28 @@ export function reconcileCanvasProjection(
   let editNodes = state.editNodes
   if (state.mode === 'edit') {
     const previous = new Map(state.editNodes.map((node) => [node.id, node]))
+    const persisted = geometryMap(input.geometry)
     const existing = input.nodes.flatMap((node) => {
       const old = previous.get(node.id)
-      return old
-        ? [
-            {
-              ...node,
-              position: old.position,
-              width: old.width,
-              height: old.height,
-              measured: old.measured,
-            },
-          ]
-        : []
+      if (!old) return []
+      const before = state.expectedGeometry.get(Number(node.id))
+      const after = persisted.get(Number(node.id))
+      const persistedPositionChanged =
+        after !== undefined &&
+        after.x !== null &&
+        after.y !== null &&
+        (before?.x !== after.x || before?.y !== after.y)
+      return [
+        {
+          ...node,
+          position: persistedPositionChanged ? node.position : old.position,
+          width: old.width,
+          height: old.height,
+          measured: old.measured,
+        },
+      ]
     })
     const added = input.nodes.filter((node) => !previous.has(node.id))
-    const persisted = geometryMap(input.geometry)
     const explicitlyPositioned = added.flatMap((node) => {
       const geometry = persisted.get(Number(node.id))
       return geometry?.x === null || geometry?.y === null || !geometry

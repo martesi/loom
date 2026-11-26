@@ -11,6 +11,7 @@ test('resize and link replay in order without moving unrelated nodes', async ({
   page,
 }, testInfo) => {
   await openFixtureRepo(page, 'group-fixtures')
+  await page.getByTestId('canvas-mode-edit').click()
   for (const [index, name] of [
     'group-alpha.png',
     'group-beta.png',

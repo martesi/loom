@@ -117,7 +117,7 @@ export const CanvasDock = memo(function CanvasDock({
             letter="D"
             shortcut={shortcuts.connectDerivative}
             active={connectionTool === 'connect-derivative'}
-            disabled={!canConnect}
+            disabled={!canConnect && connectionTool !== 'connect-derivative'}
             onClick={() => onAction('connect-derivative')}
           />
           <ToolButton
@@ -126,7 +126,7 @@ export const CanvasDock = memo(function CanvasDock({
             letter="S"
             shortcut={shortcuts.connectSource}
             active={connectionTool === 'connect-source'}
-            disabled={!canConnect}
+            disabled={!canConnect && connectionTool !== 'connect-source'}
             onClick={() => onAction('connect-source')}
           />
           <ToolButton

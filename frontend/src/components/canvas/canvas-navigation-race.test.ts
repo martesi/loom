@@ -14,6 +14,44 @@ afterEach(() => {
   mock.restore()
 })
 
+it('allows a retained direct navigation after an unrelated selection render', async () => {
+  spyOn(ImageService, 'GetImage').mockResolvedValue({
+    id: 1,
+    placed: true,
+    canvasX: 100,
+    canvasY: 0,
+  } as never)
+  const setCenter = mock(async () => true)
+  const hook = renderHook(() => {
+    const owner = useCanvasBoardOwner('/repo')
+    const [selection, setSelection] = useState(emptySelection)
+    const operations = useCanvasAssetOperations({
+      owner,
+      repoPath: '/repo',
+      selection,
+      setSelection,
+      flow: { getNode: () => undefined, getZoom: () => 1, setCenter },
+      setExpanded: mock(),
+      openAssets: mock(),
+      selectAssets: mock(),
+      setReveal: mock(),
+    } as unknown as Parameters<typeof useCanvasAssetOperations>[0])
+    return { operations, selection, setSelection }
+  })
+  const retainedGo = hook.result.current.operations.go
+  act(() =>
+    hook.result.current.setSelection({
+      surface: 'canvas',
+      ids: [2],
+      edges: [],
+      group: null,
+    })
+  )
+  await act(async () => retainedGo(1))
+  expect(hook.result.current.selection.ids).toEqual([1])
+  expect(setCenter).toHaveBeenCalledTimes(1)
+})
+
 it('does not let an older navigation replace a newer selection or viewport', async () => {
   const pending = new Map<number, (value: never) => void>()
   spyOn(ImageService, 'GetImage').mockImplementation(

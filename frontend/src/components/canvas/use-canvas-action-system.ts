@@ -3,6 +3,7 @@ import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { LibraryService } from '../../../bindings/loom/internal/service'
 import type { CanvasAction } from '../../lib/action-catalog'
+import { sameSelection } from '../../lib/selection'
 import {
   readShortcutOverrides,
   shortcutOverridesEvent,
@@ -52,6 +53,11 @@ export function useCanvasActionSystem({
   const [shortcutOverrides, setShortcutOverrides] = useState(
     readShortcutOverrides
   )
+  const selectionIntent = useRef({ selection: context.selection, revision: 0 })
+  if (!sameSelection(selectionIntent.current.selection, context.selection)) {
+    selectionIntent.current.selection = context.selection
+    selectionIntent.current.revision++
+  }
   useEffect(() => {
     const sync = () => setShortcutOverrides(readShortcutOverrides())
     window.addEventListener(shortcutOverridesEvent, sync)
@@ -77,11 +83,18 @@ export function useCanvasActionSystem({
       execute: () => {
         const capability = canvasActionCapability(action.id)
         if (!allowsCanvasAction(context.owner.getMode(), action.id)) return
+        const selectionRevision = selectionIntent.current.revision
+        const needsStableSelection =
+          action.id === 'connect-derivative' || action.id === 'connect-source'
         // Other actions may own their own queue, such as paste and history.
         if (capability !== 'geometry' && capability !== 'relationship')
           return action.execute()
         return context.owner.execute(async () => {
-          if (allowsCanvasAction(context.owner.getMode(), action.id))
+          if (
+            allowsCanvasAction(context.owner.getMode(), action.id) &&
+            (!needsStableSelection ||
+              selectionIntent.current.revision === selectionRevision)
+          )
             await action.execute()
         })
       },
@@ -221,8 +234,12 @@ export function useCanvasActionSystem({
   }
 
   function choosePaletteAsset(asset: PaletteAsset) {
+    const revision = ++selectionIntent.current.revision
     setPaletteOpen(false)
-    requestAnimationFrame(() => void context.go(asset.id).catch(report))
+    requestAnimationFrame(() => {
+      if (selectionIntent.current.revision !== revision) return
+      void context.go(asset.id).catch(report)
+    })
   }
 
   // Retry changes this request token to rerun the repository asset query.

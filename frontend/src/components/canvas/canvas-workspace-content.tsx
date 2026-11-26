@@ -177,7 +177,14 @@ export function CanvasWorkspaceContent(props: Props) {
     selectedCanvasNodeIds,
     setHoveredNodeId,
   } = boardModel
-  const { paste, importMedia, finishTrash, confirmPurge } = assetOperations
+  const {
+    paste,
+    importMedia,
+    captureIntent,
+    isCurrentIntent,
+    finishTrash,
+    confirmPurge,
+  } = assetOperations
 
   useEffect(() => {
     if (
@@ -416,6 +423,8 @@ export function CanvasWorkspaceContent(props: Props) {
           target={target}
           run={run}
           paste={paste}
+          captureAssetIntent={captureIntent}
+          isAssetIntentCurrent={isCurrentIntent}
           dragTargetRaf={dragTargetRaf}
           pendingDragNode={pendingDragNode}
           reloadForData={reloadForData}
@@ -487,7 +496,12 @@ export function CanvasWorkspaceContent(props: Props) {
         executeActionById={executeActionById}
         toggleFocusMode={toggleFocusMode}
         onImportFiles={(files) => {
-          void filesToMedia(files).then(importMedia).catch(report)
+          const intent = captureIntent()
+          void filesToMedia(files)
+            .then((media) =>
+              isCurrentIntent(intent) ? importMedia(media, intent) : undefined
+            )
+            .catch(report)
         }}
         mode={boardModel.mode}
         unpairedCount={countUnpaired(data)}

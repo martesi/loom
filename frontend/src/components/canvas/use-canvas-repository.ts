@@ -82,10 +82,12 @@ export function useCanvasRepository({
     }
   }, [assetSelectionKey, repoPath, report, setAssetSelectionRecords])
   const run = useCallback(
-    (action: () => Promise<unknown>) => {
+    (action: () => Promise<unknown>, guard?: () => boolean) => {
       void executor
         .execute(async () => {
+          if (executor.isActive?.() === false || guard?.() === false) return
           await action()
+          if (executor.isActive?.() === false || guard?.() === false) return
           await reload()
         })
         .catch(report)

@@ -4,6 +4,7 @@ import { expect, test } from './test-fixtures'
 import {
   asset,
   ctrlDrag,
+  dropAsset,
   imageNodes,
   nodeBox,
   openAssetsShelf,
@@ -12,6 +13,10 @@ import {
 
 const importMediaMethodID = runtimeMethodID('imageservice.ts', 'ImportMedia')
 const placeImagesMethodID = runtimeMethodID('imageservice.ts', 'PlaceImages')
+const getLayoutSnapshotMethodID = runtimeMethodID(
+  'imageservice.ts',
+  'GetLayoutSnapshot'
+)
 const setGeometryMethodID = runtimeMethodID(
   'imageservice.ts',
   'SetGeometryFromDisplayAtRevision'
@@ -206,7 +211,8 @@ test('Edit D/S/R connection tools retain their anchor and cancel with Escape', a
   const nodes = imageNodes(page)
   await nodes.nth(0).click({ position: { x: 20, y: 20 } })
   const derivative = page.getByTestId('dock-connect-derivative')
-  await page.keyboard.press('d')
+  await expect(derivative).toBeEnabled()
+  await derivative.click()
   await expect(derivative).toHaveAttribute('aria-pressed', 'true')
   await expect(page.getByTestId('connection-tool-status')).toContainText(
     'Connect source → derivative'
@@ -235,7 +241,8 @@ test('Edit D/S/R connection tools retain their anchor and cancel with Escape', a
   await nodes.nth(1).click({ position: { x: 20, y: 20 } })
   const source = page.getByTestId('dock-connect-source')
   await expect(source).toBeVisible()
-  await page.keyboard.press('s')
+  await expect(source).toBeEnabled()
+  await source.click()
   await nodes.nth(2).click({ position: { x: 20, y: 20 } })
   await expect(page.locator('.react-flow__edge')).toHaveCount(3)
 
@@ -372,6 +379,65 @@ test('Edit keeps explicit external file-drop coordinates in one import request',
     finalFlowTransform.top +
       finalFlowTransform.y +
       Number(args[4]) * flowTransform.scaleY,
+    0
+  )
+})
+
+test('Edit asset drop updates both saved and projected staged geometry', async ({
+  page,
+}) => {
+  await openFixtureRepo(page, 'group-fixtures', { drawers: 'closed' })
+  await page.getByTestId('canvas-mode-edit').click()
+  const node = imageNodes(page).filter({ hasText: 'group-alpha.png' })
+  await expect(node).toHaveCount(1)
+  const placementRequest = page.waitForRequest(
+    (request) =>
+      request.url().endsWith('/wails/runtime') &&
+      request.postData()?.includes(`"methodID":${placeImagesMethodID}`) === true
+  )
+  const snapshotResponse = page.waitForResponse(
+    (response) =>
+      response.url().endsWith('/wails/runtime') &&
+      response
+        .request()
+        .postData()
+        ?.includes(`"methodID":${getLayoutSnapshotMethodID}`) === true
+  )
+  await dropAsset(page, 'group-alpha.png', { x: 820, y: 360 })
+  const call = (await placementRequest).postDataJSON().args as {
+    args: unknown[]
+  }
+  const [, ids, x, y] = call.args as [string, number[], number, number, number]
+  const snapshot = (await (await snapshotResponse).json()) as {
+    images: Array<{
+      id: number
+      geometry: { x: number | null; y: number | null }
+    }>
+  }
+  const saved = snapshot.images.find((image) => image.id === ids[0])
+  expect(saved?.geometry).toMatchObject({ x, y })
+
+  const bounds = await nodeBox(node)
+  const transform = await page.locator('.react-flow').evaluate((root) => {
+    const rect = root.getBoundingClientRect()
+    const viewport = root.querySelector('.react-flow__viewport')
+    if (!viewport) throw new Error('Canvas viewport is missing')
+    const matrix = new DOMMatrix(getComputedStyle(viewport).transform)
+    return {
+      left: rect.left,
+      top: rect.top,
+      scaleX: matrix.a,
+      scaleY: matrix.d,
+      x: matrix.e,
+      y: matrix.f,
+    }
+  })
+  expect(bounds.x).toBeCloseTo(
+    transform.left + transform.x + x * transform.scaleX,
+    0
+  )
+  expect(bounds.y).toBeCloseTo(
+    transform.top + transform.y + y * transform.scaleY,
     0
   )
 })

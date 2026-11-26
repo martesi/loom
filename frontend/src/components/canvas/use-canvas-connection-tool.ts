@@ -39,7 +39,7 @@ interface Props {
     target: string,
     excludedRelationshipId?: number
   ) => { valid: boolean; reason?: string }
-  run: (action: () => Promise<unknown>) => void
+  run: (action: () => Promise<unknown>, guard?: () => boolean) => void
   setError: (message: string) => void
   setPreview: (preview: Preview | null) => void
   updateTarget: (target: Target | null) => void
@@ -47,6 +47,10 @@ interface Props {
 
 interface PendingConnection {
   anchorId: number
+  tool: Exclude<CanvasConnectionTool, null>
+  owner: CanvasBoardOwner
+  repoPath: string
+  modeRevision: number
   targetId?: string
   edgeId?: number
 }
@@ -81,8 +85,14 @@ export function useCanvasConnectionTool(props: Props) {
   }
 
   function onPointerDownCapture(event: ReactPointerEvent<HTMLElement>) {
-    const { owner, tool, anchorId, targetAt, setError } = current.current
-    if (!tool || !owner.allows('relationship') || event.button !== 0)
+    const { owner, repoPath, mode, tool, anchorId, targetAt, setError } =
+      current.current
+    if (
+      !tool ||
+      mode !== 'edit' ||
+      !owner.allows('relationship') ||
+      event.button !== 0
+    )
       return false
     const eventElement = event.target instanceof Element ? event.target : null
     if (
@@ -100,7 +110,14 @@ export function useCanvasConnectionTool(props: Props) {
       : null
     const targetId = targetAt(event.clientX, event.clientY)
     if (tool === 'reverse-relationship' && edge?.dataset.id) {
-      pending.current = { anchorId: 0, edgeId: Number(edge.dataset.id) }
+      pending.current = {
+        anchorId: 0,
+        tool,
+        owner,
+        repoPath,
+        modeRevision: owner.getModeRevision(),
+        edgeId: Number(edge.dataset.id),
+      }
       event.stopPropagation()
       event.preventDefault()
       return true
@@ -120,7 +137,14 @@ export function useCanvasConnectionTool(props: Props) {
       setError(t`Select one Canvas image first`)
       return true
     }
-    pending.current = { anchorId, targetId }
+    pending.current = {
+      anchorId,
+      targetId,
+      tool,
+      owner,
+      repoPath,
+      modeRevision: owner.getModeRevision(),
+    }
     return true
   }
 
@@ -137,39 +161,43 @@ export function useCanvasConnectionTool(props: Props) {
 
   function onPointerUpCapture(event: ReactPointerEvent<HTMLElement>) {
     const connection = pending.current
-    const { owner, tool, repoPath, targetAt, validTarget, run, setError } =
-      current.current
-    if (!connection || !tool) return false
+    const { targetAt, validTarget, run, setError } = current.current
+    if (!connection) return false
     event.stopPropagation()
     event.preventDefault()
     pending.current = null
     current.current.setPreview(null)
     current.current.updateTarget(null)
-    if (!owner.allows('relationship')) return true
+    if (!isCurrent(connection)) return true
     if (connection.edgeId !== undefined) {
-      reverseEdge(connection.edgeId, event.target)
+      reverseEdge(connection, event.target)
       return true
     }
     const id = targetAt(event.clientX, event.clientY)
     if (!id || id !== connection.targetId) return true
-    const source = tool === 'connect-source' ? Number(id) : connection.anchorId
-    const derived = tool === 'connect-source' ? connection.anchorId : Number(id)
+    const source =
+      connection.tool === 'connect-source' ? Number(id) : connection.anchorId
+    const derived =
+      connection.tool === 'connect-source' ? connection.anchorId : Number(id)
     const result = validTarget(source, String(derived))
     if (!result.valid) {
       setError(result.reason ?? t`Cannot create this relationship`)
       return true
     }
-    run(() =>
-      owner.allows('relationship')
-        ? ImageService.LinkSource(repoPath, source, derived)
-        : Promise.resolve()
+    run(
+      () => ImageService.LinkSource(connection.repoPath, source, derived),
+      () => isCurrent(connection)
     )
     return true
   }
 
-  function reverseEdge(edgeId: number, eventTarget: EventTarget | null) {
-    const { owner, data, validTarget, run, repoPath, setError } =
-      current.current
+  function reverseEdge(
+    connection: PendingConnection,
+    eventTarget: EventTarget | null
+  ) {
+    const { data, validTarget, run, setError } = current.current
+    const edgeId = connection.edgeId
+    if (edgeId === undefined || !isCurrent(connection)) return
     const edge =
       eventTarget instanceof Element
         ? eventTarget.closest<HTMLElement>('.react-flow__edge')
@@ -186,10 +214,23 @@ export function useCanvasConnectionTool(props: Props) {
       setError(result.reason ?? t`Cannot reverse this relationship`)
       return
     }
-    run(() =>
-      owner.allows('relationship')
-        ? ImageService.ReverseRelationship(repoPath, edgeId)
-        : Promise.resolve()
+    run(
+      () => ImageService.ReverseRelationship(connection.repoPath, edgeId),
+      () => isCurrent(connection)
+    )
+  }
+
+  function isCurrent(connection: PendingConnection) {
+    const latest = current.current
+    return (
+      latest.owner === connection.owner &&
+      latest.repoPath === connection.repoPath &&
+      latest.tool === connection.tool &&
+      latest.mode === 'edit' &&
+      connection.owner.isActive?.() !== false &&
+      connection.owner.getMode() === 'edit' &&
+      connection.owner.getModeRevision() === connection.modeRevision &&
+      connection.owner.allows('relationship')
     )
   }
 

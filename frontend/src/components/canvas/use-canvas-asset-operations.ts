@@ -3,9 +3,18 @@ import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import { useEffect, useRef } from 'react'
 import { ImageService } from '../../../bindings/loom/internal/service'
 import { readMedia } from '../../lib/clipboard'
-import type { Selection } from '../../lib/selection'
+import { type Selection, sameSelection } from '../../lib/selection'
 import type { CanvasBoardOwner } from './canvas-board-owner'
+import type { CanvasInternalMode } from './canvas-mode-policy'
 import type { RevealRequest } from './use-canvas-workspace-state'
+
+export interface CanvasAssetIntent {
+  owner: CanvasBoardOwner
+  repoPath: string
+  mode: CanvasInternalMode
+  modeRevision: number
+  navigationGeneration: number
+}
 
 interface Props {
   repoPath: string
@@ -77,6 +86,28 @@ export function useCanvasAssetOperations({
       navigation.current.generation++
     }
   }, [])
+  function captureIntent(): CanvasAssetIntent {
+    return {
+      owner,
+      repoPath,
+      mode: owner.getMode(),
+      modeRevision: owner.getModeRevision(),
+      navigationGeneration: navigation.current.generation,
+    }
+  }
+  function isCurrentIntent(intent: CanvasAssetIntent) {
+    return (
+      navigationActive.current &&
+      intent.owner === owner &&
+      intent.repoPath === repoPath &&
+      navigation.current.owner === owner &&
+      navigation.current.repoPath === repoPath &&
+      navigation.current.generation === intent.navigationGeneration &&
+      owner.isActive?.() !== false &&
+      owner.getMode() === intent.mode &&
+      owner.getModeRevision() === intent.modeRevision
+    )
+  }
   // A retained callback must keep the revision from the render that created it.
   const modeRevision = owner.getModeRevision()
   async function go(id: number, folder = false) {
@@ -134,11 +165,15 @@ export function useCanvasAssetOperations({
   async function paste(
     media?: Awaited<ReturnType<typeof readMedia>>,
     surface = selection.surface,
-    dropPosition?: XYPosition
+    dropPosition?: XYPosition,
+    intent = captureIntent()
   ) {
+    if (!isCurrentIntent(intent)) return
     const point = dropPosition ?? center()
     const assets = media ?? (await readMedia())
-    const { ids, canvas } = await owner.execute(async () => {
+    if (!isCurrentIntent(intent)) return
+    const result = await owner.execute(async () => {
+      if (!isCurrentIntent(intent)) return null
       const canvas = surface === 'canvas' && owner.allows('canvas-drop')
       const ids = await ImageService.ImportMedia(
         repoPath,
@@ -150,6 +185,8 @@ export function useCanvasAssetOperations({
       await reload()
       return { ids, canvas }
     })
+    if (!result || !isCurrentIntent(intent)) return
+    const { ids, canvas } = result
     setSelection({
       surface: canvas ? 'canvas' : 'assets',
       ids: ids ?? [],
@@ -159,9 +196,18 @@ export function useCanvasAssetOperations({
     if (!canvas && ids?.length) setReveal({ id: ids[0], folder: null })
   }
 
-  async function importMedia(media: Awaited<ReturnType<typeof readMedia>>) {
-    const ids = await ImageService.ImportMedia(repoPath, media, false, 0, 0)
+  async function importMedia(
+    media: Awaited<ReturnType<typeof readMedia>>,
+    intent = captureIntent()
+  ) {
+    if (!isCurrentIntent(intent)) return
+    const ids = await owner.execute(async () => {
+      if (!isCurrentIntent(intent)) return null
+      return ImageService.ImportMedia(repoPath, media, false, 0, 0)
+    })
+    if (!ids || !isCurrentIntent(intent)) return
     await reload()
+    if (!isCurrentIntent(intent)) return
     setSelection({ surface: 'assets', ids: ids ?? [], edges: [], group: null })
     if (ids?.length) setReveal({ id: ids[0], folder: null })
   }
@@ -262,6 +308,8 @@ export function useCanvasAssetOperations({
   }
 
   return {
+    captureIntent,
+    isCurrentIntent,
     go,
     paste,
     importMedia,
@@ -270,17 +318,4 @@ export function useCanvasAssetOperations({
     finishTrash,
     confirmPurge,
   }
-}
-
-function sameSelection(a: Selection, b: Selection) {
-  if (a === b) return true
-  if (!a || !b) return false
-  return (
-    a.surface === b.surface &&
-    a.group === b.group &&
-    a.ids.length === b.ids.length &&
-    a.edges.length === b.edges.length &&
-    a.ids.every((id, index) => id === b.ids[index]) &&
-    a.edges.every((id, index) => id === b.edges[index])
-  )
 }

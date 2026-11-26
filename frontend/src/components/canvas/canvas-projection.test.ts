@@ -250,6 +250,17 @@ describe('canvas projection', () => {
     expect(at(next.editNodes, '2')).toEqual({ x: 1060, y: 620 })
   })
 
+  it('updates an existing staged node after an explicit asset drop', () => {
+    const original = makeNode('1')
+    let state = enterEdit(createCanvasProjection(input([original], [])))
+    const dropped = { ...original, position: { x: 640, y: 420 } }
+    state = reconcileCanvasProjection(state, {
+      ...input([dropped], []),
+      geometry: [{ imageId: 1, x: 640, y: 420, w: 100, h: 60 }],
+    })
+    expect(at(state.editNodes, '1')).toEqual({ x: 640, y: 420 })
+  })
+
   it('retains resized Edit geometry when metadata and nodes change', () => {
     const original = { ...makeNode('1'), height: 80 }
     let state = enterEdit(createCanvasProjection(input([original], [])))

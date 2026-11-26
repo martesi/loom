@@ -7,6 +7,7 @@ import type { readMedia } from '../../lib/clipboard'
 import { filesToMedia } from '../../lib/clipboard'
 import type { Selection } from '../../lib/selection'
 import type { CanvasBoardOwner } from './canvas-board-owner'
+import type { CanvasAssetIntent } from './use-canvas-asset-operations'
 
 interface Props {
   repoPath: string
@@ -15,8 +16,11 @@ interface Props {
   paste: (
     media?: Awaited<ReturnType<typeof readMedia>>,
     surface?: Selection['surface'],
-    dropPosition?: XYPosition
+    dropPosition?: XYPosition,
+    intent?: CanvasAssetIntent
   ) => Promise<void>
+  captureIntent: () => CanvasAssetIntent
+  isCurrentIntent: (intent: CanvasAssetIntent) => boolean
   reloadForData: () => Promise<CanvasData | null>
   report: (error: unknown) => void
   assetsPinned: boolean
@@ -30,6 +34,8 @@ export function useCanvasDropHandlers({
   owner,
   flow,
   paste,
+  captureIntent,
+  isCurrentIntent,
   reloadForData,
   report,
   assetsPinned,
@@ -48,6 +54,7 @@ export function useCanvasDropHandlers({
 
   function onDrop(event: React.DragEvent<HTMLDivElement>) {
     event.preventDefault()
+    const intent = captureIntent()
     const raw = event.dataTransfer.getData('application/x-loom-assets')
     if (!raw) {
       const dropPosition = flow.screenToFlowPosition({
@@ -55,7 +62,10 @@ export function useCanvasDropHandlers({
         y: event.clientY,
       })
       void filesToMedia(Array.from(event.dataTransfer.files))
-        .then((media) => paste(media, 'canvas', dropPosition))
+        .then((media) => {
+          if (!isCurrentIntent(intent)) return
+          return paste(media, 'canvas', dropPosition, intent)
+        })
         .catch(report)
       return
     }
@@ -74,29 +84,38 @@ export function useCanvasDropHandlers({
       x: event.clientX,
       y: event.clientY,
     })
-    void placeAssetsAtDrop(ids, point).catch(report)
+    void placeAssetsAtDrop(ids, point, intent).catch(report)
   }
 
-  async function placeAssetsAtDrop(ids: number[], point: XYPosition) {
+  async function placeAssetsAtDrop(
+    ids: number[],
+    point: XYPosition,
+    intent: CanvasAssetIntent
+  ) {
+    if (!isCurrentIntent(intent)) return
     const images = await Promise.all(
       ids.map((id) => ImageService.GetImage(repoPath, id))
     )
+    if (!isCurrentIntent(intent)) return
     if (images.some((image) => !image || image.missing || image.trashed))
       throw new Error(
         'Missing or trashed assets cannot be placed. Refine the selection and try again.'
       )
     const placed = await owner.execute(async () => {
-      if (!owner.allows('canvas-drop')) return false
+      if (!isCurrentIntent(intent) || !owner.allows('canvas-drop')) return false
       await ImageService.PlaceImages(repoPath, ids, point.x, point.y, 0)
       await reloadForData()
       return true
     })
-    if (!placed) return
+    if (!placed || !isCurrentIntent(intent)) return
     if (!assetsPinned) {
       closeAssets(false)
-      requestAnimationFrame(() => host.current?.focus())
+      requestAnimationFrame(() => {
+        if (isCurrentIntent(intent)) host.current?.focus()
+      })
     }
-    setSelection({ surface: 'canvas', ids, edges: [], group: null })
+    if (isCurrentIntent(intent))
+      setSelection({ surface: 'canvas', ids, edges: [], group: null })
   }
 
   return { onDragOver, onDrop }
