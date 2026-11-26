@@ -47,6 +47,11 @@ func replayAtomicHistory(repo *store.Repo, redo bool) (bool, *store.Operation, [
 	switch s.Kind {
 	case stepGeometry, stepPositions, stepSizes:
 		ids, err = applyHistoryGeometryTx(tx, s)
+	case stepImportBatch:
+		var payload importBatchPayload
+		if err = json.Unmarshal(s.Payload, &payload); err == nil {
+			err = applyImportBatchTx(tx, payload)
+		}
 	case stepGraphInsert, stepGraphDelete, stepGraphReverse:
 		var p graphPayload
 		if err = json.Unmarshal(s.Payload, &p); err == nil {

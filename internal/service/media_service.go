@@ -1,8 +1,10 @@
 package service
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"loom/internal/media"
 	"loom/internal/store"
@@ -124,21 +126,30 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 	}
 	defer unlock()
 	defer r.Close()
+	if err := r.PrepareOperationLog(); err != nil {
+		return nil, err
+	}
 	tx, err := r.DB.Begin()
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
 	paths := []string{}
+	ownedFiles := map[string]os.FileInfo{}
 	committed := false
 	defer func() {
 		if !committed {
 			for _, path := range paths {
-				os.Remove(path)
+				current, err := os.Stat(path)
+				owned := ownedFiles[path]
+				if err == nil && owned != nil && os.SameFile(current, owned) {
+					_ = os.Remove(path)
+				}
 			}
 		}
 	}()
 	ids := make([]int64, 0, len(media))
+	entries := make([]importHistoryEntry, 0, len(media))
 	for i, item := range media {
 		name := filepath.Base(strings.ReplaceAll(item.Name, "\\", "/"))
 		data, err := base64.StdEncoding.DecodeString(item.Data)
@@ -164,6 +175,11 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 			break
 		}
 		paths = append(paths, dest)
+		ownedFiles[dest], err = file.Stat()
+		if err != nil {
+			file.Close()
+			return nil, err
+		}
 		_, writeErr := file.Write(data)
 		closeErr := file.Close()
 		if writeErr != nil {
@@ -186,6 +202,28 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 			return nil, err
 		}
 		ids = append(ids, id)
+		stash := filepath.Join(r.Path, ".loom", "trash", "import-redo", fmt.Sprintf("%d-%d-%s", time.Now().UnixNano(), id, filepath.Base(dest)))
+		if err := os.MkdirAll(filepath.Dir(stash), 0o755); err != nil {
+			return nil, err
+		}
+		stashInfo, err := writeExclusive(stash, data)
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, stash)
+		ownedFiles[stash] = stashInfo
+		entries = append(entries, importHistoryEntry{ImageID: id, RetainedPath: stash, SHA256: fmt.Sprintf("%x", sha256.Sum256(data))})
+	}
+	forward, err := json.Marshal(step(stepImportBatch, importBatchPayload{Entries: entries, Active: true}))
+	if err != nil {
+		return nil, err
+	}
+	inverse, err := json.Marshal(step(stepImportBatch, importBatchPayload{Entries: entries, Active: false}))
+	if err != nil {
+		return nil, err
+	}
+	if err := r.RecordOperationInTx(tx, "import_batch", string(forward), string(inverse)); err != nil {
+		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
