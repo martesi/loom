@@ -1,4 +1,4 @@
-import { afterEach, expect, it, mock, spyOn } from 'bun:test'
+import { afterEach, beforeEach, expect, it, mock, spyOn } from 'bun:test'
 import { act, cleanup, renderHook } from '@testing-library/react'
 import type { Edge, Node } from '@xyflow/react'
 import { useRef, useState, useSyncExternalStore } from 'react'
@@ -10,15 +10,17 @@ import { emptySelection } from '../../lib/selection'
 import { useCanvasBoardOwner } from './canvas-board-owner'
 import { data, empty, images, relationships } from './canvas-mode-test-fixtures'
 import {
+  mockCanvasObservationFromLegacyRPCs,
   refreshBoard,
   reserveCanvasOperation,
-} from './canvas-operation-test-utils'
+} from './canvas-operation-test-utils.test'
 import { useCanvasBoardModel } from './use-canvas-board-model'
 
 afterEach(() => {
   cleanup()
   mock.restore()
 })
+beforeEach(mockCanvasObservationFromLegacyRPCs)
 
 it('merges committed positions into the latest graph, not the graph used for layout', async () => {
   let links = relationships

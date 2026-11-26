@@ -523,6 +523,7 @@ export function CanvasWorkspaceContent(props: Props) {
         setPurgeIds={setPurgeIds}
         setTrashIds={setTrashIds}
         setLifecyclePending={setLifecyclePending}
+        cancelLifecycleIntent={assetOperations.cancelLifecycleIntent}
         confirmPurge={confirmPurge}
         finishTrash={finishTrash}
         report={report}

@@ -14,7 +14,10 @@ import {
   TagService,
 } from '../../../bindings/loom/internal/service'
 import { createCanvasBoardOwner } from './canvas-board-owner'
-import { refreshBoard, reserveCanvasRead } from './canvas-operation-test-utils'
+import {
+  refreshBoard,
+  reserveCanvasRead,
+} from './canvas-operation-test-utils.test'
 
 mock.module('@lingui/core/macro', () => ({
   plural: (count: number, messages: { one: string; other: string }) =>

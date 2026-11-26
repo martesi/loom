@@ -37,6 +37,7 @@ var previewLocks = struct {
 	byKey map[string]*previewLockEntry
 }{byKey: make(map[string]*previewLockEntry)}
 var previewCacheFiles sync.RWMutex
+var fencedRenditionRepositories sync.Map
 
 type previewLockEntry struct {
 	lock          chan struct{}
@@ -125,7 +126,11 @@ func serveRendition(w http.ResponseWriter, r *http.Request, processor media.Proc
 		http.NotFound(w, r)
 		return
 	}
-	repo, err := store.Bootstrap(repoPath)
+	if r.URL.Query().Get("cacheOnly") == "1" {
+		serveCachedRenditionOnly(w, r, repoPath, id, tier)
+		return
+	}
+	repo, err := store.OpenExistingReadOnly(repoPath)
 	if err != nil {
 		http.Error(w, "repo unavailable", http.StatusInternalServerError)
 		return
@@ -167,7 +172,7 @@ func serveRendition(w http.ResponseWriter, r *http.Request, processor media.Proc
 				unlockSourceRevision()
 			}
 		}()
-		image, source, err := getPreviewSource(ctx, repo, id)
+		_, source, err := getPreviewSource(ctx, repo, id)
 		if err != nil {
 			writePreviewSourceError(w, r, err)
 			return
@@ -182,23 +187,9 @@ func serveRendition(w http.ResponseWriter, r *http.Request, processor media.Proc
 			http.Error(w, "video previews are limited to 320", http.StatusBadRequest)
 			return
 		}
-		if image.Width == 0 || image.Height == 0 {
-			slotRelease, status := acquirePreviewSlot(ctx)
-			if status != 0 {
-				if r.Context().Err() == nil {
-					w.Header().Set("Retry-After", "1")
-					http.Error(w, "rendition generation busy", http.StatusServiceUnavailable)
-				}
-				return
-			}
-			dimensions, probeErr := media.SourceDimensionsContext(ctx, source.path)
-			slotRelease()
-			if probeErr == nil {
-				if after, statErr := os.Stat(source.path); statErr == nil && after.Size() == source.size && after.ModTime().Equal(source.modTime) {
-					marker := fmt.Sprintf("stat:%d:%d", source.size, source.modTime.UnixNano())
-					_, _ = repo.DB.Exec(`UPDATE images SET width = ?, height = ? WHERE id = ? AND file_path = ? AND file_size = ? AND content_hash = ? AND source_revision = ?`, dimensions.Width, dimensions.Height, id, source.path, source.size, marker, source.revision)
-				}
-			}
+		if renditionRepositoryFenced(repo.Path) {
+			cacheOnly(w, r, cacheDir, id, tier, source)
+			return
 		}
 		if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 			http.Error(w, "preview cache unavailable", http.StatusInternalServerError)
@@ -276,6 +267,77 @@ func acquireRenditionAdmission() bool {
 	}
 }
 
+func serveCachedRenditionOnly(
+	w http.ResponseWriter,
+	r *http.Request,
+	repoPath string,
+	id int64,
+	tier int,
+) {
+	fenceRenditionRepository(repoPath)
+	unlock := store.LockRepoOperations(repoPath)
+	defer unlock()
+	repo, err := store.OpenExistingReadOnly(repoPath)
+	if err != nil {
+		http.Error(w, "repo unavailable", http.StatusInternalServerError)
+		return
+	}
+	defer repo.Close()
+	_, source, err := getPreviewSource(r.Context(), repo, id)
+	if err != nil {
+		writePreviewSourceError(w, r, err)
+		return
+	}
+	if supplied := r.URL.Query().Get("v"); supplied == "" || supplied != previewRevision(source.path, source.size, source.modTime, source.revision) {
+		http.Error(w, "source revision changed", http.StatusConflict)
+		return
+	}
+	cacheOnly(w, r, filepath.Join(repo.Path, ".loom", "thumbs"), id, tier, source)
+}
+
+func cacheOnly(w http.ResponseWriter, r *http.Request, dir string, id int64, tier int, source previewSource) {
+	served, err := serveCachedPreview(w, r, renditionCachePath(dir, id, tier, source))
+	if err != nil {
+		http.Error(w, "preview cache unavailable", http.StatusInternalServerError)
+		return
+	}
+	if !served {
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func fenceRenditionRepository(repoPath string) {
+	repoPath = canonicalRenditionRepositoryPath(repoPath)
+	fencedRenditionRepositories.Store(repoPath, struct{}{})
+	previewLocks.Lock()
+	for key, entry := range previewLocks.byKey {
+		if strings.HasPrefix(key, repoPath+"\x00") && entry.work != nil {
+			entry.work.cancel()
+		}
+	}
+	previewLocks.Unlock()
+	// The write lock drains every generation that entered the publication gate
+	// before the fence. New generations take the read lock and check the fence
+	// while holding it, so none can start publication after this barrier returns.
+	unlock := lockRenditionRepositoryDrain()
+	unlock()
+}
+
+func renditionRepositoryFenced(repoPath string) bool {
+	_, fenced := fencedRenditionRepositories.Load(canonicalRenditionRepositoryPath(repoPath))
+	return fenced
+}
+
+func canonicalRenditionRepositoryPath(repoPath string) string {
+	if absolute, err := filepath.Abs(repoPath); err == nil {
+		repoPath = absolute
+	}
+	if resolved, err := filepath.EvalSymlinks(repoPath); err == nil {
+		repoPath = resolved
+	}
+	return filepath.Clean(repoPath)
+}
+
 func closeGeneratedFile(result <-chan generationResult) {
 	generated := <-result
 	if generated.file != nil {
@@ -290,6 +352,11 @@ type generationResult struct {
 }
 
 func generateRendition(ctx context.Context, repoPath string, id int64, tier int, video bool, source previewSource, cacheDir string, processor media.Processor) (*os.File, int, error) {
+	unlockPublicationGate := lockRenditionRepositoryRead(repoPath)
+	defer unlockPublicationGate()
+	if renditionRepositoryFenced(repoPath) {
+		return nil, http.StatusServiceUnavailable, nil
+	}
 	slotRelease, status := acquirePreviewSlot(ctx)
 	if status != 0 {
 		return nil, http.StatusServiceUnavailable, nil
@@ -317,12 +384,13 @@ func generateRendition(ctx context.Context, repoPath string, id int64, tier int,
 	if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
 		return nil, http.StatusInternalServerError, fmt.Errorf("encoder produced no rendition")
 	}
-	unlockRenditionRepository := lockRenditionRepositoryRead(repoPath)
-	defer unlockRenditionRepository()
+	if renditionRepositoryFenced(repoPath) {
+		return nil, http.StatusServiceUnavailable, nil
+	}
 	if beforeRenditionPublication != nil {
 		beforeRenditionPublication()
 	}
-	repo, err := store.Bootstrap(repoPath)
+	repo, err := store.OpenExistingReadOnly(repoPath)
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -340,6 +408,9 @@ func generateRendition(ctx context.Context, repoPath string, id int64, tier int,
 	fingerprint, _, fingerprintErr := store.FingerprintFile(ctx, source.path)
 	if fingerprintErr != nil || fingerprint != source.fingerprint {
 		return nil, http.StatusConflict, fingerprintErr
+	}
+	if renditionRepositoryFenced(repo.Path) {
+		return nil, http.StatusServiceUnavailable, nil
 	}
 	cachePath := renditionCachePath(cacheDir, id, tier, source)
 	if err := os.Rename(tmpPath, cachePath); err != nil {
@@ -363,7 +434,10 @@ func renditionCachePath(dir string, id int64, tier int, source previewSource) st
 }
 
 func getPreviewSource(ctx context.Context, repo *store.Repo, id int64) (store.Image, previewSource, error) {
-	image, err := repo.EnsureSourceFingerprint(ctx, id)
+	if err := ctx.Err(); err != nil {
+		return store.Image{}, previewSource{}, err
+	}
+	image, err := repo.GetImageByID(id)
 	if err != nil {
 		return image, previewSource{}, err
 	}
@@ -381,8 +455,15 @@ func getPreviewSource(ctx context.Context, repo *store.Repo, id int64) (store.Im
 	if !info.Mode().IsRegular() {
 		return image, previewSource{}, fmt.Errorf("asset is not a regular file")
 	}
+	fingerprint := image.SourceFingerprint
+	if fingerprint == "" {
+		fingerprint, _, err = store.FingerprintFile(ctx, path)
+		if err != nil {
+			return image, previewSource{}, err
+		}
+	}
 	return image, previewSource{
-		path: path, size: info.Size(), modTime: info.ModTime(), revision: image.SourceRevision, fingerprint: image.SourceFingerprint,
+		path: path, size: info.Size(), modTime: info.ModTime(), revision: image.SourceRevision, fingerprint: fingerprint,
 	}, nil
 }
 

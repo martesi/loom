@@ -29,8 +29,12 @@ func TestLoadCanvasDimensions1000TinyFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	service := &ImageService{}
+	if err := service.DiscoverCanvas(repoPath); err != nil {
+		t.Fatal(err)
+	}
 	start := time.Now()
-	canvas, err := (&ImageService{}).LoadCanvas(repoPath)
+	canvas, err := service.LoadCanvas(repoPath)
 	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatal(err)
@@ -48,7 +52,7 @@ func TestLoadCanvasDimensions1000TinyFiles(t *testing.T) {
 		t.Fatalf("LoadCanvas created rendition files: %v, err=%v", entries, err)
 	}
 	start = time.Now()
-	if _, err := (&ImageService{}).LoadCanvas(repoPath); err != nil {
+	if _, err := service.LoadCanvas(repoPath); err != nil {
 		t.Fatal(err)
 	}
 	warmElapsed := time.Since(start)
@@ -60,6 +64,9 @@ func TestLoadCanvasRefreshesRevisionGuardedDimensionsAndPreservesCanvasSize(t *t
 	asset := filepath.Join(repoPath, "image.png")
 	writePNGDimensions(t, asset, 2, 3)
 	service := &ImageService{}
+	if err := service.DiscoverCanvas(repoPath); err != nil {
+		t.Fatal(err)
+	}
 	first, err := service.LoadCanvas(repoPath)
 	if err != nil {
 		t.Fatal(err)
@@ -78,6 +85,9 @@ func TestLoadCanvasRefreshesRevisionGuardedDimensionsAndPreservesCanvasSize(t *t
 	writePNGDimensions(t, asset, 5, 7)
 	changed := time.Now().Add(2 * time.Second)
 	if err := os.Chtimes(asset, changed, changed); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.DiscoverCanvas(repoPath); err != nil {
 		t.Fatal(err)
 	}
 	updated, err := service.LoadCanvas(repoPath)
@@ -101,6 +111,9 @@ func TestLoadCanvasDoesNotStoreProbeForChangedRevision(t *testing.T) {
 		writePNGDimensions(t, path, 5, 7)
 		return media.Dimensions{Width: 2, Height: 3}, nil
 	}}
+	if err := service.DiscoverCanvas(repoPath); err != nil {
+		t.Fatal(err)
+	}
 	first, err := service.LoadCanvas(repoPath)
 	if err != nil {
 		t.Fatal(err)
@@ -109,6 +122,9 @@ func TestLoadCanvasDoesNotStoreProbeForChangedRevision(t *testing.T) {
 		t.Fatalf("stale probe was stored: %dx%d", first.Images[0].Width, first.Images[0].Height)
 	}
 	service.dimensionProbe = nil
+	if err := service.DiscoverCanvas(repoPath); err != nil {
+		t.Fatal(err)
+	}
 	second, err := service.LoadCanvas(repoPath)
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +150,7 @@ func writePNGDimensions(t *testing.T, path string, width, height int) {
 }
 
 // TestImageServiceEndToEnd drives the services exactly the way the
-// frontend does: scan/register (via LoadCanvas's discovery side effect),
+// frontend does: scan/register before observing,
 // explicit canvas placement, drag-reposition, link, undo/redo, and re-load
 // to confirm persistence — the same call sequence the Canvas + list views
 // make, without needing a webview.
@@ -155,9 +171,12 @@ func TestImageServiceEndToEnd(t *testing.T) {
 	s := &ImageService{}
 	undo := &UndoService{}
 
-	// Discovery (triggered by LoadCanvas's scan) must not auto-place new
+	// Discovery must not auto-place new
 	// images on the canvas. A freshly scanned repository's canvas should come back empty
 	// even though two images now exist in the repo.
+	if err := s.DiscoverCanvas(repoPath); err != nil {
+		t.Fatalf("DiscoverCanvas: %v", err)
+	}
 	emptyBoard, err := s.LoadCanvas(repoPath)
 	if err != nil {
 		t.Fatalf("LoadCanvas (pre-assignment): %v", err)
@@ -456,9 +475,7 @@ func TestImageServiceMoveFileUndoRedo(t *testing.T) {
 	}
 }
 
-// TestImageServiceListDirectory exercises the service-layer wrapper:
-// results come back shaped as ImageInfo (thumb/full URLs included) and the
-// underlying store row is registered, matching what Explorer will consume.
+// TestImageServiceListDirectory observes only previously discovered rows.
 func TestImageServiceListDirectory(t *testing.T) {
 	repoPath := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoPath, "pic.png"), []byte("fixture"), 0o644); err != nil {
@@ -466,12 +483,29 @@ func TestImageServiceListDirectory(t *testing.T) {
 	}
 
 	s := &ImageService{}
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
 	listing, err := s.ListDirectory(repoPath, "")
 	if err != nil {
 		t.Fatalf("ListDirectory: %v", err)
 	}
+	if len(listing.Files) != 0 {
+		t.Fatalf("unregistered file was exposed by observation: %+v", listing.Files)
+	}
+	if err := s.DiscoverDirectory(repoPath, ""); err != nil {
+		t.Fatal(err)
+	}
+	listing, err = s.ListDirectory(repoPath, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(listing.Files) != 1 {
-		t.Fatalf("expected 1 file, got %+v", listing.Files)
+		t.Fatalf("expected 1 file after discovery, got %+v", listing.Files)
 	}
 	f := listing.Files[0]
 	if f.ID == 0 {
@@ -562,8 +596,8 @@ func TestTrashRetentionPurgesExpiredAndKeepsRecent(t *testing.T) {
 	repo.Close()
 
 	s.now = func() time.Time { return now }
-	if _, err := s.LoadCanvas(repoPath); err != nil {
-		t.Fatalf("LoadCanvas: %v", err)
+	if err := s.DiscoverCanvas(repoPath); err != nil {
+		t.Fatalf("DiscoverCanvas: %v", err)
 	}
 	if _, err := os.Stat(oldTrash); !os.IsNotExist(err) {
 		t.Fatalf("expired trash file still exists: %v", err)
@@ -587,5 +621,97 @@ func TestTrashRetentionPurgesExpiredAndKeepsRecent(t *testing.T) {
 	}
 	if _, err := os.Stat(recentOriginal); err != nil {
 		t.Fatalf("recent asset is no longer restorable: %v", err)
+	}
+}
+
+func TestObserveCanvasDoesNotDiscoverProbeOrPurge(t *testing.T) {
+	repoPath := t.TempDir()
+	registered := filepath.Join(repoPath, "registered.png")
+	unregistered := filepath.Join(repoPath, "unregistered.png")
+	trashPath := filepath.Join(repoPath, ".loom", "trash", "expired.png")
+	writePNGDimensions(t, registered, 4, 6)
+	writePNGDimensions(t, unregistered, 7, 9)
+	if err := os.MkdirAll(filepath.Dir(trashPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(trashPath, []byte("retained trash"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := repo.DB.Exec(`INSERT INTO images (file_path, trashed, trashed_at) VALUES (?, 1, ?), (?, 0, NULL)`, trashPath, "2020-01-01T00:00:00.000Z", registered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeID, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	probeCalls := 0
+	service := &ImageService{
+		now: func() time.Time { return time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC) },
+		dimensionProbe: func(context.Context, string) (media.Dimensions, error) {
+			probeCalls++
+			return media.Dimensions{Width: 4, Height: 6}, nil
+		},
+	}
+	observation, err := service.ObserveCanvas(repoPath)
+	if err != nil {
+		t.Fatalf("ObserveCanvas: %v", err)
+	}
+	if len(observation.Canvas.Images) != 1 || observation.Canvas.Images[0].ID != activeID {
+		t.Fatalf("observation included undiscovered or trashed rows: %+v", observation.Canvas.Images)
+	}
+	if observation.Canvas.Images[0].Width != 0 || observation.Canvas.Images[0].Height != 0 {
+		t.Fatalf("observation stored dimensions: %+v", observation.Canvas.Images[0])
+	}
+	if probeCalls != 0 {
+		t.Fatalf("observation probed dimensions %d times", probeCalls)
+	}
+	if _, err := os.Stat(trashPath); err != nil {
+		t.Fatalf("observation deleted expired trash: %v", err)
+	}
+	repo, err = store.OpenExistingReadOnly(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows int
+	if err := repo.DB.QueryRow(`SELECT COUNT(*) FROM images`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 2 {
+		t.Fatalf("observation changed registered row count: %d", rows)
+	}
+	if _, err := service.ObserveCanvas(filepath.Join(repoPath, "not-a-repository")); err == nil {
+		t.Fatal("read-only observation opened an absent repository")
+	}
+	if _, err := os.Stat(filepath.Join(repoPath, "not-a-repository", ".loom")); !os.IsNotExist(err) {
+		t.Fatalf("read-only observation created a repository: %v", err)
+	}
+
+	if err := service.DiscoverCanvas(repoPath); err != nil {
+		t.Fatalf("DiscoverCanvas: %v", err)
+	}
+	if probeCalls == 0 {
+		t.Fatal("clean discovery did not probe missing dimensions")
+	}
+	if _, err := os.Stat(trashPath); !os.IsNotExist(err) {
+		t.Fatalf("clean discovery did not expire old trash: %v", err)
+	}
+	observed, err := service.ObserveCanvas(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(observed.Canvas.Images) != 2 {
+		t.Fatalf("clean discovery did not register the unregistered file: %+v", observed.Canvas.Images)
 	}
 }

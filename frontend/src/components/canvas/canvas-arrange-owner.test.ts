@@ -4,7 +4,7 @@ import { createCanvasBoardOwner } from './canvas-board-owner'
 import {
   refreshBoard,
   reserveCanvasOperation,
-} from './canvas-operation-test-utils'
+} from './canvas-operation-test-utils.test'
 
 afterEach(() => mock.restore())
 

@@ -1,6 +1,10 @@
 package service
 
-import "fmt"
+import (
+	"fmt"
+
+	"loom/internal/store"
+)
 
 // GetGeometry returns the exact stored rectangles, including null pairs, in
 // the requested order. Capture this baseline before deriving the displayed
@@ -12,11 +16,12 @@ func (s *ImageService) GetGeometry(path string, ids []int64) ([]GeometryUpdate, 
 	if len(ids) == 0 {
 		return result, nil
 	}
-	repo, unlock, err := openOperationRepo(path)
+	unlock := store.LockRepoOperations(path)
+	defer unlock()
+	repo, err := store.OpenExistingReadOnly(path)
 	if err != nil {
 		return nil, err
 	}
-	defer unlock()
 	defer repo.Close()
 	tx, err := repo.DB.Begin()
 	if err != nil {

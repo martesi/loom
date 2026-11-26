@@ -7,6 +7,7 @@ import {
   createCanvasBoardOwner,
   useCanvasBoardOwner,
 } from './canvas-board-owner'
+import { mockCanvasObservationFromLegacyRPCs } from './canvas-operation-test-utils.test'
 import { useCanvasAssetOperations } from './use-canvas-asset-operations'
 
 afterEach(() => {
@@ -25,6 +26,7 @@ beforeEach(() => {
     images: [],
     relationships: [],
   } as never)
+  mockCanvasObservationFromLegacyRPCs()
 })
 
 function requestMode(

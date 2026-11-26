@@ -19,10 +19,9 @@ func writeFixture(t *testing.T, path string) {
 	}
 }
 
-// TestListDirectoryRegistersFiles confirms ListDirectory finds media files
-// non-recursively and registers each with a real images row, the same
-// INSERT OR IGNORE idiom ScanAndRegisterImages uses for repo-wide scans.
-func TestListDirectoryRegistersFiles(t *testing.T) {
+// TestListDirectoryObservesOnlyRegisteredFiles keeps discovery separate from
+// the read path used while repository writes are uncertain.
+func TestListDirectoryObservesOnlyRegisteredFiles(t *testing.T) {
 	repoPath := t.TempDir()
 	writeFixture(t, filepath.Join(repoPath, "top.png"))
 	writeFixture(t, filepath.Join(repoPath, "notes.txt")) // non-media, ignored
@@ -38,27 +37,36 @@ func TestListDirectoryRegistersFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListDirectory: %v", err)
 	}
-	if len(listing.Files) != 1 || filepath.Base(listing.Files[0].FilePath) != "top.png" {
-		t.Fatalf("expected exactly top.png in root listing, got %+v", listing.Files)
+	if len(listing.Files) != 0 {
+		t.Fatalf("unregistered file appeared in read-only observation: %+v", listing.Files)
 	}
 	if len(listing.Dirs) != 1 || listing.Dirs[0] != "sub" {
 		t.Fatalf("expected 'sub' subdirectory, got %+v", listing.Dirs)
 	}
-	if listing.Files[0].ID == 0 {
-		t.Fatalf("expected a real images row (nonzero id), got %+v", listing.Files[0])
+	all, err := repo.ListImages()
+	if err != nil || len(all) != 0 {
+		t.Fatalf("observation mutated image rows: %+v, %v", all, err)
+	}
+	if err := repo.DiscoverDirectory(context.Background(), ""); err != nil {
+		t.Fatalf("DiscoverDirectory: %v", err)
+	}
+	listing, err = repo.ListDirectory("")
+	if err != nil || len(listing.Files) != 1 || filepath.Base(listing.Files[0].FilePath) != "top.png" {
+		t.Fatalf("expected discovered top.png, got %+v, %v", listing.Files, err)
 	}
 
-	// The nested file should not appear in the non-recursive root listing,
-	// but should appear (and be registered) when listing "sub" directly.
+	// The nested file should not appear in the non-recursive root listing.
 	subListing, err := repo.ListDirectory("sub")
 	if err != nil {
 		t.Fatalf("ListDirectory(sub): %v", err)
 	}
-	if len(subListing.Files) != 1 || filepath.Base(subListing.Files[0].FilePath) != "nested.png" {
-		t.Fatalf("expected exactly nested.png in sub listing, got %+v", subListing.Files)
+	if len(subListing.Files) != 0 {
+		t.Fatalf("unregistered nested file appeared in observation: %+v", subListing.Files)
 	}
-
-	all, err := repo.ListImages()
+	if err := repo.DiscoverDirectory(context.Background(), "sub"); err != nil {
+		t.Fatal(err)
+	}
+	all, err = repo.ListImages()
 	if err != nil {
 		t.Fatal(err)
 	}

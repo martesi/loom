@@ -200,6 +200,55 @@ it('replays history queued behind a write against that write’s accepted snapsh
   expect(await history).toMatchObject({ status: 'success' })
 })
 
+it('keeps queued Undo and Redo FIFO across newer owner intents', async () => {
+  const owner = runtime('/canvas-op-history-fifo')
+  await start(owner)
+  const board = owner.runtime.getSnapshot()
+  const readStarted = deferred<void>()
+  const releaseRead = deferred<void>()
+  const events: string[] = []
+  const read = submitCanvasOperation(
+    owner.repo,
+    owner.runtime,
+    { kind: 'read', capability: 'metadata', board },
+    async (context) =>
+      context.prepare(async () => {
+        readStarted.resolve()
+        await releaseRead.promise
+      })
+  )
+  await readStarted.promise
+  const undo = submitCanvasOperation(
+    owner.repo,
+    owner.runtime,
+    { kind: 'history', board },
+    async (context) => context.effect(async () => events.push('undo'))
+  )
+  const redo = submitCanvasOperation(
+    owner.repo,
+    owner.runtime,
+    { kind: 'history', board },
+    async (context) => context.effect(async () => events.push('redo'))
+  )
+  const secondUndo = submitCanvasOperation(
+    owner.repo,
+    owner.runtime,
+    { kind: 'history', board },
+    async (context) => context.effect(async () => events.push('undo-2'))
+  )
+  owner.advanceIntent()
+  owner.setMode('view')
+  const outcomes = Promise.all([undo, redo, secondUndo])
+  releaseRead.resolve()
+  expect((await read).status).toBe('cancelled')
+  expect(await outcomes).toEqual([
+    { status: 'success', value: 1 },
+    { status: 'success', value: 2 },
+    { status: 'success', value: 3 },
+  ])
+  expect(events).toEqual(['undo', 'redo', 'undo-2'])
+})
+
 it('settles synchronous failures and keeps the repository queue usable', async () => {
   const owner = runtime('/canvas-op-sync-failure')
   await start(owner)

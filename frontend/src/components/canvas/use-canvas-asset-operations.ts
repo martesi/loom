@@ -11,7 +11,7 @@ import {
   canvasCancellation,
   unwrapCanvasOutcome,
 } from './canvas-operation'
-import { canvasEffects } from './canvas-operation-effects'
+import { canvasEffects, runCanvasEffectBatch } from './canvas-operation-effects'
 import type { RevealRequest } from './use-canvas-workspace-state'
 
 type Media = Awaited<ReturnType<typeof readMedia>>
@@ -37,7 +37,6 @@ interface Props {
   setLifecyclePending: Dispatch<SetStateAction<boolean>>
   pendingRecentAction: MutableRefObject<string | null>
   setRecentActionIds: Dispatch<SetStateAction<string[]>>
-  setError: Dispatch<SetStateAction<string>>
 }
 
 export function useCanvasAssetOperations(props: Props) {
@@ -60,9 +59,10 @@ export function useCanvasAssetOperations(props: Props) {
     setLifecyclePending,
     pendingRecentAction,
     setRecentActionIds,
-    setError,
   } = props
   const purgeOrigin = useRef<Selection['surface'] | null>(null)
+  const purgeIntent = useRef<CanvasUserIntent | null>(null)
+  const trashIntent = useRef<CanvasUserIntent | null>(null)
   const navigationActive = useRef(true)
   const navigationSequence = useRef(0)
   const fallbackIntentRevision = useRef(0)
@@ -121,6 +121,13 @@ export function useCanvasAssetOperations(props: Props) {
     intent.modeRevision === owner.getModeRevision() &&
     intent.ownerIntentRevision === owner.getIntentRevision() &&
     (!checkBoard || intent.board === owner.getSnapshot()) &&
+    currentOwner.current.owner === owner &&
+    currentOwner.current.repoPath === repoPath &&
+    owner.isActive?.() !== false
+  const isLifecycleOwnerCurrent = (intent: CanvasUserIntent) =>
+    intent.owner === owner &&
+    intent.repoPath === repoPath &&
+    intent.lifetimeRevision === owner.getLifetimeRevision() &&
     currentOwner.current.owner === owner &&
     currentOwner.current.repoPath === repoPath &&
     owner.isActive?.() !== false
@@ -304,20 +311,27 @@ export function useCanvasAssetOperations(props: Props) {
   }
 
   async function remove(purge: boolean) {
+    const intent = beginSelectionIntent()
+    const capturedSelection = selection
     const ids = selectedIds()
     if (purge) {
-      if (owner.getMode() !== 'legacy' && selection.surface !== 'assets') return
+      if (
+        owner.getMode() !== 'legacy' &&
+        capturedSelection.surface !== 'assets'
+      )
+        return
       if (ids.length) {
-        purgeOrigin.current = selection.surface
+        purgeOrigin.current = capturedSelection.surface
+        purgeIntent.current = intent
         setPurgeIds(ids)
       }
       return
     }
-    if (selection.surface === 'assets') {
-      confirmTrash(ids)
+    if (capturedSelection.surface === 'assets') {
+      confirmTrash(ids, intent)
       return
     }
-    if (selection.edges.length) {
+    if (capturedSelection.edges.length) {
       if (!owner.allows('relationship')) return
       const outcome = await owner.submit(
         {
@@ -326,20 +340,31 @@ export function useCanvasAssetOperations(props: Props) {
           board: owner.getSnapshot(),
         },
         (context) =>
-          canvasEffects.unlinkSources(context, repoPath, selection.edges)
+          canvasEffects.unlinkSources(
+            context,
+            repoPath,
+            capturedSelection.edges
+          )
       )
       if (outcome.status === 'cancelled') return
       unwrapCanvasOutcome(outcome)
     } else return
-    commitSelection({ ...selection, ids: [], edges: [], group: null })
+    if (isIntentCurrent(intent))
+      commitSelection({ ...capturedSelection, ids: [], edges: [], group: null })
   }
 
-  function confirmTrash(ids: number[]) {
-    if (ids.length) setTrashIds(ids)
+  function confirmTrash(ids: number[], intent?: CanvasUserIntent) {
+    if (ids.length) {
+      trashIntent.current = intent ?? beginSelectionIntent()
+      setTrashIds(ids)
+    }
   }
 
   async function finishTrash() {
     if (!trashIds?.length || lifecyclePendingRef.current) return
+    const intent = trashIntent.current
+    const targetIds = [...trashIds]
+    if (!intent) return
     lifecyclePendingRef.current = true
     setLifecyclePending(true)
     const operation = await owner.submit(
@@ -348,44 +373,23 @@ export function useCanvasAssetOperations(props: Props) {
         capability: 'lifecycle',
         board: owner.getSnapshot(),
       },
-      async (context) => {
-        const results: PromiseSettledResult<void>[] = []
-        for (const id of trashIds) {
-          const result = await canvasEffects
-            .trashImage(context, repoPath, id)
-            .then(
-              (value) => ({ status: 'fulfilled' as const, value }),
-              (reason: unknown) => ({ status: 'rejected' as const, reason })
-            )
-          context.assertCurrent()
-          results.push(result)
-        }
-        return results
-      }
+      (context) =>
+        runCanvasEffectBatch('Trash', targetIds, (id) =>
+          canvasEffects.trashImage(context, repoPath, id)
+        )
     )
+    if (isLifecycleOwnerCurrent(intent)) {
+      lifecyclePendingRef.current = false
+      setLifecyclePending(false)
+    }
     if (operation.status === 'cancelled') return
-    const outcomes = unwrapCanvasOutcome(operation)
-    const failures = outcomes.flatMap((outcome, index) =>
-      outcome.status === 'rejected'
-        ? [{ id: trashIds[index], cause: outcome.reason }]
-        : []
-    )
-    setTrashIds(null)
-    commitSelection({ ...selection, ids: [], edges: [], group: null })
-    for (const failure of failures)
-      console.error('asset trash failed', {
-        assetId: failure.id,
-        cause: failure.cause,
-      })
-    if (failures.length) {
-      const details = failures.map(
-        ({ id, cause }) =>
-          `Asset ${id}: ${cause instanceof Error ? cause.message : String(cause)}`
-      )
-      setError(
-        `${trashIds.length - failures.length} of ${trashIds.length} assets moved to Trash.${details.length ? ` ${details.join('; ')}` : ''} The current state was refreshed.`
-      )
-      return
+    unwrapCanvasOutcome(operation)
+    if (trashIntent.current === intent && sameIds(trashIds, targetIds)) {
+      setTrashIds(null)
+      trashIntent.current = null
+    }
+    if (isIntentCurrent(intent)) {
+      commitSelection({ ...selection, ids: [], edges: [], group: null })
     }
     completeLifecycleAction()
   }
@@ -393,8 +397,11 @@ export function useCanvasAssetOperations(props: Props) {
   async function confirmPurge() {
     if (!purgeIds?.length || lifecyclePendingRef.current) return
     if (owner.getMode() !== 'legacy' && purgeOrigin.current !== 'assets') return
+    const targetIds = [...purgeIds]
     lifecyclePendingRef.current = true
     setLifecyclePending(true)
+    const confirmedIntent = purgeIntent.current
+    if (!confirmedIntent) return
     const outcome = await owner.submit(
       {
         kind: 'mutation',
@@ -405,17 +412,36 @@ export function useCanvasAssetOperations(props: Props) {
         if (owner.getMode() !== 'legacy' && purgeOrigin.current !== 'assets')
           return Promise.resolve(false)
         return canvasEffects
-          .purgeImages(context, repoPath, purgeIds)
+          .purgeImages(context, repoPath, targetIds)
           .then(() => true)
       }
     )
+    if (isLifecycleOwnerCurrent(confirmedIntent)) {
+      lifecyclePendingRef.current = false
+      setLifecyclePending(false)
+    }
     if (outcome.status === 'cancelled') return
     const purged = unwrapCanvasOutcome(outcome)
     if (!purged) return
     purgeOrigin.current = null
-    setPurgeIds(null)
-    commitSelection({ ...selection, ids: [], edges: [], group: null })
+    if (
+      purgeIntent.current === confirmedIntent &&
+      sameIds(purgeIds, targetIds)
+    ) {
+      setPurgeIds(null)
+      purgeIntent.current = null
+    }
+    if (isIntentCurrent(confirmedIntent)) {
+      commitSelection({ ...selection, ids: [], edges: [], group: null })
+    }
     completeLifecycleAction()
+  }
+
+  function cancelLifecycleIntent() {
+    if (trashIntent.current || purgeIntent.current) owner.advanceIntent()
+    trashIntent.current = null
+    purgeIntent.current = null
+    purgeOrigin.current = null
   }
 
   function completeLifecycleAction() {
@@ -436,7 +462,16 @@ export function useCanvasAssetOperations(props: Props) {
     confirmTrash,
     finishTrash,
     confirmPurge,
+    cancelLifecycleIntent,
   }
+}
+
+function sameIds(left: number[] | null, right: number[]) {
+  return Boolean(
+    left &&
+      left.length === right.length &&
+      left.every((id, index) => id === right[index])
+  )
 }
 
 function validateMedia(media: Media): Media {

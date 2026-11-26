@@ -1,4 +1,4 @@
-import { afterEach, expect, it, mock, spyOn } from 'bun:test'
+import { afterEach, beforeEach, expect, it, mock, spyOn } from 'bun:test'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import {
   type Edge,
@@ -15,7 +15,10 @@ import {
 } from '../../../bindings/loom/internal/service'
 import { emptySelection } from '../../lib/selection'
 import { useCanvasBoardOwner } from './canvas-board-owner'
-import { reserveCanvasRead } from './canvas-operation-test-utils'
+import {
+  mockCanvasObservationFromLegacyRPCs,
+  reserveCanvasRead,
+} from './canvas-operation-test-utils.test'
 import { useCanvasAssetOperations } from './use-canvas-asset-operations'
 import { useCanvasBoardModel } from './use-canvas-board-model'
 import { useCanvasPreview } from './use-canvas-preview'
@@ -50,6 +53,7 @@ afterEach(() => {
   cleanup()
   mock.restore()
 })
+beforeEach(mockCanvasObservationFromLegacyRPCs)
 
 it('uses the projected graph for navigation and preview in View and Edit', async () => {
   const images = [3, 2, 1, 4].map((id) => ({

@@ -1,7 +1,10 @@
 import { afterEach, expect, it, mock, spyOn } from 'bun:test'
 import { ImageService } from '../../../bindings/loom/internal/service'
 import { createCanvasBoardOwner } from './canvas-board-owner'
-import { refreshBoard, reserveCanvasRead } from './canvas-operation-test-utils'
+import {
+  refreshBoard,
+  reserveCanvasRead,
+} from './canvas-operation-test-utils.test'
 
 const rectangle = { imageId: 1, x: 10, y: 20, w: 150, h: 110 }
 const resized = { imageId: 1, x: 1, y: 2, w: 300, h: 200 }

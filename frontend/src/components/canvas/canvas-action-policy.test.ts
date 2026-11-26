@@ -19,7 +19,11 @@ import {
   type CanvasCapability,
   canvasActionCapability,
 } from './canvas-mode-policy'
-import { refreshBoard, reserveCanvasRead } from './canvas-operation-test-utils'
+import {
+  mockCanvasObservationFromLegacyRPCs,
+  refreshBoard,
+  reserveCanvasRead,
+} from './canvas-operation-test-utils.test'
 import type { PaletteAsset } from './command-palette'
 import { useCanvasAssetOperations } from './use-canvas-asset-operations'
 
@@ -33,12 +37,6 @@ mock.module('@lingui/core/macro', () => ({
       ''
     ),
 }))
-const { useCanvasActionSystem } = await import('./use-canvas-action-system')
-const { CanvasDock } = await import('./canvas-dock')
-
-async function activateOwner(owner: ReturnType<typeof createCanvasBoardOwner>) {
-  await refreshBoard(owner)
-}
 
 beforeEach(() => {
   spyOn(ImageService, 'LoadCanvas').mockResolvedValue({
@@ -51,7 +49,15 @@ beforeEach(() => {
     images: [],
     relationships: [],
   } as never)
+  mockCanvasObservationFromLegacyRPCs()
 })
+
+const { useCanvasActionSystem } = await import('./use-canvas-action-system')
+const { CanvasDock } = await import('./canvas-dock')
+
+async function activateOwner(owner: ReturnType<typeof createCanvasBoardOwner>) {
+  await refreshBoard(owner)
+}
 
 function blockQueue(owner: ReturnType<typeof createCanvasBoardOwner>) {
   let release = () => {}
@@ -412,7 +418,7 @@ it('rechecks the current mode when a previously enabled action reaches the queue
   await act(async () => {
     blocker.release()
     expect((await blocker.blocked).status).toBe('success')
-    expect((await view).status).toBe('cancelled')
+    expect((await view).status).toBe('success')
     await queued
   })
   expect(arrange).not.toHaveBeenCalled()

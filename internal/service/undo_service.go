@@ -523,11 +523,12 @@ type UndoState struct {
 }
 
 func (s *UndoService) State(repoPath string) (*UndoState, error) {
-	repo, unlock, err := openOperationRepo(repoPath)
+	unlock := store.LockRepoOperations(repoPath)
+	defer unlock()
+	repo, err := store.OpenExistingReadOnly(repoPath)
 	if err != nil {
 		return nil, err
 	}
-	defer unlock()
 	defer repo.Close()
 
 	undoOp, err := repo.PeekUndo()

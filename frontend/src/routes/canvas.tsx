@@ -291,7 +291,6 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     setLifecyclePending,
     pendingRecentAction,
     setRecentActionIds,
-    setError,
   })
   return (
     <CanvasWorkspaceContent

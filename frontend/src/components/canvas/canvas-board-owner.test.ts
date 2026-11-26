@@ -36,7 +36,7 @@ import {
   refreshBoard,
   reserveCanvasOperation,
   reserveCanvasRead,
-} from './canvas-operation-test-utils'
+} from './canvas-operation-test-utils.test'
 import type { ResizeDirection } from './canvas-resize-geometry'
 import { useCanvasBoardModel } from './use-canvas-board-model'
 import { useCanvasRepository } from './use-canvas-repository'
@@ -166,6 +166,7 @@ function useBoard(repoPath: string) {
 }
 
 beforeEach(() => {
+  spyOn(ImageService, 'DiscoverCanvas').mockResolvedValue(undefined as never)
   spyOn(ImageService, 'GetLayoutSnapshot').mockImplementation(
     () =>
       Promise.resolve({
@@ -181,6 +182,13 @@ beforeEach(() => {
         relationships: [],
       }) as never
   )
+  spyOn(ImageService, 'ObserveCanvas').mockImplementation(async (path) => {
+    const [canvas, snapshot] = await Promise.all([
+      ImageService.LoadCanvas(path),
+      ImageService.GetLayoutSnapshot(path),
+    ])
+    return { canvas, snapshot } as never
+  })
 })
 
 afterEach(() => {

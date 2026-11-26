@@ -159,6 +159,122 @@ func TestServePreviewValidationAndMissingAssets(t *testing.T) {
 	}
 }
 
+func TestCacheOnlyRenditionReadsExistingCacheWithoutRepositoryMutation(t *testing.T) {
+	repoPath, id, asset := previewTestAsset(t)
+	cacheDir := filepath.Join(repoPath, ".loom", "thumbs")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := store.OpenExistingReadOnly(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imageBefore, err := repo.GetImageByID(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(asset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := previewSource{
+		path: asset, size: info.Size(), modTime: info.ModTime(),
+		revision: imageBefore.SourceRevision, fingerprint: imageBefore.SourceFingerprint,
+	}
+	cachePath := renditionCachePath(cacheDir, id, 640, source)
+	if err := os.WriteFile(cachePath, []byte("cached rendition"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	processor := &previewTestProcessor{}
+	url := previewTestURL(t, repoPath, id, 640) + "&cacheOnly=1"
+	recorder := httptest.NewRecorder()
+	ServePreviewWithProcessor(recorder, httptest.NewRequest(http.MethodGet, url, nil), processor)
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "cached rendition" {
+		t.Fatalf("cached response: status=%d body=%q", recorder.Code, recorder.Body.String())
+	}
+	if processor.calls != 0 {
+		t.Fatalf("cache-only endpoint invoked the renderer %d times", processor.calls)
+	}
+	missingRecorder := httptest.NewRecorder()
+	missingURL := previewTestURL(t, repoPath, id, 1280) + "&cacheOnly=1"
+	ServePreviewWithProcessor(missingRecorder, httptest.NewRequest(http.MethodGet, missingURL, nil), processor)
+	if missingRecorder.Code != http.StatusNoContent {
+		t.Fatalf("cache miss status = %d, want no-content", missingRecorder.Code)
+	}
+	repo, err = store.OpenExistingReadOnly(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imageAfter, err := repo.GetImageByID(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if imageAfter.Width != imageBefore.Width || imageAfter.Height != imageBefore.Height || imageAfter.SourceFingerprint != imageBefore.SourceFingerprint {
+		t.Fatalf("cache-only request changed image metadata: before=%+v after=%+v", imageBefore, imageAfter)
+	}
+}
+
+func TestCacheOnlyFenceDrainsStartedGenerationBeforeReturning(t *testing.T) {
+	repoPath, id, _ := previewTestAsset(t)
+	url := previewTestURL(t, repoPath, id, 640)
+	started := make(chan struct{})
+	allowFinish := make(chan struct{})
+	processor := &previewTestProcessor{onPreview: func(_, destination string, _ int) error {
+		close(started)
+		<-allowFinish // Model a renderer that does not stop immediately on cancellation.
+		return os.WriteFile(destination, []byte("late rendition"), 0o600)
+	}}
+	preview := httptest.NewRecorder()
+	previewDone := make(chan struct{})
+	go func() {
+		ServePreviewWithProcessor(preview, httptest.NewRequest(http.MethodGet, url, nil), processor)
+		close(previewDone)
+	}()
+	<-started
+
+	cacheOnly := httptest.NewRecorder()
+	cacheOnlyDone := make(chan struct{})
+	go func() {
+		ServePreviewWithProcessor(cacheOnly, httptest.NewRequest(http.MethodGet, url+"&cacheOnly=1", nil), processor)
+		close(cacheOnlyDone)
+	}()
+	deadline := time.Now().Add(time.Second)
+	for !renditionRepositoryFenced(repoPath) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !renditionRepositoryFenced(repoPath) {
+		t.Fatal("cache-only request did not establish the rendition fence")
+	}
+	select {
+	case <-cacheOnlyDone:
+		t.Fatal("cache-only fence returned before started generation drained")
+	default:
+	}
+
+	close(allowFinish)
+	<-previewDone
+	<-cacheOnlyDone
+	if preview.Code != http.StatusServiceUnavailable {
+		t.Fatalf("started generation status=%d body=%q, want service unavailable", preview.Code, preview.Body.String())
+	}
+	if cacheOnly.Code != http.StatusNoContent {
+		t.Fatalf("cache-only status=%d body=%q, want no-content", cacheOnly.Code, cacheOnly.Body.String())
+	}
+	matches, err := filepath.Glob(filepath.Join(repoPath, ".loom", "thumbs", fmt.Sprintf("%d-*.webp", id)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("rendition published after fence drain: %v", matches)
+	}
+}
+
 func TestPreviewURLChangesWithSourceRevision(t *testing.T) {
 	repoPath, id, source := previewTestAsset(t)
 	first := previewURL(repoPath, id, source)
@@ -235,6 +351,9 @@ func TestRenditionsAfterExplorerDiscovery(t *testing.T) {
 	}
 	repo, err := store.Bootstrap(repoPath)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DiscoverDirectory(context.Background(), ""); err != nil {
 		t.Fatal(err)
 	}
 	listing, err := repo.ListDirectory("")

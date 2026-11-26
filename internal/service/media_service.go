@@ -48,7 +48,9 @@ func (s *MediaService) Transcode(repoPath string, imageID int64, request MediaTr
 		return nil, fmt.Errorf("unsupported target extension %q", targetExt)
 	}
 
-	r, err := store.Bootstrap(repoPath)
+	unlock := store.LockRepoOperations(repoPath)
+	defer unlock()
+	r, err := store.OpenExistingReadOnly(repoPath)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +88,9 @@ func (s *MediaService) Transcode(repoPath string, imageID int64, request MediaTr
 
 // CopyMedia transports original bytes rather than preview thumbnails or paths.
 func (s *ImageService) CopyMedia(repoPath string, ids []int64, converted bool) ([]ClipboardMedia, error) {
-	r, err := store.Bootstrap(repoPath)
+	unlock := store.LockRepoOperations(repoPath)
+	defer unlock()
+	r, err := store.OpenExistingReadOnly(repoPath)
 	if err != nil {
 		return nil, err
 	}

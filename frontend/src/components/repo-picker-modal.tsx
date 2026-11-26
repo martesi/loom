@@ -17,10 +17,9 @@ interface RepoPickerModalProps {
 // Server mode's substitute for the native folder dialog (RepoService's
 // OpenFolder/CreateRepo, whose Dialog.OpenFile is unavailable when built
 // headless — see main.go). Walks
-// RepoService.BrowseDirectory starting from the server's home directory;
-// "Open this folder" hands the resolved path to RepoService.OpenRecent via
-// onSelect exactly like clicking a recent-repo entry does, since that
-// already bootstraps .loom/ if the folder is new.
+// RepoService.BrowseDirectory starting from the server's home directory.
+// The selected path is passed to OpenFolderAt, which opens existing repos
+// read-only and bootstraps only a newly selected folder.
 export function RepoPickerModal({
   open,
   onOpenChange,

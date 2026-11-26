@@ -16,13 +16,19 @@ import {
   matchesAssetView,
   sortAssetRows,
 } from '../../lib/asset-views'
-import { renditionGenerationUrl } from '../../lib/preview-tier'
+import {
+  renditionCacheOnlyUrl,
+  renditionGenerationUrl,
+} from '../../lib/preview-tier'
 import type { Selection } from '../../lib/selection'
 import { Button } from '../ui/button'
 import { AssetGallery } from './asset-gallery'
 import { AssetList } from './asset-list'
 import type { CanvasBoardOwner } from './canvas-board-owner'
-import { unwrapCanvasOutcome } from './canvas-operation'
+import {
+  isCanvasRepositoryUncertain,
+  unwrapCanvasOutcome,
+} from './canvas-operation'
 import { canvasEffects } from './canvas-operation-effects'
 import {
   type AssetContextMenuState,
@@ -128,7 +134,10 @@ export const LibraryPanel = memo(function LibraryPanel({
   const sortedRows = sortAssetRows(
     rows.map((row) => ({
       ...row,
-      thumbUrl: renditionGenerationUrl(row.thumbUrl, renditionGeneration),
+      thumbUrl: renditionCacheOnlyUrl(
+        renditionGenerationUrl(row.thumbUrl, renditionGeneration),
+        isCanvasRepositoryUncertain(path)
+      ),
     })),
     sort
   )
@@ -169,6 +178,34 @@ export const LibraryPanel = memo(function LibraryPanel({
     async function load() {
       setLoading(true)
       setLoadError(false)
+      let folderIds: Set<number> | null = null
+      if (mode === 'folders') {
+        if (!isCanvasRepositoryUncertain(path)) {
+          const outcome = await owner.submit(
+            {
+              kind: 'mutation',
+              capability: 'lifecycle',
+              board: owner.getSnapshot(),
+            },
+            (context) => {
+              if (cancelled) return Promise.resolve()
+              return canvasEffects.discoverDirectory(context, path, folder)
+            }
+          )
+          if (cancelled) return
+          if (outcome.status === 'cancelled') return
+          unwrapCanvasOutcome(outcome)
+        }
+        const d = await ImageService.ListDirectory(path, folder)
+        if (cancelled) return
+        if (!cancelled) setDirs(d?.dirs ?? [])
+        // Capture the backend file order alongside the listing so a folder
+        // preview can carousel in the same order ListDirectory returned.
+        if (!cancelled) setFolderOrder((d?.files ?? []).map((file) => file.id))
+        folderIds = new Set(d?.files?.map((f) => f.id))
+      } else if (!cancelled) {
+        setFolderOrder([])
+      }
       const all = await LibraryService.ListImages(path, {
         search: mode === 'folders' ? '' : search,
         placement: mode === 'folders' ? '' : placement,
@@ -176,20 +213,12 @@ export const LibraryPanel = memo(function LibraryPanel({
           mode === 'folders' ? 'all' : status === 'missing' ? 'all' : status,
         tagId: mode === 'folders' ? 0 : tagId,
       })
-      let list = (all ?? []).filter(
-        (row) => mode === 'folders' || matchesAssetView(row, currentView)
+      if (cancelled) return
+      const list = (all ?? []).filter(
+        (row) =>
+          (mode === 'folders' || matchesAssetView(row, currentView)) &&
+          (!folderIds || folderIds.has(row.id))
       )
-      if (mode === 'folders') {
-        const d = await ImageService.ListDirectory(path, folder)
-        if (!cancelled) setDirs(d?.dirs ?? [])
-        // Capture the backend file order alongside the listing so a folder
-        // preview can carousel in the same order ListDirectory returned.
-        if (!cancelled) setFolderOrder((d?.files ?? []).map((file) => file.id))
-        const ids = new Set(d?.files?.map((f) => f.id))
-        list = list.filter((r) => ids.has(r.id))
-      } else if (!cancelled) {
-        setFolderOrder([])
-      }
       if (!cancelled) {
         setRows(list)
         setLoading(false)

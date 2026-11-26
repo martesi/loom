@@ -14,7 +14,10 @@ import type {
 } from '../../../bindings/loom/internal/service'
 import type { Selection } from '../../lib/selection'
 import type { CanvasBoardOwner } from './canvas-board-owner'
-import { canvasOutcomeError } from './canvas-operation'
+import {
+  canvasOutcomeError,
+  isCanvasOperationUncertainError,
+} from './canvas-operation'
 import { applyHistoryToNodes } from './canvas-projection-geometry'
 import { canvasProjectionGraph } from './canvas-projection-model'
 import {
@@ -217,7 +220,8 @@ export function useCanvasBoardModel({
         if (activeGestures.get(token) !== pointerId) return
         activeGestures.delete(token)
         owner.cancelResize(token, pointerId)
-      }
+      },
+      isCanvasOperationUncertainError(owner.getRepositoryIssue())
     )
     const history = owner.takeHistory()
     if (board && projectionRef.current.reconcile(board, graph, history)) {

@@ -2,8 +2,48 @@ import { afterEach, expect, it, mock, spyOn } from 'bun:test'
 import { ImageService } from '../../../bindings/loom/internal/service'
 import { createCanvasBoardOwner } from './canvas-board-owner'
 import { canvasEffects } from './canvas-operation-effects'
+import { mockCanvasObservationFromLegacyRPCs } from './canvas-operation-test-utils.test'
 
 afterEach(() => mock.restore())
+
+it('admits startup discovery before its single consistent observation', async () => {
+  const order: string[] = []
+  spyOn(ImageService, 'DiscoverCanvas').mockImplementation(async () => {
+    order.push('discover')
+    return undefined as never
+  })
+  spyOn(ImageService, 'ObserveCanvas').mockImplementation(async () => {
+    order.push('observe')
+    return {
+      canvas: { images: [], relationships: [], groups: [] },
+      snapshot: { revision: '1', images: [], relationships: [] },
+    } as never
+  })
+  const owner = createCanvasBoardOwner('/admitted-startup', true)
+  expect(await owner.activate()).toMatchObject({ status: 'success' })
+  expect(order).toEqual(['discover', 'observe'])
+})
+
+it('does not rediscover after a lost startup response across reads and owner replacement', async () => {
+  const repoPath = '/uncertain-startup-discovery'
+  const discoveryError = new Error('startup response lost')
+  const discover = spyOn(ImageService, 'DiscoverCanvas').mockRejectedValue(
+    discoveryError as never
+  )
+  const observe = spyOn(ImageService, 'ObserveCanvas').mockResolvedValue({
+    canvas: { images: [], relationships: [], groups: [] },
+    snapshot: { revision: '1', images: [], relationships: [] },
+  } as never)
+  const original = createCanvasBoardOwner(repoPath, true)
+  expect((await original.activate()).status).toBe('failed')
+  original.dispose()
+
+  const replacement = createCanvasBoardOwner(repoPath, true)
+  expect((await replacement.activate()).status).toBe('success')
+  expect((await replacement.refresh()).status).toBe('success')
+  expect(discover).toHaveBeenCalledTimes(1)
+  expect(observe).toHaveBeenCalledTimes(2)
+})
 
 it('queues a replacement owner activation behind a disposed owner write', async () => {
   let releaseWrite = () => {}
@@ -31,6 +71,7 @@ it('queues a replacement owner activation behind a disposed owner write', async 
     ],
     relationships: [],
   } as never)
+  mockCanvasObservationFromLegacyRPCs()
   spyOn(ImageService, 'SetGeometry').mockImplementation(async () => {
     signalWriteStarted()
     await writeGate
@@ -81,6 +122,7 @@ it('does not perform a write when disposal invalidates asynchronous preparation'
     ],
     relationships: [],
   } as never)
+  mockCanvasObservationFromLegacyRPCs()
   const write = spyOn(ImageService, 'SetGeometry').mockResolvedValue(
     undefined as never
   )

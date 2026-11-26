@@ -74,7 +74,7 @@ function IndexPage() {
 
   const handlePickerSelect = (path: string) => {
     setPickerOpen(false)
-    RepoService.OpenRecent(path).then((opened) => {
+    RepoService.OpenFolderAt(path).then((opened) => {
       if (opened) enterRepo(opened)
     })
   }

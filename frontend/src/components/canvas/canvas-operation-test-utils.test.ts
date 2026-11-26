@@ -1,8 +1,21 @@
+import { spyOn } from 'bun:test'
 import type { UndoResult } from '../../../bindings/loom/internal/service'
+import { ImageService } from '../../../bindings/loom/internal/service'
 import type { CanvasBoardOwner } from './canvas-board-owner'
 import type { CanvasCapability } from './canvas-mode-policy'
 import type { CanvasOperationContext } from './canvas-operation'
 import { unwrapCanvasOutcome } from './canvas-operation'
+
+export function mockCanvasObservationFromLegacyRPCs() {
+  spyOn(ImageService, 'DiscoverCanvas').mockResolvedValue(undefined as never)
+  spyOn(ImageService, 'ObserveCanvas').mockImplementation(async (path) => {
+    const [canvas, snapshot] = await Promise.all([
+      ImageService.LoadCanvas(path),
+      ImageService.GetLayoutSnapshot(path),
+    ])
+    return { canvas, snapshot } as never
+  })
+}
 
 export async function refreshBoard(owner: CanvasBoardOwner) {
   return unwrapCanvasOutcome(await owner.refresh())

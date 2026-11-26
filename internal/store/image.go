@@ -341,46 +341,66 @@ func FingerprintFile(ctx context.Context, path string) (string, os.FileInfo, err
 	return fingerprintFile(ctx, path)
 }
 
-// DirListing is a non-recursive view of one directory under the repo root:
-// subdirectory names plus every media file found in it, already registered
-// in the images table (see ListDirectory) so every entry has a real row —
-// the service layer maps Files onto the same ImageInfo shape LoadCanvas and
-// the Library view use, so Explorer never needs a separate "not yet
-// imported" case.
+// DirListing is a non-recursive observation of registered visible images.
 type DirListing struct {
 	RelPath string
 	Dirs    []string
 	Files   []Image
 }
 
-// ListDirectory lists relPath (relative to the repo root), non-recursively.
-// relPath is clamped so it can never resolve outside the repo root, even via
-// ".." segments. Any media file found gets the same
-// `INSERT OR IGNORE INTO images (file_path)` treatment ScanAndRegisterImages
-// gives repo-wide discovery, so a file Explorer just listed always has a
-// real images row before the caller ever touches it (e.g. drag-and-drop
-// onto a board).
+// ListDirectory observes registered visible rows only. It never registers,
+// fingerprints, or otherwise mutates files or the database.
 func (r *Repo) ListDirectory(relPath string) (DirListing, error) {
+	cleanRel, mediaPaths, dirs, err := r.directoryEntries(relPath)
+	if err != nil {
+		return DirListing{}, err
+	}
+	files, err := r.imagesByFilePaths(mediaPaths)
+	if err != nil {
+		return DirListing{}, err
+	}
+	visible := files[:0]
+	for _, file := range files {
+		if !file.Trashed {
+			visible = append(visible, file)
+		}
+	}
+	return DirListing{RelPath: cleanRel, Dirs: dirs, Files: visible}, nil
+}
+
+// DiscoverDirectory registers the media files directly inside relPath.
+// Callers must admit this as a repository effect before invoking it.
+func (r *Repo) DiscoverDirectory(ctx context.Context, relPath string) error {
+	_, mediaPaths, _, err := r.directoryEntries(relPath)
+	if err != nil {
+		return err
+	}
+	for _, path := range mediaPaths {
+		if _, err := r.registerImage(ctx, path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *Repo) directoryEntries(relPath string) (string, []string, []string, error) {
 	absDir, cleanRel, err := clampRelPath(r.Path, relPath)
 	if err != nil {
-		return DirListing{}, err
+		return "", nil, nil, err
 	}
-
 	entries, err := os.ReadDir(absDir)
 	if err != nil {
-		return DirListing{}, err
+		return "", nil, nil, err
 	}
-
 	loomDir := filepath.Join(r.Path, loomDirName)
 	var dirs []string
 	var mediaPaths []string
-	for _, e := range entries {
-		full := filepath.Join(absDir, e.Name())
-		if e.IsDir() {
-			if full == loomDir {
-				continue
+	for _, entry := range entries {
+		full := filepath.Join(absDir, entry.Name())
+		if entry.IsDir() {
+			if full != loomDir {
+				dirs = append(dirs, entry.Name())
 			}
-			dirs = append(dirs, e.Name())
 			continue
 		}
 		if IsMediaFile(full) {
@@ -388,19 +408,7 @@ func (r *Repo) ListDirectory(relPath string) (DirListing, error) {
 		}
 	}
 	sort.Strings(dirs)
-
-	for _, p := range mediaPaths {
-		if _, err := r.registerImage(context.Background(), p); err != nil {
-			return DirListing{}, err
-		}
-	}
-
-	files, err := r.imagesByFilePaths(mediaPaths)
-	if err != nil {
-		return DirListing{}, err
-	}
-
-	return DirListing{RelPath: cleanRel, Dirs: dirs, Files: files}, nil
+	return cleanRel, mediaPaths, dirs, nil
 }
 
 // CreateDirectory creates a new, empty folder named name inside
@@ -481,7 +489,18 @@ func scanImage(scanner interface {
 
 // ListImages returns all non-trashed images.
 func (r *Repo) ListImages() ([]Image, error) {
-	rows, err := r.DB.Query(`SELECT ` + imageSelectCols + ` FROM images WHERE trashed = 0 ORDER BY id`)
+	return listImagesFrom(r.DB, `SELECT `+imageSelectCols+` FROM images WHERE trashed = 0 ORDER BY id`)
+}
+
+// ListImagesTx reads active images from a caller-owned consistent snapshot.
+func (r *Repo) ListImagesTx(tx *sql.Tx) ([]Image, error) {
+	return listImagesFrom(tx, `SELECT `+imageSelectCols+` FROM images WHERE trashed = 0 ORDER BY id`)
+}
+
+func listImagesFrom(queryer interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+}, query string) ([]Image, error) {
+	rows, err := queryer.Query(query)
 	if err != nil {
 		return nil, err
 	}

@@ -64,6 +64,7 @@ export function dispatchCanvasOperation<T>(
       reason: 'The Canvas owner changed before this operation started.',
     })
   if (
+    ticket.request.kind !== 'history' &&
     ticket.request.kind !== 'startup' &&
     ticket.request.kind !== 'recovery' &&
     runtime.getIntentRevision() !== ticket.intentRevision
@@ -257,7 +258,11 @@ function createContext(
       throw canvasCancellation(
         'The Canvas owner changed during this operation.'
       )
-    if (!skipRequestValidation && !ticket.effectStarted) {
+    if (
+      ticket.request.kind !== 'history' &&
+      !skipRequestValidation &&
+      !ticket.effectStarted
+    ) {
       if (runtime.getIntentRevision() !== ticket.intentRevision)
         throw canvasCancellation(
           'Canvas operation intent changed before dispatch.'
@@ -295,7 +300,10 @@ function createContext(
       })
     },
     effect: <T>(operation: () => Promise<T>) => {
-      if (runtime.getIntentRevision() !== ticket.intentRevision)
+      if (
+        ticket.request.kind !== 'history' &&
+        runtime.getIntentRevision() !== ticket.intentRevision
+      )
         throw canvasCancellation(
           'Canvas operation intent changed before dispatch.'
         )
@@ -303,7 +311,8 @@ function createContext(
       if (
         ticket.request.kind !== 'mutation' &&
         ticket.request.kind !== 'history' &&
-        ticket.request.kind !== 'viewport'
+        ticket.request.kind !== 'viewport' &&
+        ticket.request.kind !== 'startup'
       )
         throw new Error('This Canvas operation cannot perform a write.')
       if (affectsBoardState(ticket.request)) repository.dirty = true
@@ -437,7 +446,9 @@ export function settleFailure<T>(
       status: 'rejected',
       reason: error.message,
     })
-  return settle(repository, ticket, { status: 'failed', error: errorOf(error) })
+  const failure = errorOf(error)
+  repository.failure = failure
+  return settle(repository, ticket, { status: 'failed', error: failure })
 }
 
 export function settleDispatchError<T>(

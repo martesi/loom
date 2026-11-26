@@ -1,7 +1,8 @@
 import { readdir } from 'node:fs/promises'
 import type { Locator, Page } from '@playwright/test'
 import type {
-  CanvasData,
+  CanvasObservation,
+  DirListing,
   UndoState,
 } from '../bindings/loom/internal/service/models'
 import { runtimeMethodID } from './bindings'
@@ -19,10 +20,17 @@ import {
 } from './test-helpers'
 
 const importMediaMethodID = runtimeMethodID('imageservice.ts', 'ImportMedia')
-const loadCanvasMethodID = runtimeMethodID('imageservice.ts', 'LoadCanvas')
-const getLayoutSnapshotMethodID = runtimeMethodID(
+const discoverCanvasMethodID = runtimeMethodID(
   'imageservice.ts',
-  'GetLayoutSnapshot'
+  'DiscoverCanvas'
+)
+const discoverDirectoryMethodID = runtimeMethodID(
+  'imageservice.ts',
+  'DiscoverDirectory'
+)
+const observeCanvasMethodID = runtimeMethodID(
+  'imageservice.ts',
+  'ObserveCanvas'
 )
 
 function waitForRuntimeCall(page: Page, methodID: string) {
@@ -124,16 +132,12 @@ test('file drop and canvas clipboard paste create placed assets and errors are d
     if (!request.url().includes('/wails/runtime')) return
     const body = request.postData() ?? ''
     if (body.includes(`"methodID":${importMediaMethodID}`)) importCalls++
-    if (
-      body.includes(`"methodID":${loadCanvasMethodID}`) ||
-      body.includes(`"methodID":${getLayoutSnapshotMethodID}`)
-    )
+    if (body.includes(`"methodID":${observeCanvasMethodID}`))
       reconciliationLoads++
   })
 
   const dropImport = waitForRuntimeCall(page, importMediaMethodID)
-  const dropLoad = waitForRuntimeCall(page, loadCanvasMethodID)
-  const dropSnapshot = waitForRuntimeCall(page, getLayoutSnapshotMethodID)
+  const dropObserve = waitForRuntimeCall(page, observeCanvasMethodID)
   await page.evaluate(() => {
     const encoded =
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
@@ -155,7 +159,7 @@ test('file drop and canvas clipboard paste create placed assets and errors are d
       })
     )
   })
-  await Promise.all([dropImport, dropLoad, dropSnapshot])
+  await Promise.all([dropImport, dropObserve])
 
   await expect(asset(page, 'dropped.png')).toBeVisible()
   await expect(imageNodes(page)).toHaveCount(1)
@@ -172,10 +176,9 @@ test('file drop and canvas clipboard paste create placed assets and errors are d
     )
   })
   const firstPasteImport = waitForRuntimeCall(page, importMediaMethodID)
-  const firstPasteLoad = waitForRuntimeCall(page, loadCanvasMethodID)
-  const firstPasteSnapshot = waitForRuntimeCall(page, getLayoutSnapshotMethodID)
+  const firstPasteObserve = waitForRuntimeCall(page, observeCanvasMethodID)
   await page.keyboard.press('Control+v')
-  await Promise.all([firstPasteImport, firstPasteLoad, firstPasteSnapshot])
+  await Promise.all([firstPasteImport, firstPasteObserve])
   await expect(imageNodes(page)).toHaveCount(2)
 
   const sourceAsset = asset(page, 'media-alpha.png')
@@ -194,20 +197,16 @@ test('file drop and canvas clipboard paste create placed assets and errors are d
     .poll(() => page.evaluate(() => navigator.clipboard.readText()))
     .toContain('canvas-paste.png')
   const secondPasteImport = waitForRuntimeCall(page, importMediaMethodID)
-  const secondPasteLoad = waitForRuntimeCall(page, loadCanvasMethodID)
-  const secondPasteSnapshot = waitForRuntimeCall(
-    page,
-    getLayoutSnapshotMethodID
-  )
+  const secondPasteObserve = waitForRuntimeCall(page, observeCanvasMethodID)
   await page.keyboard.press('Control+v')
-  await Promise.all([secondPasteImport, secondPasteLoad, secondPasteSnapshot])
+  await Promise.all([secondPasteImport, secondPasteObserve])
   await expect(asset(page, 'canvas-paste.png')).toBeVisible()
 
   const repoPath = await fixturePath('media-fixtures')
-  const repositoryBefore = await legacyServiceCall<CanvasData | null>(
+  const repositoryBefore = await legacyServiceCall<CanvasObservation | null>(
     page,
     'imageservice.ts',
-    'LoadCanvas',
+    'ObserveCanvas',
     [repoPath]
   )
   const historyBefore = await legacyServiceCall<UndoState | null>(
@@ -228,10 +227,10 @@ test('file drop and canvas clipboard paste create placed assets and errors are d
   expect(importCalls).toBe(importsBeforeInvalidPaste)
   expect(reconciliationLoads).toBe(reloadsBeforeInvalidPaste)
   expect(
-    await legacyServiceCall<CanvasData | null>(
+    await legacyServiceCall<CanvasObservation | null>(
       page,
       'imageservice.ts',
-      'LoadCanvas',
+      'ObserveCanvas',
       [repoPath]
     )
   ).toEqual(repositoryBefore)
@@ -250,12 +249,15 @@ test('lost import response keeps the real repository fenced after later reads', 
 }) => {
   void clipboardAccess
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
-  await openFixtureRepo(page, 'media-fixtures')
   let importCalls = 0
+  let discoveryCalls = 0
+  let directoryDiscoveryCalls = 0
   await page.route('**/wails/runtime', async (route) => {
-    if (
-      route.request().postData()?.includes(`"methodID":${importMediaMethodID}`)
-    ) {
+    const body = route.request().postData() ?? ''
+    if (body.includes(`"methodID":${discoverCanvasMethodID}`)) discoveryCalls++
+    if (body.includes(`"methodID":${discoverDirectoryMethodID}`))
+      directoryDiscoveryCalls++
+    if (body.includes(`"methodID":${importMediaMethodID}`)) {
       importCalls++
       const response = await route.fetch()
       if (importCalls === 1) {
@@ -267,6 +269,8 @@ test('lost import response keeps the real repository fenced after later reads', 
     }
     await route.continue()
   })
+  await openFixtureRepo(page, 'media-fixtures')
+  expect(discoveryCalls).toBe(1)
 
   await page.evaluate(async () => {
     const data =
@@ -284,21 +288,34 @@ test('lost import response keeps the real repository fenced after later reads', 
   expect(importCalls).toBe(1)
 
   const repoPath = await fixturePath('media-fixtures')
-  const firstRead = await legacyServiceCall<CanvasData | null>(
+  const firstRead = await legacyServiceCall<CanvasObservation | null>(
     page,
     'imageservice.ts',
-    'LoadCanvas',
+    'ObserveCanvas',
     [repoPath]
   )
   expect(
-    firstRead?.images?.some((image) => image.fileName === 'lost-response.png')
+    firstRead?.canvas?.images?.some(
+      (image) => image.fileName === 'lost-response.png'
+    )
   ).toBe(true)
-  await legacyServiceCall<CanvasData | null>(
+  await legacyServiceCall<CanvasObservation | null>(
     page,
     'imageservice.ts',
-    'LoadCanvas',
+    'ObserveCanvas',
     [repoPath]
   )
+  const folder = await legacyServiceCall<DirListing | null>(
+    page,
+    'imageservice.ts',
+    'ListDirectory',
+    [repoPath, '']
+  )
+  expect(
+    folder?.files?.some((file) => file.fileName === 'lost-response.png')
+  ).toBe(true)
+  expect(discoveryCalls).toBe(1)
+  expect(directoryDiscoveryCalls).toBe(0)
   await legacyServiceCall<UndoState | null>(page, 'undoservice.ts', 'State', [
     repoPath,
   ])
@@ -318,15 +335,19 @@ test('lost import response keeps the real repository fenced after later reads', 
     'Repository state is unknown'
   )
   expect(importCalls).toBe(1)
-  const finalRead = await legacyServiceCall<CanvasData | null>(
+  const finalRead = await legacyServiceCall<CanvasObservation | null>(
     page,
     'imageservice.ts',
-    'LoadCanvas',
+    'ObserveCanvas',
     [repoPath]
   )
   expect(
-    finalRead?.images?.some((image) => image.fileName === 'must-not-retry.png')
+    finalRead?.canvas?.images?.some(
+      (image) => image.fileName === 'must-not-retry.png'
+    )
   ).toBe(false)
+  expect(discoveryCalls).toBe(1)
+  expect(directoryDiscoveryCalls).toBe(0)
 })
 
 test('settled import reconciles but does not replace a newer Assets selection', async ({
@@ -338,8 +359,7 @@ test('settled import reconciles but does not replace a newer Assets selection', 
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
   await openFixtureRepo(page, 'media-fixtures')
   const seedImport = waitForRuntimeCall(page, importMediaMethodID)
-  const seedLoad = waitForRuntimeCall(page, loadCanvasMethodID)
-  const seedSnapshot = waitForRuntimeCall(page, getLayoutSnapshotMethodID)
+  const seedObserve = waitForRuntimeCall(page, observeCanvasMethodID)
   await page.evaluate(() => {
     const encoded =
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
@@ -363,7 +383,7 @@ test('settled import reconciles but does not replace a newer Assets selection', 
       })
     )
   })
-  await Promise.all([seedImport, seedLoad, seedSnapshot])
+  await Promise.all([seedImport, seedObserve])
   await openAssetsShelf(page)
   await asset(page, 'media-alpha.png').click()
   let releaseResponse!: () => void
@@ -401,10 +421,9 @@ test('settled import reconciles but does not replace a newer Assets selection', 
   const newerSelection = asset(page, 'selection-seed.png')
   await newerSelection.click()
   await expect(newerSelection).toHaveAttribute('aria-selected', 'true')
-  const reconcileLoad = waitForRuntimeCall(page, loadCanvasMethodID)
-  const reconcileSnapshot = waitForRuntimeCall(page, getLayoutSnapshotMethodID)
+  const reconcileObserve = waitForRuntimeCall(page, observeCanvasMethodID)
   releaseResponse()
-  await Promise.all([reconcileLoad, reconcileSnapshot])
+  await reconcileObserve
   await expect(asset(page, 'settled-response.png')).toBeVisible()
   await expect(newerSelection).toHaveAttribute('aria-selected', 'true')
 })

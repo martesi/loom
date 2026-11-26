@@ -55,12 +55,15 @@ func (s *RepoService) ListRecentRepos() ([]RepoInfo, error) {
 		if !store.IsRepo(r.Path) {
 			continue
 		}
-		repo, err := store.Bootstrap(r.Path)
+		unlock := store.LockRepoOperations(r.Path)
+		repo, err := store.OpenExistingReadOnly(r.Path)
 		if err != nil {
+			unlock()
 			continue
 		}
 		count, _ := repo.ImageCount()
 		repo.Close()
+		unlock()
 
 		_, isOpen := focusedWindowForRepo(r.Path)
 
@@ -112,7 +115,7 @@ func (s *RepoService) pickAndOpen(title string) (*RepoInfo, error) {
 	if path == "" {
 		return nil, nil
 	}
-	return s.open(path)
+	return s.openFolder(path)
 }
 
 // OpenRecent re-opens an already-known repo by path (e.g. clicking a row in
@@ -121,17 +124,42 @@ func (s *RepoService) OpenRecent(path string) (*RepoInfo, error) {
 	return s.open(path)
 }
 
+// OpenFolderAt opens a user-selected folder. It bootstraps a new repository
+// only when the selected folder is not already a Loom repository.
+func (s *RepoService) OpenFolderAt(path string) (*RepoInfo, error) {
+	return s.openFolder(path)
+}
+
 func (s *RepoService) open(path string) (*RepoInfo, error) {
 	if window, ok := focusedWindowForRepo(path); ok {
 		window.Focus()
 		return &RepoInfo{ID: path, Path: path, OpenedElsewhere: true}, nil
 	}
 
-	info, err := bootstrapAndTouch(path)
+	info, err := openExistingAndTouch(path)
 	if err != nil {
 		return nil, err
 	}
 
+	registerCurrentRepoWindow(path)
+	return info, nil
+}
+
+func (s *RepoService) openFolder(path string) (*RepoInfo, error) {
+	if window, ok := focusedWindowForRepo(path); ok {
+		window.Focus()
+		return &RepoInfo{ID: path, Path: path, OpenedElsewhere: true}, nil
+	}
+	var info *RepoInfo
+	var err error
+	if store.IsRepo(path) {
+		info, err = openExistingAndTouch(path)
+	} else {
+		info, err = bootstrapAndTouch(path)
+	}
+	if err != nil {
+		return nil, err
+	}
 	registerCurrentRepoWindow(path)
 	return info, nil
 }
@@ -150,7 +178,7 @@ func (s *RepoService) SwitchTo(path string) (*RepoInfo, error) {
 		return &RepoInfo{ID: path, Path: path, OpenedElsewhere: true}, nil
 	}
 
-	if _, err := bootstrapAndTouch(path); err != nil {
+	if _, err := openExistingAndTouch(path); err != nil {
 		return nil, err
 	}
 	// Deliberately NOT calling registerRepoWindow here. WindowManager.NewWithOptions
@@ -210,6 +238,31 @@ func bootstrapAndTouch(path string) (*RepoInfo, error) {
 		Path:       path,
 		ImageCount: count,
 		OpenedAt:   "Opened just now",
+	}, nil
+}
+
+func openExistingAndTouch(path string) (*RepoInfo, error) {
+	unlock := store.LockRepoOperations(path)
+	defer unlock()
+	repo, err := store.OpenExistingReadOnly(path)
+	if err != nil {
+		return nil, fmt.Errorf("open existing repo at %s: %w", path, err)
+	}
+	defer repo.Close()
+	count, err := repo.ImageCount()
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := repoconfig.Load()
+	if err != nil {
+		return nil, err
+	}
+	if err := cfg.TouchRecent(path); err != nil {
+		return nil, err
+	}
+	return &RepoInfo{
+		ID: path, Name: repo.Name(), Path: path, ImageCount: count,
+		OpenedAt: "Opened just now",
 	}, nil
 }
 

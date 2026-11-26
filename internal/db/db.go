@@ -5,6 +5,7 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -67,6 +68,65 @@ func Open(path string) (*sql.DB, error) {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 	return conn, nil
+}
+
+// OpenExistingReadOnly opens an existing database without creating the file,
+// changing journal settings, or applying migrations. Observation paths use it
+// so recovery cannot mutate a repository while backend settlement is unknown.
+func OpenExistingReadOnly(path string, immutable bool) (*sql.DB, error) {
+	dsnURL := url.URL{Scheme: "file", Path: filepath.ToSlash(path)}
+	dsnURL.RawQuery = "mode=ro&_pragma=busy_timeout(5000)"
+	if immutable {
+		dsnURL.RawQuery += "&immutable=1"
+	}
+	dsn := dsnURL.String()
+	conn, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite read-only: %w", err)
+	}
+	conn.SetMaxOpenConns(1)
+	if err := conn.Ping(); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("open existing sqlite database read-only: %w", err)
+	}
+	if err := verifyMigrated(conn); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("repository database is not ready for read-only observation: %w", err)
+	}
+	return conn, nil
+}
+
+func verifyMigrated(conn *sql.DB) error {
+	rows, err := conn.Query(`SELECT version FROM schema_migrations`)
+	if err != nil {
+		return err
+	}
+	applied := make(map[string]bool)
+	for rows.Next() {
+		var version string
+		if err := rows.Scan(&version); err != nil {
+			rows.Close()
+			return err
+		}
+		applied[version] = true
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	entries, err := fs.ReadDir(migrationsFS, "migrations")
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !applied[entry.Name()] {
+			return fmt.Errorf("missing migration %s", entry.Name())
+		}
+	}
+	return nil
 }
 
 // migrateOncePerPath runs migrate(conn) at most once per (cleaned) path for

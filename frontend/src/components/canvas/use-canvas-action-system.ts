@@ -135,7 +135,6 @@ export function useCanvasActionSystem({
       !allowsCanvasAction(context.owner.getMode(), action.id)
     )
       return Promise.resolve()
-    context.owner.advanceIntent()
     return Promise.resolve(currentAction.execute())
       .then((result) => {
         if (isCanvasOperationOutcome(result)) {

@@ -471,6 +471,42 @@ func (r *Repo) ListGroups() ([]Group, error) {
 	return groups, rows.Err()
 }
 
+// ListGroupsTx reads group metadata from a caller-owned consistent snapshot.
+func (r *Repo) ListGroupsTx(tx *sql.Tx) ([]Group, error) {
+	rows, err := tx.Query(`SELECT id, COALESCE(name, ''), COALESCE(kind, ''), COALESCE(cover_image_id, 0) FROM groups`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var groups []Group
+	for rows.Next() {
+		var group Group
+		if err := rows.Scan(&group.ID, &group.Name, &group.Kind, &group.CoverImageID); err != nil {
+			return nil, err
+		}
+		groups = append(groups, group)
+	}
+	return groups, rows.Err()
+}
+
+// GroupMemberIDsTx reads group membership from a caller-owned snapshot.
+func (r *Repo) GroupMemberIDsTx(tx *sql.Tx, groupID int64) ([]int64, error) {
+	rows, err := tx.Query(`SELECT id FROM images WHERE group_id = ?`, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 // GroupMemberIDs returns the image ids currently belonging to groupID.
 func (r *Repo) GroupMemberIDs(groupID int64) ([]int64, error) {
 	rows, err := r.DB.Query(`SELECT id FROM images WHERE group_id = ?`, groupID)

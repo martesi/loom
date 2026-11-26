@@ -1,4 +1,4 @@
-import { afterEach, expect, it, mock, spyOn } from 'bun:test'
+import { afterEach, beforeEach, expect, it, mock, spyOn } from 'bun:test'
 import { cleanup, renderHook } from '@testing-library/react'
 import { useRef } from 'react'
 import { ImageService } from '../../../bindings/loom/internal/service'
@@ -7,7 +7,10 @@ import type { CanvasActionsContext } from '../../routes/canvas-actions-context'
 import { createCanvasBoardOwner } from './canvas-board-owner'
 import { isCanvasOperationPending } from './canvas-operation'
 import { canvasEffects, runCanvasEffectBatch } from './canvas-operation-effects'
-import { refreshBoard } from './canvas-operation-test-utils'
+import {
+  mockCanvasObservationFromLegacyRPCs,
+  refreshBoard,
+} from './canvas-operation-test-utils.test'
 
 mock.module('@lingui/core/macro', () => ({
   plural: (count: number, messages: { one: string; other: string }) =>
@@ -25,6 +28,8 @@ afterEach(() => {
   cleanup()
   mock.restore()
 })
+
+beforeEach(mockCanvasObservationFromLegacyRPCs)
 
 for (const operation of [
   { id: 'archive-selection', name: 'archive', archived: false, trashed: false },

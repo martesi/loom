@@ -1,6 +1,10 @@
 package service
 
-import "testing"
+import (
+	"testing"
+
+	"loom/internal/store"
+)
 
 // TestSettingsServiceGetSetRoundTrip exercises the thin Get/Set wrapper over
 // the repo-scoped settings table: a round-trip through Set/Get, an unset key
@@ -9,6 +13,13 @@ import "testing"
 // a previously-set value.
 func TestSettingsServiceGetSetRoundTrip(t *testing.T) {
 	repoPath := t.TempDir()
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
 	settings := &SettingsService{}
 
 	// Unset key: "" and no error, not a lookup failure.

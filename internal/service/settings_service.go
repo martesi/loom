@@ -11,7 +11,9 @@ type SettingsService struct{}
 // (see store.GetSetting) — an unset setting is not an error, just an
 // unconfigured default.
 func (s *SettingsService) Get(repoPath, key string) (string, error) {
-	repo, err := store.Bootstrap(repoPath)
+	unlock := store.LockRepoOperations(repoPath)
+	defer unlock()
+	repo, err := store.OpenExistingReadOnly(repoPath)
 	if err != nil {
 		return "", err
 	}
@@ -22,10 +24,11 @@ func (s *SettingsService) Get(repoPath, key string) (string, error) {
 
 // Set upserts key's value.
 func (s *SettingsService) Set(repoPath, key, value string) error {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return err
 	}
+	defer unlock()
 	defer repo.Close()
 
 	return repo.SetSetting(key, value)

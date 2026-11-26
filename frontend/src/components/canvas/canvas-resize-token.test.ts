@@ -9,7 +9,10 @@ import {
   createCanvasBoardOwner,
   useCanvasBoardOwner,
 } from './canvas-board-owner'
-import { refreshBoard } from './canvas-operation-test-utils'
+import {
+  mockCanvasObservationFromLegacyRPCs,
+  refreshBoard,
+} from './canvas-operation-test-utils.test'
 
 const rectangle: GeometryUpdate = { imageId: 1, x: 10, y: 20, w: 150, h: 110 }
 const resized: GeometryUpdate = { ...rectangle, x: 1, y: 2, w: 300, h: 200 }
@@ -25,6 +28,7 @@ function setup() {
     relationships: [],
     images: [{ id: 1, width: 640, height: 480, geometry: rectangle }],
   } as never)
+  mockCanvasObservationFromLegacyRPCs()
   return spyOn(
     ImageService,
     'SetGeometryFromDisplayAtRevision'

@@ -38,3 +38,10 @@ export function renditionGenerationUrl(
   revisioned.searchParams.set('ui', String(generation))
   return `${revisioned.pathname}${revisioned.search}${revisioned.hash}`
 }
+
+export function renditionCacheOnlyUrl(url: string, cacheOnly: boolean): string {
+  if (!url || !cacheOnly) return url
+  const safe = new URL(url, 'http://loom.invalid')
+  safe.searchParams.set('cacheOnly', '1')
+  return `${safe.pathname}${safe.search}${safe.hash}`
+}

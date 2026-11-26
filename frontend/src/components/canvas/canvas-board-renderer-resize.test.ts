@@ -1,4 +1,4 @@
-import { afterEach, expect, it, mock, spyOn } from 'bun:test'
+import { afterEach, beforeEach, expect, it, mock, spyOn } from 'bun:test'
 import { Toast } from '@base-ui-components/react/toast'
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import type { Edge, Node } from '@xyflow/react'
@@ -13,10 +13,11 @@ import { emptySelection } from '../../lib/selection'
 import { useCanvasBoardOwner } from './canvas-board-owner'
 import { enqueueCanvasMutation } from './canvas-mutation-queue'
 import {
+  mockCanvasObservationFromLegacyRPCs,
   refreshBoard,
   reserveCanvasOperation,
   reserveCanvasRead,
-} from './canvas-operation-test-utils'
+} from './canvas-operation-test-utils.test'
 import type { ResizeDirection } from './canvas-resize-geometry'
 import { useCanvasBoardModel } from './use-canvas-board-model'
 
@@ -137,6 +138,8 @@ afterEach(() => {
   cleanup()
   mock.restore()
 })
+
+beforeEach(mockCanvasObservationFromLegacyRPCs)
 
 it('keeps a submitted resize queued across rendition changes', async () => {
   const write = setupServices({

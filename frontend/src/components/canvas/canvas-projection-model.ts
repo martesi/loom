@@ -4,7 +4,10 @@ import type {
   GeometryUpdate,
   ImageInfo,
 } from '../../../bindings/loom/internal/service'
-import { renditionGenerationUrl } from '../../lib/preview-tier'
+import {
+  renditionCacheOnlyUrl,
+  renditionGenerationUrl,
+} from '../../lib/preview-tier'
 import type { ResizeDirection } from './canvas-resize-geometry'
 
 /** Map LoadCanvas DTOs without treating saved placement as graph membership. */
@@ -28,7 +31,8 @@ export function canvasProjectionGraph(
     pointerId: number,
     after: GeometryUpdate
   ) => void,
-  onResizeCancel: (token: number, pointerId: number) => void
+  onResizeCancel: (token: number, pointerId: number) => void,
+  cacheOnly = false
 ) {
   const images = (data.images ?? []).filter((image) => !image.trashed)
   const ids = new Set(images.map((image) => image.id))
@@ -42,7 +46,8 @@ export function canvasProjectionGraph(
       onResizeStart,
       onResizeMove,
       onResizeEnd,
-      onResizeCancel
+      onResizeCancel,
+      cacheOnly
     )
   )
   const edges: Edge[] = relationships.map((edge) => ({
@@ -80,7 +85,8 @@ function imageNode(
     pointerId: number,
     after: import('../../../bindings/loom/internal/service').GeometryUpdate
   ) => void,
-  onResizeCancel: (token: number, pointerId: number) => void
+  onResizeCancel: (token: number, pointerId: number) => void,
+  cacheOnly: boolean
 ): Node {
   return {
     id: String(image.id),
@@ -90,9 +96,15 @@ function imageNode(
     height: image.canvasH || 110,
     data: {
       fileName: image.fileName,
-      thumbUrl: renditionGenerationUrl(image.thumbUrl, generation),
+      thumbUrl: renditionCacheOnlyUrl(
+        renditionGenerationUrl(image.thumbUrl, generation),
+        cacheOnly
+      ),
       previewUrl: image.previewUrl
-        ? renditionGenerationUrl(image.previewUrl, generation)
+        ? renditionCacheOnlyUrl(
+            renditionGenerationUrl(image.previewUrl, generation),
+            cacheOnly
+          )
         : undefined,
       missing: image.missing,
       showFileName: true,

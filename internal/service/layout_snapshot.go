@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"strconv"
+
+	"loom/internal/store"
 )
 
 // LayoutImage contains the persisted inputs for one active layout node.
@@ -36,11 +38,12 @@ func layoutRevision(tx *sql.Tx) (string, error) {
 // dimensions and relationships between active nodes in one read transaction.
 // It does not discover files; call LoadCanvas first if discovery is required.
 func (s *ImageService) GetLayoutSnapshot(path string) (*LayoutSnapshot, error) {
-	repo, unlock, err := openOperationRepo(path)
+	unlock := store.LockRepoOperations(path)
+	defer unlock()
+	repo, err := store.OpenExistingReadOnly(path)
 	if err != nil {
 		return nil, err
 	}
-	defer unlock()
 	defer repo.Close()
 	tx, err := repo.DB.Begin()
 	if err != nil {

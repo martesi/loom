@@ -192,17 +192,18 @@ type CanvasData struct {
 	Groups        []GroupInfo        `json:"groups"`
 }
 
-// LoadCanvas discovers assets without implicitly placing them.
-func (s *ImageService) LoadCanvas(repoPath string) (*CanvasData, error) {
+// DiscoverCanvas performs filesystem discovery, expired-trash cleanup, and
+// dimension maintenance. Callers must admit it as a repository effect.
+func (s *ImageService) DiscoverCanvas(repoPath string) error {
 	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer unlock()
 	defer repo.Close()
 
 	if err := s.purgeExpiredTrash(repo); err != nil {
-		return nil, err
+		return err
 	}
 
 	unlockRenditionRepository := lockRenditionRepository(repo.Path)
@@ -213,20 +214,18 @@ func (s *ImageService) LoadCanvas(repoPath string) (*CanvasData, error) {
 		return err
 	}()
 	if registerErr != nil {
-		return nil, registerErr
+		return registerErr
 	}
 
 	allImages, err := repo.ListImages()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	missingByID := make(map[int64]bool, len(allImages))
 	for i := range allImages {
 		img := &allImages[i]
 		info, statErr := os.Stat(img.FilePath)
 		if statErr != nil {
-			missingByID[img.ID] = true
 			continue
 		}
 		if img.Width != 0 && img.Height != 0 {
@@ -245,85 +244,17 @@ func (s *ImageService) LoadCanvas(repoPath string) (*CanvasData, error) {
 			continue
 		}
 	}
-	boardImages, err := repo.ListImages()
+	return nil
+}
+
+// LoadCanvas is a read-only compatibility endpoint. New coordinator paths use
+// ObserveCanvas to read board and layout from one transaction.
+func (s *ImageService) LoadCanvas(repoPath string) (*CanvasData, error) {
+	observation, err := s.ObserveCanvas(repoPath)
 	if err != nil {
 		return nil, err
 	}
-
-	boardImageIDs := make([]int64, len(boardImages))
-	boardIDSet := make(map[int64]bool, len(boardImages))
-	for i, img := range boardImages {
-		boardImageIDs[i] = img.ID
-		boardIDSet[img.ID] = true
-	}
-
-	rels, err := repo.ListRelationshipsAmong(boardImageIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	allGroups, err := repo.ListGroups()
-	if err != nil {
-		return nil, err
-	}
-	var groups []GroupInfo
-	for _, g := range allGroups {
-		memberIDs, err := repo.GroupMemberIDs(g.ID)
-		if err != nil {
-			return nil, err
-		}
-		var onBoard []int64
-		for _, id := range memberIDs {
-			if boardIDSet[id] {
-				onBoard = append(onBoard, id)
-			}
-		}
-		if len(onBoard) == 0 {
-			continue
-		}
-		groups = append(groups, GroupInfo{
-			ID: g.ID, Name: g.Name, Kind: g.Kind, CoverImageID: g.CoverImageID, MemberIDs: onBoard,
-		})
-	}
-
-	data := &CanvasData{
-		Images:        make([]ImageInfo, len(boardImages)),
-		Relationships: make([]RelationshipInfo, len(rels)),
-		Groups:        groups,
-	}
-	for i, img := range boardImages {
-		data.Images[i] = ImageInfo{
-			ID:         img.ID,
-			FileName:   filepath.Base(img.FilePath),
-			FilePath:   img.FilePath,
-			ThumbURL:   thumbURL(repoPath, img.ID, img.FilePath),
-			PreviewURL: previewURLForImage(repoPath, img),
-			FullURL:    fullURL(repoPath, img.ID),
-			Width:      img.Width,
-			Height:     img.Height,
-			Archived:   img.Archived,
-			Trashed:    img.Trashed,
-			Missing:    missingByID[img.ID],
-			Placed:     img.HasCanvasPos,
-			CanvasX:    img.CanvasX,
-			CanvasY:    img.CanvasY,
-			CanvasW:    img.CanvasW,
-			CanvasH:    img.CanvasH,
-			PromptText: img.PromptText,
-			GroupID:    img.GroupID,
-			CreatedAt:  img.CreatedAt,
-		}
-	}
-	for i, rel := range rels {
-		data.Relationships[i] = RelationshipInfo{
-			ID:             rel.ID,
-			SourceImageID:  rel.SourceImageID,
-			DerivedImageID: rel.DerivedImageID,
-			PairingOrder:   rel.PairingOrder,
-			CreatedAt:      rel.CreatedAt,
-		}
-	}
-	return data, nil
+	return observation.Canvas, nil
 }
 
 func (s *ImageService) probeSourceDimensions(path string) (media.Dimensions, error) {
@@ -342,7 +273,9 @@ func (s *ImageService) probeSourceDimensions(path string) (media.Dimensions, err
 // store.ListImagesByIDs with a single-element slice rather than adding a new
 // store-level single-row query.
 func (s *ImageService) GetImage(repoPath string, imageID int64) (*ImageInfo, error) {
-	repo, err := store.Bootstrap(repoPath)
+	unlock := store.LockRepoOperations(repoPath)
+	defer unlock()
+	repo, err := store.OpenExistingReadOnly(repoPath)
 	if err != nil {
 		return nil, err
 	}
@@ -365,7 +298,7 @@ func (s *ImageService) GetImage(repoPath string, imageID int64) (*ImageInfo, err
 		ID:         img.ID,
 		FileName:   filepath.Base(img.FilePath),
 		FilePath:   img.FilePath,
-		ThumbURL:   thumbURL(repoPath, img.ID, img.FilePath),
+		ThumbURL:   thumbURLForImage(repoPath, img),
 		PreviewURL: previewURLForImage(repoPath, img),
 		FullURL:    fullURL(repoPath, img.ID),
 		Width:      img.Width,
@@ -706,13 +639,26 @@ type DirListing struct {
 	Files   []ImageInfo `json:"files"`
 }
 
-// ListDirectory lists relPath (relative to repoPath), non-recursively.
-// Every media file it finds is registered in the images table first (the
-// same INSERT OR IGNORE idiom ScanAndRegisterImages uses for repo-wide
-// discovery), so every returned file always has a real row — drag-and-drop
-// from Explorer never needs to special-case "not yet imported".
+// DiscoverDirectory registers files in one folder. Callers must submit this
+// operation through the repository coordinator before invoking it.
+func (s *ImageService) DiscoverDirectory(repoPath, relPath string) error {
+	repo, unlock, err := openOperationRepo(repoPath)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	defer repo.Close()
+	unlockRenditionRepository := lockRenditionRepository(repo.Path)
+	defer unlockRenditionRepository()
+	return repo.DiscoverDirectory(context.Background(), relPath)
+}
+
+// ListDirectory observes registered visible rows only. It is read-only and
+// remains available when repository writes are fenced.
 func (s *ImageService) ListDirectory(repoPath, relPath string) (*DirListing, error) {
-	repo, err := store.Bootstrap(repoPath)
+	unlock := store.LockRepoOperations(repoPath)
+	defer unlock()
+	repo, err := store.OpenExistingReadOnly(repoPath)
 	if err != nil {
 		return nil, err
 	}
@@ -734,7 +680,7 @@ func (s *ImageService) ListDirectory(repoPath, relPath string) (*DirListing, err
 			ID:         img.ID,
 			FileName:   filepath.Base(img.FilePath),
 			FilePath:   img.FilePath,
-			ThumbURL:   thumbURL(repoPath, img.ID, img.FilePath),
+			ThumbURL:   thumbURLForImage(repoPath, img),
 			PreviewURL: previewURLForImage(repoPath, img),
 			FullURL:    fullURL(repoPath, img.ID),
 			Width:      img.Width,
@@ -761,10 +707,11 @@ func (s *ImageService) ListDirectory(repoPath, relPath string) (*DirListing, err
 // fresh empty folder has no corresponding database row (see
 // store.CreateDirectory), unlike every other Explorer mutation here.
 func (s *ImageService) CreateDirectory(repoPath, parentRelPath, name string) error {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return err
 	}
+	defer unlock()
 	defer repo.Close()
 
 	return repo.CreateDirectory(parentRelPath, name)

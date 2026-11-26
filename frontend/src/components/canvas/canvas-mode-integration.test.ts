@@ -1,4 +1,4 @@
-import { afterEach, expect, it, mock, spyOn } from 'bun:test'
+import { afterEach, beforeEach, expect, it, mock, spyOn } from 'bun:test'
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { Call } from '@wailsio/runtime'
 import type { Edge, Node, Viewport } from '@xyflow/react'
@@ -12,10 +12,11 @@ import { emptySelection } from '../../lib/selection'
 import { useCanvasBoardOwner } from './canvas-board-owner'
 import { data, empty, images, relationships } from './canvas-mode-test-fixtures'
 import {
+  mockCanvasObservationFromLegacyRPCs,
   refreshBoard,
   replayCanvasHistory,
   reserveCanvasOperation,
-} from './canvas-operation-test-utils'
+} from './canvas-operation-test-utils.test'
 import { useCanvasBoardModel } from './use-canvas-board-model'
 
 const ignoreSelection = () => {}
@@ -24,6 +25,7 @@ afterEach(() => {
   cleanup()
   mock.restore()
 })
+beforeEach(mockCanvasObservationFromLegacyRPCs)
 
 it('arranges the displayed Edit graph as one guarded batch, not stored coordinates', async () => {
   spyOn(ImageService, 'LoadCanvas').mockResolvedValue(data as never)

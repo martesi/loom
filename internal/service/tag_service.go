@@ -10,7 +10,9 @@ type TagInfo struct {
 }
 
 func (s *TagService) ListTags(repoPath string) ([]TagInfo, error) {
-	repo, err := store.Bootstrap(repoPath)
+	unlock := store.LockRepoOperations(repoPath)
+	defer unlock()
+	repo, err := store.OpenExistingReadOnly(repoPath)
 	if err != nil {
 		return nil, err
 	}
@@ -28,7 +30,9 @@ func (s *TagService) ListTags(repoPath string) ([]TagInfo, error) {
 }
 
 func (s *TagService) TagsForImage(repoPath string, imageID int64) ([]TagInfo, error) {
-	repo, err := store.Bootstrap(repoPath)
+	unlock := store.LockRepoOperations(repoPath)
+	defer unlock()
+	repo, err := store.OpenExistingReadOnly(repoPath)
 	if err != nil {
 		return nil, err
 	}

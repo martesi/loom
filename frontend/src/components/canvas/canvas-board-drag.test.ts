@@ -5,7 +5,10 @@ import type { Node } from '@xyflow/react'
 import { useState } from 'react'
 import { ImageService } from '../../../bindings/loom/internal/service'
 import { createCanvasBoardOwner } from './canvas-board-owner'
-import { refreshBoard, reserveCanvasRead } from './canvas-operation-test-utils'
+import {
+  refreshBoard,
+  reserveCanvasRead,
+} from './canvas-operation-test-utils.test'
 import { useCanvasBoardDrag } from './use-canvas-board-drag'
 
 const first = { imageId: 1, x: 10, y: 20, w: 150, h: 110 }

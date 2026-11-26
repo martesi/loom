@@ -4,7 +4,11 @@ import {
   ImageService,
 } from '../../../bindings/loom/internal/service'
 import { createCanvasBoardOwner } from './canvas-board-owner'
-import { refreshBoard, reserveCanvasRead } from './canvas-operation-test-utils'
+import {
+  mockCanvasObservationFromLegacyRPCs,
+  refreshBoard,
+  reserveCanvasRead,
+} from './canvas-operation-test-utils.test'
 
 const before: GeometryUpdate = { imageId: 1, x: 10, y: 20, w: 150, h: 110 }
 const after: GeometryUpdate = { ...before, x: 40, w: 180 }
@@ -20,6 +24,7 @@ function setup(coordinateRepository = false) {
     relationships: [],
     images: [{ id: 1, width: 640, height: 480, geometry: before }],
   } as never)
+  mockCanvasObservationFromLegacyRPCs()
   const write = spyOn(
     ImageService,
     'SetGeometryFromDisplayAtRevision'

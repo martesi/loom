@@ -1,4 +1,12 @@
-import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test'
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  mock,
+  spyOn,
+} from 'bun:test'
 import { act, cleanup, renderHook } from '@testing-library/react'
 import { createElement, StrictMode, useSyncExternalStore } from 'react'
 import {
@@ -10,7 +18,10 @@ import {
   createCanvasBoardOwner,
   useCanvasBoardOwner,
 } from './canvas-board-owner'
-import { refreshBoard } from './canvas-operation-test-utils'
+import {
+  mockCanvasObservationFromLegacyRPCs,
+  refreshBoard,
+} from './canvas-operation-test-utils.test'
 
 const image = {
   id: 1,
@@ -75,6 +86,7 @@ afterEach(() => {
   cleanup()
   mock.restore()
 })
+beforeEach(mockCanvasObservationFromLegacyRPCs)
 
 describe('board snapshot publication', () => {
   it('uses one later snapshot for membership, geometry and reversed topology', async () => {

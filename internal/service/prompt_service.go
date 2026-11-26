@@ -30,7 +30,9 @@ func toPromptInfo(p store.PromptWithUsage) PromptInfo {
 // ListPrompts returns the whole managed prompt library for the picker's
 // browse list.
 func (s *PromptService) ListPrompts(repoPath string) ([]PromptInfo, error) {
-	repo, err := store.Bootstrap(repoPath)
+	unlock := store.LockRepoOperations(repoPath)
+	defer unlock()
+	repo, err := store.OpenExistingReadOnly(repoPath)
 	if err != nil {
 		return nil, err
 	}

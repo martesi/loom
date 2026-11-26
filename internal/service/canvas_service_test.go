@@ -111,6 +111,13 @@ func TestSetDropIsRejected(t *testing.T) {
 }
 func TestViewportAndImportFailure(t *testing.T) {
 	path := t.TempDir()
+	repo, err := store.Bootstrap(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
 	s := &ImageService{}
 	if v, err := s.GetViewport(path); err != nil || v != nil {
 		t.Fatalf("initial viewport: %+v %v", v, err)

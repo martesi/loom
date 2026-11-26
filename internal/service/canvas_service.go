@@ -14,7 +14,9 @@ type Viewport struct {
 }
 
 func (s *ImageService) GetViewport(repoPath string) (*Viewport, error) {
-	r, err := store.Bootstrap(repoPath)
+	unlock := store.LockRepoOperations(repoPath)
+	defer unlock()
+	r, err := store.OpenExistingReadOnly(repoPath)
 	if err != nil {
 		return nil, err
 	}
@@ -33,10 +35,11 @@ func (s *ImageService) SetViewport(repoPath string, v Viewport) error {
 	if math.IsNaN(v.X) || math.IsInf(v.X, 0) || math.IsNaN(v.Y) || math.IsInf(v.Y, 0) || math.IsNaN(v.Zoom) || v.Zoom <= 0 || math.IsInf(v.Zoom, 0) {
 		return fmt.Errorf("invalid viewport")
 	}
-	r, err := store.Bootstrap(repoPath)
+	r, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return err
 	}
+	defer unlock()
 	defer r.Close()
 	raw, err := json.Marshal(v)
 	if err != nil {
@@ -100,10 +103,11 @@ func (s *ImageService) UnplaceImages(repoPath string, ids []int64) error {
 	return tx.Commit()
 }
 func (s *GroupService) UpdateMetadata(repoPath string, id int64, name, kind string) error {
-	r, err := store.Bootstrap(repoPath)
+	r, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return err
 	}
+	defer unlock()
 	defer r.Close()
 	_, err = r.DB.Exec("UPDATE groups SET name = ?, kind = ? WHERE id = ?", name, kind, id)
 	return err
@@ -111,7 +115,9 @@ func (s *GroupService) UpdateMetadata(repoPath string, id int64, name, kind stri
 
 // RelationshipsForImage includes unplaced endpoints for Inspector navigation.
 func (s *ImageService) RelationshipsForImage(repoPath string, imageID int64) ([]RelationshipInfo, error) {
-	r, err := store.Bootstrap(repoPath)
+	unlock := store.LockRepoOperations(repoPath)
+	defer unlock()
+	r, err := store.OpenExistingReadOnly(repoPath)
 	if err != nil {
 		return nil, err
 	}

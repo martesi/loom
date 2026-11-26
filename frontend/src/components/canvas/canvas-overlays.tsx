@@ -7,12 +7,18 @@ import type {
   ImageInfo,
 } from '../../../bindings/loom/internal/service'
 import type { CanvasAction } from '../../lib/action-catalog'
-import { renditionGenerationUrl } from '../../lib/preview-tier'
+import {
+  renditionCacheOnlyUrl,
+  renditionGenerationUrl,
+} from '../../lib/preview-tier'
 import { CompressionDialog } from '../compression-dialog'
 import { SettingsDialog } from '../settings-dialog'
 import { Button } from '../ui/button'
 import type { CanvasBoardOwner } from './canvas-board-owner'
-import { unwrapCanvasOutcome } from './canvas-operation'
+import {
+  isCanvasOperationUncertainError,
+  unwrapCanvasOutcome,
+} from './canvas-operation'
 import { canvasEffects } from './canvas-operation-effects'
 import type { PaletteAsset } from './command-palette'
 import { CommandPalette } from './command-palette'
@@ -63,6 +69,7 @@ interface Props {
   setPurgeIds: Dispatch<SetStateAction<number[] | null>>
   setTrashIds: Dispatch<SetStateAction<number[] | null>>
   setLifecyclePending: Dispatch<SetStateAction<boolean>>
+  cancelLifecycleIntent: () => void
   confirmPurge: () => Promise<void>
   finishTrash: () => Promise<void>
   report: (error: unknown) => void
@@ -110,10 +117,14 @@ export function CanvasOverlays({
   setPurgeIds,
   setTrashIds,
   setLifecyclePending,
+  cancelLifecycleIntent,
   confirmPurge,
   finishTrash,
   report,
 }: Props) {
+  const cacheOnlyRenditions = isCanvasOperationUncertainError(
+    owner.getRepositoryIssue()
+  )
   return (
     <>
       <CommandPalette
@@ -169,9 +180,9 @@ export function CanvasOverlays({
         <LightboxViewer
           images={previewImages.map((image) => ({
             ...image,
-            thumbUrl: renditionGenerationUrl(
-              image.thumbUrl,
-              renditionGeneration
+            thumbUrl: renditionCacheOnlyUrl(
+              renditionGenerationUrl(image.thumbUrl, renditionGeneration),
+              cacheOnlyRenditions
             ),
           }))}
           index={previewIndex}
@@ -193,18 +204,18 @@ export function CanvasOverlays({
           sourcesFor={(id) =>
             relatedImages(id, 'sources').map((image) => ({
               ...image,
-              thumbUrl: renditionGenerationUrl(
-                image.thumbUrl,
-                renditionGeneration
+              thumbUrl: renditionCacheOnlyUrl(
+                renditionGenerationUrl(image.thumbUrl, renditionGeneration),
+                cacheOnlyRenditions
               ),
             }))
           }
           childrenFor={(id) =>
             relatedImages(id, 'children').map((image) => ({
               ...image,
-              thumbUrl: renditionGenerationUrl(
-                image.thumbUrl,
-                renditionGeneration
+              thumbUrl: renditionCacheOnlyUrl(
+                renditionGenerationUrl(image.thumbUrl, renditionGeneration),
+                cacheOnlyRenditions
               ),
             }))
           }
@@ -225,6 +236,7 @@ export function CanvasOverlays({
         open={purgeIds !== null || trashIds !== null}
         onOpenChange={(open) => {
           if (!open) {
+            cancelLifecycleIntent()
             setPurgeIds(null)
             setTrashIds(null)
             if (!lifecyclePending) pendingRecentAction.current = null

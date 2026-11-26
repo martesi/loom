@@ -7,7 +7,10 @@ import {
 import type { Selection } from '../../lib/selection'
 import { createCanvasBoardOwner } from './canvas-board-owner'
 import { canvasEffects } from './canvas-operation-effects'
-import { refreshBoard, reserveCanvasRead } from './canvas-operation-test-utils'
+import {
+  refreshBoard,
+  reserveCanvasRead,
+} from './canvas-operation-test-utils.test'
 import { useCanvasAssetOperations } from './use-canvas-asset-operations'
 
 afterEach(() => {
@@ -587,6 +590,231 @@ it('does not unlink or open purge from a Canvas selection in View', async () => 
   await result.current.remove(true)
   expect(unlink).not.toHaveBeenCalled()
   expect(setPurgeIds).not.toHaveBeenCalled()
+})
+
+it('does not clear a newer A-to-B-to-A selection when unlink settles', async () => {
+  const owner = createCanvasBoardOwner('/repo-unlink-intent')
+  owner.setMode('edit')
+  spyOn(ImageService, 'LoadCanvas').mockResolvedValue({
+    images: [{ id: 1 }],
+    relationships: [],
+    groups: [],
+  } as never)
+  spyOn(ImageService, 'GetLayoutSnapshot').mockResolvedValue({
+    revision: '1',
+    images: [],
+    relationships: [],
+  } as never)
+  await refreshBoard(owner)
+  let release!: () => void
+  let started!: () => void
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const signaled = new Promise<void>((resolve) => {
+    started = resolve
+  })
+  const unlink = spyOn(ImageService, 'UnlinkSources').mockImplementation(
+    async () => {
+      started()
+      await waiting
+      return undefined as never
+    }
+  )
+  const selection: Selection = {
+    surface: 'canvas',
+    ids: [],
+    edges: [{ id: 7, source: 1, target: 2 } as never],
+    group: null,
+  }
+  const setSelection = mock()
+  const setLifecyclePending = mock()
+  const props = {
+    owner,
+    repoPath: '/repo-unlink-intent',
+    flow: {} as never,
+    selection,
+    selectedIds: () => [],
+    setSelection,
+    setExpanded: mock(),
+    openAssets: mock(),
+    setReveal: mock(),
+    center: () => ({ x: 0, y: 0 }),
+    purgeIds: null,
+    trashIds: null,
+    setPurgeIds: mock(),
+    setTrashIds: mock(),
+    lifecyclePendingRef: { current: false },
+    setLifecyclePending,
+    pendingRecentAction: { current: null },
+    setRecentActionIds: mock(),
+    setError: mock(),
+  } as unknown as Parameters<typeof useCanvasAssetOperations>[0]
+  const { result, rerender } = renderHook(() => useCanvasAssetOperations(props))
+  let pending!: Promise<void>
+  act(() => {
+    pending = result.current.remove(false)
+  })
+  await signaled
+  owner.advanceIntent()
+  owner.advanceIntent()
+  rerender()
+  release()
+  await act(async () => pending)
+  expect(unlink).toHaveBeenCalledTimes(1)
+  expect(setSelection).not.toHaveBeenCalled()
+  expect(setLifecyclePending).not.toHaveBeenCalled()
+})
+
+it('waits for trashed writes but does not clear selection after dialog dismissal', async () => {
+  const owner = createCanvasBoardOwner('/repo-trash-intent')
+  owner.setMode('edit')
+  spyOn(ImageService, 'LoadCanvas').mockResolvedValue({
+    images: [{ id: 1 }],
+    relationships: [],
+    groups: [],
+  } as never)
+  spyOn(ImageService, 'GetLayoutSnapshot').mockResolvedValue({
+    revision: '1',
+    images: [],
+    relationships: [],
+  } as never)
+  await refreshBoard(owner)
+  let release!: () => void
+  let started!: () => void
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const signaled = new Promise<void>((resolve) => {
+    started = resolve
+  })
+  const trash = spyOn(ImageService, 'TrashImage').mockImplementation(
+    async () => {
+      started()
+      await waiting
+      return undefined as never
+    }
+  )
+  const setSelection = mock()
+  const setTrashIds = mock()
+  const pendingRef = { current: false }
+  const props = {
+    owner,
+    repoPath: '/repo-trash-intent',
+    flow: {} as never,
+    selection: { surface: 'assets', ids: [1], edges: [], group: null },
+    selectedIds: () => [1],
+    setSelection,
+    setExpanded: mock(),
+    openAssets: mock(),
+    setReveal: mock(),
+    center: () => ({ x: 0, y: 0 }),
+    purgeIds: null,
+    trashIds: [1],
+    setPurgeIds: mock(),
+    setTrashIds,
+    lifecyclePendingRef: pendingRef,
+    setLifecyclePending: mock(),
+    pendingRecentAction: { current: null },
+    setRecentActionIds: mock(),
+    setError: mock(),
+  } as unknown as Parameters<typeof useCanvasAssetOperations>[0]
+  const { result } = renderHook(() => useCanvasAssetOperations(props))
+  act(() => result.current.confirmTrash([1]))
+  let pending!: Promise<void>
+  act(() => {
+    pending = result.current.finishTrash()
+  })
+  await signaled
+  owner.advanceIntent()
+  owner.advanceIntent()
+  act(() => {
+    result.current.cancelLifecycleIntent()
+    setTrashIds(null)
+  })
+  release()
+  await act(async () => pending)
+  expect(trash).toHaveBeenCalledTimes(1)
+  expect(setSelection).not.toHaveBeenCalled()
+  expect(pendingRef.current).toBe(false)
+  expect(setTrashIds).toHaveBeenNthCalledWith(1, [1])
+  expect(setTrashIds).toHaveBeenNthCalledWith(2, null)
+})
+
+it('does not clear a changed selection when an already-confirmed purge settles', async () => {
+  const owner = createCanvasBoardOwner('/repo-purge-intent')
+  owner.setMode('legacy')
+  spyOn(ImageService, 'LoadCanvas').mockResolvedValue({
+    images: [{ id: 1 }],
+    relationships: [],
+    groups: [],
+  } as never)
+  spyOn(ImageService, 'GetLayoutSnapshot').mockResolvedValue({
+    revision: '1',
+    images: [],
+    relationships: [],
+  } as never)
+  await refreshBoard(owner)
+  let release!: () => void
+  let started!: () => void
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const signaled = new Promise<void>((resolve) => {
+    started = resolve
+  })
+  const purge = spyOn(ImageService, 'PurgeImages').mockImplementation(
+    async () => {
+      started()
+      await waiting
+      return undefined as never
+    }
+  )
+  const selection: Selection = {
+    surface: 'assets',
+    ids: [1],
+    edges: [],
+    group: null,
+  }
+  const setSelection = mock()
+  const setPurgeIds = mock()
+  const props = {
+    owner,
+    repoPath: '/repo-purge-intent',
+    flow: {} as never,
+    selection,
+    selectedIds: () => [1],
+    setSelection,
+    setExpanded: mock(),
+    openAssets: mock(),
+    setReveal: mock(),
+    center: () => ({ x: 0, y: 0 }),
+    purgeIds: null as number[] | null,
+    trashIds: null,
+    setPurgeIds,
+    setTrashIds: mock(),
+    lifecyclePendingRef: { current: false },
+    setLifecyclePending: mock(),
+    pendingRecentAction: { current: null },
+    setRecentActionIds: mock(),
+    setError: mock(),
+  } as unknown as Parameters<typeof useCanvasAssetOperations>[0]
+  const { result, rerender } = renderHook(() => useCanvasAssetOperations(props))
+  await act(async () => result.current.remove(true))
+  props.purgeIds = [1]
+  rerender()
+  let pending!: Promise<void>
+  act(() => {
+    pending = result.current.confirmPurge()
+  })
+  await signaled
+  owner.advanceIntent()
+  owner.setMode('edit')
+  release()
+  await act(async () => pending)
+  expect(purge).toHaveBeenCalledTimes(1)
+  expect(setSelection).not.toHaveBeenCalled()
+  expect(setPurgeIds).toHaveBeenLastCalledWith(null)
 })
 
 it('does not confirm a legacy Canvas purge after entering View', async () => {

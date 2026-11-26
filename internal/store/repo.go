@@ -5,6 +5,7 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -35,6 +36,31 @@ func Bootstrap(rootPath string) (*Repo, error) {
 		return nil, err
 	}
 
+	return &Repo{Path: rootPath, DB: conn}, nil
+}
+
+// OpenExistingReadOnly opens a repository that already has a migrated
+// database. It never creates directories or initializes SQLite state.
+func OpenExistingReadOnly(rootPath string) (*Repo, error) {
+	rootPath = canonicalRepoPath(rootPath)
+	dbPath := filepath.Join(rootPath, loomDirName, "db.sqlite")
+	info, err := os.Stat(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("repository database is unavailable: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("repository database is not a regular file")
+	}
+	_, walErr := os.Stat(dbPath + "-wal")
+	_, shmErr := os.Stat(dbPath + "-shm")
+	immutable := os.IsNotExist(walErr) && os.IsNotExist(shmErr)
+	if !immutable && (walErr != nil || shmErr != nil) {
+		return nil, fmt.Errorf("repository database has incomplete WAL state; read-only observation is unavailable")
+	}
+	conn, err := db.OpenExistingReadOnly(dbPath, immutable)
+	if err != nil {
+		return nil, err
+	}
 	return &Repo{Path: rootPath, DB: conn}, nil
 }
 

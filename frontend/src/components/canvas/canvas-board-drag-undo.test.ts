@@ -7,7 +7,7 @@ import {
   UndoService,
 } from '../../../bindings/loom/internal/service'
 import { createCanvasBoardOwner } from './canvas-board-owner'
-import { refreshBoard } from './canvas-operation-test-utils'
+import { refreshBoard } from './canvas-operation-test-utils.test'
 
 mock.module('@lingui/core/macro', () => ({
   t: (parts: TemplateStringsArray) => parts.join(''),

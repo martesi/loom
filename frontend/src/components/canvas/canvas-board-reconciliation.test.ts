@@ -7,7 +7,11 @@ import {
 import { createCanvasBoardOwner } from './canvas-board-owner'
 import { isCanvasRepositoryDirty } from './canvas-operation'
 import { canvasEffects } from './canvas-operation-effects'
-import { queueCanvasHistory, refreshBoard } from './canvas-operation-test-utils'
+import {
+  mockCanvasObservationFromLegacyRPCs,
+  queueCanvasHistory,
+  refreshBoard,
+} from './canvas-operation-test-utils.test'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -74,6 +78,7 @@ function mockBoard() {
   spyOn(ImageService, 'GetLayoutSnapshot').mockResolvedValue(
     snapshot('1') as never
   )
+  mockCanvasObservationFromLegacyRPCs()
 }
 
 afterEach(() => {

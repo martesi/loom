@@ -21,6 +21,7 @@ import {
   canvasRepositoryIssue,
   isCanvasOperationPending,
   isCanvasRepositoryDirty,
+  isCanvasRepositoryUncertain,
   submitCanvasOperation,
 } from './canvas-operation'
 import { canvasEffects } from './canvas-operation-effects'
@@ -138,16 +139,19 @@ export function createCanvasBoardOwner(
     const request = ++generation
     owner.cancelGesture()
     const isCurrent = () => active && request === generation
-    const metadata = await context.prepare(() =>
-      ImageService.LoadCanvas(repoPath)
-    )
+    const observation = coordinateRepository
+      ? await context.prepare(() => ImageService.ObserveCanvas(repoPath))
+      : await context.prepare(async () => {
+          const [canvas, snapshot] = await Promise.all([
+            ImageService.LoadCanvas(repoPath),
+            ImageService.GetLayoutSnapshot(repoPath),
+          ])
+          return { canvas, snapshot }
+        })
     if (!isCurrent()) return
-    if (!metadata) throw new Error('Canvas metadata is unavailable')
-    const snapshot = await context.prepare(() =>
-      ImageService.GetLayoutSnapshot(repoPath)
-    )
-    if (!isCurrent()) return
-    if (!snapshot) throw new Error('Canvas layout snapshot is unavailable')
+    if (!observation?.canvas || !observation.snapshot)
+      throw new Error('Canvas observation is unavailable')
+    const { canvas: metadata, snapshot } = observation
     const data = joinCanvasSnapshot(metadata, snapshot)
     // An intermediate publication may not have reached React before this one.
     // Keep its replay membership, but use this snapshot's authoritative rows.
@@ -190,7 +194,14 @@ export function createCanvasBoardOwner(
         operationIdentity,
         runtime,
         { kind: 'startup' },
-        (context) => context.reconcile()
+        (context) => {
+          if (!coordinateRepository) return context.reconcile()
+          if (isCanvasRepositoryUncertain(operationIdentity))
+            return context.reconcile()
+          return canvasEffects
+            .discoverCanvas(context, repoPath)
+            .then(() => context.reconcile())
+        }
       )
       startup = queued
       void queued.then(() => {

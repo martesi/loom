@@ -39,6 +39,11 @@ func lockRenditionRepositoryRead(_ string) func() {
 	return renditionRepositoryState.RUnlock
 }
 
+func lockRenditionRepositoryDrain() func() {
+	renditionRepositoryState.Lock()
+	return renditionRepositoryState.Unlock
+}
+
 func thumbURL(repoPath string, imageID int64, filePath string) string {
 	enc := base64.RawURLEncoding.EncodeToString([]byte(repoPath))
 	info, _ := os.Stat(filePath)
@@ -48,6 +53,18 @@ func thumbURL(repoPath string, imageID int64, filePath string) string {
 		size, modified = info.Size(), info.ModTime()
 	}
 	return thumbURLPrefix + enc + "/" + strconv.FormatInt(imageID, 10) + "?v=" + previewRevision(filePath, size, modified, persistedImageRevision(repoPath, imageID))
+}
+
+func thumbURLForImage(repoPath string, image store.Image) string {
+	enc := base64.RawURLEncoding.EncodeToString([]byte(repoPath))
+	info, _ := os.Stat(image.FilePath)
+	var size int64
+	var modified time.Time
+	if info != nil {
+		size, modified = info.Size(), info.ModTime()
+	}
+	revision := previewRevision(image.FilePath, size, modified, image.SourceRevision)
+	return thumbURLPrefix + enc + "/" + strconv.FormatInt(image.ID, 10) + "?v=" + revision
 }
 
 func fullURL(repoPath string, imageID int64) string {
@@ -71,7 +88,9 @@ func previewURL(repoPath string, imageID int64, filePath string) string {
 func persistedImageRevision(repoPath string, imageID int64) int64 {
 	key := repoPath + "\x00" + strconv.FormatInt(imageID, 10)
 	return cachedImageRevision(key, func() (int64, error) {
-		repo, err := store.Bootstrap(repoPath)
+		unlock := store.LockRepoOperations(repoPath)
+		defer unlock()
+		repo, err := store.OpenExistingReadOnly(repoPath)
 		if err != nil {
 			return 0, err
 		}
@@ -126,7 +145,15 @@ func previewURLForImage(repoPath string, image store.Image) string {
 	if store.IsVideoFile(image.FilePath) {
 		return ""
 	}
-	return previewURL(repoPath, image.ID, image.FilePath)
+	enc := base64.RawURLEncoding.EncodeToString([]byte(repoPath))
+	info, err := os.Stat(image.FilePath)
+	var size int64
+	var modified time.Time
+	if err == nil {
+		size, modified = info.Size(), info.ModTime()
+	}
+	revision := previewRevision(image.FilePath, size, modified, image.SourceRevision)
+	return previewURLPrefix + enc + "/" + strconv.FormatInt(image.ID, 10) + "?v=" + revision
 }
 
 // IsThumbRequest reports whether path should be routed to ServeThumb.
@@ -193,7 +220,10 @@ func ServeFull(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repo, err := store.Bootstrap(string(repoPathBytes))
+	repoPath := string(repoPathBytes)
+	unlock := store.LockRepoOperations(repoPath)
+	defer unlock()
+	repo, err := store.OpenExistingReadOnly(repoPath)
 	if err != nil {
 		http.Error(w, "repo unavailable", http.StatusInternalServerError)
 		return

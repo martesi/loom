@@ -8,6 +8,7 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"loom/internal/repoconfig"
+	"loom/internal/store"
 )
 
 type fakeFocusWindow struct{ calls int }
@@ -43,10 +44,17 @@ func TestOpenRecentExistingWindowFocusesAndReturnsIDPathOnly(t *testing.T) {
 	}
 }
 
-func TestOpenRecentAbsentWindowBootstrapsTouchesAndRegisters(t *testing.T) {
+func TestOpenRecentExistingRepoTouchesAndRegistersWithoutBootstrap(t *testing.T) {
 	isolateRepoConfig(t)
 	path := filepath.Join(t.TempDir(), "repo")
 	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := store.Bootstrap(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
 		t.Fatal(err)
 	}
 	registered := ""
@@ -70,6 +78,60 @@ func TestOpenRecentAbsentWindowBootstrapsTouchesAndRegisters(t *testing.T) {
 	}
 }
 
+func TestOpenRecentDoesNotCreateRepositoryOrMigrate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "not-initialized")
+	setRepoServiceAdapters(t, func(string) (focusableWindow, bool) { return nil, false }, nil, nil)
+	if _, err := (&RepoService{}).OpenRecent(path); err == nil {
+		t.Fatal("OpenRecent silently initialized a repository")
+	}
+	if _, err := os.Stat(filepath.Join(path, ".loom")); !os.IsNotExist(err) {
+		t.Fatalf("OpenRecent created repository state: %v", err)
+	}
+}
+
+func TestOpenFolderAtExplicitlyBootstrapsSelectedNewFolder(t *testing.T) {
+	isolateRepoConfig(t)
+	path := filepath.Join(t.TempDir(), "selected-folder")
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	registered := ""
+	setRepoServiceAdapters(t, func(string) (focusableWindow, bool) { return nil, false }, func(path string) { registered = path }, nil)
+
+	got, err := (&RepoService{}).OpenFolderAt(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.Path != path || got.Name != filepath.Base(path) {
+		t.Fatalf("OpenFolderAt() = %#v", got)
+	}
+	if registered != path || !store.IsRepo(path) {
+		t.Fatalf("selected path was not registered and bootstrapped: registered=%q isRepo=%v", registered, store.IsRepo(path))
+	}
+}
+
+func TestOpenFolderAtOpensExistingRepositoryWithoutRebootstrap(t *testing.T) {
+	isolateRepoConfig(t)
+	path := filepath.Join(t.TempDir(), "existing-folder")
+	repo, err := store.Bootstrap(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	registered := ""
+	setRepoServiceAdapters(t, func(string) (focusableWindow, bool) { return nil, false }, func(path string) { registered = path }, nil)
+
+	got, err := (&RepoService{}).OpenFolderAt(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.Path != path || got.Name != filepath.Base(path) || registered != path {
+		t.Fatalf("OpenFolderAt() = %#v registered=%q", got, registered)
+	}
+}
+
 func TestSwitchToExistingWindowFocuses(t *testing.T) {
 	window := &fakeFocusWindow{}
 	created := false
@@ -90,6 +152,13 @@ func TestSwitchToNewWindowRegistersOnlyWhenOpenRecentRuns(t *testing.T) {
 	isolateRepoConfig(t)
 	path := filepath.Join(t.TempDir(), "destination")
 	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := store.Bootstrap(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
 		t.Fatal(err)
 	}
 	registered := false
@@ -136,7 +205,11 @@ func TestListRecentReposMapsOpenClosedAndMissingEntries(t *testing.T) {
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := (&RepoService{}).OpenRecent(path); err != nil {
+		repo, err := store.Bootstrap(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.Close(); err != nil {
 			t.Fatal(err)
 		}
 	}

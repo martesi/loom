@@ -41,7 +41,11 @@ func TestLoadCanvasDoesNotEncodeThumbnails(t *testing.T) {
 	}
 
 	processor := &recordingMediaProcessor{}
-	canvas, err := (&ImageService{Media: processor}).LoadCanvas(repoPath)
+	service := &ImageService{Media: processor}
+	if err := service.DiscoverCanvas(repoPath); err != nil {
+		t.Fatal(err)
+	}
+	canvas, err := service.LoadCanvas(repoPath)
 	if err != nil {
 		t.Fatal(err)
 	}

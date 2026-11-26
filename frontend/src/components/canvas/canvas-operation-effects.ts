@@ -1,3 +1,4 @@
+import { Call } from '@wailsio/runtime'
 import {
   type GeometryUpdate,
   ImageService,
@@ -12,6 +13,13 @@ import type { CanvasOperationContext } from './canvas-operation'
 import { isCanvasOperationCancellation } from './canvas-operation'
 
 export const canvasEffects = {
+  discoverCanvas: (context: CanvasOperationContext, path: string) =>
+    context.effect(() => ImageService.DiscoverCanvas(path)),
+  discoverDirectory: (
+    context: CanvasOperationContext,
+    path: string,
+    folder: string
+  ) => context.effect(() => ImageService.DiscoverDirectory(path, folder)),
   addTag: (
     context: CanvasOperationContext,
     path: string,
@@ -197,7 +205,21 @@ export async function runCanvasEffectBatch(
     ({ id, cause }) =>
       `Asset ${id}: ${cause instanceof Error ? cause.message : String(cause)}`
   )
+  const unknown = failures.filter(
+    ({ cause }) => !(cause instanceof Call.RuntimeError)
+  )
+  const succeeded = results.filter(
+    (result) => result.status === 'fulfilled'
+  ).length
+  const notDispatched = results.filter(
+    (result) =>
+      result.status === 'rejected' &&
+      isCanvasOperationCancellation(result.reason)
+  ).length
+  const settlement = unknown.length
+    ? `${unknown.length} dispatched backend call(s) did not return; ${notDispatched} were not dispatched. Repository state is unknown and further writes are blocked. Do not retry.`
+    : `${failures.length} dispatched backend call(s) returned errors; ${notDispatched} were not dispatched. The methods settled, but they may have made partial changes. Other changes may have succeeded; the current state was refreshed.`
   throw new Error(
-    `${operation} may be incomplete: ${failures.length} of ${ids.length} assets failed. Other changes may have succeeded. Repository state is unknown and further writes are blocked because the backend cannot prove settlement. ${details.join('; ')}`
+    `${operation} may be incomplete: ${succeeded} of ${ids.length} assets succeeded; ${failures.length} failed. ${settlement} ${details.join('; ')}`
   )
 }
