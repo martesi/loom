@@ -2,8 +2,10 @@ import { t } from '@lingui/core/macro'
 import {
   AlignCenterHorizontal,
   AlignCenterVertical,
+  ArrowLeftRight,
   Eye,
   Focus,
+  Link2,
   MapPin,
   Maximize2,
   PanelRight,
@@ -24,6 +26,8 @@ export interface CanvasDockProps {
   canAutoArrange: boolean
   canArrangeSelection?: boolean
   canMutateGeometry?: boolean
+  canConnect?: boolean
+  onConnect?: (tool: 'derivative' | 'source' | 'reverse') => void
   shortcuts: {
     fitAll: string
     fitSelection: string
@@ -84,6 +88,8 @@ export const CanvasDock = memo(function CanvasDock({
   canAutoArrange,
   canArrangeSelection = true,
   canMutateGeometry = true,
+  canConnect = false,
+  onConnect,
   shortcuts,
   onAction,
 }: CanvasDockProps) {
@@ -127,6 +133,24 @@ export const CanvasDock = memo(function CanvasDock({
       )}
       {mode === 'single' && (
         <>
+          {canConnect && (
+            <>
+              <DockButton
+                testId="dock-connect-derivative"
+                label={t`Connect derivative`}
+                shortcut="D"
+                icon={<Link2 className="h-3.5 w-3.5" />}
+                onClick={() => onConnect?.('derivative')}
+              />
+              <DockButton
+                testId="dock-connect-source"
+                label={t`Connect source`}
+                shortcut="S"
+                icon={<Link2 className="h-3.5 w-3.5" />}
+                onClick={() => onConnect?.('source')}
+              />
+            </>
+          )}
           <DockButton
             testId="dock-preview"
             label={t`Preview`}
@@ -155,6 +179,15 @@ export const CanvasDock = memo(function CanvasDock({
             onClick={() => onAction('fit-selection')}
           />
         </>
+      )}
+      {canConnect && (
+        <DockButton
+          testId="dock-reverse-relationship"
+          label={t`Reverse relationship`}
+          shortcut="R"
+          icon={<ArrowLeftRight className="h-3.5 w-3.5" />}
+          onClick={() => onConnect?.('reverse')}
+        />
       )}
       {mode === 'multiple' && (
         <>
@@ -202,6 +235,8 @@ function areDockPropsEqual(previous: CanvasDockProps, next: CanvasDockProps) {
     previous.canAutoArrange === next.canAutoArrange &&
     previous.canArrangeSelection === next.canArrangeSelection &&
     previous.canMutateGeometry === next.canMutateGeometry &&
+    previous.canConnect === next.canConnect &&
+    previous.onConnect === next.onConnect &&
     previous.onAction === next.onAction &&
     Object.keys(previous.shortcuts).every(
       (key) =>

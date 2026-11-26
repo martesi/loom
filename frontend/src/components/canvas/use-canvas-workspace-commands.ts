@@ -39,6 +39,7 @@ interface Props {
     alignHorizontal: () => Promise<void>
     alignVertical: () => Promise<void>
     toggleFocusMode: () => void
+    cameraIntent?: { version(): number; reserve(): number }
   }
   selectionActions: {
     selectAssets: (ids: number[]) => void

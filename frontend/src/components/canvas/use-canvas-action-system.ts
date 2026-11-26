@@ -166,6 +166,16 @@ export function useCanvasActionSystem({
   function runPaletteAction(action: CanvasAction) {
     const currentAction = actionById.get(action.id)
     if (!currentAction?.enabled) return
+    const changesCamera = [
+      'fit-all',
+      'fit-selection',
+      'reset-zoom',
+      'zoom-in',
+      'zoom-out',
+      'locate-selection',
+    ].includes(currentAction.id)
+    const camera = changesCamera ? context.cameraIntent : undefined
+    const cameraRevision = camera?.reserve()
     // The route owns focus after palette commands; do not race dialog restoration.
     setPaletteOpen(false)
     if (
@@ -182,6 +192,12 @@ export function useCanvasActionSystem({
       currentAction.id === 'purge-selection'
     if (isLifecycleAction) pendingRecentAction.current = currentAction.id
     requestAnimationFrame(() => {
+      if (
+        camera &&
+        (camera.version() !== cameraRevision ||
+          context.owner.isActive?.() === false)
+      )
+        return
       void executeAction(currentAction).then(() => {
         if (!isLifecycleAction)
           setRecentActionIds((ids) =>
@@ -228,9 +244,17 @@ export function useCanvasActionSystem({
 
   function choosePaletteAsset(asset: PaletteAsset) {
     const revision = ++paletteIntent.current.revision
+    const camera = context.cameraIntent
+    const cameraRevision = camera?.reserve()
     setPaletteOpen(false)
     requestAnimationFrame(() => {
       if (paletteIntent.current.revision !== revision) return
+      if (
+        camera &&
+        (camera.version() !== cameraRevision ||
+          context.owner.isActive?.() === false)
+      )
+        return
       void context.go(asset.id).catch(report)
     })
   }

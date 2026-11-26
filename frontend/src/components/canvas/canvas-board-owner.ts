@@ -68,7 +68,8 @@ export interface CanvasBoardOwner extends CanvasBoardExecutor {
     board: AcceptedCanvasBoard,
     before: GeometryUpdate[],
     after: GeometryUpdate[],
-    accept: () => void
+    accept: () => void,
+    modeTransition?: boolean
   ): Promise<void>
   cancelGesture(): void
   isGestureActive(gesture: DragGesture): boolean
@@ -340,8 +341,14 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
         await owner.refresh()
       })
     },
-    async commitDisplayedLayout(board, before, after, accept) {
-      if (mode !== 'edit' || !active) return
+    async commitDisplayedLayout(
+      board,
+      before,
+      after,
+      accept,
+      modeTransition = false
+    ) {
+      if ((!modeTransition && mode !== 'edit') || !active) return
       if (board !== accepted || acceptedGeneration !== generation)
         throw new Error('Canvas changed during layout. Try again.')
       const batch = buildDisplayGeometry(
@@ -367,7 +374,7 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
           )
         throw error
       })
-      if (active && mode === 'edit') accept()
+      if (active && (modeTransition || mode === 'edit')) accept()
       if (active) await owner.refresh()
     },
     cancelGesture() {

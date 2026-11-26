@@ -20,11 +20,13 @@ import { createElement, useRef, useState, useSyncExternalStore } from 'react'
 import {
   type CanvasData,
   ImageService,
+  SettingsService,
   UndoService,
 } from '../../../bindings/loom/internal/service'
 import { emptySelection } from '../../lib/selection'
 import { Toaster } from '../ui/toast'
 import { useCanvasBoardOwner } from './canvas-board-owner'
+import type { createCanvasCamera } from './canvas-camera'
 import { useCanvasBoardModel } from './use-canvas-board-model'
 import { useCanvasRepository } from './use-canvas-repository'
 
@@ -82,8 +84,14 @@ function deferred<T>() {
 const flow = {
   setViewport: mock(),
   fitView: mock(),
+  getNodes: () => [],
 } as unknown as ReactFlowInstance
 const noOp = () => {}
+const camera = {
+  version: () => 0,
+  restore: noOp,
+  move: async () => false,
+} as unknown as ReturnType<typeof createCanvasCamera>
 const wrapper = ({ children }: { children: React.ReactNode }) =>
   createElement(Toast.Provider, null, children, createElement(Toaster))
 
@@ -95,10 +103,13 @@ function useBoard(repoPath: string) {
   const [error, setError] = useState('')
   const [nodes, setNodes] = useState<Node[]>([])
   const [edges, setEdges] = useState<Edge[]>([])
+  const host = useRef<HTMLDivElement | null>(null)
   const repository = useCanvasRepository({
     repoPath,
     executor: owner,
     flow,
+    camera,
+    host,
     updateZoomCompensation: noOp,
     selection: emptySelection,
     refresh,
@@ -109,7 +120,6 @@ function useBoard(repoPath: string) {
   })
   const callbacks = useRef({ report: repository.report })
   callbacks.current = { report: repository.report }
-  const host = useRef<HTMLDivElement | null>(null)
   useCanvasBoardModel({
     data: boardData,
     owner,
@@ -129,6 +139,7 @@ function useBoard(repoPath: string) {
 }
 
 beforeEach(() => {
+  spyOn(SettingsService, 'Get').mockResolvedValue('' as never)
   spyOn(ImageService, 'GetLayoutSnapshot').mockImplementation(
     () =>
       Promise.resolve({

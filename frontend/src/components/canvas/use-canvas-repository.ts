@@ -1,13 +1,20 @@
-import type { ReactFlowInstance } from '@xyflow/react'
+import {
+  getNodesBounds,
+  getViewportForBounds,
+  type ReactFlowInstance,
+} from '@xyflow/react'
 import type { Dispatch, SetStateAction } from 'react'
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   type CanvasData,
   type ImageInfo,
   ImageService,
+  SettingsService,
 } from '../../../bindings/loom/internal/service'
 import type { Selection } from '../../lib/selection'
 import type { CanvasBoardOwner } from './canvas-board-owner'
+import type { createCanvasCamera } from './canvas-camera'
+import { loadCanvasViewport } from './canvas-viewport-store'
 
 interface AssetSelectionRecords {
   key: string
@@ -18,6 +25,8 @@ interface Props {
   repoPath: string
   executor: CanvasBoardOwner
   flow: ReactFlowInstance
+  camera: ReturnType<typeof createCanvasCamera>
+  host: { current: HTMLDivElement | null }
   updateZoomCompensation: (zoom: number) => void
   selection: Selection
   refresh: number
@@ -31,6 +40,8 @@ export function useCanvasRepository({
   repoPath,
   executor,
   flow,
+  camera,
+  host,
   updateZoomCompensation,
   selection,
   refresh,
@@ -39,6 +50,7 @@ export function useCanvasRepository({
   setReady,
   setAssetSelectionRecords,
 }: Props) {
+  const [initialMode, setInitialMode] = useState<'view' | 'edit' | null>(null)
   const report = useCallback(
     (error: unknown) => {
       console.error('canvas operation failed', error)
@@ -94,14 +106,21 @@ export function useCanvasRepository({
   )
   useEffect(() => {
     let cancelled = false
+    const cameraVersion = camera.version()
     let fitTimer: ReturnType<typeof setTimeout> | undefined
-    void Promise.all([executor.refresh(), ImageService.GetViewport(repoPath)])
-      .then(([result, viewport]) => {
+    setInitialMode(null)
+    void Promise.all([
+      executor.refresh(),
+      loadCanvasViewport(repoPath),
+      SettingsService.Get(repoPath, 'canvas_mode'),
+    ])
+      .then(([result, viewport, savedMode]) => {
         if (cancelled) return
-        if (viewport) {
+        if (viewport && camera.version() === cameraVersion) {
           updateZoomCompensation(viewport.zoom)
-          void flow.setViewport(viewport)
+          camera.restore(viewport)
         }
+        setInitialMode(savedMode === 'edit' ? 'edit' : 'view')
         setReady(true)
         if (
           !viewport &&
@@ -109,10 +128,21 @@ export function useCanvasRepository({
             (image) => image.placed && !image.trashed
           )
         )
-          fitTimer = setTimeout(
-            () => void flow.fitView({ padding: 0.2, maxZoom: 1 }),
-            100
-          )
+          fitTimer = setTimeout(() => {
+            if (camera.version() !== cameraVersion) return
+            const nodes = flow.getNodes()
+            const element = host.current
+            if (!nodes.length || !element) return
+            const target = getViewportForBounds(
+              getNodesBounds(nodes),
+              element.clientWidth,
+              element.clientHeight,
+              0.05,
+              1,
+              0.2
+            )
+            void camera.move(async () => target)
+          }, 100)
       })
       .catch((error) => {
         if (!cancelled) report(error)
@@ -121,6 +151,15 @@ export function useCanvasRepository({
       cancelled = true
       if (fitTimer) clearTimeout(fitTimer)
     }
-  }, [executor, repoPath, flow, updateZoomCompensation, setReady, report])
-  return { report, reload, reloadForData, run, assetSelectionKey }
+  }, [
+    executor,
+    repoPath,
+    flow,
+    camera,
+    host,
+    updateZoomCompensation,
+    setReady,
+    report,
+  ])
+  return { report, reload, reloadForData, run, assetSelectionKey, initialMode }
 }

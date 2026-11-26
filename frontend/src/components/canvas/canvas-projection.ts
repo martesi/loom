@@ -5,6 +5,7 @@ import {
   layoutChronologicalGraph,
 } from '../../lib/chronological-layout'
 import type { LayoutBox, LayoutNode } from '../../lib/layout'
+import { computeSubgraphLayout, placeCluster } from '../../lib/layout'
 import { clearObstacles } from '../../lib/staging-obstacles'
 
 export interface CanvasProjectionInput {
@@ -86,13 +87,21 @@ export function reconcileCanvasProjection(
   let editNodes = state.editNodes
   if (state.mode === 'edit') {
     const previous = new Map(state.editNodes.map((node) => [node.id, node]))
+    const persisted = geometryMap(input.geometry)
     const existing = input.nodes.flatMap((node) => {
       const old = previous.get(node.id)
+      const before = state.expectedGeometry.get(Number(node.id))
+      const after = persisted.get(Number(node.id))
+      const changed =
+        after !== undefined &&
+        after.x !== null &&
+        after.y !== null &&
+        (before?.x !== after.x || before?.y !== after.y)
       return old
         ? [
             {
               ...node,
-              position: old.position,
+              position: changed ? node.position : old.position,
               width: old.width,
               height: old.height,
               measured: old.measured,
@@ -101,13 +110,21 @@ export function reconcileCanvasProjection(
         : []
     })
     const added = input.nodes.filter((node) => !previous.has(node.id))
+    const explicitlyPositioned = added.filter((node) => {
+      const geometry = persisted.get(Number(node.id))
+      return geometry && geometry.x !== null && geometry.y !== null
+    })
+    const positionedIds = new Set(explicitlyPositioned.map((node) => node.id))
     const staged = stageNodes(
-      added,
-      existing.map(nodeBox),
+      added.filter((node) => !positionedIds.has(node.id)),
+      [...existing, ...explicitlyPositioned].map(nodeBox),
       center(state.editViewport, state.viewportSize)
     )
     const byId = new Map(
-      [...existing, ...staged].map((node) => [node.id, node])
+      [...existing, ...explicitlyPositioned, ...staged].map((node) => [
+        node.id,
+        node,
+      ])
     )
     editNodes = input.nodes.map((node) => {
       const result = byId.get(node.id)
@@ -193,6 +210,42 @@ export function arrangeEditProjection(
     return { ...node, position }
   })
   return { ...state, editNodes }
+}
+
+export function arrangeEditSelection(
+  state: CanvasProjectionState,
+  selectedIds: readonly string[]
+): CanvasProjectionState {
+  if (state.mode !== 'edit') throw new Error('arrange requires Edit')
+  const selected = new Set(selectedIds)
+  const nodes = state.editNodes.filter((node) => selected.has(node.id))
+  if (nodes.length < 2) return state
+  const layout = computeSubgraphLayout(
+    nodes.map(nodeSize),
+    state.edges.filter(
+      (edge) => selected.has(edge.source) && selected.has(edge.target)
+    )
+  )
+  const obstacles = state.editNodes
+    .filter((node) => !selected.has(node.id))
+    .map(nodeBox)
+  const minX = Math.min(...nodes.map((node) => node.position.x))
+  const minY = Math.min(...nodes.map((node) => node.position.y))
+  const placed = obstacles.length
+    ? placeCluster(layout, obstacles)
+    : new Map(
+        [...layout].map(([id, point]) => [
+          id,
+          { x: point.x + minX, y: point.y + minY },
+        ])
+      )
+  return {
+    ...state,
+    editNodes: state.editNodes.map((node) => {
+      const position = placed.get(node.id)
+      return position ? { ...node, position } : node
+    }),
+  }
 }
 
 export function enterView(state: CanvasProjectionState): CanvasProjectionState {

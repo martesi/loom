@@ -1,11 +1,5 @@
 import { afterEach, expect, it, mock, spyOn } from 'bun:test'
-import {
-  act,
-  cleanup,
-  fireEvent,
-  render,
-  renderHook,
-} from '@testing-library/react'
+import { act, cleanup, render, renderHook } from '@testing-library/react'
 import { createElement, useRef, useState } from 'react'
 import { ImageService } from '../../../bindings/loom/internal/service'
 import { emptySelection } from '../../lib/selection'
@@ -284,6 +278,69 @@ for (const interruption of [
   })
 }
 
+it('does not run a delayed palette camera command after a newer camera intent', () => {
+  let frame: FrameRequestCallback = () => {}
+  spyOn(globalThis, 'requestAnimationFrame').mockImplementation((callback) => {
+    frame = callback
+    return 1
+  })
+  let revision = 0
+  const cameraIntent = { reserve: () => ++revision, version: () => revision }
+  const fitAll = mock(async () => {})
+  const go = mock(async () => {})
+  const owner = createCanvasBoardOwner('/repo')
+  const context = {
+    owner,
+    repoPath: '/repo',
+    cameraIntent,
+    fitAll,
+    go,
+    displayNodes: [{ id: '1' }],
+    selectedCanvasNodeIds: [],
+    selectedIds: () => [],
+    selectedImageRecords: [],
+    relationshipActions: [],
+    visible: { current: [] },
+    selection: emptySelection,
+    data: { images: [], relationships: [], groups: [] },
+    undoActions: { undo: async () => {}, redo: async () => {} },
+  } as unknown as CanvasActionsContext
+  const { result } = renderHook(() =>
+    useCanvasActionSystem({
+      context,
+      report: mock(),
+      paletteOpen: false,
+      setPaletteOpen: mock(),
+      setRecentActionIds: mock(),
+      pendingRecentAction: useRef(null),
+      trashIds: null,
+      purgeIds: null,
+      host: useRef(null),
+      paletteAssetRequest: 0,
+      setPaletteAssets: mock(),
+      setPaletteAssetsLoading: mock(),
+      setPaletteAssetsError: mock(),
+    })
+  )
+  const fit = result.current.actionById.get('fit-all')
+  if (!fit) throw new Error('missing Fit action')
+  act(() => result.current.runPaletteAction(fit))
+  cameraIntent.reserve()
+  act(() => frame(0))
+  expect(fitAll).not.toHaveBeenCalled()
+  act(() =>
+    result.current.choosePaletteAsset({
+      id: 1,
+      fileName: 'a',
+      filePath: '/a',
+      tags: [],
+    })
+  )
+  cameraIntent.reserve()
+  act(() => frame(0))
+  expect(go).not.toHaveBeenCalled()
+})
+
 it('rechecks the current mode when a previously enabled action reaches the queue', async () => {
   const owner = createCanvasBoardOwner('/repo')
   owner.setMode('edit')
@@ -330,7 +387,7 @@ it('rechecks the current mode when a previously enabled action reaches the queue
     'auto-arrange-selection'
   )
   if (!selectionAction) throw new Error('missing selection action')
-  expect(selectionAction.enabled).toBe(false)
+  expect(selectionAction.enabled).toBe(true)
   const dock = render(
     createElement(CanvasDock, {
       mode: 'multiple',
@@ -353,12 +410,7 @@ it('rechecks the current mode when a previously enabled action reaches the queue
   const selectionButton = dock.getByTestId(
     'dock-arrange-selection'
   ) as HTMLButtonElement
-  expect(selectionButton.disabled).toBe(true)
-  await act(async () => {
-    fireEvent.click(selectionButton)
-    await result.current.executeAction(selectionAction)
-    result.current.runDockAction('auto-arrange-selection')
-  })
+  expect(selectionButton.disabled).toBe(false)
   expect(arrange).not.toHaveBeenCalled()
   const expected = new Map(
     Object.entries(expectedCapabilities).flatMap(([capability, ids]) =>
@@ -373,9 +425,8 @@ it('rechecks the current mode when a previously enabled action reaches the queue
     expect(canvasActionCapability(id)).toBe(capability)
     for (const mode of ['legacy', 'view', 'edit'] as const)
       expect(allowsCanvasAction(mode, id)).toBe(
-        !(mode === 'edit' && id === 'auto-arrange-selection') &&
-          (mode !== 'view' ||
-            (capability !== 'geometry' && capability !== 'relationship'))
+        mode !== 'view' ||
+          (capability !== 'geometry' && capability !== 'relationship')
       )
   }
   if (!action) throw new Error('missing arrange action')

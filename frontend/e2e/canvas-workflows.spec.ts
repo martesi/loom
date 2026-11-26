@@ -15,6 +15,17 @@ test('select, arrange, align individual images, then restore viewport', async ({
   page,
 }) => {
   await openFixtureRepo(page, 'group-fixtures', { drawers: 'closed' })
+  const editSaved = page.waitForResponse(
+    (response) =>
+      response.url().endsWith('/wails/runtime') &&
+      response
+        .request()
+        .postData()
+        ?.includes(`"methodID":${setViewportMethodID}`) === true
+  )
+  await page.getByTestId('canvas-mode-edit').click()
+  await expect(imageNodes(page)).toHaveCount(3)
+  await editSaved
   for (const [index, name] of [
     'group-alpha.png',
     'group-beta.png',
@@ -82,6 +93,7 @@ test('select, arrange, align individual images, then restore viewport', async ({
   const paneBox = await pane.boundingBox()
   if (!paneBox) throw new Error('Canvas pane has no bounding box')
   const panSaved = waitForViewportSave()
+  await page.locator('main').focus()
   await page.mouse.move(paneBox.x + 100, paneBox.y + 100)
   await page.keyboard.down('Space')
   await page.mouse.down()

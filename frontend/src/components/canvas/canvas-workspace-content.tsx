@@ -13,12 +13,9 @@ import type { useUndoActions } from '../../lib/use-undo'
 import {
   alignCanvas,
   arrangeCanvas,
-  fitCanvas,
   isCanvasRelationshipDrag as isRelationshipDrag,
-  resetCanvasZoom,
   targetAt,
   validateRelationshipTarget,
-  zoomCanvas,
 } from './canvas-board-operations'
 import { CanvasMainSurface } from './canvas-main-surface'
 import { CanvasOverlays } from './canvas-overlays'
@@ -29,6 +26,7 @@ import { LibraryPanel } from './library-panel'
 import { ShelfPanel } from './shelf-panel'
 import type { useCanvasAssetOperations } from './use-canvas-asset-operations'
 import type { useCanvasBoardModel } from './use-canvas-board-model'
+import type { useCanvasCamera } from './use-canvas-camera'
 import type { useCanvasRepository } from './use-canvas-repository'
 import { useCanvasWorkspaceCommands } from './use-canvas-workspace-commands'
 import type { useCanvasWorkspaceState } from './use-canvas-workspace-state'
@@ -38,6 +36,7 @@ const nodeTypes = { image: ImageNode }
 
 interface Props {
   repo: RepoInfo
+  camera: ReturnType<typeof useCanvasCamera>
   flow: ReactFlowInstance
   host: MutableRefObject<HTMLDivElement | null>
   data: CanvasData
@@ -70,6 +69,7 @@ interface Props {
 export function CanvasWorkspaceContent(props: Props) {
   const {
     repo,
+    camera,
     flow,
     host,
     data,
@@ -178,9 +178,7 @@ export function CanvasWorkspaceContent(props: Props) {
     validateRelationshipTarget(source, id, data, groupMembers)
   const arrange = (nodeIds?: string[]) =>
     boardModel.owner.getMode() === 'edit'
-      ? nodeIds
-        ? Promise.resolve()
-        : boardModel.arrangeEdit()
+      ? boardModel.arrangeEdit(nodeIds)
       : boardModel.owner.getMode() === 'legacy'
         ? arrangeCanvas(repo.path, nodes, edges, data, reload, nodeIds)
         : Promise.resolve()
@@ -196,11 +194,10 @@ export function CanvasWorkspaceContent(props: Props) {
     setReveal({ id: imageId, folder: null })
     const live = boardModel.mode === 'legacy' ? node : flow.getNode(node.id)
     if (!live) return
-    void flow
-      .setCenter(
+    void camera
+      .center(
         live.position.x + (live.measured?.width ?? live.width ?? 150) / 2,
-        live.position.y + (live.measured?.height ?? live.height ?? 110) / 2,
-        { zoom: flow.getZoom() }
+        live.position.y + (live.measured?.height ?? live.height ?? 110) / 2
       )
       .catch(report)
   }
@@ -218,19 +215,30 @@ export function CanvasWorkspaceContent(props: Props) {
     workspaceState.setPreviewFolderOrder(orderedIds)
     setPreviewImageId(imageId)
   }
-  const persistViewport = boardModel.mode === 'legacy'
-  const fitAll = () => fitCanvas(flow, repo.path, undefined, persistViewport)
-  const fitSelection = () =>
-    fitCanvas(
-      flow,
-      repo.path,
-      nodes.filter(isCanvasNodeSelected),
-      persistViewport
-    )
-  const resetZoom = () =>
-    resetCanvasZoom(flow, host, repo.path, persistViewport)
-  const zoomBy = (factor: number) =>
-    zoomCanvas(flow, repo.path, factor, persistViewport)
+  const fitAll = async () => {
+    await camera.fit(displayNodes, true)
+  }
+  const fitSelection = async () => {
+    await camera.fit(displayNodes.filter(isCanvasNodeSelected))
+  }
+  const resetZoom = async () => {
+    await camera.camera.move(async () => {
+      const viewport = flow.getViewport()
+      const x = (host.current?.clientWidth ?? 0) / 2
+      const y = (host.current?.clientHeight ?? 0) / 2
+      return {
+        x: x - (x - viewport.x) / viewport.zoom,
+        y: y - (y - viewport.y) / viewport.zoom,
+        zoom: 1,
+      }
+    })
+  }
+  const zoomBy = async (factor: number) => {
+    await camera.camera.move(async () => ({
+      ...flow.getViewport(),
+      zoom: Math.max(0.05, Math.min(4, flow.getZoom() * factor)),
+    }))
+  }
   function toggleFocusMode() {
     setFocusCanvas((focused) => !focused)
     requestAnimationFrame(() => host.current?.focus())
@@ -256,6 +264,7 @@ export function CanvasWorkspaceContent(props: Props) {
       alignHorizontal,
       alignVertical,
       toggleFocusMode,
+      cameraIntent: camera.camera,
     },
     selectionActions: {
       selectAssets,
@@ -337,6 +346,7 @@ export function CanvasWorkspaceContent(props: Props) {
           />
         </ShelfPanel>
         <CanvasMainSurface
+          camera={camera}
           updateProjectionViewport={boardModel.updateProjectionViewport}
           repoPath={repo.path}
           owner={boardModel.owner}
@@ -428,6 +438,11 @@ export function CanvasWorkspaceContent(props: Props) {
         </ShelfPanel>
       </div>
       <CanvasToolbar
+        mode={boardModel.mode}
+        ready={ready && boardModel.mode !== 'legacy'}
+        onModeChange={(mode) => {
+          void boardModel.transitionMode(mode).catch(report)
+        }}
         repo={repo}
         repoOpenRequest={repoOpenRequest}
         focusCanvas={focusCanvas}

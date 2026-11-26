@@ -22,6 +22,7 @@ import { useCanvasBoardOwner } from '../components/canvas/canvas-board-owner'
 import { CanvasWorkspaceContent } from '../components/canvas/canvas-workspace-content'
 import { useCanvasAssetOperations } from '../components/canvas/use-canvas-asset-operations'
 import { useCanvasBoardModel } from '../components/canvas/use-canvas-board-model'
+import { useCanvasCamera } from '../components/canvas/use-canvas-camera'
 import { useCanvasRepository } from '../components/canvas/use-canvas-repository'
 import { useCanvasWorkspaceState } from '../components/canvas/use-canvas-workspace-state'
 import { useInspectorFieldSubmission } from '../components/canvas/use-inspector-field-submission'
@@ -151,11 +152,17 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     setReveal,
     target,
   } = workspaceState
-  const { report, reload, reloadForData, run, assetSelectionKey } =
+  const camera = useCanvasCamera(repo.path, flow, host, (error) => {
+    console.error('canvas camera failed', error)
+    setError(error instanceof Error ? error.message : String(error))
+  })
+  const { report, reload, reloadForData, run, assetSelectionKey, initialMode } =
     useCanvasRepository({
       repoPath: repo.path,
       executor: boardOwner,
       flow,
+      camera: camera.camera,
+      host,
       updateZoomCompensation,
       selection,
       refresh,
@@ -192,6 +199,9 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     target,
     host,
     flow,
+    camera,
+    initialMode,
+    repoPath: repo.path,
     cancelPointerGesture: () => {
       workspaceState.relation.current = null
       workspaceState.setRelationshipPreview(null)
@@ -228,6 +238,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     repoPath: repo.path,
     owner: boardOwner,
     flow,
+    camera,
     selection,
     setSelection,
     selectedIds,
@@ -250,6 +261,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   return (
     <CanvasWorkspaceContent
       repo={repo}
+      camera={camera}
       flow={flow}
       host={host}
       data={data}
@@ -266,7 +278,14 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       setExpanded={setExpanded}
       modifiedMarquee={modifiedMarquee}
       workspaceState={workspaceState}
-      repository={{ report, reload, reloadForData, run, assetSelectionKey }}
+      repository={{
+        report,
+        reload,
+        reloadForData,
+        run,
+        assetSelectionKey,
+        initialMode,
+      }}
       assetOperations={assetOperations}
       selectAssets={selectAssets}
       groupMembers={groupMembers}

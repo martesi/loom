@@ -17,12 +17,12 @@ import {
   useRef,
 } from 'react'
 import type { CanvasData } from '../../../bindings/loom/internal/service'
-import { ImageService } from '../../../bindings/loom/internal/service'
 import { applyCanvasNodeSelection } from '../../lib/canvas-selection'
 import { emptySelection, type Selection } from '../../lib/selection'
 import type { CanvasBoardOwner } from './canvas-board-owner'
 import type { CanvasInternalMode } from './canvas-mode-policy'
 import { useCanvasBoardDrag } from './use-canvas-board-drag'
+import type { useCanvasCamera } from './use-canvas-camera'
 
 interface MenuState {
   kind: 'pane' | 'node' | 'selection' | 'edge'
@@ -48,6 +48,7 @@ interface DropTarget {
 }
 
 interface Props {
+  camera: ReturnType<typeof useCanvasCamera>
   repoPath: string
   owner: CanvasBoardOwner
   mode: CanvasInternalMode
@@ -88,7 +89,7 @@ interface Props {
 export function CanvasFlow(props: Props) {
   const keyboardContextMenu = useRef(false)
   const {
-    repoPath,
+    camera,
     owner,
     mode,
     data,
@@ -276,12 +277,13 @@ export function CanvasFlow(props: Props) {
           const gesture = drag.take()
           if (gesture) drag.finish(gesture, moved.length ? moved : [node])
         }}
-        onMoveEnd={(_, v) => {
+        onMoveStart={(event) => camera.startGesture(event)}
+        onMoveEnd={(event, v) => {
           updateProjectionViewport(v)
-          if (ready && mode === 'legacy')
-            void ImageService.SetViewport(repoPath, v).catch(report)
+          if (ready) camera.endGesture(event, v)
         }}
-        onMove={(_, viewport) => {
+        onMove={(event, viewport) => {
+          if (ready) camera.moveGesture(event, viewport)
           // Zoom badges read this once per frame at most; onMove fires
           // per input event during pans.
           pendingZoom.current = viewport.zoom

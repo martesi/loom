@@ -13,6 +13,33 @@ msgstr ""
 "Language-Team: \n"
 "Plural-Forms: \n"
 
+msgid "Canvas mode"
+msgstr "Canvas mode"
+
+msgid "View"
+msgstr "View"
+
+msgid "Edit"
+msgstr "Edit"
+
+msgid "Click a relationship to reverse it"
+msgstr "Click a relationship to reverse it"
+
+msgid "Connect source ← selected image"
+msgstr "Connect source ← selected image"
+
+msgid "Connect source → derivative"
+msgstr "Connect source → derivative"
+
+msgid "Exit · Esc"
+msgstr "Exit · Esc"
+
+msgid "Connect derivative"
+msgstr "Connect derivative"
+
+msgid "Connect source"
+msgstr "Connect source"
+
 #. placeholder {0}: promptConfirmation.ids.length
 #. placeholder {1}: promptConfirmation.replacing ? 'Replace prompts on # selected asset?' : 'Clear prompts on # selected asset?'
 #. placeholder {2}: promptConfirmation.replacing ? 'Replace prompts on # selected assets?' : 'Clear prompts on # selected assets?'

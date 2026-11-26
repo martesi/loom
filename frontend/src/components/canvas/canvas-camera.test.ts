@@ -4,10 +4,12 @@ import { createCanvasCamera } from './canvas-camera'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((done) => {
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((done, fail) => {
     resolve = done
+    reject = fail
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 function fixture() {
@@ -148,5 +150,52 @@ describe('canvas camera intent', () => {
     stale(100)
     expect(f.visible()).toEqual({ x: 0, y: 0, zoom: 2 })
     expect(f.persist).toHaveBeenCalledTimes(0)
+  })
+
+  it('drains an accepted queued save after disposal', async () => {
+    const first = deferred<void>()
+    const f = fixture()
+    const writes: Viewport[] = []
+    f.persist.mockImplementation((viewport) => {
+      writes.push(viewport)
+      return writes.length === 1 ? first.promise : Promise.resolve()
+    })
+    f.camera.accept({ x: 1, y: 0, zoom: 2 })
+    f.camera.accept({ x: 2, y: 0, zoom: 2 })
+    f.camera.dispose()
+    const drained = f.camera.drain()
+    first.resolve()
+    await drained
+    expect(writes).toEqual([
+      { x: 1, y: 0, zoom: 2 },
+      { x: 2, y: 0, zoom: 2 },
+    ])
+  })
+
+  it('fails closed when a viewport write has an unknown outcome', async () => {
+    const f = fixture()
+    const first = deferred<void>()
+    f.persist.mockImplementation(() => first.promise)
+    f.camera.accept({ x: 1, y: 0, zoom: 2 })
+    f.camera.accept({ x: 2, y: 0, zoom: 2 })
+    first.reject(new Error('unknown write outcome'))
+    await f.camera.drain()
+    f.camera.accept({ x: 3, y: 0, zoom: 2 })
+    expect(f.persist).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects a late physical gesture after a newer command', async () => {
+    const f = fixture()
+    const gesture = f.camera.beginGesture()
+    f.camera.updateGesture(gesture, { x: 20, y: 0, zoom: 2 })
+    const move = f.camera.move(async () => ({ x: 100, y: 0, zoom: 2 }), 100)
+    await Promise.resolve()
+    f.advance(50)
+    const current = f.visible()
+    f.camera.endGesture(gesture, { x: -500, y: 0, zoom: 2 })
+    expect(f.visible()).toEqual(current)
+    f.advance(100)
+    expect(await move).toBe(true)
+    expect(f.persist).toHaveBeenCalledTimes(1)
   })
 })

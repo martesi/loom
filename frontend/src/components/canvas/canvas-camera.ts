@@ -23,18 +23,33 @@ export function createCanvasCamera(deps: CameraDependencies) {
   let disposed = false
   let pending: Viewport | null = null
   let saving = false
+  let failed = false
+  let visible = deps.read()
+  let drainWaiters: Array<() => void> = []
+
+  function resolveDrains() {
+    if (saving || (!failed && pending)) return
+    const waiters = drainWaiters
+    drainWaiters = []
+    for (const resolve of waiters) resolve()
+  }
 
   function flush() {
-    if (saving || !pending) return
+    if (saving || failed || !pending) return
     const viewport = pending
     pending = null
     saving = true
     void deps
       .persist(viewport)
-      .catch(deps.report)
+      .catch((error) => {
+        failed = true
+        pending = null
+        deps.report(error)
+      })
       .finally(() => {
         saving = false
         flush()
+        resolveDrains()
       })
   }
 
@@ -64,8 +79,9 @@ export function createCanvasCamera(deps: CameraDependencies) {
     const intent = interrupt()
     const target = await resolveTarget()
     if (disposed || intent !== revision) return false
-    const start = deps.read()
+    const start = visible
     if (duration <= 0) {
+      visible = target
       deps.apply(target)
       save(target)
       return true
@@ -85,6 +101,7 @@ export function createCanvasCamera(deps: CameraDependencies) {
           y: start.y + (target.y - start.y) * eased,
           zoom: start.zoom + (target.zoom - start.zoom) * eased,
         }
+        visible = viewport
         deps.apply(viewport)
         if (progress === 1) {
           frame = null
@@ -97,17 +114,59 @@ export function createCanvasCamera(deps: CameraDependencies) {
     })
   }
 
+  function updateGesture(intent: number, viewport: Viewport) {
+    if (disposed) return false
+    if (intent !== revision) {
+      deps.apply(visible)
+      return false
+    }
+    visible = viewport
+    return true
+  }
+
   return {
     move,
+    activate() {
+      disposed = false
+    },
+    version: () => revision,
+    reserve() {
+      return interrupt()
+    },
+    drain() {
+      if (!saving && (!pending || failed)) return Promise.resolve()
+      return new Promise<void>((resolve) => {
+        drainWaiters.push(resolve)
+      })
+    },
+    restore(viewport: Viewport) {
+      if (disposed) return
+      interrupt()
+      visible = viewport
+      deps.apply(viewport)
+    },
+    beginGesture() {
+      return interrupt()
+    },
+    updateGesture,
+    endGesture(intent: number, viewport: Viewport) {
+      if (!updateGesture(intent, viewport)) return
+      save(viewport)
+    },
     /** User input supersedes an animation and persists the visible camera. */
     accept(viewport: Viewport) {
       if (disposed) return
       interrupt()
+      visible = viewport
       save(viewport)
     },
     dispose() {
       disposed = true
-      interrupt()
+      revision++
+      if (frame !== null) deps.clock.cancel(frame)
+      frame = null
+      finishAnimation?.(false)
+      finishAnimation = null
     },
   }
 }

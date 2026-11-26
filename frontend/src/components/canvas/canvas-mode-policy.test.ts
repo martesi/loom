@@ -41,9 +41,7 @@ describe('internal Canvas capability policy', () => {
       'remove-relationship',
     ]) {
       expect(allowsCanvasAction('view', id)).toBe(false)
-      expect(allowsCanvasAction('edit', id)).toBe(
-        id !== 'auto-arrange-selection'
-      )
+      expect(allowsCanvasAction('edit', id)).toBe(true)
       expect(allowsCanvasAction('legacy', id)).toBe(true)
     }
     for (const id of [

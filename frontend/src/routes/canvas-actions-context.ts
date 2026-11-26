@@ -45,6 +45,7 @@ export interface CanvasActionsContext {
   setNavigatorModeRequest: Dispatch<SetStateAction<NavigatorModeRequest | null>>
   setSearchFocusRequest: Dispatch<SetStateAction<number>>
   displayNodes: Node[]
+  cameraIntent?: { version(): number; reserve(): number }
   canFitSelection: boolean
   canArrangeSelection: boolean
   fitAll: () => Promise<void>

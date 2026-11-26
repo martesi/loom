@@ -1,4 +1,5 @@
 import { t } from '@lingui/core/macro'
+import { Trans } from '@lingui/react/macro'
 import type {
   Edge,
   Node,
@@ -19,6 +20,8 @@ import { CanvasDock } from './canvas-dock'
 import { CanvasFlow } from './canvas-flow'
 import type { CanvasInternalMode } from './canvas-mode-policy'
 import { PerfHud } from './perf-hud'
+import type { useCanvasCamera } from './use-canvas-camera'
+import { useCanvasConnectMode } from './use-canvas-connect-mode'
 
 interface MenuState {
   kind: 'pane' | 'node' | 'selection' | 'edge'
@@ -44,6 +47,7 @@ interface DropTarget {
 }
 
 interface Props {
+  camera: ReturnType<typeof useCanvasCamera>
   repoPath: string
   owner: CanvasBoardOwner
   mode: CanvasInternalMode
@@ -111,6 +115,7 @@ interface Props {
 
 export function CanvasMainSurface(props: Props) {
   const {
+    camera,
     repoPath,
     owner,
     mode,
@@ -165,6 +170,15 @@ export function CanvasMainSurface(props: Props) {
     perfHud,
     setPerfHud,
   } = props
+  const connect = useCanvasConnectMode({
+    mode,
+    owner,
+    repoPath,
+    selectionRef,
+    run,
+    validTarget,
+    setError,
+  })
   return (
     <main
       ref={host}
@@ -173,6 +187,15 @@ export function CanvasMainSurface(props: Props) {
       tabIndex={-1}
       className="absolute inset-0 min-w-0 outline-none"
       onClickCapture={(event) => {
+        if (
+          connect.active &&
+          event.target instanceof Element &&
+          connect.complete(event.target)
+        ) {
+          event.preventDefault()
+          event.stopPropagation()
+          return
+        }
         if (
           owner.allows('relationship') &&
           (event.ctrlKey || event.metaKey) &&
@@ -183,6 +206,14 @@ export function CanvasMainSurface(props: Props) {
         }
       }}
       onPointerDownCapture={(event) => {
+        if (
+          connect.active &&
+          event.target instanceof Element &&
+          event.target.closest('.react-flow__node,.react-flow__edge')
+        ) {
+          event.stopPropagation()
+          return
+        }
         if (!owner.allows('relationship')) return
         const id = targetAt(event.clientX, event.clientY)
         if ((event.ctrlKey || event.metaKey) && id) {
@@ -193,6 +224,17 @@ export function CanvasMainSurface(props: Props) {
           }
           event.stopPropagation()
           event.preventDefault()
+        }
+      }}
+      onKeyDownCapture={(event) => {
+        if (
+          event.key === 'Enter' &&
+          connect.active &&
+          event.target instanceof Element &&
+          connect.complete(event.target)
+        ) {
+          event.preventDefault()
+          event.stopPropagation()
         }
       }}
       onPointerCancel={() => {
@@ -330,7 +372,30 @@ export function CanvasMainSurface(props: Props) {
             .catch(report)
       }}
     >
+      {connect.active && (
+        <div
+          role="status"
+          data-testid="connection-tool-status"
+          className="absolute left-1/2 top-14 z-20 flex -translate-x-1/2 items-center gap-3 rounded-md border border-border bg-card p-2 text-xs text-ink shadow-lg"
+        >
+          <span>
+            {connect.active.tool === 'reverse'
+              ? t`Click a relationship to reverse it`
+              : connect.active.tool === 'source'
+                ? t`Connect source ← selected image`
+                : t`Connect source → derivative`}
+          </span>
+          <button
+            type="button"
+            onClick={connect.exit}
+            className="rounded px-2 py-1 hover:bg-accent"
+          >
+            <Trans>Exit · Esc</Trans>
+          </button>
+        </div>
+      )}
       <CanvasFlow
+        camera={camera}
         mode={mode}
         updateProjectionViewport={updateProjectionViewport}
         repoPath={repoPath}
@@ -432,6 +497,8 @@ export function CanvasMainSurface(props: Props) {
               : displayNodes.length >= 2 || selectedCanvasNodeIds.length > 1)
           }
           canMutateGeometry={mode !== 'view'}
+          canConnect={mode === 'edit'}
+          onConnect={connect.start}
           canArrangeSelection={
             actionById.get('auto-arrange-selection')?.enabled ?? false
           }

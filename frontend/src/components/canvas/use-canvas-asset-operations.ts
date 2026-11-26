@@ -5,12 +5,14 @@ import { ImageService } from '../../../bindings/loom/internal/service'
 import { readMedia } from '../../lib/clipboard'
 import { type Selection, sameSelection } from '../../lib/selection'
 import type { CanvasBoardOwner } from './canvas-board-owner'
+import type { useCanvasCamera } from './use-canvas-camera'
 import type { RevealRequest } from './use-canvas-workspace-state'
 
 interface Props {
   repoPath: string
   owner: CanvasBoardOwner
   flow: ReactFlowInstance
+  camera?: ReturnType<typeof useCanvasCamera>
   selection: Selection
   setSelection: Dispatch<SetStateAction<Selection>>
   selectedIds: () => number[]
@@ -35,6 +37,7 @@ export function useCanvasAssetOperations({
   repoPath,
   owner,
   flow,
+  camera,
   selection,
   setSelection,
   selectedIds,
@@ -80,6 +83,7 @@ export function useCanvasAssetOperations({
   // A retained callback must keep the revision from the render that created it.
   const modeRevision = owner.getModeRevision()
   async function go(id: number, folder = false) {
+    const cameraVersion = camera?.camera.version()
     const isOwnerCurrent = () =>
       navigationActive.current &&
       navigation.current.owner === owner &&
@@ -115,20 +119,18 @@ export function useCanvasAssetOperations({
     setExpanded(null)
     if (!isCurrent()) return
     setSelection({ surface: 'canvas', ids: [id], edges: [], group: null })
-    if (!isCurrent()) return
+    if (!isCurrent() || (camera && camera.camera.version() !== cameraVersion))
+      return
     const zoom = flow.getZoom()
     if (!isCurrent()) return
-    await flow.setCenter(
-      node
-        ? node.position.x + (node.measured?.width ?? node.width ?? 150) / 2
-        : image.canvasX + 75,
-      node
-        ? node.position.y + (node.measured?.height ?? node.height ?? 110) / 2
-        : image.canvasY + 55,
-      {
-        zoom,
-      }
-    )
+    const x = node
+      ? node.position.x + (node.measured?.width ?? node.width ?? 150) / 2
+      : image.canvasX + 75
+    const y = node
+      ? node.position.y + (node.measured?.height ?? node.height ?? 110) / 2
+      : image.canvasY + 55
+    if (camera) await camera.center(x, y)
+    else await flow.setCenter(x, y, { zoom })
   }
 
   async function paste(

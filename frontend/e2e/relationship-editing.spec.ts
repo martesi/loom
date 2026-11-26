@@ -6,6 +6,7 @@ import {
   dropAsset,
   imageNodes,
   openFixtureRepo,
+  waitForStableNodePositions,
 } from './test-helpers'
 
 async function clickEdge(page: Page, button: 'left' | 'right', index = 0) {
@@ -25,6 +26,9 @@ async function clickEdge(page: Page, button: 'left' | 'right', index = 0) {
 
 async function createChain(page: Page) {
   await openFixtureRepo(page, 'group-fixtures')
+  await page.getByTestId('canvas-mode-edit').click()
+  await expect(imageNodes(page)).toHaveCount(3)
+  await waitForStableNodePositions(page)
   for (const [index, name] of [
     'group-alpha.png',
     'group-beta.png',
@@ -245,6 +249,9 @@ test('top-left resize undo and redo restore position and size', async ({
   page,
 }, testInfo) => {
   await openFixtureRepo(page, 'resize-fixtures')
+  await page.getByTestId('canvas-mode-edit').click()
+  await expect(imageNodes(page)).not.toHaveCount(0)
+  await waitForStableNodePositions(page)
   await dropAsset(page, 'resize-alpha.png', { x: 500, y: 180 })
   const node = imageNodes(page).first()
   await node.click()
@@ -288,6 +295,9 @@ test('edge menu reverses and deletes with undo while image Delete does nothing',
   page,
 }, testInfo) => {
   await openFixtureRepo(page, 'menu-linux-fixtures')
+  await page.getByTestId('canvas-mode-edit').click()
+  await expect(imageNodes(page)).not.toHaveCount(0)
+  await waitForStableNodePositions(page)
   await dropAsset(page, 'menu-alpha.png', { x: 100, y: 150 })
   await dropAsset(page, 'menu-beta.png', { x: 450, y: 250 })
   const nodes = imageNodes(page)
@@ -343,6 +353,9 @@ test('edge menu reverses and deletes with undo while image Delete does nothing',
 
 test('resize is one undoable geometry change', async ({ page }) => {
   await openFixtureRepo(page, 'resize-fixtures')
+  await page.getByTestId('canvas-mode-edit').click()
+  await expect(imageNodes(page)).not.toHaveCount(0)
+  await waitForStableNodePositions(page)
   await dropAsset(page, 'resize-alpha.png', { x: 500, y: 180 })
   const node = imageNodes(page).first()
   await node.click()
@@ -375,6 +388,9 @@ test('resize is one undoable geometry change', async ({ page }) => {
 
 test('deleting selected edges is one undoable batch', async ({ page }) => {
   await openFixtureRepo(page, 'group-fixtures')
+  await page.getByTestId('canvas-mode-edit').click()
+  await expect(imageNodes(page)).toHaveCount(3)
+  await waitForStableNodePositions(page)
   for (const [index, name] of [
     'group-alpha.png',
     'group-beta.png',

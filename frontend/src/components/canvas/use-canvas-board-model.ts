@@ -13,6 +13,7 @@ import type { Selection } from '../../lib/selection'
 import type { CanvasBoardOwner, ResizeGesture } from './canvas-board-owner'
 import { applyHistoryToNodes } from './canvas-projection-geometry'
 import { canvasProjectionGraph } from './canvas-projection-model'
+import type { useCanvasCamera } from './use-canvas-camera'
 import {
   type CanvasProjectionViewport,
   useCanvasProjectionController,
@@ -43,6 +44,9 @@ interface Props {
   target: CanvasDropTarget | null
   host: { current: HTMLDivElement | null }
   flow?: CanvasProjectionViewport
+  camera?: ReturnType<typeof useCanvasCamera>
+  initialMode?: 'view' | 'edit' | null
+  repoPath?: string
   cancelPointerGesture?: () => void
 }
 
@@ -60,6 +64,9 @@ export function useCanvasBoardModel({
   target,
   host,
   flow,
+  camera,
+  initialMode,
+  repoPath,
   cancelPointerGesture,
 }: Props) {
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null)
@@ -105,6 +112,8 @@ export function useCanvasBoardModel({
     setEdges,
     host,
     flow,
+    camera,
+    repoPath,
     report: callbacks.current.report,
     cancelPointerGesture,
     reconcileSelection,
@@ -148,6 +157,18 @@ export function useCanvasBoardModel({
     const history = owner.takeHistory()
     if (board && projectionRef.current.reconcile(board, graph, history)) {
       focusCanvasWhenEdgeRemoved(graph.edges, host.current)
+      return () => {
+        rendererActive = false
+        for (const gesture of activeGestures.values())
+          owner.cancelResize(gesture)
+        activeGestures.clear()
+      }
+    }
+    if (
+      board &&
+      initialMode &&
+      projectionRef.current.restoreMode(initialMode)
+    ) {
       return () => {
         rendererActive = false
         for (const gesture of activeGestures.values())
@@ -228,6 +249,7 @@ export function useCanvasBoardModel({
     setEdges,
     setNodes,
     reconcileSelection,
+    initialMode,
   ])
 
   const isCanvasNodeSelected = useCallback(
