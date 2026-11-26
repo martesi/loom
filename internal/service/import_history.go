@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -188,14 +189,12 @@ func applyImportBatchTx(tx *sql.Tx, payload importBatchPayload, created, validat
 		}
 		item := validatedEntry{entry: entry, currentPath: currentPath}
 		if payload.Active {
-			data, err := os.ReadFile(entry.RetainedPath)
+			data, info, err := readOwnedImportCopy(entry.RetainedPath, entry.SHA256)
 			if err != nil {
-				return fmt.Errorf("read retained import bytes: %w", err)
-			}
-			if fmt.Sprintf("%x", sha256.Sum256(data)) != entry.SHA256 {
-				return fmt.Errorf("retained import bytes changed for image %d", entry.ImageID)
+				return fmt.Errorf("read retained import bytes for image %d: %w", entry.ImageID, err)
 			}
 			item.data = data
+			*validate = append(*validate, ownedImportFile{path: entry.RetainedPath, info: info, hash: entry.SHA256})
 		}
 		validated = append(validated, item)
 	}
@@ -313,4 +312,37 @@ func verifyOwnedImportFile(file ownedImportFile) error {
 		return fmt.Errorf("import file %q changed during commit validation", file.path)
 	}
 	return nil
+}
+
+func readOwnedImportCopy(path, expectedHash string) ([]byte, os.FileInfo, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	before, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, nil, err
+	}
+	if !before.Mode().IsRegular() {
+		_ = file.Close()
+		return nil, nil, fmt.Errorf("retained import copy is not a regular file")
+	}
+	data, readErr := io.ReadAll(file)
+	after, statErr := file.Stat()
+	closeErr := file.Close()
+	if readErr != nil || statErr != nil || closeErr != nil {
+		return nil, nil, errors.Join(readErr, statErr, closeErr)
+	}
+	pathInfo, err := os.Stat(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !os.SameFile(before, after) || !os.SameFile(after, pathInfo) || store.FileIdentityAt(path, after) == "" {
+		return nil, nil, fmt.Errorf("retained import copy changed while reading")
+	}
+	if fmt.Sprintf("%x", sha256.Sum256(data)) != expectedHash {
+		return nil, nil, fmt.Errorf("retained import copy content changed")
+	}
+	return data, after, nil
 }

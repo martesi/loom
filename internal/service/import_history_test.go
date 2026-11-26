@@ -489,6 +489,80 @@ func TestRedoRejectsReplacementPublishedDuringReplay(t *testing.T) {
 	}
 }
 
+func TestRedoRejectsRetainedCopyChangedAfterRead(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		replace  bool
+		newBytes []byte
+	}{
+		{name: "replacement", replace: true, newBytes: []byte("external retained replacement")},
+		{name: "in-place modification", newBytes: []byte("external retained edit")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repoPath := t.TempDir()
+			captured := []byte("retained bytes read by redo")
+			ids, err := (&ImageService{}).ImportMedia(repoPath, []ClipboardMedia{{
+				Name: "retained-race.png", Data: base64.StdEncoding.EncodeToString(captured),
+			}}, false, 0, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := (&UndoService{}).Undo(repoPath); err != nil {
+				t.Fatal(err)
+			}
+			matches, err := filepath.Glob(filepath.Join(repoPath, ".loom", "trash", "import-redo", "*-retained-race.png"))
+			if err != nil || len(matches) != 1 {
+				t.Fatalf("retained copies = %v err=%v", matches, err)
+			}
+			retainedPath := matches[0]
+			originalPath := filepath.Join(repoPath, "retained-race.png")
+			if err := os.Remove(originalPath); err != nil {
+				t.Fatal(err)
+			}
+			service := &UndoService{afterImportRedoFileWrite: func(_ string) {
+				if tc.replace {
+					replacement := retainedPath + ".external"
+					if err := os.WriteFile(replacement, tc.newBytes, 0o600); err != nil {
+						t.Errorf("write external retained replacement: %v", err)
+						return
+					}
+					if err := os.Remove(retainedPath); err != nil {
+						t.Errorf("remove retained copy: %v", err)
+						return
+					}
+					if err := os.Rename(replacement, retainedPath); err != nil {
+						t.Errorf("publish retained replacement: %v", err)
+					}
+					return
+				}
+				if err := os.WriteFile(retainedPath, tc.newBytes, 0o600); err != nil {
+					t.Errorf("modify retained copy in place: %v", err)
+				}
+			}}
+			result, err := service.Redo(repoPath)
+			if err != nil || result.Applied || result.Error == "" {
+				t.Fatalf("redo after retained-copy change = %+v err=%v", result, err)
+			}
+			if got, err := os.ReadFile(retainedPath); err != nil || !bytes.Equal(got, tc.newBytes) {
+				t.Fatalf("external retained copy after rejected redo = %q err=%v", got, err)
+			}
+			state, err := (&UndoService{}).State(repoPath)
+			if err != nil || !state.CanRedo || state.CanUndo {
+				t.Fatalf("history after rejected redo = %+v err=%v", state, err)
+			}
+			repo, err := store.Bootstrap(repoPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer repo.Close()
+			image, err := repo.GetImageByID(ids[0])
+			if err != nil || !image.ImportUndone || image.FilePath != originalPath {
+				t.Fatalf("image after rejected redo = %+v err=%v", image, err)
+			}
+		})
+	}
+}
+
 func TestUnverifiedSuppressionCannotHideIdenticalExternalBytes(t *testing.T) {
 	repoPath := t.TempDir()
 	repo, err := store.Bootstrap(repoPath)
