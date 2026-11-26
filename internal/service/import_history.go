@@ -34,11 +34,11 @@ func writeExclusive(path string, data []byte) (os.FileInfo, error) {
 		return nil, statErr
 	}
 	if writeErr != nil {
-		removeOwnedFile(path, info)
+		removeOwnedFile(path, info, fmt.Sprintf("%x", sha256.Sum256(data)))
 		return nil, writeErr
 	}
 	if closeErr != nil {
-		removeOwnedFile(path, info)
+		removeOwnedFile(path, info, fmt.Sprintf("%x", sha256.Sum256(data)))
 		return nil, closeErr
 	}
 	return info, nil
@@ -47,10 +47,22 @@ func writeExclusive(path string, data []byte) (os.FileInfo, error) {
 // applyImportBatchTx retains all active media and changes only the imported
 // rows. A redo never replaces a file that changed outside Loom: it restores
 // the captured bytes at a new, exclusive path instead.
-func applyImportBatchTx(tx *sql.Tx, payload importBatchPayload) error {
+type ownedImportFile struct {
+	path string
+	info os.FileInfo
+	hash string
+}
+
+func applyImportBatchTx(tx *sql.Tx, payload importBatchPayload, created *[]ownedImportFile) error {
 	if len(payload.Entries) == 0 {
 		return fmt.Errorf("import history batch is empty")
 	}
+	type validatedEntry struct {
+		entry       importHistoryEntry
+		currentPath string
+		data        []byte
+	}
+	validated := make([]validatedEntry, 0, len(payload.Entries))
 	for _, entry := range payload.Entries {
 		var currentPath string
 		if err := tx.QueryRow(`SELECT file_path FROM images WHERE id = ?`, entry.ImageID).Scan(&currentPath); err != nil {
@@ -59,52 +71,69 @@ func applyImportBatchTx(tx *sql.Tx, payload importBatchPayload) error {
 			}
 			return err
 		}
+		item := validatedEntry{entry: entry, currentPath: currentPath}
+		if payload.Active {
+			data, err := os.ReadFile(entry.RetainedPath)
+			if err != nil {
+				return fmt.Errorf("read retained import bytes: %w", err)
+			}
+			if fmt.Sprintf("%x", sha256.Sum256(data)) != entry.SHA256 {
+				return fmt.Errorf("retained import bytes changed for image %d", entry.ImageID)
+			}
+			item.data = data
+		}
+		validated = append(validated, item)
+	}
+	for _, item := range validated {
+		entry, currentPath := item.entry, item.currentPath
 		if !payload.Active {
-			if _, err := tx.Exec(`UPDATE images SET trashed = 1 WHERE id = ?`, entry.ImageID); err != nil {
+			if _, err := tx.Exec(`UPDATE images SET trashed = 0, import_undone = 1 WHERE id = ?`, entry.ImageID); err != nil {
 				return err
 			}
 			continue
 		}
-
-		data, err := os.ReadFile(entry.RetainedPath)
-		if err != nil {
-			return fmt.Errorf("read retained import bytes: %w", err)
-		}
-		if fmt.Sprintf("%x", sha256.Sum256(data)) != entry.SHA256 {
-			return fmt.Errorf("retained import bytes changed for image %d", entry.ImageID)
-		}
 		activePath := currentPath
 		current, readErr := os.ReadFile(currentPath)
 		if readErr != nil || fmt.Sprintf("%x", sha256.Sum256(current)) != entry.SHA256 {
-			activePath, err = writeRetainedImport(currentPath, data)
+			var info os.FileInfo
+			var err error
+			activePath, info, err = writeRetainedImport(currentPath, item.data)
 			if err != nil {
 				return err
 			}
+			*created = append(*created, ownedImportFile{path: activePath, info: info, hash: entry.SHA256})
 		}
-		if _, err := tx.Exec(`UPDATE images SET file_path = ?, trashed = 0 WHERE id = ?`, activePath, entry.ImageID); err != nil {
+		if activePath != currentPath {
+			if _, err := tx.Exec(`UPDATE images SET file_path = ?, trashed = 0, import_undone = 0, thumb_path = NULL, width = NULL, height = NULL, file_size = ?, content_hash = NULL, source_fingerprint = NULL, source_revision = source_revision + 1 WHERE id = ?`, activePath, len(item.data), entry.ImageID); err != nil {
+				return err
+			}
+		} else if _, err := tx.Exec(`UPDATE images SET trashed = 0, import_undone = 0 WHERE id = ?`, entry.ImageID); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func writeRetainedImport(currentPath string, data []byte) (string, error) {
+func writeRetainedImport(currentPath string, data []byte) (string, os.FileInfo, error) {
 	dir := filepath.Dir(currentPath)
 	ext := filepath.Ext(currentPath)
 	base := strings.TrimSuffix(filepath.Base(currentPath), ext)
 	for index := 1; ; index++ {
 		candidate := filepath.Join(dir, fmt.Sprintf("%s (redo %d)%s", base, index, ext))
-		if _, err := writeExclusive(candidate, data); err == nil {
-			return candidate, nil
+		if info, err := writeExclusive(candidate, data); err == nil {
+			return candidate, info, nil
 		} else if !os.IsExist(err) {
-			return "", err
+			return "", nil, err
 		}
 	}
 }
 
-func removeOwnedFile(path string, owned os.FileInfo) {
+func removeOwnedFile(path string, owned os.FileInfo, expectedHash string) {
 	current, err := os.Stat(path)
 	if err == nil && owned != nil && os.SameFile(current, owned) {
-		_ = os.Remove(path)
+		data, readErr := os.ReadFile(path)
+		if readErr == nil && fmt.Sprintf("%x", sha256.Sum256(data)) == expectedHash {
+			_ = os.Remove(path)
+		}
 	}
 }

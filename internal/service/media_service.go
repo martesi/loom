@@ -129,6 +129,10 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 	if err := r.PrepareOperationLog(); err != nil {
 		return nil, err
 	}
+	redoTail, err := collectImportRedoTail(r)
+	if err != nil {
+		return nil, err
+	}
 	tx, err := r.DB.Begin()
 	if err != nil {
 		return nil, err
@@ -136,6 +140,7 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 	defer tx.Rollback()
 	paths := []string{}
 	ownedFiles := map[string]os.FileInfo{}
+	ownedFileHashes := map[string]string{}
 	committed := false
 	defer func() {
 		if !committed {
@@ -143,7 +148,10 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 				current, err := os.Stat(path)
 				owned := ownedFiles[path]
 				if err == nil && owned != nil && os.SameFile(current, owned) {
-					_ = os.Remove(path)
+					data, readErr := os.ReadFile(path)
+					if readErr == nil && fmt.Sprintf("%x", sha256.Sum256(data)) == ownedFileHashes[path] {
+						_ = os.Remove(path)
+					}
 				}
 			}
 		}
@@ -188,6 +196,10 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 		if closeErr != nil {
 			return nil, closeErr
 		}
+		ownedFileHashes[dest] = fmt.Sprintf("%x", sha256.Sum256(data))
+		if s.afterImportFileWrite != nil {
+			s.afterImportFileWrite(dest)
+		}
 		var cx, cy any
 		if place {
 			cx = x + float64(i%6)*190
@@ -212,6 +224,7 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 		}
 		paths = append(paths, stash)
 		ownedFiles[stash] = stashInfo
+		ownedFileHashes[stash] = fmt.Sprintf("%x", sha256.Sum256(data))
 		entries = append(entries, importHistoryEntry{ImageID: id, RetainedPath: stash, SHA256: fmt.Sprintf("%x", sha256.Sum256(data))})
 	}
 	forward, err := json.Marshal(step(stepImportBatch, importBatchPayload{Entries: entries, Active: true}))
@@ -229,6 +242,9 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 		return nil, err
 	}
 	committed = true
+	if err := cleanupUnreferencedImportRedo(r, redoTail); err != nil {
+		return nil, fmt.Errorf("clean up discarded import snapshots: %w", err)
+	}
 	return ids, nil
 }
 
@@ -334,7 +350,7 @@ func purgeExpiredTrash(r *store.Repo, now time.Time) error {
 	cutoff := now.Add(-trashRetention).UTC().Format("2006-01-02T15:04:05.000Z")
 	rows, err := r.DB.Query(`
 		SELECT id FROM images
-		WHERE trashed = 1 AND trashed_at IS NOT NULL AND trashed_at <= ?`, cutoff)
+		WHERE trashed = 1 AND import_undone = 0 AND trashed_at IS NOT NULL AND trashed_at <= ?`, cutoff)
 	if err != nil {
 		return err
 	}
@@ -418,6 +434,9 @@ func purgeImages(r *store.Repo, ids []int64) error {
 		}
 	}
 	for _, img := range images {
+		if img.ImportUndone {
+			return fmt.Errorf("asset %d is hidden by import undo", img.ID)
+		}
 		if err := os.Remove(img.FilePath); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("purge %s: %w", filepath.Base(img.FilePath), err)
 		}
@@ -438,6 +457,13 @@ func purgeImages(r *store.Repo, ids []int64) error {
 		if deleteErr != nil {
 			return deleteErr
 		}
+	}
+	purgedIDs := make([]int64, 0, len(images))
+	for _, img := range images {
+		purgedIDs = append(purgedIDs, img.ID)
+	}
+	if err := forgetPurgedImportHistory(r, purgedIDs); err != nil {
+		return err
 	}
 	_, err := r.DB.Exec("DELETE FROM groups WHERE NOT EXISTS (SELECT 1 FROM images WHERE group_id = groups.id)")
 	return err

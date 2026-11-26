@@ -36,7 +36,7 @@ func validateRelationship(tx *sql.Tx, source, derived, excluded int64) error {
 		return fmt.Errorf("cannot link an image to itself")
 	}
 	var n int
-	if err := tx.QueryRow(`SELECT count(*) FROM images WHERE id IN (?, ?) AND trashed = 0`, source, derived).Scan(&n); err != nil {
+	if err := tx.QueryRow(`SELECT count(*) FROM images WHERE id IN (?, ?) AND trashed = 0 AND import_undone = 0`, source, derived).Scan(&n); err != nil {
 		return err
 	}
 	if n != 2 {

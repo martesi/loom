@@ -162,13 +162,20 @@ func recordOp(repo *store.Repo, kind string, forward, inverse OpStep) error {
 	if err != nil {
 		return err
 	}
+	redoTail, err := collectImportRedoTail(repo)
+	if err != nil {
+		if rollbackErr := applyStep(repo, inverse); rollbackErr != nil {
+			return fmt.Errorf("operation history cleanup preparation failed: %w; compensating rollback failed: %v", err, rollbackErr)
+		}
+		return fmt.Errorf("operation history cleanup preparation failed: %w (mutation rolled back)", err)
+	}
 	if err := repo.RecordOperation(kind, string(fwd), string(inv)); err != nil {
 		if rollbackErr := applyStep(repo, inverse); rollbackErr != nil {
 			return fmt.Errorf("operation log append failed: %w; compensating rollback failed: %v", err, rollbackErr)
 		}
 		return fmt.Errorf("operation log append failed: %w (mutation rolled back)", err)
 	}
-	return nil
+	return cleanupUnreferencedImportRedo(repo, redoTail)
 }
 
 // purgedErr is returned by applyStep when a step's target image no longer

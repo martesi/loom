@@ -26,6 +26,7 @@ type Image struct {
 	SourceRevision    int64
 	Archived          bool
 	Trashed           bool
+	ImportUndone      bool
 	CanvasX           float64
 	CanvasY           float64
 	HasCanvasPos      bool
@@ -434,7 +435,7 @@ func (r *Repo) imagesByFilePaths(paths []string) ([]Image, error) {
 		placeholders[i] = "?"
 		args[i] = p
 	}
-	query := `SELECT ` + imageSelectCols + ` FROM images WHERE file_path IN (` +
+	query := `SELECT ` + imageSelectCols + ` FROM images WHERE import_undone = 0 AND file_path IN (` +
 		strings.Join(placeholders, ",") + `)`
 	rows, err := r.DB.Query(query, args...)
 	if err != nil {
@@ -455,10 +456,10 @@ func (r *Repo) imagesByFilePaths(paths []string) ([]Image, error) {
 
 const imageSelectCols = `
 	images.id, file_path, COALESCE(thumb_path, ''), COALESCE(width, 0),
-	COALESCE(height, 0), COALESCE(file_size, 0), archived, trashed, canvas_x, canvas_y,
+	COALESCE(height, 0), COALESCE(file_size, 0), archived, CASE WHEN trashed != 0 OR import_undone != 0 THEN 1 ELSE 0 END, canvas_x, canvas_y,
 	canvas_w, canvas_h,
 	COALESCE((SELECT p.text FROM prompts p WHERE p.id = images.prompt_id), ''),
-	COALESCE(group_id, 0), created_at, COALESCE(source_fingerprint, ''), source_revision`
+	COALESCE(group_id, 0), created_at, COALESCE(source_fingerprint, ''), source_revision, import_undone`
 
 func scanImage(scanner interface {
 	Scan(dest ...any) error
@@ -466,7 +467,7 @@ func scanImage(scanner interface {
 	var img Image
 	var cx, cy, cw, ch sql.NullFloat64
 	err := scanner.Scan(&img.ID, &img.FilePath, &img.ThumbPath, &img.Width, &img.Height,
-		&img.FileSize, &img.Archived, &img.Trashed, &cx, &cy, &cw, &ch, &img.PromptText, &img.GroupID, &img.CreatedAt, &img.SourceFingerprint, &img.SourceRevision)
+		&img.FileSize, &img.Archived, &img.Trashed, &cx, &cy, &cw, &ch, &img.PromptText, &img.GroupID, &img.CreatedAt, &img.SourceFingerprint, &img.SourceRevision, &img.ImportUndone)
 	if err != nil {
 		return img, err
 	}
@@ -481,7 +482,7 @@ func scanImage(scanner interface {
 
 // ListImages returns all non-trashed images.
 func (r *Repo) ListImages() ([]Image, error) {
-	rows, err := r.DB.Query(`SELECT ` + imageSelectCols + ` FROM images WHERE trashed = 0 ORDER BY id`)
+	rows, err := r.DB.Query(`SELECT ` + imageSelectCols + ` FROM images WHERE trashed = 0 AND import_undone = 0 ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -514,7 +515,7 @@ func (r *Repo) ListRelationships() ([]Relationship, error) {
 		FROM relationships rel
 		JOIN images s ON s.id = rel.source_image_id
 		JOIN images d ON d.id = rel.derived_image_id
-		WHERE s.trashed = 0 AND d.trashed = 0 ORDER BY rel.pairing_order, rel.id`)
+		WHERE s.trashed = 0 AND d.trashed = 0 AND s.import_undone = 0 AND d.import_undone = 0 ORDER BY rel.pairing_order, rel.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -581,6 +582,13 @@ func (r *Repo) SetArchived(imageID int64, archived bool) error {
 // SetTrashed call never leaves the filesystem and DB pointing at different
 // realities.
 func (r *Repo) SetTrashed(imageID int64, trashed bool) error {
+	var importUndone bool
+	if err := r.DB.QueryRow(`SELECT import_undone FROM images WHERE id = ?`, imageID).Scan(&importUndone); err != nil {
+		return err
+	}
+	if importUndone {
+		return fmt.Errorf("asset %d is hidden by import undo", imageID)
+	}
 	curPath, err := r.GetFilePath(imageID)
 	if err != nil {
 		return err
@@ -921,7 +929,7 @@ func (r *Repo) ListImagesByIDs(ids []int64) ([]Image, error) {
 		placeholders[i] = "?"
 		args[i] = id
 	}
-	query := `SELECT ` + imageSelectCols + ` FROM images WHERE trashed = 0 AND id IN (` +
+	query := `SELECT ` + imageSelectCols + ` FROM images WHERE trashed = 0 AND import_undone = 0 AND id IN (` +
 		strings.Join(placeholders, ",") + `)`
 	rows, err := r.DB.Query(query, args...)
 	if err != nil {

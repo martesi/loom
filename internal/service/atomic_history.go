@@ -17,7 +17,16 @@ func replayAtomicHistory(repo *store.Repo, redo bool) (bool, *store.Operation, [
 	if err != nil {
 		return true, nil, nil, err
 	}
-	defer tx.Rollback()
+	committed := false
+	var createdFiles []ownedImportFile
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+			for _, file := range createdFiles {
+				removeOwnedFile(file.path, file.info, file.hash)
+			}
+		}
+	}()
 	// A deferred SQLite transaction must obtain the writer lock before any
 	// reads, otherwise a second connection can commit between selection and
 	// the first write (or cause a stale WAL snapshot upgrade to fail).
@@ -50,7 +59,7 @@ func replayAtomicHistory(repo *store.Repo, redo bool) (bool, *store.Operation, [
 	case stepImportBatch:
 		var payload importBatchPayload
 		if err = json.Unmarshal(s.Payload, &payload); err == nil {
-			err = applyImportBatchTx(tx, payload)
+			err = applyImportBatchTx(tx, payload, &createdFiles)
 		}
 	case stepGraphInsert, stepGraphDelete, stepGraphReverse:
 		var p graphPayload
@@ -78,6 +87,7 @@ func replayAtomicHistory(repo *store.Repo, redo bool) (bool, *store.Operation, [
 	if err := tx.Commit(); err != nil {
 		return true, op, nil, err
 	}
+	committed = true
 	return true, op, geometry, nil
 }
 
