@@ -104,6 +104,7 @@ func TestReplayWaitsForIndependentWriter(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer tx.Rollback()
+			var previousCursor int64
 			if failRedo {
 				if _, err := tx.Exec(`CREATE TRIGGER fail_graph_redo BEFORE INSERT ON relationships BEGIN SELECT RAISE(ABORT, 'forced graph redo failure'); END`); err != nil {
 					t.Fatal(err)
@@ -113,7 +114,8 @@ func TestReplayWaitsForIndependentWriter(t *testing.T) {
 				if err := applyGeometryTx(tx, []GeometryUpdate{g}); err != nil {
 					t.Fatal(err)
 				}
-				if err := graphRecord(repo, tx, stepGeometry, step(stepGeometry, geometryPayload{[]GeometryUpdate{g}}), step(stepGeometry, geometryPayload{[]GeometryUpdate{{ImageID: ids[1]}}})); err != nil {
+				previousCursor, err = graphRecord(repo, tx, stepGeometry, step(stepGeometry, geometryPayload{[]GeometryUpdate{g}}), step(stepGeometry, geometryPayload{[]GeometryUpdate{{ImageID: ids[1]}}}))
+				if err != nil {
 					t.Fatal(err)
 				}
 			} else {
@@ -130,7 +132,8 @@ func TestReplayWaitsForIndependentWriter(t *testing.T) {
 					t.Fatal(err)
 				}
 				p := graphPayload{Relationships: []store.Relationship{r}}
-				if err := graphRecord(repo, tx, stepGraphInsert, step(stepGraphInsert, p), step(stepGraphDelete, p)); err != nil {
+				previousCursor, err = graphRecord(repo, tx, stepGraphInsert, step(stepGraphInsert, p), step(stepGraphDelete, p))
+				if err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -155,7 +158,7 @@ func TestReplayWaitsForIndependentWriter(t *testing.T) {
 				t.Fatalf("replay returned while writer held lock: %q", result)
 			case <-time.After(150 * time.Millisecond):
 			}
-			if err := tx.Commit(); err != nil {
+			if err := repo.CommitOperation(tx, previousCursor); err != nil {
 				t.Fatal(err)
 			}
 			var result UndoResult

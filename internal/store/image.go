@@ -306,6 +306,9 @@ func (r *Repo) mediaFiles(ctx context.Context) ([]string, error) {
 		if err != nil {
 			return err
 		}
+		if d.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
 		if d.IsDir() {
 			if path == loomDir {
 				return filepath.SkipDir
@@ -413,6 +416,9 @@ func (r *Repo) ListDirectory(relPath string) (DirListing, error) {
 	var mediaPaths []string
 	for _, e := range entries {
 		full := filepath.Join(absDir, e.Name())
+		if e.Type()&os.ModeSymlink != 0 {
+			continue
+		}
 		if e.IsDir() {
 			if full == loomDir {
 				continue

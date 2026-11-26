@@ -85,38 +85,51 @@ func (r *Repo) RecordOperation(kind, forward, inverse string) error {
 		return err
 	}
 	defer tx.Rollback()
-	if err := r.RecordOperationInTx(tx, kind, forward, inverse); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
-// RecordOperationInTx appends an operation in the caller's transaction.
-func (r *Repo) RecordOperationInTx(tx *sql.Tx, kind, forward, inverse string) error {
-	cursor, err := undoCursorTx(tx)
+	previousCursor, err := r.RecordOperationInTx(tx, kind, forward, inverse)
 	if err != nil {
 		return err
 	}
-	capUndoSessionBoundaryValue(r.Path, cursor)
+	return r.CommitOperation(tx, previousCursor)
+}
+
+// RecordOperationInTx appends an operation in the caller's transaction and
+// returns the cursor before the append. Call CommitOperation after all writes
+// in the transaction succeed so the session boundary changes only on commit.
+func (r *Repo) RecordOperationInTx(tx *sql.Tx, kind, forward, inverse string) (int64, error) {
+	previousCursor, err := undoCursorTx(tx)
+	if err != nil {
+		return 0, err
+	}
+	cursor := previousCursor
 	// A new branch discards any archived redo tail before reusing its seqs.
 	if _, err := tx.Exec(`UPDATE settings SET value = ? WHERE scope = 'repo' AND key = 'undo_history_floor' AND CAST(value AS INTEGER) > ?`, strconv.FormatInt(cursor, 10), cursor); err != nil {
-		return err
+		return 0, err
 	}
 	newSeq := cursor + 1
 
 	if _, err := tx.Exec(`DELETE FROM operation_log WHERE seq > ?`, cursor); err != nil {
-		return err
+		return 0, err
 	}
 	if _, err := tx.Exec(`INSERT INTO operation_log (seq, kind, forward, inverse) VALUES (?, ?, ?, ?)`,
 		newSeq, kind, forward, inverse); err != nil {
-		return err
+		return 0, err
 	}
 	if _, err := tx.Exec(`
 		INSERT INTO settings (scope, key, value) VALUES ('repo', 'undo_cursor', ?)
 		ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value`,
 		strconv.FormatInt(newSeq, 10)); err != nil {
+		return 0, err
+	}
+	return previousCursor, nil
+}
+
+// CommitOperation commits a transaction containing one appended history entry
+// and only then lowers the process-local session boundary.
+func (r *Repo) CommitOperation(tx *sql.Tx, previousCursor int64) error {
+	if err := tx.Commit(); err != nil {
 		return err
 	}
+	capUndoSessionBoundaryValue(r.Path, previousCursor)
 	return nil
 }
 

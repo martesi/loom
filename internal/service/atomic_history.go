@@ -56,7 +56,9 @@ func replayAtomicHistory(repo *store.Repo, redo bool) (bool, *store.Operation, [
 			err = applyGraphTx(tx, s.Kind, p)
 		}
 	case stepImportMedia:
-		err = applyImportHistoryTx(tx, s)
+		err = applyImportHistoryTx(repo.Path, tx, s)
+	case stepShowUnverifiedImport:
+		err = applyUnverifiedImportHistoryTx(repo.Path, tx, s)
 	default:
 		var handled bool
 		handled, err = applyLegacyHistoryTx(tx, s)

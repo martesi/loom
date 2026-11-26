@@ -98,10 +98,11 @@ func (s *ImageService) SetGeometry(path string, updates []GeometryUpdate) error 
 	if err := applyGeometryTx(tx, updates); err != nil {
 		return err
 	}
-	if err := graphRecord(repo, tx, stepGeometry, step(stepGeometry, geometryPayload{updates}), step(stepGeometry, geometryPayload{before})); err != nil {
+	previousCursor, err := graphRecord(repo, tx, stepGeometry, step(stepGeometry, geometryPayload{updates}), step(stepGeometry, geometryPayload{before}))
+	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	return repo.CommitOperation(tx, previousCursor)
 }
 
 func replayGeometry(repo *store.Repo, raw json.RawMessage) error {

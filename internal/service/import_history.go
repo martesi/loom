@@ -1,11 +1,9 @@
 package service
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"os"
 
 	"loom/internal/store"
 )
@@ -23,9 +21,27 @@ type importHistoryPayload struct {
 	Entries  []importHistoryEntry `json:"entries"`
 }
 
+const stepShowUnverifiedImport = "show_unverified_import"
+
+type unverifiedImportHistoryEntry struct {
+	ID                  int64                  `json:"id"`
+	Path                string                 `json:"path"`
+	RecordedFingerprint string                 `json:"recordedFingerprint"`
+	Trusted             bool                   `json:"trusted"`
+	CurrentStatus       ImportResolutionStatus `json:"currentStatus"`
+	CurrentFingerprint  string                 `json:"currentFingerprint,omitempty"`
+	X                   *float64               `json:"x,omitempty"`
+	Y                   *float64               `json:"y,omitempty"`
+}
+
+type unverifiedImportHistoryPayload struct {
+	Retained bool                           `json:"retained"`
+	Entries  []unverifiedImportHistoryEntry `json:"entries"`
+}
+
 // applyImportHistoryTx changes visibility only. The media stays at its normal
 // repository path so Undo never removes or relocates user files.
-func applyImportHistoryTx(tx *sql.Tx, step OpStep) error {
+func applyImportHistoryTx(repoPath string, tx *sql.Tx, step OpStep) error {
 	var p importHistoryPayload
 	if err := json.Unmarshal(step.Payload, &p); err != nil {
 		return err
@@ -55,22 +71,56 @@ func applyImportHistoryTx(tx *sql.Tx, step OpStep) error {
 			return fmt.Errorf("imported image %d geometry changed since history was recorded", entry.ID)
 		}
 		if !p.Retained {
-			info, err := os.Lstat(path)
-			if err != nil {
-				return fmt.Errorf("imported image %d is unavailable for redo: %w", entry.ID, err)
-			}
-			if !info.Mode().IsRegular() {
-				return fmt.Errorf("imported image %d is not a regular file", entry.ID)
-			}
-			fingerprint, _, err := store.FingerprintFile(context.Background(), path)
-			if err != nil {
-				return fmt.Errorf("verify imported image %d for redo: %w", entry.ID, err)
-			}
-			if fingerprint != entry.Fingerprint {
-				return fmt.Errorf("imported image %d changed since import; redo was refused", entry.ID)
+			evidence, _ := inspectImportEvidence(repoPath, path, entry.Fingerprint, true)
+			if evidence.Status != ImportStatusVerified {
+				return fmt.Errorf("imported image %d is %s for redo: %s", entry.ID, evidence.Status, evidence.Error)
 			}
 		}
 		if _, err := tx.Exec(`UPDATE import_recovery SET retained = ? WHERE image_id = ?`, p.Retained, entry.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func applyUnverifiedImportHistoryTx(repoPath string, tx *sql.Tx, step OpStep) error {
+	var payload unverifiedImportHistoryPayload
+	if err := json.Unmarshal(step.Payload, &payload); err != nil {
+		return err
+	}
+	if len(payload.Entries) == 0 {
+		return fmt.Errorf("empty unverified import visibility history")
+	}
+	seen := make(map[int64]bool, len(payload.Entries))
+	for _, entry := range payload.Entries {
+		if entry.ID <= 0 || seen[entry.ID] || entry.Path == "" {
+			return fmt.Errorf("invalid unverified import history entry for image %d", entry.ID)
+		}
+		seen[entry.ID] = true
+		var imagePath, recoveryPath, recorded string
+		var trusted, retained bool
+		var x, y sql.NullFloat64
+		if err := tx.QueryRow(`SELECT i.file_path,r.file_path,r.fingerprint,r.trusted,r.retained,i.canvas_x,i.canvas_y
+			FROM images i JOIN import_recovery r ON r.image_id=i.id WHERE i.id=?`, entry.ID).
+			Scan(&imagePath, &recoveryPath, &recorded, &trusted, &retained, &x, &y); err != nil {
+			return fmt.Errorf("unverified import %d is unavailable: %w", entry.ID, err)
+		}
+		if imagePath != entry.Path || recoveryPath != entry.Path || recorded != entry.RecordedFingerprint || trusted != entry.Trusted || retained == payload.Retained {
+			return fmt.Errorf("unverified import %d metadata or visibility changed", entry.ID)
+		}
+		if !sameImportCoordinate(x, entry.X) || !sameImportCoordinate(y, entry.Y) {
+			return fmt.Errorf("unverified import %d geometry changed", entry.ID)
+		}
+		if !payload.Retained {
+			evidence, _ := inspectImportEvidence(repoPath, entry.Path, entry.RecordedFingerprint, entry.Trusted)
+			if evidence.Status != entry.CurrentStatus || evidence.CurrentFingerprint != entry.CurrentFingerprint {
+				return fmt.Errorf("unverified import %d current file state changed; redo was refused", entry.ID)
+			}
+			if err := validateRetainedImportGraph(tx, entry.ID); err != nil {
+				return fmt.Errorf("unverified import %d graph is incompatible with redo: %w", entry.ID, err)
+			}
+		}
+		if _, err := tx.Exec(`UPDATE import_recovery SET retained=? WHERE image_id=? AND retained=?`, payload.Retained, entry.ID, !payload.Retained); err != nil {
 			return err
 		}
 	}
@@ -101,21 +151,28 @@ func requireNoRedoTail(tx *sql.Tx) error {
 // RecoverableImport describes an undone import retained after its redo history
 // was discarded. It is deliberately separate from the ordinary asset catalog.
 type RecoverableImport struct {
-	ImageID     int64  `json:"imageId"`
-	FilePath    string `json:"filePath"`
-	Fingerprint string `json:"fingerprint"`
-	Trusted     bool   `json:"trusted"`
-	FilePresent bool   `json:"filePresent"`
-	Verified    bool   `json:"verified"`
+	ImageID             int64                  `json:"imageId"`
+	FilePath            string                 `json:"filePath"`
+	Fingerprint         string                 `json:"fingerprint"`
+	Trusted             bool                   `json:"trusted"`
+	Status              ImportResolutionStatus `json:"status"`
+	RecordedFingerprint string                 `json:"recordedFingerprint"`
+	CurrentFingerprint  string                 `json:"currentFingerprint,omitempty"`
+	ResolutionError     string                 `json:"resolutionError,omitempty"`
+	FilePresent         bool                   `json:"filePresent"`
+	Verified            bool                   `json:"verified"`
 }
 
 func (s *ImageService) ListRecoverableImports(repoPath string) ([]RecoverableImport, error) {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return nil, err
 	}
+	defer unlock()
 	defer repo.Close()
-	rows, err := repo.DB.Query(`SELECT r.image_id, r.file_path, r.fingerprint, r.trusted FROM import_recovery r WHERE r.retained = 1 ORDER BY r.image_id`)
+	rows, err := repo.DB.Query(`SELECT r.image_id, r.file_path, r.fingerprint, r.trusted, i.file_path, i.source_fingerprint
+		FROM import_recovery r JOIN images i ON i.id=r.image_id
+		WHERE r.retained = 1 ORDER BY r.image_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -123,97 +180,55 @@ func (s *ImageService) ListRecoverableImports(repoPath string) ([]RecoverableImp
 	var imports []RecoverableImport
 	for rows.Next() {
 		var item RecoverableImport
-		if err := rows.Scan(&item.ImageID, &item.FilePath, &item.Fingerprint, &item.Trusted); err != nil {
+		var imagePath string
+		var sourceFingerprint sql.NullString
+		if err := rows.Scan(&item.ImageID, &item.FilePath, &item.Fingerprint, &item.Trusted, &imagePath, &sourceFingerprint); err != nil {
 			return nil, err
 		}
-		if item.Trusted {
-			if info, err := os.Lstat(item.FilePath); err == nil && info.Mode().IsRegular() {
-				item.FilePresent = true
-				fingerprint, _, err := store.FingerprintFile(context.Background(), item.FilePath)
-				item.Verified = err == nil && fingerprint == item.Fingerprint
-			}
+		evidence, _ := inspectImportEvidence(repo.Path, item.FilePath, item.Fingerprint, item.Trusted)
+		if imagePath != item.FilePath || !retainedSourceEvidenceConsistent(item.Trusted, sourceFingerprint, evidence) {
+			evidence.Status = ImportStatusAmbiguous
+			evidence.Verified = false
+			evidence.Error = "retained import metadata is inconsistent"
 		}
+		item.Status = evidence.Status
+		item.RecordedFingerprint = evidence.RecordedFingerprint
+		item.CurrentFingerprint = evidence.CurrentFingerprint
+		item.ResolutionError = evidence.Error
+		item.FilePresent = evidence.FilePresent
+		item.Verified = evidence.Verified
 		imports = append(imports, item)
 	}
 	return imports, rows.Err()
 }
 
-// RecoverImport explicitly makes a retained import active after redo history
-// was truncated. It never copies, moves, reimports, or deletes the source.
-func (s *ImageService) RecoverImport(repoPath string, imageID int64) error {
-	return s.recoverImport(repoPath, imageID, false)
+func retainedSourceEvidenceConsistent(trusted bool, sourceFingerprint sql.NullString, evidence ImportEvidence) bool {
+	if !trusted {
+		return true
+	}
+	if !sourceFingerprint.Valid {
+		return false
+	}
+	switch evidence.Status {
+	case ImportStatusVerified:
+		return sourceFingerprint.String == evidence.RecordedFingerprint
+	case ImportStatusChanged:
+		return sourceFingerprint.String == evidence.RecordedFingerprint || sourceFingerprint.String == evidence.CurrentFingerprint
+	case ImportStatusMissing:
+		return true
+	default:
+		return false
+	}
 }
 
-// RecoverImportAndReplaceRedo explicitly discards the persisted redo tail as
-// part of the same transaction as recovery. Call only after user confirmation.
-func (s *ImageService) RecoverImportAndReplaceRedo(repoPath string, imageID int64) error {
-	return s.recoverImport(repoPath, imageID, true)
-}
-
-func (s *ImageService) recoverImport(repoPath string, imageID int64, replaceRedo bool) error {
-	repo, unlock, err := openOperationRepo(repoPath)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	defer repo.Close()
-	if err := repo.PrepareOperationLog(); err != nil {
-		return err
-	}
-	tx, err := repo.DB.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.Exec(`UPDATE operation_log SET seq = seq WHERE 0`); err != nil {
-		return err
-	}
-	if !replaceRedo {
-		if err := requireNoRedoTail(tx); err != nil {
-			return err
-		}
-	}
-	var path, expected, sourceFingerprint string
-	var retained, trusted bool
-	var x, y sql.NullFloat64
-	if err := tx.QueryRow(`SELECT images.file_path, recovery.fingerprint, recovery.retained, recovery.trusted, images.source_fingerprint, images.canvas_x, images.canvas_y FROM import_recovery recovery JOIN images ON images.id = recovery.image_id WHERE recovery.image_id = ?`, imageID).Scan(&path, &expected, &retained, &trusted, &sourceFingerprint, &x, &y); err != nil {
-		return fmt.Errorf("recoverable import %d not found: %w", imageID, err)
-	}
-	if !retained {
-		return fmt.Errorf("import %d is already active", imageID)
-	}
-	if !trusted || expected == "" {
-		return fmt.Errorf("legacy retained import %d has no verifiable recovery fingerprint; source was left hidden and unchanged", imageID)
-	}
-	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() {
-		return fmt.Errorf("retained import %d is unavailable; file was left unchanged: %v", imageID, err)
-	}
-	fingerprint, _, err := store.FingerprintFile(context.Background(), path)
-	if err != nil || fingerprint != expected || sourceFingerprint != expected {
-		return fmt.Errorf("retained import %d cannot be verified; file was left unchanged", imageID)
-	}
-	if _, err := tx.Exec(`UPDATE import_recovery SET retained = 0 WHERE image_id = ?`, imageID); err != nil {
-		return err
-	}
-	entry := importHistoryEntry{ID: imageID, Path: path, Fingerprint: expected}
-	if x.Valid && y.Valid {
-		entry.X, entry.Y = &x.Float64, &y.Float64
-	}
-	if err := recordImportHistory(repo, tx, []importHistoryEntry{entry}); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
-func recordImportHistory(repo *store.Repo, tx *sql.Tx, entries []importHistoryEntry) error {
+func recordImportHistory(repo *store.Repo, tx *sql.Tx, entries []importHistoryEntry) (int64, error) {
 	f, err := json.Marshal(step(stepImportMedia, importHistoryPayload{Entries: entries}))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	i, err := json.Marshal(step(stepImportMedia, importHistoryPayload{Retained: true, Entries: entries}))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	return repo.RecordOperationInTx(tx, stepImportMedia, string(f), string(i))
 }

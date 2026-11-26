@@ -95,8 +95,12 @@ func (s *ImageService) PlaceImages(repoPath string, ids []int64, x, y float64, g
 		before = append(before, previous)
 		after = append(after, next)
 	}
-	if err := recordGeometryBatch(r, tx, before, after); err != nil {
+	previousCursor, recorded, err := recordGeometryBatch(r, tx, before, after)
+	if err != nil {
 		return err
+	}
+	if recorded {
+		return r.CommitOperation(tx, previousCursor)
 	}
 	return tx.Commit()
 }
@@ -140,8 +144,12 @@ func (s *ImageService) UnplaceImages(repoPath string, ids []int64) error {
 		before = append(before, previous)
 		after = append(after, next)
 	}
-	if err := recordGeometryBatch(r, tx, before, after); err != nil {
+	previousCursor, recorded, err := recordGeometryBatch(r, tx, before, after)
+	if err != nil {
 		return err
+	}
+	if recorded {
+		return r.CommitOperation(tx, previousCursor)
 	}
 	return tx.Commit()
 }
@@ -157,13 +165,14 @@ func requirePlaceableImage(tx *sql.Tx, id int64) error {
 	return nil
 }
 
-func recordGeometryBatch(repo *store.Repo, tx *sql.Tx, before, after []GeometryUpdate) error {
+func recordGeometryBatch(repo *store.Repo, tx *sql.Tx, before, after []GeometryUpdate) (int64, bool, error) {
 	if len(before) == 0 {
-		return nil
+		return 0, false, nil
 	}
-	return graphRecord(repo, tx, stepGeometry,
+	cursor, err := graphRecord(repo, tx, stepGeometry,
 		step(stepGeometry, geometryPayload{Entries: after}),
 		step(stepGeometry, geometryPayload{Entries: before}))
+	return cursor, err == nil, err
 }
 func (s *GroupService) UpdateMetadata(repoPath string, id int64, name, kind string) error {
 	r, err := store.Bootstrap(repoPath)

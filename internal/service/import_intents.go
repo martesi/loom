@@ -1,7 +1,6 @@
 package service
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -37,10 +36,15 @@ type pendingImportRow struct {
 }
 
 type PendingImportFile struct {
-	Path        string `json:"path"`
-	Fingerprint string `json:"fingerprint"`
-	FilePresent bool   `json:"filePresent"`
-	Verified    bool   `json:"verified"`
+	ItemIndex           int                    `json:"itemIndex"`
+	Path                string                 `json:"path"`
+	Fingerprint         string                 `json:"fingerprint"`
+	Status              ImportResolutionStatus `json:"status"`
+	RecordedFingerprint string                 `json:"recordedFingerprint"`
+	CurrentFingerprint  string                 `json:"currentFingerprint,omitempty"`
+	ResolutionError     string                 `json:"resolutionError,omitempty"`
+	FilePresent         bool                   `json:"filePresent"`
+	Verified            bool                   `json:"verified"`
 }
 
 type PendingImportBatch struct {
@@ -192,16 +196,9 @@ func finalizeImportBatch(repo *store.Repo, batchID string, requireNoRedo bool) (
 		if item.Index != i {
 			return nil, fmt.Errorf("pending import batch %s has an incomplete item sequence", batchID)
 		}
-		info, err := os.Lstat(item.Path)
-		if err != nil {
-			return nil, fmt.Errorf("pending import file %s is unavailable: %w", item.Path, err)
-		}
-		if !info.Mode().IsRegular() {
-			return nil, fmt.Errorf("pending import file %s is not a regular file", item.Path)
-		}
-		fingerprint, stableInfo, err := store.FingerprintFile(context.Background(), item.Path)
-		if err != nil || fingerprint != item.Fingerprint {
-			return nil, fmt.Errorf("pending import file %s cannot be verified; no database rows were created", item.Path)
+		evidence, stableInfo := inspectImportEvidence(repo.Path, item.Path, item.Fingerprint, true)
+		if evidence.Status != ImportStatusVerified || stableInfo == nil {
+			return nil, fmt.Errorf("pending import file %s is %s: %s; no database rows were created", item.Path, evidence.Status, evidence.Error)
 		}
 		var x, y any
 		entry := importHistoryEntry{Path: item.Path, Fingerprint: item.Fingerprint}
@@ -225,7 +222,8 @@ func finalizeImportBatch(repo *store.Repo, batchID string, requireNoRedo bool) (
 			return nil, err
 		}
 	}
-	if err := recordImportHistory(repo, tx, entries); err != nil {
+	previousCursor, err := recordImportHistory(repo, tx, entries)
+	if err != nil {
 		return nil, fmt.Errorf("record import history: %w", err)
 	}
 	result, err := tx.Exec(`DELETE FROM import_intents WHERE batch_id=?`, batchID)
@@ -236,22 +234,25 @@ func finalizeImportBatch(repo *store.Repo, batchID string, requireNoRedo bool) (
 	if err != nil || int(deleted) != len(pending) {
 		return nil, fmt.Errorf("pending import batch changed while being finalized")
 	}
-	if err := tx.Commit(); err != nil {
+	if err := repo.CommitOperation(tx, previousCursor); err != nil {
 		return nil, err
 	}
 	return ids, nil
 }
 
 func listPendingImportBatches(repo *store.Repo) ([]PendingImportBatch, error) {
-	rows, err := repo.DB.Query(`SELECT batch_id,file_path,fingerprint FROM import_intents ORDER BY created_at,batch_id,item_index`)
+	rows, err := repo.DB.Query(`SELECT batch_id,item_index,file_path,fingerprint FROM import_intents ORDER BY created_at,batch_id,item_index`)
 	if err != nil {
 		return nil, err
 	}
-	type pending struct{ batchID, path, fingerprint string }
+	type pending struct {
+		batchID, path, fingerprint string
+		index                      int
+	}
 	var files []pending
 	for rows.Next() {
 		var item pending
-		if err := rows.Scan(&item.batchID, &item.path, &item.fingerprint); err != nil {
+		if err := rows.Scan(&item.batchID, &item.index, &item.path, &item.fingerprint); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -273,12 +274,12 @@ func listPendingImportBatches(repo *store.Repo) ([]PendingImportBatch, error) {
 			index = len(batches) - 1
 			byID[item.batchID] = index
 		}
-		status := PendingImportFile{Path: item.path, Fingerprint: item.fingerprint}
-		info, err := os.Lstat(item.path)
-		if err == nil && info.Mode().IsRegular() {
-			status.FilePresent = true
-			fingerprint, _, fingerprintErr := store.FingerprintFile(context.Background(), item.path)
-			status.Verified = fingerprintErr == nil && fingerprint == item.fingerprint
+		evidence, _ := inspectImportEvidence(repo.Path, item.path, item.fingerprint, true)
+		status := PendingImportFile{
+			ItemIndex: item.index, Path: item.path, Fingerprint: item.fingerprint,
+			Status: evidence.Status, RecordedFingerprint: evidence.RecordedFingerprint,
+			CurrentFingerprint: evidence.CurrentFingerprint, ResolutionError: evidence.Error,
+			FilePresent: evidence.FilePresent, Verified: evidence.Verified,
 		}
 		batches[index].Files = append(batches[index].Files, status)
 	}
@@ -288,35 +289,11 @@ func listPendingImportBatches(repo *store.Repo) ([]PendingImportBatch, error) {
 // ListPendingImportBatches exposes pre-commit work that survived an error or
 // process exit. Unverified files remain reserved and are never auto-discovered.
 func (s *ImageService) ListPendingImportBatches(repoPath string) ([]PendingImportBatch, error) {
-	repo, err := store.Bootstrap(repoPath)
-	if err != nil {
-		return nil, err
-	}
-	defer repo.Close()
-	return listPendingImportBatches(repo)
-}
-
-// RecoverPendingImportBatch explicitly finalizes one verified interrupted batch
-// as a single undoable import. It refuses to discard an existing redo branch.
-func (s *ImageService) RecoverPendingImportBatch(repoPath, batchID string) ([]int64, error) {
-	return s.recoverPendingImportBatch(repoPath, batchID, false)
-}
-
-// RecoverPendingImportBatchAndReplaceRedo requires explicit caller confirmation
-// before it discards a stored redo tail while finalizing the pending batch.
-func (s *ImageService) RecoverPendingImportBatchAndReplaceRedo(repoPath, batchID string) ([]int64, error) {
-	return s.recoverPendingImportBatch(repoPath, batchID, true)
-}
-
-func (s *ImageService) recoverPendingImportBatch(repoPath, batchID string, replaceRedo bool) ([]int64, error) {
 	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
 	defer repo.Close()
-	if err := repo.PrepareOperationLog(); err != nil {
-		return nil, err
-	}
-	return finalizeImportBatch(repo, batchID, !replaceRedo)
+	return listPendingImportBatches(repo)
 }

@@ -19,14 +19,14 @@ type graphPayload struct {
 	Relationships []store.Relationship `json:"relationships"`
 }
 
-func graphRecord(repo *store.Repo, tx *sql.Tx, kind string, forward, inverse OpStep) error {
+func graphRecord(repo *store.Repo, tx *sql.Tx, kind string, forward, inverse OpStep) (int64, error) {
 	f, err := json.Marshal(forward)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	i, err := json.Marshal(inverse)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	return repo.RecordOperationInTx(tx, kind, string(f), string(i))
 }
@@ -118,10 +118,11 @@ func (s *ImageService) createRelationship(path string, source, derived int64) er
 		return err
 	}
 	p := graphPayload{Relationships: []store.Relationship{r}}
-	if err := graphRecord(repo, tx, stepGraphInsert, step(stepGraphInsert, p), step(stepGraphDelete, p)); err != nil {
+	previousCursor, err := graphRecord(repo, tx, stepGraphInsert, step(stepGraphInsert, p), step(stepGraphDelete, p))
+	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	return repo.CommitOperation(tx, previousCursor)
 }
 
 // UnlinkSources removes all requested edges as one undoable operation.
@@ -154,10 +155,11 @@ func (s *ImageService) UnlinkSources(path string, ids []int64) error {
 	if err := applyGraphTx(tx, stepGraphDelete, p); err != nil {
 		return err
 	}
-	if err := graphRecord(repo, tx, stepGraphDelete, step(stepGraphDelete, p), step(stepGraphInsert, p)); err != nil {
+	previousCursor, err := graphRecord(repo, tx, stepGraphDelete, step(stepGraphDelete, p), step(stepGraphInsert, p))
+	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	return repo.CommitOperation(tx, previousCursor)
 }
 
 // ReverseRelationship reverses one edge without changing its identity or order.
@@ -189,10 +191,11 @@ func (s *ImageService) ReverseRelationship(path string, id int64) error {
 	}
 	reversed := r
 	reversed.SourceImageID, reversed.DerivedImageID = r.DerivedImageID, r.SourceImageID
-	if err := graphRecord(repo, tx, stepGraphReverse, step(stepGraphReverse, p), step(stepGraphReverse, graphPayload{Relationships: []store.Relationship{reversed}})); err != nil {
+	previousCursor, err := graphRecord(repo, tx, stepGraphReverse, step(stepGraphReverse, p), step(stepGraphReverse, graphPayload{Relationships: []store.Relationship{reversed}}))
+	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	return repo.CommitOperation(tx, previousCursor)
 }
 
 func applyGraphTx(tx *sql.Tx, kind string, p graphPayload) error {

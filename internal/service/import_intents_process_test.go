@@ -17,6 +17,43 @@ const importCrashStageEnv = "LOOM_IMPORT_CRASH_STAGE"
 const importCrashRepoEnv = "LOOM_IMPORT_CRASH_REPO"
 const replayCrashStageEnv = "LOOM_IMPORT_REPLAY_CRASH_STAGE"
 const prepareRedoRepoEnv = "LOOM_IMPORT_PREPARE_REDO_REPO"
+const resolutionCrashRepoEnv = "LOOM_IMPORT_RESOLUTION_CRASH_REPO"
+const resolutionCrashBatchEnv = "LOOM_IMPORT_RESOLUTION_CRASH_BATCH"
+const redoConfirmationRepoEnv = "LOOM_REDO_CONFIRMATION_REPO"
+const redoConfirmationTokenEnv = "LOOM_REDO_CONFIRMATION_TOKEN_FILE"
+
+func TestPendingResolutionCrashHelper(t *testing.T) {
+	root := os.Getenv(resolutionCrashRepoEnv)
+	if root == "" {
+		return
+	}
+	importResolutionCrashHook = func(stage string) {
+		if stage == "before_commit" {
+			os.Exit(90)
+		}
+	}
+	_, err := (&ImageService{}).ResolvePendingImportBatch(root, PendingImportResolutionRequest{
+		BatchID: os.Getenv(resolutionCrashBatchEnv), RequestID: "crash-resolution",
+		SelectedItemIndexes: []int{0},
+	})
+	t.Fatalf("child resolution returned instead of crashing: %v", err)
+}
+
+func TestRetainedRedoConfirmationHelper(t *testing.T) {
+	root := os.Getenv(redoConfirmationRepoEnv)
+	if root == "" {
+		return
+	}
+	preview, err := (&ImageService{}).ResolveRetainedImport(root, RetainedImportResolutionRequest{
+		ImageID: 1, RequestID: "restart-stale-confirmation",
+	})
+	if err != nil || !preview.NeedsRedoConfirmation || preview.RedoTailConfirmation == "" {
+		t.Fatalf("prepare retained redo confirmation: result=%+v err=%v", preview, err)
+	}
+	if err := os.WriteFile(os.Getenv(redoConfirmationTokenEnv), []byte(preview.RedoTailConfirmation), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestImportIntentCrashHelper(t *testing.T) {
 	stage := os.Getenv(importCrashStageEnv)
@@ -125,9 +162,12 @@ func TestImportIntentSurvivesProcessExitBeforeAndAfterFileCreation(t *testing.T)
 				}
 			}
 			if stage == "files" {
-				ids, err := service.RecoverPendingImportBatch(root, batches[0].ID)
-				if err != nil || len(ids) != 2 {
-					t.Fatalf("explicit interrupted batch recovery: ids=%v err=%v", ids, err)
+				result, err := service.ResolvePendingImportBatch(root, PendingImportResolutionRequest{
+					BatchID: batches[0].ID, RequestID: "recovered-after-process-exit",
+					SelectedItemIndexes: []int{0, 1},
+				})
+				if err != nil || len(result.ImageIDs) != 2 {
+					t.Fatalf("explicit interrupted batch recovery: result=%+v err=%v", result, err)
 				}
 				repo, err := store.Bootstrap(root)
 				if err != nil {
@@ -139,6 +179,139 @@ func TestImportIntentSurvivesProcessExitBeforeAndAfterFileCreation(t *testing.T)
 				}
 			}
 		})
+	}
+}
+
+func TestPendingResolutionProcessExitRollsBackDatabaseAndKeepsSource(t *testing.T) {
+	root := t.TempDir()
+	items, err := prepareImportItems([]ClipboardMedia{{Name: "crash-resolution.png", Data: "c2FmZSBieXRlcw=="}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := store.Bootstrap(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	batchID, paths, err := reserveImportPaths(repo, items, true, 21, 22)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := createReservedFiles(items, paths); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	logPath := filepath.Join(root, "resolution-child.log")
+	logFile, err := os.Create(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestPendingResolutionCrashHelper$")
+	cmd.Env = append(os.Environ(), resolutionCrashRepoEnv+"="+root, resolutionCrashBatchEnv+"="+batchID)
+	bounded := &boundedTestLog{writer: logFile, remaining: 64 << 10}
+	cmd.Stdout, cmd.Stderr = bounded, bounded
+	err = cmd.Run()
+	if closeErr := logFile.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	exitErr, ok := err.(*exec.ExitError)
+	if ctx.Err() != nil || !ok || exitErr.ExitCode() != 90 {
+		log, _ := os.ReadFile(logPath)
+		t.Fatalf("child did not exit at the transaction boundary: err=%v context=%v log=%s", err, ctx.Err(), log)
+	}
+
+	repo, err = store.Bootstrap(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	var imageCount, historyCount, receiptCount, intentCount int
+	for query, target := range map[string]*int{
+		`SELECT COUNT(*) FROM images`:                          &imageCount,
+		`SELECT COUNT(*) FROM operation_log`:                   &historyCount,
+		`SELECT COUNT(*) FROM import_resolution_receipts`:      &receiptCount,
+		`SELECT COUNT(*) FROM import_intents WHERE batch_id=?`: &intentCount,
+	} {
+		var err error
+		if query == `SELECT COUNT(*) FROM import_intents WHERE batch_id=?` {
+			err = repo.DB.QueryRow(query, batchID).Scan(target)
+		} else {
+			err = repo.DB.QueryRow(query).Scan(target)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if imageCount != 0 || historyCount != 0 || receiptCount != 0 || intentCount != 1 {
+		t.Fatalf("child crash partially committed resolution: images=%d history=%d receipts=%d intents=%d", imageCount, historyCount, receiptCount, intentCount)
+	}
+	data, err := os.ReadFile(paths[0].Path)
+	if err != nil || string(data) != "safe bytes" {
+		t.Fatalf("child crash changed source file: %q err=%v", data, err)
+	}
+}
+
+func TestRedoConfirmationFromPriorProcessIsRejectedAfterTailChanges(t *testing.T) {
+	root := t.TempDir()
+	ids, err := (&ImageService{}).ImportMedia(root, []ClipboardMedia{{Name: "restart-confirm.png", Data: "c3RheQ=="}}, false, 0, 0)
+	if err != nil || len(ids) != 1 || ids[0] != 1 {
+		t.Fatalf("prepare retained import: ids=%v err=%v", ids, err)
+	}
+	if result, err := (&UndoService{}).Undo(root); err != nil || !result.Applied {
+		t.Fatalf("prepare redo tail: %+v err=%v", result, err)
+	}
+	tokenPath := filepath.Join(root, "redo-confirmation.token")
+	logPath := filepath.Join(root, "redo-confirmation-child.log")
+	logFile, err := os.Create(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestRetainedRedoConfirmationHelper$")
+	cmd.Env = append(os.Environ(), redoConfirmationRepoEnv+"="+root, redoConfirmationTokenEnv+"="+tokenPath)
+	bounded := &boundedTestLog{writer: logFile, remaining: 64 << 10}
+	cmd.Stdout, cmd.Stderr = bounded, bounded
+	err = cmd.Run()
+	if closeErr := logFile.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if ctx.Err() != nil || err != nil {
+		log, _ := os.ReadFile(logPath)
+		t.Fatalf("confirmation child failed: err=%v context=%v log=%s", err, ctx.Err(), log)
+	}
+	token, err := os.ReadFile(tokenPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := store.Bootstrap(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.DB.Exec(`UPDATE operation_log SET forward='changed after confirmation' WHERE seq=1`); err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	result, err := (&ImageService{}).ResolveRetainedImport(root, RetainedImportResolutionRequest{
+		ImageID: 1, RequestID: "restart-stale-confirmation", RedoTailConfirmation: string(token),
+	})
+	if err == nil || result != nil {
+		t.Fatalf("stale cross-process confirmation was accepted: result=%+v err=%v", result, err)
+	}
+	state, err := (&UndoService{}).State(root)
+	if err != nil || !state.CanRedo {
+		t.Fatalf("stale confirmation changed cursor/tail: %+v err=%v", state, err)
+	}
+	recoverable, err := (&ImageService{}).ListRecoverableImports(root)
+	if err != nil || len(recoverable) != 1 || recoverable[0].ImageID != 1 {
+		t.Fatalf("stale confirmation changed retained item: %+v err=%v", recoverable, err)
 	}
 }
 
@@ -224,8 +397,11 @@ func TestRecoveryRefusesRedoTailAfterProcessRestart(t *testing.T) {
 		t.Fatalf("prepare redo child failed: err=%v context=%v log=%s", err, ctx.Err(), log)
 	}
 	service := &ImageService{}
-	if err := service.RecoverImport(root, 1); err == nil || !strings.Contains(err.Error(), "redo history exists") {
-		t.Fatalf("recovery discarded persisted redo tail after restart: %v", err)
+	preview, err := service.ResolveRetainedImport(root, RetainedImportResolutionRequest{
+		ImageID: 1, RequestID: "restart-redo-preview",
+	})
+	if err != nil || !preview.NeedsRedoConfirmation || preview.RedoTailConfirmation == "" {
+		t.Fatalf("recovery did not preserve persisted redo tail after restart: result=%+v err=%v", preview, err)
 	}
 	repo, err := store.Bootstrap(root)
 	if err != nil {

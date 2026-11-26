@@ -590,7 +590,9 @@ func (s *ImageService) linkSourceToGroup(repoPath string, sourceID, groupID int6
 			newLinks = append(newLinks, rel)
 		}
 	}
-	if len(newLinks) > 0 {
+	var previousCursor int64
+	recorded := len(newLinks) > 0
+	if recorded {
 		fwd, err := json.Marshal(step(stepGraphInsert, graphPayload{Relationships: newLinks}))
 		if err != nil {
 			return fmt.Errorf("encode grouped relationship history: %w", err)
@@ -599,12 +601,19 @@ func (s *ImageService) linkSourceToGroup(repoPath string, sourceID, groupID int6
 		if err != nil {
 			return fmt.Errorf("encode grouped relationship inverse: %w", err)
 		}
-		if err := repo.RecordOperationInTx(tx, stepLinks, string(fwd), string(inv)); err != nil {
+		previousCursor, err = repo.RecordOperationInTx(tx, stepLinks, string(fwd), string(inv))
+		if err != nil {
 			return fmt.Errorf("record grouped relationship history: %w", err)
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit grouped relationship transaction: %w", err)
+	var commitErr error
+	if recorded {
+		commitErr = repo.CommitOperation(tx, previousCursor)
+	} else {
+		commitErr = tx.Commit()
+	}
+	if commitErr != nil {
+		return fmt.Errorf("commit grouped relationship transaction: %w", commitErr)
 	}
 	return nil
 }
@@ -712,10 +721,11 @@ type DirListing struct {
 // discovery), so every returned file always has a real row — drag-and-drop
 // from Explorer never needs to special-case "not yet imported".
 func (s *ImageService) ListDirectory(repoPath, relPath string) (*DirListing, error) {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return nil, err
 	}
+	defer unlock()
 	defer repo.Close()
 
 	listing, err := repo.ListDirectory(relPath)

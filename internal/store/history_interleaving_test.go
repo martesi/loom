@@ -102,3 +102,42 @@ func TestTransactionalHistorySelectionHonorsSessionAndFloor(t *testing.T) {
 		t.Fatalf("new branch = %+v", op)
 	}
 }
+
+func TestFailedBranchCommitDoesNotCapSessionBoundary(t *testing.T) {
+	r, err := Bootstrap(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if _, err := r.DB.Exec(`INSERT INTO operation_log(seq,kind,forward,inverse) VALUES
+		(1,'current-session','{}','{}'),(2,'older-redo','{}','{}');
+		INSERT INTO settings(scope,key,value) VALUES ('repo','undo_cursor','1')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.PrepareOperationLog(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.DB.Exec(`CREATE TRIGGER fail_new_branch BEFORE INSERT ON operation_log
+		WHEN NEW.kind='failed-branch' BEGIN SELECT RAISE(ABORT,'injected branch failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.RecordOperation("failed-branch", "{}", "{}"); err == nil {
+		t.Fatal("injected failed branch committed")
+	}
+	if op, err := r.PeekUndo(); err != nil || op != nil {
+		t.Fatalf("failed branch exposed prior-session operation: op=%+v err=%v", op, err)
+	}
+	var redoRows int
+	if err := r.DB.QueryRow(`SELECT COUNT(*) FROM operation_log WHERE seq=2`).Scan(&redoRows); err != nil || redoRows != 1 {
+		t.Fatalf("failed branch changed redo tail: count=%d err=%v", redoRows, err)
+	}
+	if _, err := r.DB.Exec(`DROP TRIGGER fail_new_branch`); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.RecordOperation("successful-branch", "{}", "{}"); err != nil {
+		t.Fatal(err)
+	}
+	if op, err := r.PeekUndo(); err != nil || op == nil || op.Kind != "successful-branch" {
+		t.Fatalf("successful branch was not undoable: op=%+v err=%v", op, err)
+	}
+}

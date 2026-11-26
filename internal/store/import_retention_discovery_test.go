@@ -58,3 +58,37 @@ func TestRescanSnapshotCannotUpdateAssetAfterItBecomesRetained(t *testing.T) {
 		t.Fatalf("stale discovery update changed retained row: revision %d -> %d, retained=%v", beforeRevision, afterRevision, retained)
 	}
 }
+
+func TestDiscoveryIgnoresSymlinkedMediaFiles(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.png")
+	if err := os.WriteFile(outside, []byte("user bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	linked := filepath.Join(root, "linked.png")
+	if err := os.Symlink(outside, linked); err != nil {
+		t.Skipf("symlinks unavailable on this platform: %v", err)
+	}
+	repo, err := Bootstrap(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	if count, err := repo.ScanAndRegisterImages(context.Background()); err != nil || count != 0 {
+		t.Fatalf("rescan registered symlink: count=%d err=%v", count, err)
+	}
+	if count, err := repo.RegisterImages(context.Background()); err != nil || count != 0 {
+		t.Fatalf("normal discovery registered symlink: count=%d err=%v", count, err)
+	}
+	listing, err := repo.ListDirectory("")
+	if err != nil || len(listing.Files) != 0 {
+		t.Fatalf("directory listing exposed symlink as asset: files=%+v err=%v", listing.Files, err)
+	}
+	if images, err := repo.ListImages(); err != nil || len(images) != 0 {
+		t.Fatalf("symlink became an image row: images=%+v err=%v", images, err)
+	}
+	data, err := os.ReadFile(outside)
+	if err != nil || string(data) != "user bytes" {
+		t.Fatalf("discovery changed symlink target: %q err=%v", data, err)
+	}
+}
