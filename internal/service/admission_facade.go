@@ -29,7 +29,7 @@ type AdmissionFacade struct {
 	operations map[string]admissionOperation
 }
 
-type admissionOperation func(canonicalRoot string, payload []byte) admissionOutcome
+type admissionOperation func(canonicalRoot string, token admissionToken, payload []byte) admissionOutcome
 
 type AdmissionTicket struct {
 	Root          string `json:"root"`
@@ -66,14 +66,24 @@ type discoverCanvasPayload struct {
 func newAdmissionFacade(registry *admissionRegistry) *AdmissionFacade {
 	facade := &AdmissionFacade{registry: registry, images: &ImageService{}}
 	facade.operations = map[string]admissionOperation{
-		admissionCreateRepository:  func(root string, _ []byte) admissionOutcome { return facade.createRepository(root) },
-		admissionMigrateRepository: func(root string, _ []byte) admissionOutcome { return facade.migrateRepository(root) },
-		admissionDiscoverCanvas:    func(root string, _ []byte) admissionOutcome { return facade.discoverCanvas(root) },
-		admissionSetGeometry:       facade.setGeometry,
-		admissionSetPositions:      facade.setPositions,
-		admissionSetViewport:       facade.setViewport,
-		admissionPlaceImages:       facade.placeImages,
-		admissionUnplaceImages:     facade.unplaceImages,
+		admissionCreateRepository:  func(root string, _ admissionToken, _ []byte) admissionOutcome { return facade.createRepository(root) },
+		admissionMigrateRepository: func(root string, _ admissionToken, _ []byte) admissionOutcome { return facade.migrateRepository(root) },
+		admissionDiscoverCanvas:    facade.discoverCanvas,
+		admissionSetGeometry: func(root string, _ admissionToken, payload []byte) admissionOutcome {
+			return facade.setGeometry(root, payload)
+		},
+		admissionSetPositions: func(root string, _ admissionToken, payload []byte) admissionOutcome {
+			return facade.setPositions(root, payload)
+		},
+		admissionSetViewport: func(root string, _ admissionToken, payload []byte) admissionOutcome {
+			return facade.setViewport(root, payload)
+		},
+		admissionPlaceImages: func(root string, _ admissionToken, payload []byte) admissionOutcome {
+			return facade.placeImages(root, payload)
+		},
+		admissionUnplaceImages: func(root string, _ admissionToken, payload []byte) admissionOutcome {
+			return facade.unplaceImages(root, payload)
+		},
 	}
 	return facade
 }
@@ -110,7 +120,7 @@ func (facade *AdmissionFacade) Dispatch(ticket AdmissionTicket, payload []byte) 
 	if err := validateAdmissionPayload(token.kind, payload); err != nil {
 		return AdmissionResult{}, err
 	}
-	outcome, err := facade.registry.Dispatch(token, payload, func() admissionOutcome { return operation(token.root, payload) })
+	outcome, err := facade.registry.Dispatch(token, payload, func() admissionOutcome { return operation(token.root, token, payload) })
 	if err != nil {
 		return AdmissionResult{}, err
 	}
@@ -160,7 +170,12 @@ func (facade *AdmissionFacade) migrateRepository(root string) admissionOutcome {
 	return admissionOutcome{result: []byte("migrated")}
 }
 
-func (facade *AdmissionFacade) discoverCanvas(root string) admissionOutcome {
+func (facade *AdmissionFacade) discoverCanvas(root string, token admissionToken, _ []byte) admissionOutcome {
+	lease, err := facade.registry.AdmitOperation(token)
+	if err != nil {
+		return admissionFailure(err)
+	}
+	defer lease.Release()
 	if err := facade.images.discoverCanvasExisting(root); err != nil {
 		return admissionFailure(err)
 	}

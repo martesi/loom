@@ -276,6 +276,11 @@ func (s *ImageService) ReplaceMedia(repoPath string, imageID int64, item Clipboa
 const trashRetention = 30 * 24 * time.Hour
 
 func (s *ImageService) PurgeImages(repoPath string, ids []int64) error {
+	writer, err := processRenditionGate.Admit(repoPath)
+	if err != nil {
+		return err
+	}
+	defer writer.Release()
 	r, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return err

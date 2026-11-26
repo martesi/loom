@@ -339,6 +339,9 @@ func TestRenditionGateDrainTimeoutStaysClosed(t *testing.T) {
 		t.Fatalf("gate reopened after stalled drain: %v", err)
 	}
 	lease.Release()
+	if err := gate.CloseAndDrain(context.Background(), root); err != nil {
+		t.Fatalf("join timed-out drain after writer completion: %v", err)
+	}
 	if err := gate.Reopen(root); err != nil {
 		t.Fatal(err)
 	}

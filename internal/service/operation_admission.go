@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"sync"
 
 	"loom/internal/store"
 )
@@ -13,7 +12,7 @@ import (
 // This registry is a process-owned foundation only. It is deliberately not
 // wired to Wails or HTTP handlers until every mutating entry point carries an
 // admission token. A missing drain contract fails closed.
-var processAdmissionRegistry = newAdmissionRegistry(nil)
+var processAdmissionRegistry = &admissionRegistry{operationCoordinator: processRenditionGate.operationCoordinator}
 
 var (
 	errAdmissionDrainUnavailable = errors.New("operation admission drain is unavailable")
@@ -64,29 +63,42 @@ type admissionOutcome struct {
 type admissionDrain func(canonicalRoot string) error
 
 type admissionRegistry struct {
-	mu     sync.Mutex
-	roots  map[string]*admissionRoot
-	drain  admissionDrain
-	reopen func(canonicalRoot string) error
+	*operationCoordinator
+	drain          admissionDrain
+	drainAvailable bool
 }
 
 type admissionRoot struct {
-	epoch      uint64
-	activeID   string
-	gateClosed bool
-	fences     map[string]struct{}
-	records    map[string]*admissionRecord // Tombstones are retained for process lifetime.
+	epoch           uint64
+	activeID        string
+	gateClosed      bool
+	fences          map[string]closureOwnerToken
+	owners          map[string]struct{}
+	ownerTombstones map[string]struct{}
+	records         map[string]*admissionRecord // Tombstones are retained for process lifetime.
+	leases          map[*renditionGateLease]struct{}
+	activeLeases    int
+	drainEpoch      uint64
+	drain           *coordinatorDrain
+	drainHold       bool
+	recoveryHold    bool
+	recoveryErr     error
 }
 
 type admissionRecord struct {
-	token      admissionToken
-	state      admissionState
-	drainDone  chan struct{}
-	drained    bool
-	drainErr   error
-	closing    bool
-	outcome    admissionOutcome
-	reconciled bool
+	token            admissionToken
+	state            admissionState
+	drainDone        chan struct{}
+	drained          bool
+	drainErr         error
+	closing          bool
+	outcome          admissionOutcome
+	reconciled       bool
+	drainEpoch       uint64
+	ownerID          string
+	ownedRefs        int
+	dispatchReturned bool
+	ownedDone        chan struct{}
 }
 
 type admissionStatus struct {
@@ -101,30 +113,25 @@ type admissionStatus struct {
 }
 
 func newAdmissionRegistry(drain admissionDrain) *admissionRegistry {
-	return &admissionRegistry{roots: make(map[string]*admissionRoot), drain: drain}
+	return &admissionRegistry{operationCoordinator: newOperationCoordinator(), drain: drain, drainAvailable: drain != nil}
 }
 
 func newAdmissionRegistryWithRenditionGate(gate *renditionGate) *admissionRegistry {
-	return &admissionRegistry{
-		roots:  make(map[string]*admissionRoot),
-		drain:  func(root string) error { return gate.CloseAndDrain(context.Background(), root) },
-		reopen: gate.Reopen,
-	}
+	return &admissionRegistry{operationCoordinator: gate.operationCoordinator, drainAvailable: true}
 }
 
-// Reserve closes the configured rendition gate before draining prior work and
-// returns a dispatch token only after the drain succeeds. Production handlers
-// still use the compatibility path until Wails mutation conversion is complete.
-// The drain runs without the registry mutex; a drain error leaves the gate shut.
+// Reserve installs its operation owner and closes admission atomically with
+// starting or joining the root's drain epoch. Drain work runs without the
+// coordinator mutex and the internal hold survives a caller timeout.
 func (registry *admissionRegistry) Reserve(root, id, kind string, payload []byte) (admissionToken, error) {
 	canonical, err := store.CanonicalRepoOperationRoot(root)
 	if err != nil {
 		return admissionToken{}, err
 	}
-	if id == "" || kind == "" || registry.drain == nil {
-		if registry.drain == nil {
-			return admissionToken{}, errAdmissionDrainUnavailable
-		}
+	if !registry.drainAvailable {
+		return admissionToken{}, errAdmissionDrainUnavailable
+	}
+	if id == "" || kind == "" {
 		return admissionToken{}, errAdmissionInvalid
 	}
 
@@ -143,45 +150,49 @@ func (registry *admissionRegistry) Reserve(root, id, kind string, payload []byte
 		return admissionToken{}, errAdmissionEpochExhausted
 	}
 	entry.epoch++
+	ownerID := "operation:" + id
 	token := admissionToken{
 		root: canonical, id: id, epoch: entry.epoch, kind: kind,
 		digest: sha256.Sum256(payload),
 	}
 	record := &admissionRecord{
-		token: token, state: admissionDraining, drainDone: make(chan struct{}),
+		token: token, state: admissionDraining, ownerID: ownerID,
 	}
 	entry.records[id] = record
 	entry.activeID = id
-	entry.gateClosed = true
+	drain, cancels, leader, err := registry.installOwnerLocked(canonical, entry, ownerID)
+	if err != nil {
+		delete(entry.records, id)
+		entry.activeID = ""
+		registry.mu.Unlock()
+		return admissionToken{}, err
+	}
+	record.drainEpoch = drain.epoch
+	record.drainDone = drain.done
 	registry.mu.Unlock()
-
-	drainErr := registry.drain(canonical)
+	if leader {
+		registry.launchDrain(canonical, entry, drain, cancels, registry.drain)
+	}
+	<-drain.done
+	drainErr := drain.err
 	registry.mu.Lock()
 	entry = registry.roots[canonical]
+	record.drained = drainErr == nil
+	record.drainErr = drainErr
 	if drainErr != nil {
 		record.state = admissionSealed
-		record.drainErr = drainErr
-		record.drained = false
-		close(record.drainDone)
 		registry.mu.Unlock()
 		return admissionToken{}, fmt.Errorf("drain rendition work: %w", drainErr)
 	}
-	record.drained = true
 	if record.state == admissionSealed {
+		registry.removeOwnerLocked(entry, ownerID)
 		if entry.activeID == id {
-			if err := registry.reopenIfUnfencedLocked(canonical, entry); err != nil {
-				registry.mu.Unlock()
-				close(record.drainDone)
-				return admissionToken{}, err
-			}
 			entry.activeID = ""
 		}
-		close(record.drainDone)
 		registry.mu.Unlock()
 		return admissionToken{}, errAdmissionSealed
 	}
 	record.state = admissionReserved
-	close(record.drainDone)
 	registry.mu.Unlock()
 	return token, nil
 }
@@ -238,6 +249,19 @@ func (registry *admissionRegistry) Dispatch(
 		registry.mu.Unlock()
 		return admissionOutcome{}, errAdmissionInvalid
 	}
+	if record.ownedRefs != 0 {
+		record.dispatchReturned = true
+		record.ownedDone = make(chan struct{})
+		ownedDone := record.ownedDone
+		registry.mu.Unlock()
+		<-ownedDone
+		registry.mu.Lock()
+		entry = registry.roots[canonical]
+		if entry == nil || entry.records[token.id] != record || record.state != admissionRunning {
+			registry.mu.Unlock()
+			return admissionOutcome{}, errAdmissionInvalid
+		}
+	}
 	record.outcome = outcome
 	record.state = admissionTerminal
 	registry.mu.Unlock()
@@ -256,7 +280,7 @@ func (registry *admissionRegistry) SealIfNotStarted(root, id string) error {
 	if id == "" {
 		return errAdmissionInvalid
 	}
-	if registry.drain == nil {
+	if !registry.drainAvailable {
 		return errAdmissionDrainUnavailable
 	}
 
@@ -268,80 +292,68 @@ func (registry *admissionRegistry) SealIfNotStarted(root, id string) error {
 		case admissionRunning, admissionTerminal:
 			registry.mu.Unlock()
 			return errAdmissionStarted
-		case admissionSealed:
+		case admissionDraining:
+			record.state = admissionSealed
+		case admissionReserved, admissionSealed:
+			record.state = admissionSealed
 			if record.drained {
+				registry.removeOwnerLocked(entry, record.ownerID)
 				if entry.activeID == id {
-					if err := registry.reopenIfUnfencedLocked(canonical, entry); err != nil {
-						registry.mu.Unlock()
-						return err
-					}
 					entry.activeID = ""
 				}
 				registry.mu.Unlock()
-				return nil
+				return record.drainErr
 			}
-			if record.drainDone == nil {
-				registry.mu.Unlock()
-				return errAdmissionDrainUnavailable
-			}
-			done := record.drainDone
-			registry.mu.Unlock()
-			<-done
-			return record.drainErr
-		case admissionDraining:
-			record.state = admissionSealed
-			done := record.drainDone
-			registry.mu.Unlock()
-			<-done
-			return record.drainErr
-		case admissionReserved:
-			record.state = admissionSealed
-			record.drained = true
-			if entry.activeID == id {
-				if err := registry.reopenIfUnfencedLocked(canonical, entry); err != nil {
-					registry.mu.Unlock()
-					return err
-				}
-				entry.activeID = ""
-			}
-			registry.mu.Unlock()
-			return nil
 		}
 	}
-
-	// Tombstone before waiting. If another operation already owns the closed
-	// root gate, its drain also protects this not-started ID from cache writers.
-	record = &admissionRecord{
-		token: admissionToken{root: canonical, id: id, epoch: entry.epoch},
-		state: admissionSealed, drained: true, drainDone: closedAdmissionSignal(),
-	}
-	entry.records[id] = record
-	if entry.activeID != "" || entry.gateClosed {
+	if record == nil {
+		ownerID := "seal:" + id
+		record = &admissionRecord{
+			token: admissionToken{root: canonical, id: id, epoch: entry.epoch},
+			state: admissionSealed, ownerID: ownerID,
+		}
+		entry.records[id] = record
+		drain, cancels, leader, installErr := registry.installOwnerLocked(canonical, entry, ownerID)
+		if installErr != nil {
+			registry.mu.Unlock()
+			return installErr
+		}
+		record.drainEpoch = drain.epoch
+		record.drainDone = drain.done
 		registry.mu.Unlock()
+		if leader {
+			registry.launchDrain(canonical, entry, drain, cancels, registry.drain)
+		}
+		<-drain.done
+		registry.mu.Lock()
+		record.drained = drain.err == nil
+		record.drainErr = drain.err
+		registry.removeOwnerLocked(entry, ownerID)
+		registry.mu.Unlock()
+		if drain.err != nil {
+			return fmt.Errorf("drain rendition work while sealing: %w", drain.err)
+		}
 		return nil
 	}
-	entry.activeID = id
-	entry.gateClosed = true
-	record.drained = false
-	record.drainDone = make(chan struct{})
-	registry.mu.Unlock()
 
-	drainErr := registry.drain(canonical)
+	drain := entry.drain
+	if drain == nil || record.drainEpoch != drain.epoch {
+		registry.mu.Unlock()
+		return errAdmissionDrainUnavailable
+	}
+	done := drain.done
+	registry.mu.Unlock()
+	<-done
 	registry.mu.Lock()
-	entry = registry.roots[canonical]
-	record.drainErr = drainErr
-	record.drained = drainErr == nil
-	close(record.drainDone)
-	if drainErr == nil && entry.activeID == id {
-		drainErr = registry.reopenIfUnfencedLocked(canonical, entry)
-		record.drainErr = drainErr
-		if drainErr == nil {
-			entry.activeID = ""
-		}
+	record.drained = drain.err == nil
+	record.drainErr = drain.err
+	registry.removeOwnerLocked(entry, record.ownerID)
+	if entry.activeID == id {
+		entry.activeID = ""
 	}
 	registry.mu.Unlock()
-	if drainErr != nil {
-		return fmt.Errorf("drain rendition work while sealing: %w", drainErr)
+	if drain.err != nil {
+		return fmt.Errorf("drain rendition work while sealing: %w", drain.err)
 	}
 	return nil
 }
@@ -368,6 +380,10 @@ func (registry *admissionRegistry) CloseAfterReconciliation(
 	if !sameAdmissionToken(record.token, token) {
 		registry.mu.Unlock()
 		return errAdmissionMismatch
+	}
+	if record.reconciled {
+		registry.mu.Unlock()
+		return nil
 	}
 	if record.state != admissionTerminal || entry.activeID != token.id {
 		registry.mu.Unlock()
@@ -397,20 +413,14 @@ func (registry *admissionRegistry) CloseAfterReconciliation(
 		registry.mu.Unlock()
 		return errAdmissionInvalid
 	}
-	if len(entry.fences) != 0 {
-		registry.mu.Unlock()
+	registry.removeOwnerLocked(entry, record.ownerID)
+	entry.activeID = ""
+	record.reconciled = true
+	otherOwners := len(entry.owners) != 0 || entry.drainHold || entry.recoveryHold
+	registry.mu.Unlock()
+	if otherOwners {
 		return errAdmissionOtherFence
 	}
-	if registry.reopen != nil {
-		if err := registry.reopen(canonical); err != nil {
-			registry.mu.Unlock()
-			return err
-		}
-	}
-	entry.activeID = ""
-	entry.gateClosed = false
-	record.reconciled = true
-	registry.mu.Unlock()
 	return nil
 }
 
@@ -425,26 +435,92 @@ func (registry *admissionRegistry) SetIndependentFence(root, name string, closed
 	if name == "" {
 		return errAdmissionInvalid
 	}
+	if closed {
+		token, err := registry.AcquireFence(canonical, name)
+		if err != nil {
+			return err
+		}
+		return registry.AwaitFence(context.Background(), token)
+	}
 	registry.mu.Lock()
 	entry := registry.rootLocked(canonical)
-	if closed {
-		entry.fences[name] = struct{}{}
-		entry.gateClosed = true
-		if registry.reopen != nil {
-			// Fence installation must be backed by the same real drain as an
-			// admission reservation. Drop the registry lock before waiting.
-			registry.mu.Unlock()
-			return registry.drain(canonical)
-		}
-	} else {
-		delete(entry.fences, name)
-		if entry.activeID == "" {
-			if err := registry.reopenIfUnfencedLocked(canonical, entry); err != nil {
-				registry.mu.Unlock()
-				return err
-			}
-		} else {
-			registry.refreshGateLocked(entry)
+	token, ok := entry.fences[name]
+	registry.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	return registry.ReleaseFence(token)
+}
+
+func (registry *admissionRegistry) AcquireFence(root, id string) (closureOwnerToken, error) {
+	canonical, err := store.CanonicalRepoOperationRoot(root)
+	if err != nil {
+		return closureOwnerToken{}, err
+	}
+	if !registry.drainAvailable {
+		return closureOwnerToken{}, errAdmissionDrainUnavailable
+	}
+	ownerID := "fence:" + id
+	registry.mu.Lock()
+	entry := registry.rootLocked(canonical)
+	if _, exists := entry.owners[ownerID]; exists {
+		registry.mu.Unlock()
+		return closureOwnerToken{}, errAdmissionDuplicate
+	}
+	drain, cancels, leader, err := registry.installOwnerLocked(canonical, entry, ownerID)
+	if err != nil {
+		registry.mu.Unlock()
+		return closureOwnerToken{}, err
+	}
+	token := closureOwnerToken{root: canonical, id: ownerID}
+	entry.fences[id] = token
+	registry.mu.Unlock()
+	if leader {
+		registry.launchDrain(canonical, entry, drain, cancels, registry.drain)
+	}
+	return token, nil
+}
+
+func (registry *admissionRegistry) AwaitFence(ctx context.Context, token closureOwnerToken) error {
+	registry.mu.Lock()
+	entry := registry.roots[token.root]
+	if entry == nil || entry.drain == nil {
+		registry.mu.Unlock()
+		return errAdmissionNotFound
+	}
+	if _, owned := entry.owners[token.id]; !owned {
+		registry.mu.Unlock()
+		return errAdmissionNotFound
+	}
+	drain := entry.drain
+	registry.mu.Unlock()
+	select {
+	case <-drain.done:
+		return drain.err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (registry *admissionRegistry) ReleaseFence(token closureOwnerToken) error {
+	canonical, err := store.CanonicalRepoOperationRoot(token.root)
+	if err != nil || canonical != token.root || token.id == "" {
+		return errAdmissionInvalid
+	}
+	registry.mu.Lock()
+	entry := registry.roots[canonical]
+	if entry == nil {
+		registry.mu.Unlock()
+		return errAdmissionNotFound
+	}
+	if _, owned := entry.owners[token.id]; !owned {
+		registry.mu.Unlock()
+		return errAdmissionNotFound
+	}
+	registry.removeOwnerLocked(entry, token.id)
+	for name, current := range entry.fences {
+		if current == token {
+			delete(entry.fences, name)
 		}
 	}
 	registry.mu.Unlock()

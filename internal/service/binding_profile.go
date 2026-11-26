@@ -6,6 +6,8 @@ import (
 	"net/http"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+
+	"loom/internal/media"
 )
 
 func WailsServices() []application.Service {
@@ -23,9 +25,9 @@ func WailsServices() []application.Service {
 }
 
 func ServePreviewBindingProfile(w http.ResponseWriter, r *http.Request) {
-	ServePreview(w, r)
+	servePreviewWithGate(w, r, media.FFmpegProcessor{}, processRenditionGate)
 }
 
 func ServeThumbBindingProfile(w http.ResponseWriter, r *http.Request) {
-	ServeThumb(w, r)
+	serveThumbWithGate(w, r, media.FFmpegProcessor{}, processRenditionGate)
 }

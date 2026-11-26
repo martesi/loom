@@ -10,8 +10,8 @@ import (
 	"loom/internal/media"
 )
 
-var admissionTestGate = newRenditionGate()
-var admissionTestRegistry = newAdmissionRegistryWithRenditionGate(admissionTestGate)
+var admissionTestGate = processRenditionGate
+var admissionTestRegistry = newAdmissionRegistryWithRenditionGate(processRenditionGate)
 
 func WailsServices() []application.Service {
 	return []application.Service{application.NewService(newAdmissionFacade(admissionTestRegistry))}

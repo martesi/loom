@@ -207,6 +207,17 @@ test('admission facade survives lost response and reload, then discovers through
     (await admissionRPC(page, 'Reconcile', [discoverTicket.value])).status
   ).toBe(200)
 
+  const previewPath = observedAfter.value?.canvas.images[0]?.previewUrl
+  expect(previewPath).toBeTruthy()
+  if (!previewPath) throw new Error('discovery observation returned no preview URL')
+  const cacheOnlyURL = new URL(previewPath, 'http://127.0.0.1')
+  cacheOnlyURL.searchParams.set('cacheOnly', '1')
+  const cacheOnly = await request.get(`${cacheOnlyURL.pathname}${cacheOnlyURL.search}`)
+  expect(cacheOnly.status()).toBe(204)
+  cacheOnlyURL.searchParams.delete('cacheOnly')
+  const generatedAfterCacheOnly = await request.get(`${cacheOnlyURL.pathname}${cacheOnlyURL.search}`)
+  expect(generatedAfterCacheOnly.status()).toBe(200)
+
   const viewportPayload = Buffer.from(
     JSON.stringify({
       action: 'set_viewport',

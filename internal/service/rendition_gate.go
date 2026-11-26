@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 
 	"loom/internal/store"
@@ -11,33 +12,148 @@ import (
 var errRenditionGateClosed = errors.New("rendition cache mutations are fenced")
 var errRenditionCleanup = errors.New("rendition cache cleanup failed")
 
-// renditionGate is a process-local, per-canonical-root admission barrier.
-// Ordinary requests hold a lease through all cache mutation and detached
-// renderer cleanup. Cache-only observation does not acquire a lease.
-type renditionGate struct {
+var processRenditionGate = newRenditionGate()
+
+// operationCoordinator is the single process-local authority for both
+// admission records and rendition leases, keyed by canonical repository root.
+type operationCoordinator struct {
 	mu    sync.Mutex
-	roots map[string]*renditionGateRoot
+	roots map[string]*admissionRoot
+	seq   uint64
 }
 
-type renditionGateRoot struct {
-	closed  bool
-	active  int
-	changed chan struct{}
-	leases  map[*renditionGateLease]struct{}
-	failure error
+type coordinatorDrain struct {
+	epoch       uint64
+	writersDone chan struct{}
+	done        chan struct{}
+	complete    bool
+	err         error
+}
+
+type renditionGate struct{ *operationCoordinator }
+
+type closureOwnerToken struct {
+	root string
+	id   string
 }
 
 type renditionGateLease struct {
-	gate     *renditionGate
-	root     string
-	state    *renditionGateRoot
-	mu       sync.Mutex
-	released bool
-	cancel   context.CancelFunc
+	gate      *renditionGate
+	root      string
+	state     *admissionRoot
+	epoch     uint64
+	released  bool
+	cancel    context.CancelFunc
+	operation *admissionRecord
+}
+
+func newOperationCoordinator() *operationCoordinator {
+	return &operationCoordinator{roots: make(map[string]*admissionRoot)}
 }
 
 func newRenditionGate() *renditionGate {
-	return &renditionGate{roots: make(map[string]*renditionGateRoot)}
+	return &renditionGate{operationCoordinator: newOperationCoordinator()}
+}
+
+func (coordinator *operationCoordinator) rootLocked(root string) *admissionRoot {
+	state := coordinator.roots[root]
+	if state == nil {
+		state = &admissionRoot{
+			fences:          make(map[string]closureOwnerToken),
+			owners:          make(map[string]struct{}),
+			ownerTombstones: make(map[string]struct{}),
+			records:         make(map[string]*admissionRecord),
+			leases:          make(map[*renditionGateLease]struct{}),
+		}
+		coordinator.roots[root] = state
+	}
+	return state
+}
+
+func (coordinator *operationCoordinator) updateClosedLocked(state *admissionRoot) {
+	state.gateClosed = len(state.owners) != 0 || state.drainHold || state.recoveryHold
+}
+
+func (coordinator *operationCoordinator) startDrainLocked(root string, state *admissionRoot) (*coordinatorDrain, []context.CancelFunc, bool, error) {
+	if state.drain != nil && !state.drain.complete {
+		return state.drain, nil, false, nil
+	}
+	if state.drain != nil && state.drain.complete && state.gateClosed {
+		return state.drain, nil, false, nil
+	}
+	if state.drainEpoch == ^uint64(0) {
+		return nil, nil, false, errAdmissionEpochExhausted
+	}
+	state.drainEpoch++
+	drain := &coordinatorDrain{
+		epoch: state.drainEpoch, writersDone: make(chan struct{}), done: make(chan struct{}), err: state.recoveryErr,
+	}
+	state.drain = drain
+	state.drainHold = true
+	coordinator.updateClosedLocked(state)
+	cancels := make([]context.CancelFunc, 0, len(state.leases))
+	for lease := range state.leases {
+		if lease.cancel != nil {
+			cancels = append(cancels, lease.cancel)
+		}
+	}
+	if state.activeLeases == 0 {
+		close(drain.writersDone)
+	}
+	return drain, cancels, true, nil
+}
+
+func (coordinator *operationCoordinator) launchDrain(root string, state *admissionRoot, drain *coordinatorDrain, cancels []context.CancelFunc, hook admissionDrain) {
+	go func() {
+		for _, cancel := range cancels {
+			cancel()
+		}
+		<-drain.writersDone
+		var drainErr error
+		if hook != nil {
+			drainErr = hook(root)
+		}
+		coordinator.mu.Lock()
+		if coordinator.roots[root] == state && state.drain == drain && !drain.complete {
+			if drainErr != nil && drain.err == nil {
+				drain.err = drainErr
+			}
+			drain.complete = true
+			if drain.err != nil {
+				state.recoveryHold = true
+			} else if len(state.owners) == 0 && !state.recoveryHold {
+				state.drainHold = false
+			}
+			coordinator.updateClosedLocked(state)
+			close(drain.done)
+		}
+		coordinator.mu.Unlock()
+	}()
+}
+
+func (coordinator *operationCoordinator) installOwnerLocked(root string, state *admissionRoot, id string) (*coordinatorDrain, []context.CancelFunc, bool, error) {
+	if id == "" {
+		return nil, nil, false, errAdmissionInvalid
+	}
+	if _, used := state.ownerTombstones[id]; used {
+		return nil, nil, false, errAdmissionDuplicate
+	}
+	state.ownerTombstones[id] = struct{}{}
+	state.owners[id] = struct{}{}
+	coordinator.updateClosedLocked(state)
+	return coordinator.startDrainLocked(root, state)
+}
+
+func (coordinator *operationCoordinator) removeOwnerLocked(state *admissionRoot, id string) {
+	delete(state.owners, id)
+	if len(state.owners) == 0 {
+		if state.drain != nil && !state.drain.complete {
+			state.drainHold = true
+		} else if state.drain != nil && state.drain.complete && state.drain.err == nil && !state.recoveryHold {
+			state.drainHold = false
+		}
+	}
+	coordinator.updateClosedLocked(state)
 }
 
 func (gate *renditionGate) Admit(root string) (*renditionGateLease, error) {
@@ -45,145 +161,162 @@ func (gate *renditionGate) Admit(root string) (*renditionGateLease, error) {
 	if err != nil {
 		return nil, err
 	}
-	gate.mu.Lock()
-	state := gate.rootLocked(canonical)
-	if state.closed {
-		gate.mu.Unlock()
+	coordinator := gate.operationCoordinator
+	coordinator.mu.Lock()
+	state := coordinator.rootLocked(canonical)
+	if state.gateClosed {
+		coordinator.mu.Unlock()
 		return nil, errRenditionGateClosed
 	}
-	lease := &renditionGateLease{gate: gate, root: canonical, state: state}
-	state.active++
+	lease := &renditionGateLease{gate: gate, root: canonical, state: state, epoch: state.drainEpoch}
+	state.activeLeases++
 	state.leases[lease] = struct{}{}
-	gate.mu.Unlock()
+	coordinator.mu.Unlock()
 	return lease, nil
 }
 
-// CloseAndDrain atomically rejects new leases, cancels cooperative renderers,
-// then waits for every admitted handler/renderer to finish. A timeout leaves
-// the root closed. No caller mutex is held while waiting.
+// CloseAndDrain installs a unique temporary closure owner, then joins the
+// actual writer drain. A caller timeout removes only its owner; the internal
+// drain hold remains until the same epoch finishes.
 func (gate *renditionGate) CloseAndDrain(ctx context.Context, root string) error {
 	canonical, err := store.CanonicalRepoOperationRoot(root)
 	if err != nil {
 		return err
 	}
-	gate.mu.Lock()
-	state := gate.rootLocked(canonical)
-	if !state.closed {
-		state.closed = true
-		state.changed = make(chan struct{})
+	coordinator := gate.operationCoordinator
+	coordinator.mu.Lock()
+	state := coordinator.rootLocked(canonical)
+	coordinator.seq++
+	ownerID := fmt.Sprintf("drain:%d", coordinator.seq)
+	drain, cancels, leader, err := coordinator.installOwnerLocked(canonical, state, ownerID)
+	coordinator.mu.Unlock()
+	if err != nil {
+		return err
 	}
-	drained := state.changed
-	cancels := make([]context.CancelFunc, 0, len(state.leases))
-	for lease := range state.leases {
-		if cancel := lease.cancelFunc(); cancel != nil {
-			cancels = append(cancels, cancel)
-		}
-	}
-	if state.active == 0 {
-		closeSignal(state.changed)
-	}
-	gate.mu.Unlock()
-
-	for _, cancel := range cancels {
-		cancel()
+	if leader {
+		coordinator.launchDrain(canonical, state, drain, cancels, nil)
 	}
 	select {
-	case <-drained:
-		gate.mu.Lock()
-		failure := state.failure
-		gate.mu.Unlock()
-		return failure
+	case <-drain.done:
+		err = drain.err
 	case <-ctx.Done():
-		return ctx.Err()
+		err = ctx.Err()
 	}
+	coordinator.mu.Lock()
+	coordinator.removeOwnerLocked(state, ownerID)
+	coordinator.mu.Unlock()
+	return err
 }
 
-// Reopen is a nonblocking state transition. Its caller must first establish
-// that the admission registry has no active operation or independent fence.
 func (gate *renditionGate) Reopen(root string) error {
 	canonical, err := store.CanonicalRepoOperationRoot(root)
 	if err != nil {
 		return err
 	}
-	gate.mu.Lock()
-	defer gate.mu.Unlock()
-	state := gate.rootLocked(canonical)
-	if !state.closed || state.active != 0 {
+	coordinator := gate.operationCoordinator
+	coordinator.mu.Lock()
+	defer coordinator.mu.Unlock()
+	state := coordinator.rootLocked(canonical)
+	if state.activeLeases != 0 || len(state.owners) != 0 || state.recoveryHold || (state.drain != nil && !state.drain.complete) {
 		return errAdmissionBusy
 	}
-	state.closed = false
-	state.changed = nil
+	state.drainHold = false
+	coordinator.updateClosedLocked(state)
 	return nil
 }
 
-func (gate *renditionGate) rootLocked(root string) *renditionGateRoot {
-	state := gate.roots[root]
-	if state == nil {
-		state = &renditionGateRoot{leases: make(map[*renditionGateLease]struct{})}
-		gate.roots[root] = state
-	}
-	return state
-}
-
 func (lease *renditionGateLease) SetCancel(cancel context.CancelFunc) {
-	lease.gate.mu.Lock()
+	if lease == nil {
+		return
+	}
+	coordinator := lease.gate.operationCoordinator
+	coordinator.mu.Lock()
+	cancelNow := false
 	if !lease.released {
 		lease.cancel = cancel
+		cancelNow = lease.state.gateClosed && lease.operation == nil
 	}
-	lease.gate.mu.Unlock()
+	coordinator.mu.Unlock()
+	if cancelNow && cancel != nil {
+		cancel()
+	}
 }
 
-// Fork transfers the active rendition slot to a separately-owned worker lease.
-// The worker cancellation registration and closure check share the gate mutex.
+// Fork creates a separate worker reference before renderer work starts. If a
+// closure won the race, the derived worker is still counted and cancelled.
 func (lease *renditionGateLease) Fork(cancel context.CancelFunc) (*renditionGateLease, error) {
 	if lease == nil || cancel == nil {
 		return nil, errAdmissionInvalid
 	}
-	gate := lease.gate
-	gate.mu.Lock()
-	defer gate.mu.Unlock()
-	if lease.released || lease.state.closed {
+	coordinator := lease.gate.operationCoordinator
+	coordinator.mu.Lock()
+	if lease.released {
+		coordinator.mu.Unlock()
 		return nil, errRenditionGateClosed
 	}
-	worker := &renditionGateLease{gate: gate, root: lease.root, state: lease.state, cancel: cancel}
-	lease.state.active++
+	worker := &renditionGateLease{
+		gate: lease.gate, root: lease.root, state: lease.state, epoch: lease.epoch,
+		cancel: cancel, operation: lease.operation,
+	}
+	lease.state.activeLeases++
 	lease.state.leases[worker] = struct{}{}
+	if worker.operation != nil {
+		worker.operation.ownedRefs++
+	}
+	closed := lease.state.gateClosed
+	if worker.operation != nil {
+		closed = false
+	}
+	coordinator.mu.Unlock()
+	if closed {
+		cancel()
+	}
 	return worker, nil
 }
 
-func (lease *renditionGateLease) cancelFunc() context.CancelFunc {
-	return lease.cancel
-}
-
-func (lease *renditionGateLease) Release() {
-	lease.Finish(nil)
-}
+func (lease *renditionGateLease) Release() { lease.Finish(nil) }
 
 func (lease *renditionGateLease) Finish(failure error) {
 	if lease == nil {
 		return
 	}
-	lease.gate.mu.Lock()
+	coordinator := lease.gate.operationCoordinator
+	coordinator.mu.Lock()
 	if lease.released {
-		lease.gate.mu.Unlock()
+		coordinator.mu.Unlock()
 		return
 	}
 	lease.released = true
 	lease.cancel = nil
-	if failure != nil && lease.state.failure == nil {
-		lease.state.failure = failure
+	state := lease.state
+	if failure != nil {
+		state.recoveryHold = true
+		if state.recoveryErr == nil {
+			state.recoveryErr = fmt.Errorf("%w: %w", errRenditionCleanup, failure)
+		}
+		if state.drain != nil && state.drain.err == nil {
+			state.drain.err = state.recoveryErr
+		}
 	}
-	delete(lease.state.leases, lease)
-	lease.state.active--
-	if lease.state.closed && lease.state.active == 0 {
-		closeSignal(lease.state.changed)
+	delete(state.leases, lease)
+	state.activeLeases--
+	if lease.operation != nil {
+		lease.operation.ownedRefs--
+		if lease.operation.dispatchReturned && lease.operation.ownedRefs == 0 {
+			closeSignal(lease.operation.ownedDone)
+		}
 	}
-	lease.gate.mu.Unlock()
+	if state.activeLeases == 0 && state.drain != nil && !state.drain.complete {
+		close(state.drain.writersDone)
+	}
+	if state.activeLeases == 0 && len(state.owners) == 0 && state.drain != nil && state.drain.complete && state.drain.err == nil && !state.recoveryHold {
+		state.drainHold = false
+	}
+	coordinator.updateClosedLocked(state)
+	coordinator.mu.Unlock()
 }
 
-func (lease *renditionGateLease) Transfer() func() {
-	return lease.Release
-}
+func (lease *renditionGateLease) Transfer() func() { return lease.Release }
 
 func closeSignal(signal chan struct{}) {
 	if signal == nil {

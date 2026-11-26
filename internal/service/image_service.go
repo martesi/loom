@@ -33,6 +33,15 @@ func (s *ImageService) mediaProcessor() media.Processor {
 // It removes generated cache files, clears in-memory rendition metadata, and
 // serializes with active encodes so the next request regenerates every tier.
 func (s *ImageService) InvalidateRenditions(repoPath string) (int, error) {
+	writer, err := processRenditionGate.Admit(repoPath)
+	if err != nil {
+		return 0, err
+	}
+	defer writer.Release()
+	return s.invalidateRenditionsWithLease(repoPath)
+}
+
+func (s *ImageService) invalidateRenditionsWithLease(repoPath string) (int, error) {
 	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return 0, err
@@ -107,6 +116,15 @@ func (s *ImageService) RescanRepository(repoPath string) (int, error) {
 // RescanRepositoryContext permits callers that own a cancellation context to
 // stop the bounded source-fingerprinting pass.
 func (s *ImageService) RescanRepositoryContext(ctx context.Context, repoPath string) (int, error) {
+	writer, err := processRenditionGate.Admit(repoPath)
+	if err != nil {
+		return 0, err
+	}
+	defer writer.Release()
+	return s.rescanRepositoryWithLease(ctx, repoPath)
+}
+
+func (s *ImageService) rescanRepositoryWithLease(ctx context.Context, repoPath string) (int, error) {
 	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return 0, err
@@ -195,6 +213,11 @@ type CanvasData struct {
 // DiscoverCanvas performs filesystem discovery, expired-trash cleanup, and
 // dimension maintenance. Callers must admit it as a repository effect.
 func (s *ImageService) DiscoverCanvas(repoPath string) error {
+	writer, err := processRenditionGate.Admit(repoPath)
+	if err != nil {
+		return err
+	}
+	defer writer.Release()
 	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return err
@@ -658,6 +681,11 @@ type DirListing struct {
 // DiscoverDirectory registers files in one folder. Callers must submit this
 // operation through the repository coordinator before invoking it.
 func (s *ImageService) DiscoverDirectory(repoPath, relPath string) error {
+	writer, err := processRenditionGate.Admit(repoPath)
+	if err != nil {
+		return err
+	}
+	defer writer.Release()
 	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return err
