@@ -165,7 +165,7 @@ type ownedImportFile struct {
 	hash string
 }
 
-func applyImportBatchTx(tx *sql.Tx, payload importBatchPayload, created *[]ownedImportFile, afterWrite func(string), writeFile ...func(string, []byte) (os.FileInfo, error)) error {
+func applyImportBatchTx(tx *sql.Tx, payload importBatchPayload, created, validate *[]ownedImportFile, afterWrite func(string), writeFile ...func(string, []byte) (os.FileInfo, error)) error {
 	if len(payload.Entries) == 0 {
 		return fmt.Errorf("import history batch is empty")
 	}
@@ -237,10 +237,6 @@ func applyImportBatchTx(tx *sql.Tx, payload importBatchPayload, created *[]owned
 				if errors.As(err, &cleanupFailure) {
 					*created = append(*created, ownedImportFile{path: cleanupFailure.path, info: cleanupFailure.info, hash: cleanupFailure.hash})
 				}
-				var unverifiedFailure *unverifiedExclusiveFileError
-				if errors.As(err, &unverifiedFailure) {
-					*created = append(*created, ownedImportFile{path: unverifiedFailure.path, hash: fmt.Sprintf("%x", sha256.Sum256(nil))})
-				}
 				return err
 			}
 			*created = append(*created, ownedImportFile{path: activePath, info: info, hash: entry.SHA256})
@@ -256,6 +252,7 @@ func applyImportBatchTx(tx *sql.Tx, payload importBatchPayload, created *[]owned
 		} else if _, err := tx.Exec(`UPDATE images SET trashed = 0, import_undone = 0 WHERE id = ?`, entry.ImageID); err != nil {
 			return err
 		}
+		*validate = append(*validate, ownedImportFile{path: activePath, info: activeInfo, hash: entry.SHA256})
 	}
 	return nil
 }
@@ -288,4 +285,29 @@ func ownedFilePrefixHash(path string, owned os.FileInfo, data []byte) (string, o
 		return "", nil, false
 	}
 	return fmt.Sprintf("%x", sha256.Sum256(onDisk)), current, true
+}
+
+func verifyOwnedImportFile(file ownedImportFile) error {
+	if file.info == nil || store.FileIdentity(file.info) == "" {
+		return fmt.Errorf("import file %q has no verifiable identity", file.path)
+	}
+	before, err := os.Stat(file.path)
+	if err != nil {
+		return fmt.Errorf("inspect import file %q before commit: %w", file.path, err)
+	}
+	if !before.Mode().IsRegular() || !os.SameFile(before, file.info) || store.FileIdentity(before) != store.FileIdentity(file.info) {
+		return fmt.Errorf("import file %q changed before commit", file.path)
+	}
+	data, err := os.ReadFile(file.path)
+	if err != nil {
+		return fmt.Errorf("read import file %q before commit: %w", file.path, err)
+	}
+	if fmt.Sprintf("%x", sha256.Sum256(data)) != file.hash {
+		return fmt.Errorf("import file %q content changed before commit", file.path)
+	}
+	after, err := os.Stat(file.path)
+	if err != nil || !os.SameFile(before, after) || !os.SameFile(after, file.info) || store.FileIdentity(after) != store.FileIdentity(file.info) {
+		return fmt.Errorf("import file %q changed during commit validation", file.path)
+	}
+	return nil
 }

@@ -28,6 +28,7 @@ func replayAtomicHistoryWithCleanup(repo *store.Repo, redo bool, afterWrite func
 	}
 	committed := false
 	var createdFiles []ownedImportFile
+	var filesToValidate []ownedImportFile
 	defer func() {
 		if !committed {
 			_ = tx.Rollback()
@@ -68,7 +69,7 @@ func replayAtomicHistoryWithCleanup(repo *store.Repo, redo bool, afterWrite func
 	case stepImportBatch:
 		var payload importBatchPayload
 		if err = json.Unmarshal(s.Payload, &payload); err == nil {
-			err = applyImportBatchTx(tx, payload, &createdFiles, afterWrite, writeFile)
+			err = applyImportBatchTx(tx, payload, &createdFiles, &filesToValidate, afterWrite, writeFile)
 			if err == nil && payload.Active {
 				for i := range payload.Entries {
 					if scanErr := tx.QueryRow(`SELECT import_file_identity FROM images WHERE id = ?`, payload.Entries[i].ImageID).Scan(&payload.Entries[i].FileIdentity); scanErr != nil {
@@ -110,6 +111,11 @@ func replayAtomicHistoryWithCleanup(repo *store.Repo, redo bool, afterWrite func
 	geometry, err := historyGeometryTx(tx, ids)
 	if err != nil {
 		return true, op, nil, err
+	}
+	for _, file := range filesToValidate {
+		if err := verifyOwnedImportFile(file); err != nil {
+			return true, op, nil, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return true, op, nil, err

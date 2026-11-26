@@ -155,8 +155,11 @@ func clearDiscardedImportSuppression(repo *store.Repo, path, operation string) {
 }
 
 func recordImportFileSuppression(repo *store.Repo, path, expectedHash string, owned os.FileInfo, operation string) {
+	if owned == nil || store.FileIdentity(owned) == "" {
+		return
+	}
 	info, err := os.Stat(path)
-	if err != nil || !info.Mode().IsRegular() || (owned != nil && !os.SameFile(info, owned)) {
+	if err != nil || !info.Mode().IsRegular() || !os.SameFile(info, owned) {
 		return
 	}
 	data, err := os.ReadFile(path)
@@ -164,7 +167,7 @@ func recordImportFileSuppression(repo *store.Repo, path, expectedHash string, ow
 		return
 	}
 	identity := store.FileIdentity(info)
-	if identity == "" || (owned != nil && store.FileIdentity(owned) != identity) {
+	if identity == "" || store.FileIdentity(owned) != identity {
 		return
 	}
 	if _, err := repo.DB.Exec(`INSERT INTO discarded_import_files (file_path, sha256, file_identity) VALUES (?, ?, ?)

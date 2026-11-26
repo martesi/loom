@@ -96,7 +96,7 @@ func TestWriteExclusiveModeDoesNotPublishPartialWritesOrStatFailures(t *testing.
 	}
 }
 
-func TestPersistentImportStatFailureIsSuppressedFromDiscovery(t *testing.T) {
+func TestPersistentImportStatFailureDoesNotClaimUnverifiedOwnership(t *testing.T) {
 	repoPath := t.TempDir()
 	service := &ImageService{writeImportFile: func(path string, data []byte, mode os.FileMode) (os.FileInfo, error) {
 		return writeExclusiveModeUsing(path, data, mode, func(path string, flags int, mode os.FileMode) (exclusiveFile, error) {
@@ -126,8 +126,8 @@ func TestPersistentImportStatFailureIsSuppressedFromDiscovery(t *testing.T) {
 	}
 	defer repo.Close()
 	var suppressed, images int
-	if err := repo.DB.QueryRow(`SELECT count(*) FROM discarded_import_files`).Scan(&suppressed); err != nil || suppressed != 1 {
-		t.Fatalf("persistent stat-failure staging suppression = %d, err=%v", suppressed, err)
+	if err := repo.DB.QueryRow(`SELECT count(*) FROM discarded_import_files`).Scan(&suppressed); err != nil || suppressed != 0 {
+		t.Fatalf("unverified persistent stat-failure suppressions = %d, err=%v", suppressed, err)
 	}
 	if err := repo.DB.QueryRow(`SELECT count(*) FROM images WHERE file_path = ?`, path).Scan(&images); err != nil || images != 0 {
 		t.Fatalf("persistent stat-failure image rows before scan = %d, err=%v", images, err)
@@ -427,6 +427,140 @@ func TestRedoRefreshesActiveFileIdentityAfterRestoringMissingImport(t *testing.T
 	got, err := os.ReadFile(image.FilePath)
 	if err != nil || !bytes.Equal(got, data) {
 		t.Fatalf("repeated redo bytes = %q err=%v", got, err)
+	}
+}
+
+func TestRedoRejectsReplacementPublishedDuringReplay(t *testing.T) {
+	repoPath := t.TempDir()
+	data := []byte("captured import bytes")
+	ids, err := (&ImageService{}).ImportMedia(repoPath, []ClipboardMedia{{
+		Name: "redo-race.png", Data: base64.StdEncoding.EncodeToString(data),
+	}}, false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&UndoService{}).Undo(repoPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(repoPath, "redo-race.png")); err != nil {
+		t.Fatal(err)
+	}
+	service := &UndoService{afterImportRedoFileWrite: func(path string) {
+		replacement := path + ".external"
+		if err := os.WriteFile(replacement, data, 0o600); err != nil {
+			t.Errorf("write identical external replacement: %v", err)
+			return
+		}
+		if err := os.Remove(path); err != nil {
+			t.Errorf("remove restored file before replacement: %v", err)
+			return
+		}
+		if err := os.Rename(replacement, path); err != nil {
+			t.Errorf("publish identical external replacement: %v", err)
+		}
+	}}
+	result, err := service.Redo(repoPath)
+	if err != nil || result.Applied || result.Error == "" {
+		t.Fatalf("redo after in-replay replacement = %+v err=%v", result, err)
+	}
+	path := filepath.Join(repoPath, "redo-race (redo 1).png")
+	if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("external replacement after failed redo = %q err=%v", got, err)
+	}
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	image, err := repo.GetImageByID(ids[0])
+	if err != nil || !image.ImportUndone {
+		t.Fatalf("image after rejected redo = %+v err=%v", image, err)
+	}
+	var suppressions int
+	if err := repo.DB.QueryRow(`SELECT count(*) FROM discarded_import_files WHERE file_path = ?`, path).Scan(&suppressions); err != nil || suppressions != 0 {
+		t.Fatalf("unowned identical replacement suppressions = %d err=%v", suppressions, err)
+	}
+	if _, err := repo.RegisterImages(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var discovered int
+	if err := repo.DB.QueryRow(`SELECT count(*) FROM images WHERE file_path = ? AND id != ?`, path, ids[0]).Scan(&discovered); err != nil || discovered != 1 {
+		t.Fatalf("identical external replacement discovered rows = %d err=%v", discovered, err)
+	}
+}
+
+func TestUnverifiedSuppressionCannotHideIdenticalExternalBytes(t *testing.T) {
+	repoPath := t.TempDir()
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	path := filepath.Join(repoPath, "unverified-identical.png")
+	data := []byte("identical captured bytes")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fileHash := fmt.Sprintf("%x", sha256.Sum256(data))
+	recordImportFileSuppression(repo, path, fileHash, nil, "unverified regression")
+	var suppressions int
+	if err := repo.DB.QueryRow(`SELECT count(*) FROM discarded_import_files WHERE file_path = ?`, path).Scan(&suppressions); err != nil || suppressions != 0 {
+		t.Fatalf("unverified identical file suppressions = %d err=%v", suppressions, err)
+	}
+	if _, err := repo.RegisterImages(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var discovered int
+	if err := repo.DB.QueryRow(`SELECT count(*) FROM images WHERE file_path = ?`, path).Scan(&discovered); err != nil || discovered != 1 {
+		t.Fatalf("unverified identical external bytes discovered rows = %d err=%v", discovered, err)
+	}
+}
+
+func TestUnverifiedRedoFailureDoesNotSuppressExternalPath(t *testing.T) {
+	repoPath := t.TempDir()
+	ids, err := (&ImageService{}).ImportMedia(repoPath, []ClipboardMedia{{
+		Name: "redo-unverified.png", Data: base64.StdEncoding.EncodeToString([]byte("retained")),
+	}}, false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&UndoService{}).Undo(repoPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(repoPath, "redo-unverified.png")); err != nil {
+		t.Fatal(err)
+	}
+	var externalPath string
+	service := &UndoService{writeImportRedoFile: func(path string, _ []byte) (os.FileInfo, error) {
+		externalPath = path
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			return nil, err
+		}
+		return nil, &unverifiedExclusiveFileError{path: path, cause: errors.New("injected unverified publication")}
+	}}
+	result, err := service.Redo(repoPath)
+	if err != nil || result.Applied || result.Error == "" {
+		t.Fatalf("redo with an unverified path = %+v err=%v", result, err)
+	}
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	var suppressions int
+	if err := repo.DB.QueryRow(`SELECT count(*) FROM discarded_import_files WHERE file_path = ?`, externalPath).Scan(&suppressions); err != nil || suppressions != 0 {
+		t.Fatalf("unverified external path suppressions = %d err=%v", suppressions, err)
+	}
+	if _, err := repo.RegisterImages(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var discovered int
+	if err := repo.DB.QueryRow(`SELECT count(*) FROM images WHERE file_path = ?`, externalPath).Scan(&discovered); err != nil || discovered != 1 {
+		t.Fatalf("unverified external path discovered rows = %d err=%v", discovered, err)
+	}
+	image, err := repo.GetImageByID(ids[0])
+	if err != nil || !image.ImportUndone {
+		t.Fatalf("image after failed unverified redo = %+v err=%v", image, err)
 	}
 }
 
