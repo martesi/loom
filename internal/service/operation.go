@@ -12,5 +12,20 @@ func openOperationRepo(repoPath string) (*store.Repo, func(), error) {
 		unlock()
 		return nil, nil, err
 	}
+	if err := recoverImportIntents(repo); err != nil {
+		_ = repo.Close()
+		unlock()
+		return nil, nil, err
+	}
+	if err := repo.RetireImportHistoryBeforeSession(); err != nil {
+		_ = repo.Close()
+		unlock()
+		return nil, nil, err
+	}
+	if err := drainImportCleanup(repo); err != nil {
+		_ = repo.Close()
+		unlock()
+		return nil, nil, err
+	}
 	return repo, unlock, nil
 }

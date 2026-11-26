@@ -557,6 +557,23 @@ func (s *UndoService) replay(repoPath string, redo bool) (*UndoResult, error) {
 	defer unlock()
 	defer repo.Close()
 
+	importHandled, importOp, importErr := replayImportBatchHistory(repo, redo)
+	if importHandled {
+		if importErr != nil {
+			if importOp == nil {
+				return nil, importErr
+			}
+			return &UndoResult{Applied: false, Kind: importOp.Kind, Error: importErr.Error()}, nil
+		}
+		if importOp == nil {
+			return &UndoResult{Applied: false}, nil
+		}
+		return &UndoResult{Applied: true, Kind: importOp.Kind}, nil
+	}
+	if importErr != nil {
+		return nil, importErr
+	}
+
 	handled, op, geometry, err := replayAtomicHistory(repo, redo)
 	if err != nil {
 		if op == nil {

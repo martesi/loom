@@ -544,10 +544,10 @@ func (s *ImageService) linkSourceToGroup(repoPath string, sourceID, groupID int6
 	var newLinks []store.Relationship
 	for _, derivedID := range memberIDs {
 		var sourceExists, targetExists int
-		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images WHERE id = ? AND trashed = 0)`, sourceID).Scan(&sourceExists); err != nil {
+		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images WHERE id = ? AND trashed = 0 AND import_undone = 0)`, sourceID).Scan(&sourceExists); err != nil {
 			return fmt.Errorf("check relationship source: %w", err)
 		}
-		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images WHERE id = ? AND trashed = 0)`, derivedID).Scan(&targetExists); err != nil {
+		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images WHERE id = ? AND trashed = 0 AND import_undone = 0)`, derivedID).Scan(&targetExists); err != nil {
 			return fmt.Errorf("check group member: %w", err)
 		}
 		if sourceExists == 0 || targetExists == 0 {

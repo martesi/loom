@@ -115,83 +115,7 @@ func (s *ImageService) CopyMedia(repoPath string, ids []int64, converted bool) (
 
 // ImportMedia always creates fresh files and identities, with no copied metadata.
 func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, place bool, x, y float64) ([]int64, error) {
-	if err := validateClipboardMedia(media); err != nil {
-		return nil, err
-	}
-	r, unlock, err := openOperationRepo(repoPath)
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	defer r.Close()
-	tx, err := r.DB.Begin()
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-	paths := []string{}
-	committed := false
-	defer func() {
-		if !committed {
-			for _, path := range paths {
-				os.Remove(path)
-			}
-		}
-	}()
-	ids := make([]int64, 0, len(media))
-	for i, item := range media {
-		name := filepath.Base(strings.ReplaceAll(item.Name, "\\", "/"))
-		data, err := base64.StdEncoding.DecodeString(item.Data)
-		if err != nil {
-			return nil, fmt.Errorf("decode media: %w", err)
-		}
-		var file *os.File
-		var dest string
-		for n := 0; ; n++ {
-			candidate := name
-			if n > 0 {
-				ext := filepath.Ext(name)
-				candidate = fmt.Sprintf("%s (%d)%s", strings.TrimSuffix(name, ext), n, ext)
-			}
-			dest = filepath.Join(r.Path, candidate)
-			file, err = os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-			if os.IsExist(err) {
-				continue
-			}
-			if err != nil {
-				return nil, err
-			}
-			break
-		}
-		paths = append(paths, dest)
-		_, writeErr := file.Write(data)
-		closeErr := file.Close()
-		if writeErr != nil {
-			return nil, writeErr
-		}
-		if closeErr != nil {
-			return nil, closeErr
-		}
-		var cx, cy any
-		if place {
-			cx = x + float64(i%6)*190
-			cy = y + float64(i/6)*160
-		}
-		result, err := tx.Exec("INSERT INTO images(file_path,canvas_x,canvas_y) VALUES (?,?,?)", dest, cx, cy)
-		if err != nil {
-			return nil, err
-		}
-		id, err := result.LastInsertId()
-		if err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	committed = true
-	return ids, nil
+	return s.importMediaBatch(repoPath, media, place, x, y)
 }
 
 // ReplaceMedia swaps an asset's stored representation while preserving its
@@ -380,7 +304,7 @@ func purgeImages(r *store.Repo, ids []int64) error {
 		}
 	}
 	for _, img := range images {
-		if err := os.Remove(img.FilePath); err != nil && !os.IsNotExist(err) {
+		if err := removePurgeTarget(r, img); err != nil {
 			return fmt.Errorf("purge %s: %w", filepath.Base(img.FilePath), err)
 		}
 		if img.ThumbPath != "" {
@@ -395,14 +319,67 @@ func purgeImages(r *store.Repo, ids []int64) error {
 		if err != nil {
 			return fmt.Errorf("purge preview cache: %w", err)
 		}
-		_, deleteErr := r.DB.Exec("DELETE FROM images WHERE id = ?", img.ID)
+		deleteErr := deletePurgedImage(r, img.ID)
 		releasePreviewLocks()
 		if deleteErr != nil {
 			return deleteErr
 		}
 	}
 	_, err := r.DB.Exec("DELETE FROM groups WHERE NOT EXISTS (SELECT 1 FROM images WHERE group_id = groups.id)")
-	return err
+	if err != nil {
+		return err
+	}
+	return drainImportCleanup(r)
+}
+
+func removePurgeTarget(repo *store.Repo, image store.Image) error {
+	var identity, hash string
+	err := repo.DB.QueryRow(`SELECT file_identity, sha256 FROM import_file_ownership WHERE image_id = ?`, image.ID).Scan(&identity, &hash)
+	if err == sql.ErrNoRows {
+		if err := os.Remove(image.FilePath); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !sameOwnedImportFile(image.FilePath, identity, hash) {
+		// A path may now name an external replacement. Preserve it; deleting the
+		// image row makes normal discovery register those bytes independently.
+		return nil
+	}
+	if err := os.Remove(image.FilePath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func deletePurgedImage(repo *store.Repo, imageID int64) error {
+	tx, err := repo.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var anchor, identity, hash string
+	err = tx.QueryRow(`SELECT anchor_path, file_identity, sha256 FROM import_file_ownership WHERE image_id = ?`, imageID).Scan(&anchor, &identity, &hash)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if err == nil {
+		if anchor != "" {
+			if _, err := tx.Exec(`INSERT OR IGNORE INTO import_cleanup_queue(anchor_path, file_identity, sha256) VALUES (?, ?, ?)`, anchor, identity, hash); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(`DELETE FROM import_replay_refs WHERE image_id = ?`, imageID); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`DELETE FROM images WHERE id = ?`, imageID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func availableMediaPath(path string) string {

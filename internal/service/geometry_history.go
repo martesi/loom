@@ -42,7 +42,7 @@ func validateGeometry(g GeometryUpdate) error {
 
 func geometryTx(tx *sql.Tx, id int64) (GeometryUpdate, error) {
 	g := GeometryUpdate{ImageID: id}
-	err := tx.QueryRow(`SELECT canvas_x, canvas_y, canvas_w, canvas_h FROM images WHERE id = ? AND trashed = 0`, id).Scan(&g.X, &g.Y, &g.W, &g.H)
+	err := tx.QueryRow(`SELECT canvas_x, canvas_y, canvas_w, canvas_h FROM images WHERE id = ? AND trashed = 0 AND import_undone = 0`, id).Scan(&g.X, &g.Y, &g.W, &g.H)
 	return g, err
 }
 

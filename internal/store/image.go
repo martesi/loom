@@ -26,6 +26,7 @@ type Image struct {
 	SourceRevision    int64
 	Archived          bool
 	Trashed           bool
+	ImportUndone      bool
 	CanvasX           float64
 	CanvasY           float64
 	HasCanvasPos      bool
@@ -104,6 +105,10 @@ func (r *Repo) RegisterImages(ctx context.Context) (int, error) {
 
 func (r *Repo) registerImage(ctx context.Context, path string) (int, error) {
 	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	pending, err := r.importPathPending(path)
+	if err != nil || pending {
 		return 0, err
 	}
 	info, err := os.Stat(path)
@@ -226,6 +231,13 @@ func (r *Repo) scanAndRegisterImagesWithFingerprint(ctx context.Context, advance
 		if item.err != nil {
 			return changed, fmt.Errorf("fingerprint %s: %w", item.path, item.err)
 		}
+		pending, err := r.importPathPending(item.path)
+		if err != nil {
+			return changed, err
+		}
+		if pending {
+			continue
+		}
 		statMarker := fmt.Sprintf("stat:%d:%d", item.info.Size(), item.info.ModTime().UnixNano())
 		res, err := r.DB.Exec(`INSERT OR IGNORE INTO images (file_path, file_size, content_hash, source_fingerprint, source_revision) VALUES (?, ?, ?, ?, 1)`, item.path, item.info.Size(), statMarker, item.fingerprint)
 		if err != nil {
@@ -257,6 +269,16 @@ func (r *Repo) scanAndRegisterImagesWithFingerprint(ctx context.Context, advance
 		return changed, err
 	}
 	return changed, nil
+}
+
+func (r *Repo) importPathPending(path string) (bool, error) {
+	var pending bool
+	err := r.DB.QueryRow(`SELECT EXISTS(
+		SELECT 1 FROM import_batch_intent_files f
+		JOIN import_batch_intents i ON i.batch_id = f.batch_id
+		WHERE i.action = 'publish' AND f.target_path = ?
+	)`, path).Scan(&pending)
+	return pending, err
 }
 
 func (r *Repo) mediaFiles(ctx context.Context) ([]string, error) {
@@ -384,6 +406,13 @@ func (r *Repo) ListDirectory(relPath string) (DirListing, error) {
 			continue
 		}
 		if IsMediaFile(full) {
+			pending, err := r.importPathPending(full)
+			if err != nil {
+				return DirListing{}, err
+			}
+			if pending {
+				continue
+			}
 			mediaPaths = append(mediaPaths, full)
 		}
 	}
@@ -458,7 +487,7 @@ const imageSelectCols = `
 	COALESCE(height, 0), COALESCE(file_size, 0), archived, trashed, canvas_x, canvas_y,
 	canvas_w, canvas_h,
 	COALESCE((SELECT p.text FROM prompts p WHERE p.id = images.prompt_id), ''),
-	COALESCE(group_id, 0), created_at, COALESCE(source_fingerprint, ''), source_revision`
+	COALESCE(group_id, 0), created_at, COALESCE(source_fingerprint, ''), source_revision, import_undone`
 
 func scanImage(scanner interface {
 	Scan(dest ...any) error
@@ -466,7 +495,7 @@ func scanImage(scanner interface {
 	var img Image
 	var cx, cy, cw, ch sql.NullFloat64
 	err := scanner.Scan(&img.ID, &img.FilePath, &img.ThumbPath, &img.Width, &img.Height,
-		&img.FileSize, &img.Archived, &img.Trashed, &cx, &cy, &cw, &ch, &img.PromptText, &img.GroupID, &img.CreatedAt, &img.SourceFingerprint, &img.SourceRevision)
+		&img.FileSize, &img.Archived, &img.Trashed, &cx, &cy, &cw, &ch, &img.PromptText, &img.GroupID, &img.CreatedAt, &img.SourceFingerprint, &img.SourceRevision, &img.ImportUndone)
 	if err != nil {
 		return img, err
 	}
@@ -481,7 +510,7 @@ func scanImage(scanner interface {
 
 // ListImages returns all non-trashed images.
 func (r *Repo) ListImages() ([]Image, error) {
-	rows, err := r.DB.Query(`SELECT ` + imageSelectCols + ` FROM images WHERE trashed = 0 ORDER BY id`)
+	rows, err := r.DB.Query(`SELECT ` + imageSelectCols + ` FROM images WHERE trashed = 0 AND import_undone = 0 ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -514,7 +543,7 @@ func (r *Repo) ListRelationships() ([]Relationship, error) {
 		FROM relationships rel
 		JOIN images s ON s.id = rel.source_image_id
 		JOIN images d ON d.id = rel.derived_image_id
-		WHERE s.trashed = 0 AND d.trashed = 0 ORDER BY rel.pairing_order, rel.id`)
+		WHERE s.trashed = 0 AND d.trashed = 0 AND s.import_undone = 0 AND d.import_undone = 0 ORDER BY rel.pairing_order, rel.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -955,7 +984,7 @@ func (r *Repo) ListImagesByIDs(ids []int64) ([]Image, error) {
 		placeholders[i] = "?"
 		args[i] = id
 	}
-	query := `SELECT ` + imageSelectCols + ` FROM images WHERE trashed = 0 AND id IN (` +
+	query := `SELECT ` + imageSelectCols + ` FROM images WHERE trashed = 0 AND import_undone = 0 AND id IN (` +
 		strings.Join(placeholders, ",") + `)`
 	rows, err := r.DB.Query(query, args...)
 	if err != nil {

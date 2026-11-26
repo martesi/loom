@@ -164,3 +164,42 @@ test('file drop and canvas clipboard paste create placed assets and errors are d
   await pasteError.getByRole('button', { name: 'Dismiss' }).click()
   await expect(pasteError).toHaveCount(0)
 })
+
+test('a pasted import is one undoable and redoable batch', async ({
+  page,
+  context,
+  clipboardAccess,
+}) => {
+  void clipboardAccess
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await openFixtureRepo(page, 'media-fixtures')
+  await enterEdit(page)
+
+  await page.evaluate(async () => {
+    const data =
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+    await navigator.clipboard.writeText(
+      JSON.stringify({
+        version: 1,
+        media: [
+          { name: 'undo-paste-one.png', data },
+          { name: 'undo-paste-two.png', data },
+        ],
+      })
+    )
+  })
+  await page.keyboard.press('ControlOrMeta+v')
+  await expect(asset(page, 'undo-paste-one.png')).toBeVisible()
+  await expect(asset(page, 'undo-paste-two.png')).toBeVisible()
+  await expect(imageNodes(page)).toHaveCount(3)
+
+  await page.keyboard.press('ControlOrMeta+z')
+  await expect(asset(page, 'undo-paste-one.png')).toHaveCount(0)
+  await expect(asset(page, 'undo-paste-two.png')).toHaveCount(0)
+  await expect(imageNodes(page)).toHaveCount(1)
+
+  await page.keyboard.press('ControlOrMeta+Shift+z')
+  await expect(asset(page, 'undo-paste-one.png')).toBeVisible()
+  await expect(asset(page, 'undo-paste-two.png')).toBeVisible()
+  await expect(imageNodes(page)).toHaveCount(3)
+})

@@ -12,7 +12,7 @@ type LibraryQuery struct {
 
 // ListImagesFiltered backs the Assets view with metadata, placement, and status filters.
 func (r *Repo) ListImagesFiltered(q LibraryQuery) ([]Image, error) {
-	var conditions []string
+	conditions := []string{"import_undone = 0"}
 	var args []any
 
 	switch q.Status {
