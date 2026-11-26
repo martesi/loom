@@ -16,13 +16,11 @@ import (
 )
 
 type ImageService struct {
-	Media                     media.Processor
-	now                       func() time.Time
-	dimensionProbe            func(context.Context, string) (media.Dimensions, error)
-	afterImportFileWrite      func(string)
-	removeDiscardedImportFile func(string) error
-	writeImportFile           func(string, []byte, os.FileMode) (os.FileInfo, error)
-	removeImportRollbackFile  func(string) error
+	Media                media.Processor
+	now                  func() time.Time
+	dimensionProbe       func(context.Context, string) (media.Dimensions, error)
+	afterImportFileWrite func(string)
+	writeImportFile      func(string, []byte, os.FileMode) (os.FileInfo, error)
 }
 
 func (s *ImageService) mediaProcessor() media.Processor {

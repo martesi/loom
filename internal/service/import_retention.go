@@ -8,7 +8,6 @@ import (
 	"log"
 	"loom/internal/store"
 	"os"
-	"path/filepath"
 	"strconv"
 )
 
@@ -18,14 +17,8 @@ type discardedImportFile struct {
 	identity string
 }
 
-type importRedoFile struct {
-	hash     string
-	identity string
-}
-
 type discardedImportRedo struct {
-	snapshots map[string]importRedoFile
-	active    []discardedImportFile
+	active []discardedImportFile
 }
 
 func recordOperationInTx(repo *store.Repo, tx *sql.Tx, kind, forward, inverse string) (discardedImportRedo, error) {
@@ -40,9 +33,10 @@ func recordOperationInTx(repo *store.Repo, tx *sql.Tx, kind, forward, inverse st
 }
 
 // pruneUndoneImportRedoTx removes hidden import rows whose redo operations are
-// about to be discarded. File cleanup is deferred until the caller commits.
+// about to be discarded. Files stay on disk; stable identities get tombstones
+// because portable path-based unlink cannot bind deletion to identity.
 func pruneUndoneImportRedoTx(tx *sql.Tx) (discardedImportRedo, error) {
-	result := discardedImportRedo{snapshots: make(map[string]importRedoFile)}
+	result := discardedImportRedo{}
 	var cursor int64
 	var rawCursor string
 	err := tx.QueryRow(`SELECT value FROM settings WHERE scope = 'repo' AND key = 'undo_cursor'`).Scan(&rawCursor)
@@ -77,11 +71,6 @@ func pruneUndoneImportRedoTx(tx *sql.Tx) (discardedImportRedo, error) {
 				continue
 			}
 			entries = append(entries, payload.Entries...)
-			for _, entry := range payload.Entries {
-				if entry.RetainedPath != "" && entry.SHA256 != "" {
-					result.snapshots[filepath.Clean(entry.RetainedPath)] = importRedoFile{hash: entry.SHA256, identity: entry.RetainedIdentity}
-				}
-			}
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -126,45 +115,37 @@ func pruneUndoneImportRedoTx(tx *sql.Tx) (discardedImportRedo, error) {
 }
 
 func cleanupDiscardedImportRedoBestEffort(repo *store.Repo, discarded discardedImportRedo, operation string) {
-	cleanupDiscardedImportRedoBestEffortWith(repo, discarded, operation, os.Remove)
+	cleanupDiscardedImportRedoBestEffortAfterCheck(repo, discarded, operation, nil)
 }
 
-func (s *ImageService) cleanupDiscardedImportRedo(repo *store.Repo, discarded discardedImportRedo, operation string) {
-	if s.removeDiscardedImportFile == nil {
-		cleanupDiscardedImportRedoBestEffort(repo, discarded, operation)
-		return
-	}
-	cleanupDiscardedImportRedoBestEffortWith(repo, discarded, operation, s.removeDiscardedImportFile)
-}
-
-func cleanupDiscardedImportRedoBestEffortWith(repo *store.Repo, discarded discardedImportRedo, operation string, remove func(string) error) {
+// The test hook replaces a path after its ownership check. Production does not
+// unlink it, because no portable path removal can close the check/remove race.
+func cleanupDiscardedImportRedoBestEffortAfterCheck(repo *store.Repo, discarded discardedImportRedo, operation string, afterCheck func(string)) {
 	for _, file := range discarded.active {
-		before, err := os.Stat(file.path)
+		info, err := os.Stat(file.path)
+		if os.IsNotExist(err) {
+			clearDiscardedImportSuppression(repo, file.path, operation)
+			continue
+		}
 		if err != nil {
-			if os.IsNotExist(err) {
-				clearDiscardedImportSuppression(repo, file.path, operation)
-			}
 			continue
 		}
 		data, err := os.ReadFile(file.path)
 		if err != nil {
 			continue
 		}
-		if store.FileIdentity(before) == "" || store.FileIdentity(before) != file.identity || fmt.Sprintf("%x", sha256.Sum256(data)) != file.hash {
+		if store.FileIdentity(info) != file.identity || fmt.Sprintf("%x", sha256.Sum256(data)) != file.hash {
 			clearDiscardedImportSuppression(repo, file.path, operation)
 			continue
 		}
-		after, err := os.Stat(file.path)
-		if err != nil || !os.SameFile(before, after) || store.FileIdentity(after) != file.identity {
-			continue
+		if afterCheck != nil {
+			afterCheck(file.path)
 		}
-		if err := remove(file.path); err != nil && !os.IsNotExist(err) {
-			log.Printf("%s: unable to clean up discarded import file %q: %v", operation, file.path, err)
-			continue
-		}
-		clearDiscardedImportSuppression(repo, file.path, operation)
 	}
-	cleanupImportRedoBestEffort(repo, discarded.snapshots, operation)
+}
+
+func (s *ImageService) cleanupDiscardedImportRedo(repo *store.Repo, discarded discardedImportRedo, operation string) {
+	cleanupDiscardedImportRedoBestEffort(repo, discarded, operation)
 }
 
 func clearDiscardedImportSuppression(repo *store.Repo, path, operation string) {
@@ -192,168 +173,12 @@ func recordImportFileSuppression(repo *store.Repo, path, expectedHash string, ow
 	}
 }
 
-func collectImportRedoTail(repo *store.Repo) (map[string]importRedoFile, error) {
-	cursor, err := repo.UndoCursor()
-	if err != nil {
-		return nil, err
-	}
-	rows, err := repo.DB.Query(`SELECT forward, inverse FROM operation_log WHERE seq > ?`, cursor)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	candidates := make(map[string]importRedoFile)
-	for rows.Next() {
-		var forward, inverse string
-		if err := rows.Scan(&forward, &inverse); err != nil {
-			return nil, err
-		}
-		collectImportPayloadPaths(candidates, forward)
-		collectImportPayloadPaths(candidates, inverse)
-	}
-	return candidates, rows.Err()
-}
-
-func collectImportRedoForImages(repo *store.Repo, ids []int64) (map[string]importRedoFile, error) {
-	if len(ids) == 0 {
-		return map[string]importRedoFile{}, nil
-	}
-	selected := make(map[int64]bool, len(ids))
-	for _, id := range ids {
-		selected[id] = true
-	}
-	rows, err := repo.DB.Query(`SELECT forward, inverse FROM operation_log WHERE kind = 'import_batch'`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	candidates := make(map[string]importRedoFile)
-	for rows.Next() {
-		var forward, inverse string
-		if err := rows.Scan(&forward, &inverse); err != nil {
-			return nil, err
-		}
-		for _, raw := range []string{forward, inverse} {
-			var step OpStep
-			if err := json.Unmarshal([]byte(raw), &step); err != nil || step.Kind != stepImportBatch {
-				continue
-			}
-			var payload importBatchPayload
-			if err := json.Unmarshal(step.Payload, &payload); err != nil {
-				continue
-			}
-			for _, entry := range payload.Entries {
-				if selected[entry.ImageID] && entry.RetainedPath != "" {
-					candidates[filepath.Clean(entry.RetainedPath)] = importRedoFile{hash: entry.SHA256, identity: entry.RetainedIdentity}
-				}
-			}
-		}
-	}
-	return candidates, rows.Err()
-}
-
-func collectImportPayloadPaths(candidates map[string]importRedoFile, raw string) {
-	var step OpStep
-	if err := json.Unmarshal([]byte(raw), &step); err != nil || step.Kind != stepImportBatch {
-		return
-	}
-	var payload importBatchPayload
-	if err := json.Unmarshal(step.Payload, &payload); err != nil {
-		return
-	}
-	for _, entry := range payload.Entries {
-		if entry.RetainedPath != "" && entry.SHA256 != "" {
-			candidates[filepath.Clean(entry.RetainedPath)] = importRedoFile{hash: entry.SHA256, identity: entry.RetainedIdentity}
-		}
-	}
-}
-
-func cleanupUnreferencedImportRedo(repo *store.Repo, candidates map[string]importRedoFile) error {
-	rows, err := repo.DB.Query(`SELECT forward, inverse FROM operation_log`)
-	if err != nil {
-		return err
-	}
-	referenced := make(map[string]bool)
-	for rows.Next() {
-		var forward, inverse string
-		if err := rows.Scan(&forward, &inverse); err != nil {
-			rows.Close()
-			return err
-		}
-		for _, raw := range []string{forward, inverse} {
-			var step OpStep
-			if err := json.Unmarshal([]byte(raw), &step); err != nil || step.Kind != stepImportBatch {
-				continue
-			}
-			var payload importBatchPayload
-			if err := json.Unmarshal(step.Payload, &payload); err != nil {
-				continue
-			}
-			for _, entry := range payload.Entries {
-				if entry.RetainedPath != "" {
-					referenced[filepath.Clean(entry.RetainedPath)] = true
-				}
-			}
-		}
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return err
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	dir := filepath.Join(repo.Path, ".loom", "trash", "import-redo")
-	entries, err := os.ReadDir(dir)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		if !entry.Type().IsRegular() {
-			continue
-		}
-		path := filepath.Join(dir, entry.Name())
-		candidate, wasPruned := candidates[filepath.Clean(path)]
-		if !referenced[filepath.Clean(path)] && wasPruned {
-			before, err := os.Stat(path)
-			if err != nil || !before.Mode().IsRegular() || candidate.identity == "" || store.FileIdentity(before) != candidate.identity {
-				continue
-			}
-			data, err := os.ReadFile(path)
-			if err != nil || fmt.Sprintf("%x", sha256.Sum256(data)) != candidate.hash {
-				continue
-			}
-			after, err := os.Stat(path)
-			if err != nil || !os.SameFile(before, after) || store.FileIdentity(after) != candidate.identity {
-				continue
-			}
-			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func cleanupImportRedoBestEffort(repo *store.Repo, candidates map[string]importRedoFile, operation string) {
-	if err := cleanupUnreferencedImportRedo(repo, candidates); err != nil {
-		log.Printf("%s: unable to clean up import snapshots: %v", operation, err)
-	}
-}
-
 // Once an image is purged, its import-history payload can no longer be replayed.
-// Clear only that image's retained path, then let the reference scan safely
-// remove bytes that no remaining operation can use.
+// Clear only that image's retained path. The captured bytes remain under .loom
+// because deleting by path cannot be made identity-atomic on supported OSes.
 func forgetPurgedImportHistory(repo *store.Repo, ids []int64) error {
 	if len(ids) == 0 {
 		return nil
-	}
-	candidates, err := collectImportRedoForImages(repo, ids)
-	if err != nil {
-		return err
 	}
 	rows, err := repo.DB.Query(`SELECT seq, forward, inverse FROM operation_log WHERE kind = 'import_batch'`)
 	if err != nil {
@@ -424,6 +249,5 @@ func forgetPurgedImportHistory(repo *store.Repo, ids []int64) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	cleanupImportRedoBestEffort(repo, candidates, "purge images")
 	return nil
 }

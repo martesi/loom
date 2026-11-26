@@ -2,8 +2,10 @@ package service
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -62,27 +64,22 @@ func writeExclusiveMode(path string, data []byte, mode os.FileMode) (os.FileInfo
 	})
 }
 
-func writeExclusiveModeUsing(path string, data []byte, mode os.FileMode, open func(string, int, os.FileMode) (exclusiveFile, error), removeFiles ...func(string) error) (os.FileInfo, error) {
-	remove := os.Remove
-	if len(removeFiles) > 0 && removeFiles[0] != nil {
-		remove = removeFiles[0]
+func writeExclusiveModeUsing(path string, data []byte, mode os.FileMode, open func(string, int, os.FileMode) (exclusiveFile, error)) (os.FileInfo, error) {
+	if _, err := os.Lstat(path); err == nil {
+		return nil, os.ErrExist
+	} else if !os.IsNotExist(err) {
+		return nil, err
 	}
 	stageDir := exclusiveStageDirectory(path)
 	var stagePath string
 	var file exclusiveFile
 	for {
-		seed, err := os.CreateTemp(stageDir, ".loom-import-stage-*")
-		if err != nil {
+		randomName := make([]byte, 16)
+		if _, err := rand.Read(randomName); err != nil {
 			return nil, err
 		}
-		stagePath = seed.Name()
-		if err := seed.Close(); err != nil {
-			_ = os.Remove(stagePath)
-			return nil, err
-		}
-		if err := os.Remove(stagePath); err != nil {
-			return nil, err
-		}
+		stagePath = filepath.Join(stageDir, ".loom-import-stage-"+hex.EncodeToString(randomName))
+		var err error
 		file, err = open(stagePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 		if os.IsExist(err) {
 			continue
@@ -97,9 +94,9 @@ func writeExclusiveModeUsing(path string, data []byte, mode os.FileMode, open fu
 		retryInfo, retryErr := file.Stat()
 		_ = file.Close()
 		if retryErr == nil {
-			remainingHash, cleanupErr := removeOwnedFilePrefix(stagePath, retryInfo, data, remove)
-			if cleanupErr != nil {
-				return nil, &exclusiveCleanupFailure{path: stagePath, info: retryInfo, hash: remainingHash, cause: errors.Join(statErr, cleanupErr)}
+			remainingHash, currentInfo, verified := ownedFilePrefixHash(stagePath, retryInfo, data)
+			if verified {
+				return nil, &exclusiveCleanupFailure{path: stagePath, info: currentInfo, hash: remainingHash, cause: statErr}
 			}
 			return nil, statErr
 		}
@@ -108,28 +105,39 @@ func writeExclusiveModeUsing(path string, data []byte, mode os.FileMode, open fu
 	_, writeErr := file.Write(data)
 	closeErr := file.Close()
 	if writeErr != nil {
-		remainingHash, cleanupErr := removeOwnedFilePrefix(stagePath, info, data, remove)
-		if cleanupErr != nil {
-			return nil, &exclusiveCleanupFailure{path: stagePath, info: info, hash: remainingHash, cause: errors.Join(writeErr, cleanupErr)}
+		remainingHash, currentInfo, verified := ownedFilePrefixHash(stagePath, info, data)
+		if verified {
+			return nil, &exclusiveCleanupFailure{path: stagePath, info: currentInfo, hash: remainingHash, cause: writeErr}
 		}
 		return nil, writeErr
 	}
 	if closeErr != nil {
-		remainingHash, cleanupErr := removeOwnedFilePrefix(stagePath, info, data, remove)
-		if cleanupErr != nil {
-			return nil, &exclusiveCleanupFailure{path: stagePath, info: info, hash: remainingHash, cause: errors.Join(closeErr, cleanupErr)}
+		remainingHash, currentInfo, verified := ownedFilePrefixHash(stagePath, info, data)
+		if verified {
+			return nil, &exclusiveCleanupFailure{path: stagePath, info: currentInfo, hash: remainingHash, cause: closeErr}
 		}
 		return nil, closeErr
 	}
 	if err := os.Link(stagePath, path); err != nil {
-		remainingHash, cleanupErr := removeOwnedFilePrefix(stagePath, info, data, remove)
-		if cleanupErr != nil {
-			return nil, &exclusiveCleanupFailure{path: stagePath, info: info, hash: remainingHash, cause: errors.Join(err, cleanupErr)}
-		}
 		return nil, err
 	}
-	_ = os.Remove(stagePath)
-	return info, nil
+	// Keep this hidden hard link as an ownership anchor. It pins the inode so
+	// the OS cannot reuse its device/inode identity after the visible path is
+	// deleted or replaced.
+	publishedInfo, err := os.Stat(path)
+	if err == nil {
+		if os.SameFile(info, publishedInfo) {
+			return publishedInfo, nil
+		}
+		return nil, fmt.Errorf("import destination changed after publication: %s", path)
+	}
+	anchorInfo, anchorErr := os.Stat(stagePath)
+	if anchorErr == nil {
+		return nil, &exclusiveCleanupFailure{
+			path: path, info: anchorInfo, hash: fmt.Sprintf("%x", sha256.Sum256(data)), cause: err,
+		}
+	}
+	return nil, &unverifiedExclusiveFileError{path: path, cause: errors.Join(err, anchorErr)}
 }
 
 func exclusiveStageDirectory(path string) string {
@@ -270,38 +278,14 @@ func writeRetainedImport(currentPath string, data []byte, writeFile ...func(stri
 	}
 }
 
-func removeOwnedFile(path string, owned os.FileInfo, expectedHash string, removeFiles ...func(string) error) bool {
-	remove := os.Remove
-	if len(removeFiles) > 0 && removeFiles[0] != nil {
-		remove = removeFiles[0]
-	}
-	current, err := os.Stat(path)
-	if os.IsNotExist(err) {
-		return true
-	}
-	if err != nil || owned == nil || !os.SameFile(current, owned) {
-		return false
-	}
-	data, err := os.ReadFile(path)
-	if err != nil || fmt.Sprintf("%x", sha256.Sum256(data)) != expectedHash {
-		return false
-	}
-	err = remove(path)
-	return err == nil || os.IsNotExist(err)
-}
-
-func removeOwnedFilePrefix(path string, owned os.FileInfo, data []byte, remove func(string) error) (string, error) {
+func ownedFilePrefixHash(path string, owned os.FileInfo, data []byte) (string, os.FileInfo, bool) {
 	current, err := os.Stat(path)
 	if err != nil || owned == nil || !os.SameFile(current, owned) {
-		return "", nil
+		return "", nil, false
 	}
 	onDisk, err := os.ReadFile(path)
 	if err != nil || len(onDisk) > len(data) || !bytes.Equal(onDisk, data[:len(onDisk)]) {
-		return "", nil
+		return "", nil, false
 	}
-	err = remove(path)
-	if err == nil || os.IsNotExist(err) {
-		return "", nil
-	}
-	return fmt.Sprintf("%x", sha256.Sum256(onDisk)), err
+	return fmt.Sprintf("%x", sha256.Sum256(onDisk)), current, true
 }

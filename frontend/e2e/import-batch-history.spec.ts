@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, unlink, writeFile } from 'node:fs/promises'
 import { expect, test } from './test-fixtures'
 import { enterEdit, fixturePath, imageNodes, openFixtureRepo } from './test-helpers'
 
@@ -54,6 +54,67 @@ test('a pasted batch undo does not revive after an external replacement', async 
     'batch-a (redo 1).png'
   )
   expect(await readFile(redoPath).catch(() => null)).toBeNull()
+  await page.getByTestId('canvas-mode-view').click()
+  await expect(nodes).toHaveCount(0)
+})
+
+test('redo restores captured bytes beside a colliding redo destination', async ({
+  page,
+  context,
+  clipboardAccess: _clipboardAccess,
+}) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await openFixtureRepo(page, 'import-empty-fixtures', { drawers: 'closed' })
+  await enterEdit(page)
+  const data =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+  await page.evaluate(async (data) => {
+    await navigator.clipboard.writeText(
+      JSON.stringify({
+        version: 1,
+        media: [
+          { name: 'redo-collision-a.png', data },
+          { name: 'redo-collision-b.png', data },
+        ],
+      })
+    )
+  }, data)
+  await page.keyboard.press('ControlOrMeta+v')
+  const nodes = imageNodes(page)
+  await expect(nodes).toHaveCount(2)
+  const ids = await nodes.evaluateAll((elements) =>
+    elements.map((node) => node.getAttribute('data-id')).sort()
+  )
+  const paths = await Promise.all(
+    ['redo-collision-a.png', 'redo-collision-b.png'].map((name) =>
+      fixturePath('import-empty-fixtures', name)
+    )
+  )
+  const bytes = await Promise.all(paths.map((path) => readFile(path)))
+  await page.keyboard.press('ControlOrMeta+z')
+  await expect(nodes).toHaveCount(0)
+  await unlink(paths[0])
+
+  const collision = await fixturePath(
+    'import-empty-fixtures',
+    'redo-collision-a (redo 1).png'
+  )
+  const collisionBytes = Buffer.from('external redo destination collision')
+  await writeFile(collision, collisionBytes)
+
+  await page.keyboard.press('ControlOrMeta+Shift+z')
+  await expect(nodes).toHaveCount(3)
+  const redoneIds = await nodes.evaluateAll((elements) =>
+    elements.map((node) => node.getAttribute('data-id'))
+  )
+  for (const id of ids) expect(redoneIds).toContain(id)
+  const restored = await fixturePath(
+    'import-empty-fixtures',
+    'redo-collision-a (redo 2).png'
+  )
+  expect(await readFile(collision)).toEqual(collisionBytes)
+  expect(await readFile(restored)).toEqual(bytes[0])
+  expect(await readFile(paths[1])).toEqual(bytes[1])
   await page.getByTestId('canvas-mode-view').click()
   await expect(nodes).toHaveCount(0)
 })

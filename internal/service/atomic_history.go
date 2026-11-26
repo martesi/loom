@@ -15,10 +15,10 @@ func replayAtomicHistory(repo *store.Repo, redo bool, afterImportFileWrite ...fu
 	if len(afterImportFileWrite) > 0 {
 		afterWrite = afterImportFileWrite[0]
 	}
-	return replayAtomicHistoryWithCleanup(repo, redo, afterWrite, nil, nil)
+	return replayAtomicHistoryWithCleanup(repo, redo, afterWrite, nil)
 }
 
-func replayAtomicHistoryWithCleanup(repo *store.Repo, redo bool, afterWrite func(string), removeFile func(string) error, writeFile func(string, []byte) (os.FileInfo, error)) (bool, *store.Operation, []GeometryUpdate, error) {
+func replayAtomicHistoryWithCleanup(repo *store.Repo, redo bool, afterWrite func(string), writeFile func(string, []byte) (os.FileInfo, error)) (bool, *store.Operation, []GeometryUpdate, error) {
 	if err := repo.PrepareOperationLog(); err != nil {
 		return true, nil, nil, err
 	}
@@ -32,9 +32,7 @@ func replayAtomicHistoryWithCleanup(repo *store.Repo, redo bool, afterWrite func
 		if !committed {
 			_ = tx.Rollback()
 			for _, file := range createdFiles {
-				if !removeOwnedFile(file.path, file.info, file.hash, removeFile) {
-					recordImportFileSuppression(repo, file.path, file.hash, file.info, "failed history replay")
-				}
+				recordImportFileSuppression(repo, file.path, file.hash, file.info, "failed history replay")
 			}
 		}
 	}()

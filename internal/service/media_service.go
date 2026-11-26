@@ -146,19 +146,11 @@ func (s *ImageService) ImportMedia(repoPath string, media []ClipboardMedia, plac
 		if !committed {
 			_ = tx.Rollback()
 			for _, path := range paths {
-				current, err := os.Stat(path)
 				owned := ownedFiles[path]
-				if err == nil && owned != nil && os.SameFile(current, owned) {
-					data, readErr := os.ReadFile(path)
-					if readErr == nil && fmt.Sprintf("%x", sha256.Sum256(data)) == ownedFileHashes[path] {
-						remove := s.removeImportRollbackFile
-						if remove == nil {
-							remove = os.Remove
-						}
-						if removeErr := remove(path); discoverablePaths[path] && removeErr != nil && !os.IsNotExist(removeErr) {
-							recordImportFileSuppression(r, path, ownedFileHashes[path], owned, "failed import rollback")
-						}
-					}
+				if discoverablePaths[path] && owned != nil {
+					// Keep the file. An unlink by path could race with an external
+					// replacement; the identity-bound tombstone hides only these bytes.
+					recordImportFileSuppression(r, path, ownedFileHashes[path], owned, "failed import rollback")
 				}
 			}
 			for _, path := range unverifiedStatPaths {

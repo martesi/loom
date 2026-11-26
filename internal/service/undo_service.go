@@ -529,9 +529,8 @@ func applyStep(repo *store.Repo, s OpStep) error {
 // for the frontend to surface (e.g. as a toast) rather than silently
 // dropped.
 type UndoService struct {
-	afterImportRedoFileWrite     func(string)
-	removeImportRedoRollbackFile func(string) error
-	writeImportRedoFile          func(string, []byte) (os.FileInfo, error)
+	afterImportRedoFileWrite func(string)
+	writeImportRedoFile      func(string, []byte) (os.FileInfo, error)
 }
 
 type UndoResult struct {
@@ -582,7 +581,7 @@ func (s *UndoService) replay(repoPath string, redo bool) (*UndoResult, error) {
 	defer unlock()
 	defer repo.Close()
 
-	handled, op, geometry, err := replayAtomicHistoryWithCleanup(repo, redo, s.afterImportRedoFileWrite, s.removeImportRedoRollbackFile, s.writeImportRedoFile)
+	handled, op, geometry, err := replayAtomicHistoryWithCleanup(repo, redo, s.afterImportRedoFileWrite, s.writeImportRedoFile)
 	if err != nil {
 		if op == nil {
 			return nil, err
