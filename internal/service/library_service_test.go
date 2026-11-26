@@ -12,6 +12,22 @@ func TestLibraryPairedIncludesTrashedRelationships(t *testing.T) {
 		ids[0], ids[1], ids[0], ids[2], ids[2], ids[3]); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := repo.DB.Exec(`UPDATE relationships SET created_at = NULL WHERE source_image_id = ? AND derived_image_id = ?`, ids[0], ids[2]); err != nil {
+		t.Fatal(err)
+	}
+	activeEdges, err := repo.ListRelationships()
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyTimestampRead := false
+	for _, edge := range activeEdges {
+		if edge.SourceImageID == ids[0] && edge.DerivedImageID == ids[2] {
+			legacyTimestampRead = edge.CreatedAt == nil
+		}
+	}
+	if !legacyTimestampRead {
+		t.Fatalf("legacy relationship was not read with a NULL timestamp: %+v", activeEdges)
+	}
 	imageService := &ImageService{}
 	for _, id := range ids[2:] {
 		if err := imageService.TrashImage(path, id); err != nil {
@@ -39,7 +55,7 @@ func TestLibraryPairedIncludesTrashedRelationships(t *testing.T) {
 		t.Fatalf("trashed endpoints not returned as trashed: %v", trashed)
 	}
 
-	activeEdges, err := repo.ListRelationships()
+	activeEdges, err = repo.ListRelationships()
 	if err != nil {
 		t.Fatal(err)
 	}
