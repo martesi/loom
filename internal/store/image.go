@@ -121,10 +121,17 @@ func (r *Repo) registerImage(ctx context.Context, path string) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		if discardedIdentity != "" && FileIdentityAt(path, stableInfo) == discardedIdentity && fingerprint == discardedHash {
+		identity := r.identityAt(path, stableInfo)
+		if identity == "" || discardedIdentity == "" {
+			return 0, fmt.Errorf("verify discarded import file identity for %q", path)
+		}
+		if identity == discardedIdentity && fingerprint == discardedHash {
 			return 0, nil
 		}
 		if _, err := r.DB.Exec(`DELETE FROM discarded_import_files WHERE file_path = ?`, path); err != nil {
+			return 0, err
+		}
+		if err := r.ReleaseImportIdentityAnchors(discardedIdentity); err != nil {
 			return 0, err
 		}
 	}
@@ -145,9 +152,15 @@ func (r *Repo) registerImage(ctx context.Context, path string) (int, error) {
 		return 0, fmt.Errorf("fingerprint %s: %w", path, err)
 	}
 	marker = fmt.Sprintf("stat:%d:%d", stableInfo.Size(), stableInfo.ModTime().UnixNano())
-	if !isNew && importUndone && (importIdentity.String == "" || FileIdentityAt(path, stableInfo) != importIdentity.String || fingerprint != importHash.String) {
-		if _, err := r.DB.Exec(`UPDATE images SET import_undone = 0 WHERE file_path = ? AND import_undone = 1`, path); err != nil {
-			return 0, err
+	if !isNew && importUndone {
+		identity := r.identityAt(path, stableInfo)
+		if identity == "" || importIdentity.String == "" {
+			return 0, fmt.Errorf("verify undone import file identity for %q", path)
+		}
+		if identity != importIdentity.String || fingerprint != importHash.String {
+			if _, err := r.DB.Exec(`UPDATE images SET import_undone = 0 WHERE file_path = ? AND import_undone = 1`, path); err != nil {
+				return 0, err
+			}
 		}
 	}
 	if isNew {
@@ -256,10 +269,17 @@ func (r *Repo) scanAndRegisterImagesWithFingerprint(ctx context.Context, advance
 			return changed, err
 		}
 		if err == nil {
-			if discardedIdentity != "" && FileIdentityAt(item.path, item.info) == discardedIdentity && item.fingerprint == discardedHash {
+			identity := r.identityAt(item.path, item.info)
+			if identity == "" || discardedIdentity == "" {
+				return changed, fmt.Errorf("verify discarded import file identity for %q", item.path)
+			}
+			if identity == discardedIdentity && item.fingerprint == discardedHash {
 				continue
 			}
 			if _, err := r.DB.Exec(`DELETE FROM discarded_import_files WHERE file_path = ?`, item.path); err != nil {
+				return changed, err
+			}
+			if err := r.ReleaseImportIdentityAnchors(discardedIdentity); err != nil {
 				return changed, err
 			}
 		}
@@ -269,9 +289,15 @@ func (r *Repo) scanAndRegisterImagesWithFingerprint(ctx context.Context, advance
 		if rowErr != nil && rowErr != sql.ErrNoRows {
 			return changed, rowErr
 		}
-		if rowErr == nil && importUndone && (importIdentity == "" || FileIdentityAt(item.path, item.info) != importIdentity || item.fingerprint != importHash) {
-			if _, err := r.DB.Exec(`UPDATE images SET import_undone = 0 WHERE file_path = ? AND import_undone = 1`, item.path); err != nil {
-				return changed, err
+		if rowErr == nil && importUndone {
+			identity := r.identityAt(item.path, item.info)
+			if identity == "" || importIdentity == "" {
+				return changed, fmt.Errorf("verify undone import file identity for %q", item.path)
+			}
+			if identity != importIdentity || item.fingerprint != importHash {
+				if _, err := r.DB.Exec(`UPDATE images SET import_undone = 0 WHERE file_path = ? AND import_undone = 1`, item.path); err != nil {
+					return changed, err
+				}
 			}
 		}
 		statMarker := fmt.Sprintf("stat:%d:%d", item.info.Size(), item.info.ModTime().UnixNano())

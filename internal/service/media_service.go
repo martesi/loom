@@ -431,6 +431,7 @@ func validateClipboardMedia(items []ClipboardMedia) error {
 
 func purgeImages(r *store.Repo, ids []int64) error {
 	images := make([]store.Image, 0, len(ids))
+	var importIdentities []string
 	for _, id := range uniqueImageIDs(ids) {
 		img, err := r.GetImageByID(id)
 		if err == sql.ErrNoRows {
@@ -451,7 +452,18 @@ func purgeImages(r *store.Repo, ids []int64) error {
 		}
 	}
 	for _, img := range images {
-		if err := os.Remove(img.FilePath); err != nil && !os.IsNotExist(err) {
+		var importIdentity, importHash sql.NullString
+		if err := r.DB.QueryRow(`SELECT import_file_identity, import_file_sha256 FROM images WHERE id = ?`, img.ID).Scan(&importIdentity, &importHash); err != nil {
+			return err
+		}
+		if importIdentity.String != "" || importHash.String != "" {
+			if importIdentity.Valid && importIdentity.String != "" {
+				importIdentities = append(importIdentities, importIdentity.String)
+				if _, err := removeOwnedImportFile(img.FilePath, importIdentity.String); err != nil {
+					return fmt.Errorf("purge %s: %w", filepath.Base(img.FilePath), err)
+				}
+			}
+		} else if err := os.Remove(img.FilePath); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("purge %s: %w", filepath.Base(img.FilePath), err)
 		}
 		if img.ThumbPath != "" {
@@ -476,10 +488,13 @@ func purgeImages(r *store.Repo, ids []int64) error {
 	for _, img := range images {
 		purgedIDs = append(purgedIDs, img.ID)
 	}
-	if err := forgetPurgedImportHistory(r, purgedIDs); err != nil {
+	discarded, err := forgetPurgedImportHistory(r, purgedIDs)
+	if err != nil {
 		return err
 	}
-	_, err := r.DB.Exec("DELETE FROM groups WHERE NOT EXISTS (SELECT 1 FROM images WHERE group_id = groups.id)")
+	discarded.released = append(discarded.released, importIdentities...)
+	cleanupDiscardedImportRedoBestEffort(r, discarded, "purge import history")
+	_, err = r.DB.Exec("DELETE FROM groups WHERE NOT EXISTS (SELECT 1 FROM images WHERE group_id = groups.id)")
 	return err
 }
 

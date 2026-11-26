@@ -55,7 +55,18 @@ test('a pasted batch undo does not revive after an external replacement', async 
   )
   expect(await readFile(redoPath).catch(() => null)).toBeNull()
   await page.getByTestId('canvas-mode-view').click()
-  await expect(nodes).toHaveCount(0)
+  await page.keyboard.press('ControlOrMeta+,')
+  const settings = page.getByRole('dialog', { name: 'Settings' })
+  await settings.getByRole('button', { name: 'Repository', exact: true }).click()
+  await settings.getByRole('button', { name: 'Rescan repository' }).click()
+  await expect(settings.getByRole('status')).toContainText(
+    /\d+ new or changed assets? found\./
+  )
+  await page.keyboard.press('Escape')
+  await page.getByTestId('toggle-assets-shelf').click()
+  await expect(
+    page.getByRole('option', { name: /batch-a\.png/ })
+  ).toBeVisible()
 })
 
 test('redo restores captured bytes beside a colliding redo destination', async ({

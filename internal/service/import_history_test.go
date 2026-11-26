@@ -1020,6 +1020,38 @@ func TestReplacementAfterCleanupOwnershipCheckIsNeverUnlinked(t *testing.T) {
 	}
 }
 
+func TestDiscardedRedoCleanupPreservesTombstoneWhenIdentityUnknown(t *testing.T) {
+	repoPath := t.TempDir()
+	path := filepath.Join(repoPath, "unknown-identity.png")
+	data := []byte("retained hidden file")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := store.FileIdentityAt(path, info)
+	if identity == "" {
+		t.Skip("platform does not expose stable file identity")
+	}
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	hash := fmt.Sprintf("%x", sha256.Sum256(data))
+	if _, err := repo.DB.Exec(`INSERT INTO discarded_import_files (file_path, sha256, file_identity) VALUES (?, ?, ?)`, path, hash, identity); err != nil {
+		t.Fatal(err)
+	}
+	discarded := discardedImportRedo{active: []discardedImportFile{{path: path, hash: hash, identity: identity}}}
+	cleanupDiscardedImportRedoWithIdentity(repo, discarded, "test unknown identity", nil, func(string, os.FileInfo) string { return "" })
+	var count int
+	if err := repo.DB.QueryRow(`SELECT COUNT(*) FROM discarded_import_files WHERE file_path = ?`, path).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("tombstone count after unknown identity = %d, err=%v", count, err)
+	}
+}
+
 func TestUndoneImportIsHiddenFromLibraryAndTrashActions(t *testing.T) {
 	repoPath := t.TempDir()
 	ids, err := (&ImageService{}).ImportMedia(repoPath, []ClipboardMedia{{Name: "hidden.png", Data: base64.StdEncoding.EncodeToString([]byte("hidden"))}}, false, 0, 0)
@@ -1134,8 +1166,8 @@ func TestDiscardingUndoneImportRedoSuppressesFilesWithoutUnlinking(t *testing.T)
 	if data, err := os.ReadFile(image.FilePath); err != nil || string(data) != "discard me" {
 		t.Fatalf("discarded import active file changed or vanished: %q err=%v", data, err)
 	}
-	if data, err := os.ReadFile(retained); err != nil || string(data) != "discard me" {
-		t.Fatalf("discarded redo snapshot changed or vanished: %q err=%v", data, err)
+	if _, err := os.Stat(retained); !os.IsNotExist(err) {
+		t.Fatalf("discarded redo snapshot was not reclaimed: %v", err)
 	}
 	repo, err = store.Bootstrap(repoPath)
 	if err != nil {
@@ -1201,7 +1233,14 @@ func TestDiscardedImportPreservesExternallyModifiedFilesAndSnapshots(t *testing.
 	if err := os.WriteFile(image.FilePath, []byte("external replacement"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(retained, []byte("modified snapshot"), 0o600); err != nil {
+	retainedReplacement := retained + ".external"
+	if err := os.WriteFile(retainedReplacement, []byte("modified snapshot"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(retained); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(retainedReplacement, retained); err != nil {
 		t.Fatal(err)
 	}
 	if err := service.LinkSource(repoPath, seedIDs[0], seedIDs[1]); err != nil {
@@ -1213,7 +1252,7 @@ func TestDiscardedImportPreservesExternallyModifiedFilesAndSnapshots(t *testing.
 	}
 	snapshot, err := os.ReadFile(retained)
 	if err != nil || string(snapshot) != "modified snapshot" {
-		t.Fatalf("modified snapshot = %q, err=%v", snapshot, err)
+		t.Fatalf("external snapshot replacement = %q, err=%v", snapshot, err)
 	}
 	repo, err = store.Bootstrap(repoPath)
 	if err != nil {
@@ -1226,7 +1265,7 @@ func TestDiscardedImportPreservesExternallyModifiedFilesAndSnapshots(t *testing.
 	}
 }
 
-func TestDiscardedRedoSnapshotRemainsHiddenWithoutUnlinking(t *testing.T) {
+func TestDiscardedRedoSnapshotIsReclaimed(t *testing.T) {
 	repoPath := t.TempDir()
 	service := &ImageService{}
 	seedIDs, err := service.ImportMedia(repoPath, []ClipboardMedia{
@@ -1251,8 +1290,8 @@ func TestDiscardedRedoSnapshotRemainsHiddenWithoutUnlinking(t *testing.T) {
 	if err := service.LinkSource(repoPath, seedIDs[0], seedIDs[1]); err != nil {
 		t.Fatalf("committed graph mutation failed: %v", err)
 	}
-	if _, err := os.Stat(retainedPath); err != nil {
-		t.Fatalf("disused redo snapshot was unlinked: %v", err)
+	if _, err := os.Stat(retainedPath); !os.IsNotExist(err) {
+		t.Fatalf("disused redo snapshot was not reclaimed: %v", err)
 	}
 	repo, err := store.Bootstrap(repoPath)
 	if err != nil {
@@ -1261,7 +1300,7 @@ func TestDiscardedRedoSnapshotRemainsHiddenWithoutUnlinking(t *testing.T) {
 	defer repo.Close()
 	relationships, err := repo.ListRelationships()
 	if err != nil || len(relationships) != 1 {
-		t.Fatalf("relationships after cleanup failure = %+v, err=%v", relationships, err)
+		t.Fatalf("relationships after redo-tail cleanup = %+v, err=%v", relationships, err)
 	}
 }
 
@@ -1647,7 +1686,7 @@ func TestMixedPurgeRejectsBeforeDeletingAnyImage(t *testing.T) {
 	}
 }
 
-func TestImportCommitSucceedsAndPreservesModifiedSnapshotDuringCleanup(t *testing.T) {
+func TestImportCommitSucceedsAndReclaimsModifiedOwnedSnapshot(t *testing.T) {
 	repoPath := t.TempDir()
 	_, err := (&ImageService{}).ImportMedia(repoPath, []ClipboardMedia{{Name: "branch.png", Data: base64.StdEncoding.EncodeToString([]byte("original"))}}, false, 0, 0)
 	if err != nil {
@@ -1683,9 +1722,8 @@ func TestImportCommitSucceedsAndPreservesModifiedSnapshotDuringCleanup(t *testin
 	if _, err := (&ImageService{}).ImportMedia(repoPath, []ClipboardMedia{{Name: "new-branch.png", Data: base64.StdEncoding.EncodeToString([]byte("new"))}}, false, 0, 0); err != nil {
 		t.Fatalf("committed import failed during best-effort cleanup: %v", err)
 	}
-	data, err := os.ReadFile(retained)
-	if err != nil || !bytes.Equal(data, modified) {
-		t.Fatalf("modified snapshot after cleanup = %q, err=%v", data, err)
+	if _, err := os.Stat(retained); !os.IsNotExist(err) {
+		t.Fatalf("owned modified snapshot after cleanup was not reclaimed: %v", err)
 	}
 	repo, err = store.Bootstrap(repoPath)
 	if err != nil {
@@ -1948,7 +1986,7 @@ func TestImportRollbackSuppressionAllowsExternalReplacement(t *testing.T) {
 	}
 }
 
-func TestDiscardedImportRedoBranchRetainsUnreferencedSnapshots(t *testing.T) {
+func TestDiscardedImportRedoBranchReclaimsUnreferencedSnapshots(t *testing.T) {
 	repoPath := t.TempDir()
 	_, err := (&ImageService{}).ImportMedia(repoPath, []ClipboardMedia{{Name: "branch.png", Data: base64.StdEncoding.EncodeToString([]byte("branch"))}}, false, 0, 0)
 	if err != nil {
@@ -1981,8 +2019,12 @@ func TestDiscardedImportRedoBranchRetainsUnreferencedSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if data, err := os.ReadFile(retained); err != nil || string(data) != "branch" {
-		t.Fatalf("discarded redo snapshot was changed or removed: %q err=%v", data, err)
+	if _, err := os.Stat(retained); !os.IsNotExist(err) {
+		t.Fatalf("discarded redo snapshot remains: %v", err)
+	}
+	anchors, err := filepath.Glob(filepath.Join(repoPath, ".loom", ".loom-import-stage-*"))
+	if err != nil || len(anchors) != 3 {
+		t.Fatalf("anchors after redo-tail discard = %v err=%v, want hidden asset anchor plus new import anchors", anchors, err)
 	}
 	repo, err = store.Bootstrap(repoPath)
 	if err != nil {
@@ -2007,8 +2049,165 @@ func TestDiscardedImportRedoBranchRetainsUnreferencedSnapshots(t *testing.T) {
 	if err := (&ImageService{}).PurgeImages(repoPath, newIDs); err != nil {
 		t.Fatal(err)
 	}
-	if data, err := os.ReadFile(purgedSnapshot); err != nil || string(data) != "new" {
-		t.Fatalf("purged image snapshot was changed or removed: %q err=%v", data, err)
+	if _, err := os.Stat(purgedSnapshot); !os.IsNotExist(err) {
+		t.Fatalf("purged image snapshot remains: %v", err)
+	}
+	anchors, err = filepath.Glob(filepath.Join(repoPath, ".loom", ".loom-import-stage-*"))
+	if err != nil || len(anchors) != 1 {
+		t.Fatalf("anchors after purge = %v err=%v, want only still-hidden discarded asset anchor", anchors, err)
+	}
+}
+
+func TestRedoTailCleanupPreservesExternalRetainedReplacement(t *testing.T) {
+	repoPath := t.TempDir()
+	captured := []byte("retained bytes")
+	if _, err := (&ImageService{}).ImportMedia(repoPath, []ClipboardMedia{{
+		Name: "retained-cleanup.png", Data: base64.StdEncoding.EncodeToString(captured),
+	}}, false, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var forward string
+	if err := repo.DB.QueryRow(`SELECT forward FROM operation_log WHERE kind = 'import_batch'`).Scan(&forward); err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	var operation OpStep
+	var payload importBatchPayload
+	if err := json.Unmarshal([]byte(forward), &operation); err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(operation.Payload, &payload); err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	entry := payload.Entries[0]
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&UndoService{}).Undo(repoPath); err != nil {
+		t.Fatal(err)
+	}
+	replacement := entry.RetainedPath + ".external"
+	if err := os.WriteFile(replacement, captured, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(entry.RetainedPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacement, entry.RetainedPath); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(entry.RetainedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity := store.FileIdentityAt(entry.RetainedPath, info); identity == entry.RetainedIdentity {
+		t.Fatalf("retained replacement reused identity %q", identity)
+	}
+	if _, err := (&ImageService{}).ImportMedia(repoPath, []ClipboardMedia{{
+		Name: "new-history-branch.png", Data: base64.StdEncoding.EncodeToString([]byte("new branch")),
+	}}, false, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(entry.RetainedPath); err != nil || !bytes.Equal(got, captured) {
+		t.Fatalf("external retained replacement after cleanup = %q err=%v", got, err)
+	}
+}
+
+func TestPurgePreservesExternalRetainedReplacementAndReclaimsAnchors(t *testing.T) {
+	repoPath := t.TempDir()
+	captured := []byte("purged retained bytes")
+	ids, err := (&ImageService{}).ImportMedia(repoPath, []ClipboardMedia{{
+		Name: "purge-retained.png", Data: base64.StdEncoding.EncodeToString(captured),
+	}}, false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var forward string
+	if err := repo.DB.QueryRow(`SELECT forward FROM operation_log WHERE kind = 'import_batch'`).Scan(&forward); err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	var operation OpStep
+	var payload importBatchPayload
+	if err := json.Unmarshal([]byte(forward), &operation); err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(operation.Payload, &payload); err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	entry := payload.Entries[0]
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&ImageService{}).TrashImage(repoPath, ids[0]); err != nil {
+		t.Fatal(err)
+	}
+	repo, err = store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	image, err := repo.GetImageByID(ids[0])
+	if err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	visibleReplacement := image.FilePath + ".external"
+	if err := os.WriteFile(visibleReplacement, []byte("external visible replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(image.FilePath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(visibleReplacement, image.FilePath); err != nil {
+		t.Fatal(err)
+	}
+	replacement := entry.RetainedPath + ".external"
+	if err := os.WriteFile(replacement, captured, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(entry.RetainedPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacement, entry.RetainedPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&ImageService{}).PurgeImages(repoPath, ids); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(entry.RetainedPath); err != nil || !bytes.Equal(got, captured) {
+		t.Fatalf("external retained replacement after purge = %q err=%v", got, err)
+	}
+	if got, err := os.ReadFile(image.FilePath); err != nil || string(got) != "external visible replacement" {
+		t.Fatalf("external visible replacement after purge = %q err=%v", got, err)
+	}
+	anchors, err := filepath.Glob(filepath.Join(repoPath, ".loom", ".loom-import-stage-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, anchor := range anchors {
+		info, err := os.Stat(anchor)
+		if err != nil {
+			continue
+		}
+		identity := store.FileIdentityAt(anchor, info)
+		if identity == entry.FileIdentity || identity == entry.RetainedIdentity {
+			t.Fatalf("purged import anchor remains: %s (%s)", anchor, identity)
+		}
 	}
 }
 

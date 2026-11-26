@@ -18,7 +18,9 @@ type discardedImportFile struct {
 }
 
 type discardedImportRedo struct {
-	active []discardedImportFile
+	active   []discardedImportFile
+	retained []discardedImportFile
+	released []string
 }
 
 func recordOperationInTx(repo *store.Repo, tx *sql.Tx, kind, forward, inverse string) (discardedImportRedo, error) {
@@ -33,8 +35,8 @@ func recordOperationInTx(repo *store.Repo, tx *sql.Tx, kind, forward, inverse st
 }
 
 // pruneUndoneImportRedoTx removes hidden import rows whose redo operations are
-// about to be discarded. Files stay on disk; stable identities get tombstones
-// because portable path-based unlink cannot bind deletion to identity.
+// about to be discarded. It retains an identity tombstone for the still-present
+// visible file and queues the now-unreferenced retained copy for cleanup.
 func pruneUndoneImportRedoTx(tx *sql.Tx) (discardedImportRedo, error) {
 	result := discardedImportRedo{}
 	var cursor int64
@@ -86,15 +88,23 @@ func pruneUndoneImportRedoTx(tx *sql.Tx) (discardedImportRedo, error) {
 			continue
 		}
 		seen[entry.ImageID] = true
-		var path string
-		err := tx.QueryRow(`SELECT file_path FROM images WHERE id = ? AND import_undone = 1`, entry.ImageID).Scan(&path)
+		var path, currentIdentity string
+		err := tx.QueryRow(`SELECT file_path, import_file_identity FROM images WHERE id = ? AND import_undone = 1`, entry.ImageID).Scan(&path, &currentIdentity)
 		if err == sql.ErrNoRows {
 			continue
 		}
 		if err != nil {
 			return result, err
 		}
-		if entry.FileIdentity == "" {
+		identity := currentIdentity
+		if identity == "" {
+			identity = entry.FileIdentity
+		}
+		if entry.RetainedPath != "" && entry.RetainedIdentity != "" {
+			result.retained = append(result.retained, discardedImportFile{path: entry.RetainedPath, hash: entry.SHA256, identity: entry.RetainedIdentity})
+			result.released = append(result.released, entry.RetainedIdentity)
+		}
+		if identity == "" {
 			// Without a stable ID, keep the bytes and let normal discovery
 			// register the path after its hidden row is removed.
 			if _, err := tx.Exec(`DELETE FROM images WHERE id = ? AND import_undone = 1`, entry.ImageID); err != nil {
@@ -103,13 +113,13 @@ func pruneUndoneImportRedoTx(tx *sql.Tx) (discardedImportRedo, error) {
 			continue
 		}
 		if _, err := tx.Exec(`INSERT INTO discarded_import_files (file_path, sha256, file_identity) VALUES (?, ?, ?)
-			ON CONFLICT(file_path) DO UPDATE SET sha256 = excluded.sha256, file_identity = excluded.file_identity`, path, entry.SHA256, entry.FileIdentity); err != nil {
+			ON CONFLICT(file_path) DO UPDATE SET sha256 = excluded.sha256, file_identity = excluded.file_identity`, path, entry.SHA256, identity); err != nil {
 			return result, err
 		}
 		if _, err := tx.Exec(`DELETE FROM images WHERE id = ? AND import_undone = 1`, entry.ImageID); err != nil {
 			return result, err
 		}
-		result.active = append(result.active, discardedImportFile{path: path, hash: entry.SHA256, identity: entry.FileIdentity})
+		result.active = append(result.active, discardedImportFile{path: path, hash: entry.SHA256, identity: identity})
 	}
 	return result, nil
 }
@@ -118,13 +128,18 @@ func cleanupDiscardedImportRedoBestEffort(repo *store.Repo, discarded discardedI
 	cleanupDiscardedImportRedoBestEffortAfterCheck(repo, discarded, operation, nil)
 }
 
-// The test hook replaces a path after its ownership check. Production does not
-// unlink it, because no portable path removal can close the check/remove race.
+// The test hook replaces a path after its ownership check.
 func cleanupDiscardedImportRedoBestEffortAfterCheck(repo *store.Repo, discarded discardedImportRedo, operation string, afterCheck func(string)) {
+	cleanupDiscardedImportRedoWithIdentity(repo, discarded, operation, afterCheck, store.FileIdentityAt)
+}
+
+func cleanupDiscardedImportRedoWithIdentity(repo *store.Repo, discarded discardedImportRedo, operation string, afterCheck func(string), identityAt func(string, os.FileInfo) string) {
+	releasedVisible := make([]string, 0, len(discarded.active))
 	for _, file := range discarded.active {
 		info, err := os.Stat(file.path)
 		if os.IsNotExist(err) {
 			clearDiscardedImportSuppression(repo, file.path, operation)
+			releasedVisible = append(releasedVisible, file.identity)
 			continue
 		}
 		if err != nil {
@@ -134,12 +149,27 @@ func cleanupDiscardedImportRedoBestEffortAfterCheck(repo *store.Repo, discarded 
 		if err != nil {
 			continue
 		}
-		if store.FileIdentityAt(file.path, info) != file.identity || fmt.Sprintf("%x", sha256.Sum256(data)) != file.hash {
+		identity := identityAt(file.path, info)
+		if identity == "" || file.identity == "" {
+			continue
+		}
+		if identity != file.identity || fmt.Sprintf("%x", sha256.Sum256(data)) != file.hash {
 			clearDiscardedImportSuppression(repo, file.path, operation)
+			releasedVisible = append(releasedVisible, file.identity)
 			continue
 		}
 		if afterCheck != nil {
 			afterCheck(file.path)
+		}
+	}
+	for _, file := range discarded.retained {
+		if _, err := removeOwnedImportFile(file.path, file.identity); err != nil {
+			log.Printf("%s: unable to remove discarded retained import %q: %v", operation, file.path, err)
+		}
+	}
+	for _, identity := range append(discarded.released, releasedVisible...) {
+		if err := repo.ReleaseImportIdentityAnchors(identity); err != nil {
+			log.Printf("%s: unable to remove import identity anchor %q: %v", operation, identity, err)
 		}
 	}
 }
@@ -177,15 +207,16 @@ func recordImportFileSuppression(repo *store.Repo, path, expectedHash string, ow
 }
 
 // Once an image is purged, its import-history payload can no longer be replayed.
-// Clear only that image's retained path. The captured bytes remain under .loom
-// because deleting by path cannot be made identity-atomic on supported OSes.
-func forgetPurgedImportHistory(repo *store.Repo, ids []int64) error {
+// Clear its file identities and queue the retained copy and identity anchors for
+// cleanup after the history update commits.
+func forgetPurgedImportHistory(repo *store.Repo, ids []int64) (discardedImportRedo, error) {
+	cleanup := discardedImportRedo{}
 	if len(ids) == 0 {
-		return nil
+		return cleanup, nil
 	}
 	rows, err := repo.DB.Query(`SELECT seq, forward, inverse FROM operation_log WHERE kind = 'import_batch'`)
 	if err != nil {
-		return err
+		return cleanup, err
 	}
 	type update struct {
 		seq              int64
@@ -196,7 +227,7 @@ func forgetPurgedImportHistory(repo *store.Repo, ids []int64) error {
 		var item update
 		if err := rows.Scan(&item.seq, &item.forward, &item.inverse); err != nil {
 			rows.Close()
-			return err
+			return cleanup, err
 		}
 		for _, raw := range []*string{&item.forward, &item.inverse} {
 			var step OpStep
@@ -210,8 +241,15 @@ func forgetPurgedImportHistory(repo *store.Repo, ids []int64) error {
 			changed := false
 			for index := range payload.Entries {
 				for _, id := range ids {
-					if payload.Entries[index].ImageID == id && payload.Entries[index].RetainedPath != "" {
-						payload.Entries[index].RetainedPath = ""
+					entry := &payload.Entries[index]
+					if entry.ImageID == id {
+						if entry.RetainedPath != "" && entry.RetainedIdentity != "" {
+							cleanup.retained = append(cleanup.retained, discardedImportFile{path: entry.RetainedPath, hash: entry.SHA256, identity: entry.RetainedIdentity})
+						}
+						cleanup.released = append(cleanup.released, entry.FileIdentity, entry.RetainedIdentity)
+						entry.RetainedPath = ""
+						entry.FileIdentity = ""
+						entry.RetainedIdentity = ""
 						changed = true
 					}
 				}
@@ -220,12 +258,12 @@ func forgetPurgedImportHistory(repo *store.Repo, ids []int64) error {
 				step.Payload, err = json.Marshal(payload)
 				if err != nil {
 					rows.Close()
-					return err
+					return cleanup, err
 				}
 				data, err := json.Marshal(step)
 				if err != nil {
 					rows.Close()
-					return err
+					return cleanup, err
 				}
 				*raw = string(data)
 			}
@@ -234,23 +272,23 @@ func forgetPurgedImportHistory(repo *store.Repo, ids []int64) error {
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
-		return err
+		return cleanup, err
 	}
 	if err := rows.Close(); err != nil {
-		return err
+		return cleanup, err
 	}
 	tx, err := repo.DB.Begin()
 	if err != nil {
-		return err
+		return cleanup, err
 	}
 	defer tx.Rollback()
 	for _, item := range updates {
 		if _, err := tx.Exec(`UPDATE operation_log SET forward = ?, inverse = ? WHERE seq = ?`, item.forward, item.inverse, item.seq); err != nil {
-			return err
+			return cleanup, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return err
+		return cleanup, err
 	}
-	return nil
+	return cleanup, nil
 }

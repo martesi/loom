@@ -14,8 +14,16 @@ import (
 const loomDirName = ".loom"
 
 type Repo struct {
-	Path string
-	DB   *sql.DB
+	Path           string
+	DB             *sql.DB
+	fileIdentityAt func(string, os.FileInfo) string
+}
+
+func (r *Repo) identityAt(path string, info os.FileInfo) string {
+	if r.fileIdentityAt != nil {
+		return r.fileIdentityAt(path, info)
+	}
+	return FileIdentityAt(path, info)
 }
 
 // Bootstrap opens the repo rooted at rootPath, creating its .loom/ folder
