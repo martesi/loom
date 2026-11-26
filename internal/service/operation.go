@@ -1,8 +1,6 @@
 package service
 
 import (
-	"errors"
-
 	"loom/internal/store"
 )
 
@@ -26,7 +24,7 @@ func openOperationRepo(repoPath string) (*store.Repo, func(), error) {
 		unlock()
 		return nil, nil, err
 	}
-	if err := drainImportCleanup(repo); err != nil && !errors.Is(err, errImportCleanupChanged) {
+	if err := finishImportCleanup(repo); err != nil {
 		_ = repo.Close()
 		unlock()
 		return nil, nil, err

@@ -77,6 +77,17 @@ func drainImportCleanup(repo *store.Repo) error {
 	return unresolved
 }
 
+// finishImportCleanup treats ownership mismatches as durable deferrals. Other
+// cleanup failures still reach the caller so database and I/O errors are not
+// confused with an expected preservation decision.
+func finishImportCleanup(repo *store.Repo) error {
+	err := drainImportCleanup(repo)
+	if errors.Is(err, errImportCleanupChanged) {
+		return nil
+	}
+	return err
+}
+
 func enqueueImportCleanup(repo *store.Repo, path, identity, hash string) error {
 	_, err := repo.DB.Exec(`INSERT OR IGNORE INTO import_cleanup_queue(anchor_path, file_identity, sha256) VALUES (?, ?, ?)`, path, identity, hash)
 	return err

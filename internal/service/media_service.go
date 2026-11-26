@@ -329,7 +329,7 @@ func purgeImages(r *store.Repo, ids []int64) error {
 	if err != nil {
 		return err
 	}
-	return drainImportCleanup(r)
+	return finishImportCleanup(r)
 }
 
 func removePurgeTarget(repo *store.Repo, image store.Image) error {
