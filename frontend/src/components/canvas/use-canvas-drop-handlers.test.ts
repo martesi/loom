@@ -141,3 +141,66 @@ it('rejects a delayed asset placement after its owner is disposed', async () => 
   expect(place).not.toHaveBeenCalled()
   expect(setSelection).not.toHaveBeenCalled()
 })
+
+it('rejects a delayed asset placement after mode intent changes', async () => {
+  const { owner, hook } = assetIntentHarness()
+  let resolveImage: ((image: unknown) => void) | undefined
+  spyOn(ImageService, 'GetImage').mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        resolveImage = resolve
+      }) as never
+  )
+  const place = spyOn(ImageService, 'PlaceImages').mockResolvedValue(undefined)
+  const drops = useCanvasDropHandlers(dropProps(owner, hook.result.current))
+  drops.onDrop({
+    preventDefault: mock(),
+    dataTransfer: {
+      getData: () => JSON.stringify({ repoPath: '/repo', ids: [1] }),
+      files: [],
+    },
+    clientX: 100,
+    clientY: 120,
+  } as never)
+  await Promise.resolve()
+  owner.setMode('view')
+  resolveImage?.({ id: 1, missing: false, trashed: false })
+  await Promise.resolve()
+  await Promise.resolve()
+  expect(place).not.toHaveBeenCalled()
+})
+
+it('rejects a delayed file drop after repository navigation', async () => {
+  const { owner, hook } = assetIntentHarness()
+  const paste = mock(async () => {})
+  const drops = useCanvasDropHandlers(
+    dropProps(owner, hook.result.current, paste)
+  )
+  const original = globalThis.FileReader
+  let completeRead: (() => void) | undefined
+  class DeferredFileReader {
+    onload: ((event: ProgressEvent<FileReader>) => void) | null = null
+    onerror: ((event: ProgressEvent<FileReader>) => void) | null = null
+    result: string | ArrayBuffer | null = null
+    error: DOMException | null = null
+    readAsDataURL() {
+      completeRead = () => {
+        this.result = 'data:image/png;base64,aW1hZ2U='
+        this.onload?.({ target: this } as ProgressEvent<FileReader>)
+      }
+    }
+  }
+  globalThis.FileReader = DeferredFileReader as unknown as typeof FileReader
+  try {
+    drops.onDrop(fileDrop())
+    const nextOwner = createCanvasBoardOwner('/other')
+    nextOwner.setMode('edit')
+    hook.rerender({ repoPath: '/other', boardOwner: nextOwner })
+    completeRead?.()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(paste).not.toHaveBeenCalled()
+  } finally {
+    globalThis.FileReader = original
+  }
+})
