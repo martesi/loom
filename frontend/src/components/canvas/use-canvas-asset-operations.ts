@@ -4,8 +4,11 @@ import { useEffect, useRef } from 'react'
 import { ImageService } from '../../../bindings/loom/internal/service'
 import { readMedia } from '../../lib/clipboard'
 import { type Selection, sameSelection } from '../../lib/selection'
-import type { CanvasBoardOwner } from './canvas-board-owner'
-import type { CanvasInternalMode } from './canvas-mode-policy'
+import type {
+  CanvasBoardOwner,
+  CanvasOperationIntent,
+} from './canvas-board-owner'
+import type { CanvasCapability, CanvasInternalMode } from './canvas-mode-policy'
 import type { RevealRequest } from './use-canvas-workspace-state'
 
 export interface CanvasAssetIntent {
@@ -14,6 +17,7 @@ export interface CanvasAssetIntent {
   mode: CanvasInternalMode
   modeRevision: number
   navigationGeneration: number
+  operation: CanvasOperationIntent
 }
 
 interface Props {
@@ -23,7 +27,6 @@ interface Props {
   selection: Selection
   setSelection: Dispatch<SetStateAction<Selection>>
   selectedIds: () => number[]
-  reload: () => Promise<void>
   setExpanded: Dispatch<SetStateAction<number | null>>
   openAssets: () => void
   selectAssets: (ids: number[]) => void
@@ -47,7 +50,6 @@ export function useCanvasAssetOperations({
   selection,
   setSelection,
   selectedIds,
-  reload,
   setExpanded,
   openAssets,
   selectAssets,
@@ -86,13 +88,16 @@ export function useCanvasAssetOperations({
       navigation.current.generation++
     }
   }, [])
-  function captureIntent(): CanvasAssetIntent {
+  function captureIntent(
+    capability: CanvasCapability = 'lifecycle'
+  ): CanvasAssetIntent {
     return {
       owner,
       repoPath,
       mode: owner.getMode(),
       modeRevision: owner.getModeRevision(),
       navigationGeneration: navigation.current.generation,
+      operation: owner.captureIntent(capability, navigation.current.generation),
     }
   }
   function isCurrentIntent(intent: CanvasAssetIntent) {
@@ -105,7 +110,15 @@ export function useCanvasAssetOperations({
       navigation.current.generation === intent.navigationGeneration &&
       owner.isActive?.() !== false &&
       owner.getMode() === intent.mode &&
-      owner.getModeRevision() === intent.modeRevision
+      owner.getModeRevision() === intent.modeRevision &&
+      owner.isIntentCurrent(
+        intent.operation,
+        () =>
+          navigationActive.current &&
+          navigation.current.owner === intent.owner &&
+          navigation.current.repoPath === intent.repoPath &&
+          navigation.current.generation === intent.navigationGeneration
+      )
     )
   }
   // A retained callback must keep the revision from the render that created it.
@@ -172,21 +185,24 @@ export function useCanvasAssetOperations({
     const point = dropPosition ?? center()
     const assets = media ?? (await readMedia())
     if (!isCurrentIntent(intent)) return
-    const result = await owner.execute(async () => {
-      if (!isCurrentIntent(intent)) return null
-      const canvas = surface === 'canvas' && owner.allows('canvas-drop')
-      const ids = await ImageService.ImportMedia(
-        repoPath,
-        assets,
-        canvas,
-        point.x,
-        point.y
-      )
-      await reload()
-      return { ids, canvas }
-    })
-    if (!result || !isCurrentIntent(intent)) return
-    const { ids, canvas } = result
+    const result = await owner.executeIntent(
+      intent.operation,
+      () => isCurrentIntent(intent),
+      async () => {
+        const canvas = surface === 'canvas' && owner.allows('canvas-drop')
+        const ids = await ImageService.ImportMedia(
+          repoPath,
+          assets,
+          canvas,
+          point.x,
+          point.y
+        )
+        return { ids, canvas }
+      },
+      true
+    )
+    if (!result.dispatched || !isCurrentIntent(intent)) return
+    const { ids, canvas } = result.value ?? { ids: null, canvas: false }
     setSelection({
       surface: canvas ? 'canvas' : 'assets',
       ids: ids ?? [],
@@ -201,13 +217,14 @@ export function useCanvasAssetOperations({
     intent = captureIntent()
   ) {
     if (!isCurrentIntent(intent)) return
-    const ids = await owner.execute(async () => {
-      if (!isCurrentIntent(intent)) return null
-      return ImageService.ImportMedia(repoPath, media, false, 0, 0)
-    })
-    if (!ids || !isCurrentIntent(intent)) return
-    await reload()
-    if (!isCurrentIntent(intent)) return
+    const result = await owner.executeIntent(
+      intent.operation,
+      () => isCurrentIntent(intent),
+      () => ImageService.ImportMedia(repoPath, media, false, 0, 0),
+      true
+    )
+    const ids = result.value
+    if (!result.dispatched || !isCurrentIntent(intent)) return
     setSelection({ surface: 'assets', ids: ids ?? [], edges: [], group: null })
     if (ids?.length) setReveal({ id: ids[0], folder: null })
   }
@@ -228,10 +245,11 @@ export function useCanvasAssetOperations({
     }
     if (selection.edges.length) {
       if (!owner.allows('relationship')) return
+      const intent = captureIntent('relationship')
       await ImageService.UnlinkSources(repoPath, selection.edges)
+      if (!isCurrentIntent(intent)) return
     } else return
     setSelection({ ...selection, ids: [], edges: [], group: null })
-    await reload()
   }
 
   function confirmTrash(ids: number[]) {
@@ -240,39 +258,40 @@ export function useCanvasAssetOperations({
 
   async function finishTrash() {
     if (!trashIds?.length || lifecyclePendingRef.current) return
+    const ids = [...trashIds]
+    const intent = captureIntent('lifecycle')
     lifecyclePendingRef.current = true
     setLifecyclePending(true)
-    const outcomes = await Promise.allSettled(
-      trashIds.map((id) => ImageService.TrashImage(repoPath, id))
+    const result = await owner.executeIntent(
+      intent.operation,
+      () => isCurrentIntent(intent),
+      () =>
+        Promise.allSettled(
+          ids.map((id) => ImageService.TrashImage(repoPath, id))
+        ),
+      true
     )
+    if (!result.dispatched || !isCurrentIntent(intent)) return
+    const outcomes = result.value ?? []
     const failures = outcomes.flatMap((outcome, index) =>
       outcome.status === 'rejected'
-        ? [{ id: trashIds[index], cause: outcome.reason }]
+        ? [{ id: ids[index], cause: outcome.reason }]
         : []
     )
     setTrashIds(null)
     setSelection({ ...selection, ids: [], edges: [], group: null })
-    let refreshError: unknown
-    await reload().then(
-      () => undefined,
-      (cause: unknown) => {
-        refreshError = cause
-      }
-    )
     for (const failure of failures)
       console.error('asset trash failed', {
         assetId: failure.id,
         cause: failure.cause,
       })
-    if (refreshError)
-      console.error('asset trash refresh failed', { cause: refreshError })
-    if (failures.length || refreshError) {
+    if (failures.length) {
       const details = failures.map(
         ({ id, cause }) =>
           `Asset ${id}: ${cause instanceof Error ? cause.message : String(cause)}`
       )
       setError(
-        `${trashIds.length - failures.length} of ${trashIds.length} assets moved to Trash.${details.length ? ` ${details.join('; ')}` : ''}${refreshError ? ' Refresh failed; the current state may be stale.' : ' The current state was refreshed.'}`
+        `${ids.length - failures.length} of ${ids.length} assets moved to Trash. ${details.join('; ')} The current state was refreshed.`
       )
       return
     }
@@ -284,14 +303,17 @@ export function useCanvasAssetOperations({
     if (owner.getMode() !== 'legacy' && purgeOrigin.current !== 'assets') return
     lifecyclePendingRef.current = true
     setLifecyclePending(true)
-    const purged = await owner.execute(async () => {
-      if (owner.getMode() !== 'legacy' && purgeOrigin.current !== 'assets')
-        return false
-      await ImageService.PurgeImages(repoPath, purgeIds)
-      await reload()
-      return true
-    })
-    if (!purged) return
+    const intent = captureIntent('lifecycle')
+    const ids = [...purgeIds]
+    const result = await owner.executeIntent(
+      intent.operation,
+      () =>
+        isCurrentIntent(intent) &&
+        (owner.getMode() === 'legacy' || purgeOrigin.current === 'assets'),
+      () => ImageService.PurgeImages(repoPath, ids),
+      true
+    )
+    if (!result.dispatched || !isCurrentIntent(intent)) return
     purgeOrigin.current = null
     setPurgeIds(null)
     setSelection({ ...selection, ids: [], edges: [], group: null })

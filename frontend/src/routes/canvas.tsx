@@ -120,6 +120,9 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   const submissionScope = `${repo.path}\u0000${selection.surface}\u0000${selection.ids
     .slice()
     .sort((a, b) => a - b)
+    .join(',')}\u0000${selection.edges
+    .slice()
+    .sort((a, b) => a - b)
     .join(',')}\u0000${selection.group ?? ''}`
   const submissionScopeRef = useRef({ key: submissionScope, revision: 0 })
   if (submissionScopeRef.current.key !== submissionScope) {
@@ -154,6 +157,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
   const { report, reload, reloadForData, run, assetSelectionKey } =
     useCanvasRepository({
       repoPath: repo.path,
+      modeViewports: true,
       executor: boardOwner,
       flow,
       updateZoomCompensation,
@@ -232,7 +236,6 @@ function Canvas({ repo }: { repo: RepoInfo }) {
     selection,
     setSelection,
     selectedIds,
-    reload,
     setExpanded,
     openAssets,
     selectAssets,
@@ -278,6 +281,7 @@ function Canvas({ repo }: { repo: RepoInfo }) {
       assetSelectionRecords={assetSelectionRecords}
       updateZoomCompensation={updateZoomCompensation}
       submissionScopeRef={submissionScopeRef}
+      selectionIntentRevision={submissionScopeRef.current.revision}
     />
   )
 }

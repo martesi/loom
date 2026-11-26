@@ -1,8 +1,11 @@
 import type { Locator, Page } from '@playwright/test'
+import { runtimeMethodID } from './bindings'
+import { legacyServiceCall } from './legacy-service'
 import { expect, test } from './test-fixtures'
 import {
   asset,
   autoArrangeCanvas,
+  fixturePath,
   imageNodes,
   nodeBox,
   openAssetsShelf,
@@ -45,6 +48,7 @@ test('node resize and movement persist while Space drag pans instead of moving n
   expect(moved.x).toBeGreaterThan(resized.x + 50)
 
   await page.reload()
+  await page.getByTestId('canvas-mode-edit').click()
   const restored = imageNodes(page).first()
   await expect(restored).toBeVisible()
   const restoredBox = await nodeBox(restored)
@@ -86,6 +90,7 @@ test('text-input undo does not undo canvas changes', async ({ page }) => {
   await expect(imageNodes(page)).toHaveCount(2)
   expect(await positions()).toEqual(arranged)
   await page.reload()
+  await page.getByTestId('canvas-mode-edit').click()
   await expect(imageNodes(page)).toHaveCount(2)
 })
 
@@ -122,9 +127,24 @@ test('file drop and canvas clipboard paste create placed assets and errors are d
   })
 
   await expect(asset(page, 'dropped.png')).toBeVisible()
-  await expect(imageNodes(page)).toHaveCount(1)
+  const mediaId = await asset(page, 'media-alpha.png').getAttribute(
+    'data-asset-id'
+  )
+  const droppedId = await asset(page, 'dropped.png').getAttribute(
+    'data-asset-id'
+  )
+  if (!mediaId || !droppedId)
+    throw new Error('Missing fixture or drop asset ID')
+  await expect(imageNodes(page)).toHaveCount(2)
+  await expect
+    .poll(() =>
+      imageNodes(page).evaluateAll((nodes) =>
+        nodes.map((node) => node.getAttribute('data-id')).sort()
+      )
+    )
+    .toEqual([mediaId, droppedId].sort())
 
-  await imageNodes(page).first().click()
+  await page.locator(`.react-flow__node[data-id="${droppedId}"]`).click()
   await page.evaluate(async () => {
     const data =
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
@@ -136,7 +156,7 @@ test('file drop and canvas clipboard paste create placed assets and errors are d
     )
   })
   await page.keyboard.press('Control+v')
-  await expect(imageNodes(page)).toHaveCount(2)
+  await expect(imageNodes(page)).toHaveCount(3)
 
   const sourceAsset = asset(page, 'media-alpha.png')
   await sourceAsset.click()
@@ -155,11 +175,81 @@ test('file drop and canvas clipboard paste create placed assets and errors are d
     .toContain('canvas-paste.png')
   await page.keyboard.press('Control+v')
   await expect(asset(page, 'canvas-paste.png')).toBeVisible()
+  const pasteId = await asset(page, 'canvas-paste.png').getAttribute(
+    'data-asset-id'
+  )
+  await expect(imageNodes(page)).toHaveCount(4)
+  await expect
+    .poll(() =>
+      imageNodes(page).evaluateAll(
+        (nodes, id) =>
+          nodes.some((node) => node.getAttribute('data-id') === id),
+        pasteId
+      )
+    )
+    .toBe(true)
 
+  const importID = runtimeMethodID('imageservice.ts', 'ImportMedia')
+  const importRequests: string[] = []
+  const recordImport = (request: import('@playwright/test').Request) => {
+    const body = request.postData()
+    if (body?.includes(`"methodID":${importID}`)) importRequests.push(body)
+  }
+  page.on('request', recordImport)
+  const repoPath = await fixturePath('media-fixtures')
+  const beforeInvalid = await legacyServiceCall<{
+    images?: {
+      id: number
+      placed: boolean
+      canvasX: number
+      canvasY: number
+      canvasW: number
+      canvasH: number
+    }[]
+  }>(page, 'imageservice.ts', 'LoadCanvas', [repoPath])
   await page.evaluate(() => navigator.clipboard.writeText('not Loom media'))
   await page.keyboard.press('Control+v')
   const pasteError = page.getByRole('alert')
   await expect(pasteError).toContainText('Clipboard contains no media files')
+  await expect(imageNodes(page)).toHaveCount(4)
+  expect(importRequests).toHaveLength(0)
+  const afterInvalid = await legacyServiceCall<{
+    images?: {
+      id: number
+      placed: boolean
+      canvasX: number
+      canvasY: number
+      canvasW: number
+      canvasH: number
+    }[]
+  }>(page, 'imageservice.ts', 'LoadCanvas', [repoPath])
+  expect(afterInvalid.images).toEqual(beforeInvalid.images)
   await pasteError.getByRole('button', { name: 'Dismiss' }).click()
   await expect(pasteError).toHaveCount(0)
+  page.off('request', recordImport)
+
+  await page.getByTestId('canvas-mode-view').click()
+  await expect(page.getByTestId('canvas-mode-view')).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+  await page.evaluate(async () => {
+    const data =
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+    await navigator.clipboard.writeText(
+      JSON.stringify({
+        version: 1,
+        media: [{ name: 'view-paste.png', data }],
+      })
+    )
+  })
+  await page.keyboard.press('Control+v')
+  await expect(asset(page, 'view-paste.png')).toBeVisible()
+  const viewPasteId = await asset(page, 'view-paste.png').getAttribute(
+    'data-asset-id'
+  )
+  if (!viewPasteId) throw new Error('View paste did not create an asset ID')
+  await expect(
+    page.locator(`.react-flow__node[data-id="${viewPasteId}"]`)
+  ).toHaveCount(0)
 })

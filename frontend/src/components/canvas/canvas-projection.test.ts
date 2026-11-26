@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { applyNodeChanges, type Edge, type Node } from '@xyflow/react'
 import {
   arrangeEditProjection,
+  arrangeEditSelection,
   createCanvasProjection,
   enterEdit,
   enterView,
@@ -36,6 +37,62 @@ const at = (nodes: Node[], id: string) =>
   nodes.find((node) => node.id === id)?.position
 
 describe('canvas projection', () => {
+  it('arranges a selected subgraph around displayed unselected obstacles only', () => {
+    const nodes = ['1', '2', '3', '4'].map(makeNode)
+    let state = enterEdit(
+      createCanvasProjection(
+        input(nodes, [link('a', '1', '2'), link('b', '2', '3')])
+      )
+    )
+    state = setEditNodes(
+      state,
+      state.editNodes.map((node) =>
+        node.id === '1'
+          ? { ...node, position: { x: 100, y: 100 }, width: 310, height: 190 }
+          : node.id === '2'
+            ? { ...node, position: { x: 140, y: 130 }, width: 170, height: 120 }
+            : node.id === '3'
+              ? { ...node, position: { x: 180, y: 160 } }
+              : {
+                  ...node,
+                  position: { x: 600, y: 240 },
+                  width: 220,
+                  height: 160,
+                }
+      )
+    )
+    const before = new Map(
+      state.editNodes.map((node) => [node.id, node.position])
+    )
+    const arranged = arrangeEditSelection(state, ['1', '2', '3'])
+    expect(at(arranged.editNodes, '4')).toEqual(before.get('4'))
+    expect(arranged.editNodes.find((node) => node.id === '1')?.width).toBe(310)
+    expect(arranged.editNodes.find((node) => node.id === '1')?.height).toBe(190)
+    for (const id of ['1', '2', '3'])
+      expect(at(arranged.editNodes, id)).not.toEqual(before.get(id))
+    const selectedBoxes = arranged.editNodes
+      .filter((node) => node.id !== '4')
+      .map((node) => ({
+        x: node.position.x,
+        y: node.position.y,
+        width: node.measured?.width ?? node.width ?? 150,
+        height: node.measured?.height ?? node.height ?? 110,
+      }))
+    for (const box of selectedBoxes)
+      expect(
+        box.x + box.width <= 600 ||
+          box.x >= 820 ||
+          box.y + box.height <= 240 ||
+          box.y >= 400
+      ).toBe(true)
+    expect(
+      arrangeEditSelection(arranged, ['1', '2', '3']).editNodes.map(
+        (node) => node.position
+      )
+    ).toEqual(arranged.editNodes.map((node) => node.position))
+    expect(() => arrangeEditSelection(enterView(state), ['1', '2'])).toThrow()
+  })
+
   it('freshly arranges the whole Edit graph and stages orphans without overlap', () => {
     const nodes = ['1', '2', '3', '4', '5'].map(makeNode)
     const edges = [link('a', '1', '2'), link('b', '3', '4')]

@@ -24,7 +24,11 @@ import {
 } from '../../../bindings/loom/internal/service'
 import { emptySelection } from '../../lib/selection'
 import { Toaster } from '../ui/toast'
-import { useCanvasBoardOwner } from './canvas-board-owner'
+import {
+  createCanvasBoardOwner,
+  createCanvasRepositoryQueue,
+  useCanvasBoardOwner,
+} from './canvas-board-owner'
 import { useCanvasBoardModel } from './use-canvas-board-model'
 import { useCanvasRepository } from './use-canvas-repository'
 
@@ -152,6 +156,141 @@ afterEach(() => {
 })
 
 describe('canvas board owner', () => {
+  it('cancels queued Edit work on View and does not revive it on a rapid Edit request', async () => {
+    const owner = createCanvasBoardOwner('/intent-rapid-mode')
+    owner.setMode('edit')
+    const blocker = deferred<void>()
+    const blocked = owner.execute(() => blocker.promise)
+    await Promise.resolve()
+    const intent = owner.captureIntent('relationship', 1)
+    const action = mock(async () => undefined)
+    const queued = owner.executeIntent(intent, () => true, action, true)
+    owner.requestModeTransition('view')
+    owner.requestModeTransition('edit')
+    blocker.resolve()
+    await blocked
+    const result = await queued
+    expect(result.dispatched).toBe(false)
+    expect(action).not.toHaveBeenCalled()
+    expect(intent.phase).toBe('cancelled')
+    owner.dispose()
+  })
+
+  it('reconciles a dispatched write after its UI intent becomes stale', async () => {
+    const owner = createCanvasBoardOwner('/intent-settle-after-escape')
+    owner.setMode('edit')
+    const board = {
+      snapshot: { revision: 'settled', images: [], relationships: [] },
+      data,
+    }
+    const refresh = spyOn(owner, 'refresh').mockResolvedValue(board as never)
+    const gate = deferred<void>()
+    const started = deferred<void>()
+    let intentCurrent = true
+    const intent = owner.captureIntent('relationship', 2)
+    const pending = owner.executeIntent(
+      intent,
+      () => intentCurrent,
+      () => {
+        started.resolve()
+        return gate.promise
+      },
+      true
+    )
+    await started.promise
+    intentCurrent = false
+    owner.requestModeTransition('view')
+    gate.resolve()
+    const result = await pending
+    expect(result.dispatched).toBe(true)
+    expect(refresh).toHaveBeenCalledTimes(1)
+    expect(intent.phase).toBe('reconciled')
+    owner.dispose()
+  })
+
+  it('reconciles a dispatched old-owner write through the replacement owner', async () => {
+    const repoPath = '/intent-owner-replacement'
+    const queue = createCanvasRepositoryQueue()
+    const oldOwner = createCanvasBoardOwner(repoPath, queue)
+    oldOwner.setMode('edit')
+    const gate = deferred<void>()
+    const started = deferred<void>()
+    const intent = oldOwner.captureIntent('relationship', 0)
+    const pending = oldOwner.executeIntent(
+      intent,
+      () => true,
+      () => {
+        started.resolve()
+        return gate.promise
+      },
+      true
+    )
+    await started.promise
+    oldOwner.dispose()
+    const replacement = createCanvasBoardOwner(repoPath, queue)
+    replacement.setMode('view')
+    const refresh = spyOn(replacement, 'refresh').mockResolvedValue({
+      snapshot: { revision: 'replacement', images: [], relationships: [] },
+      data,
+    } as never)
+    gate.resolve()
+    const result = await pending
+    expect(result.dispatched).toBe(true)
+    expect(refresh).toHaveBeenCalledTimes(1)
+    expect(intent.phase).toBe('reconciled')
+    replacement.dispose()
+  })
+
+  it('fences failed reconciliation until an explicit retry succeeds', async () => {
+    const owner = createCanvasBoardOwner('/intent-refresh-retry')
+    owner.setMode('edit')
+    const refresh = spyOn(owner, 'refresh').mockRejectedValue(
+      new Error('snapshot read failed')
+    )
+    const intent = owner.captureIntent('relationship', 0)
+    await expect(
+      owner.executeIntent(
+        intent,
+        () => true,
+        async () => undefined,
+        true
+      )
+    ).rejects.toThrow('snapshot read failed')
+    expect(owner.getMutationFence()).not.toBeNull()
+    refresh.mockResolvedValue({
+      snapshot: { revision: 'retried', images: [], relationships: [] },
+      data,
+    } as never)
+    expect(await owner.retryReconciliation()).toBe(true)
+    expect(owner.getMutationFence()).toBeNull()
+    owner.dispose()
+  })
+
+  it('keeps an uncertain transport fenced until an explicit stable retry', async () => {
+    const owner = createCanvasBoardOwner('/intent-uncertain-retry')
+    owner.setMode('edit')
+    const refresh = spyOn(owner, 'refresh').mockResolvedValue({
+      snapshot: { revision: 'uncertain', images: [], relationships: [] },
+      data,
+    } as never)
+    const intent = owner.captureIntent('relationship', 0)
+    await expect(
+      owner.executeIntent(
+        intent,
+        () => true,
+        async () => {
+          throw new TypeError('fetch failed')
+        },
+        true
+      )
+    ).rejects.toThrow('fetch failed')
+    expect(owner.getMutationFence()?.uncertain).toBe(true)
+    expect(await owner.retryReconciliation()).toBe(false)
+    expect(await owner.retryReconciliation(true)).toBe(true)
+    expect(refresh).toHaveBeenCalledTimes(3)
+    owner.dispose()
+  })
+
   it('waits for the real resize commit and its reload before undo, then waits for undo reload before redo', async () => {
     spyOn(ImageService, 'GetLayoutSnapshot').mockImplementation(
       () =>

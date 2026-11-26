@@ -105,12 +105,16 @@ it('arranges the displayed Edit graph as one guarded batch, not stored coordinat
   await act(async () => {
     await result.current.owner.refresh()
   })
-  const before = result.current.nodes.map((node) => ({
-    imageId: Number(node.id),
-    ...node.position,
-    w: node.width ?? 150,
-    h: node.height ?? 110,
-  }))
+  const before = result.current.nodes.map((node) => {
+    const stored = geometry.find((item) => item.imageId === Number(node.id))
+    if (!stored) throw new Error(`missing geometry for ${node.id}`)
+    return {
+      imageId: Number(node.id),
+      ...node.position,
+      w: stored.w,
+      h: stored.h,
+    }
+  })
   let arranging: Promise<void> = Promise.resolve()
   await act(async () => {
     arranging = result.current.owner.execute(() =>

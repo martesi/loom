@@ -53,9 +53,17 @@ export function useCanvasActionSystem({
   const [shortcutOverrides, setShortcutOverrides] = useState(
     readShortcutOverrides
   )
-  const selectionIntent = useRef({ selection: context.selection, revision: 0 })
-  if (!sameSelection(selectionIntent.current.selection, context.selection)) {
+  const selectionIntent = useRef({
+    selection: context.selection,
+    tool: context.connectionTool,
+    revision: 0,
+  })
+  if (
+    !sameSelection(selectionIntent.current.selection, context.selection) ||
+    selectionIntent.current.tool !== context.connectionTool
+  ) {
     selectionIntent.current.selection = context.selection
+    selectionIntent.current.tool = context.connectionTool
     selectionIntent.current.revision++
   }
   useEffect(() => {
@@ -70,7 +78,10 @@ export function useCanvasActionSystem({
     ...canvasAssetActions(context),
   ]
   const actionCatalog: CanvasAction[] = baseActionCatalog.map((action) => {
-    const allowed = allowsCanvasAction(context.owner.getMode(), action.id)
+    const capability = canvasActionCapability(action.id)
+    const allowed =
+      allowsCanvasAction(context.owner.getMode(), action.id) &&
+      (capability ? context.owner.allows(capability) : true)
     return {
       ...action,
       shortcut: shortcutOverrides[action.id] ?? action.shortcut,
@@ -82,21 +93,50 @@ export function useCanvasActionSystem({
           : t`Available in Edit mode`,
       execute: () => {
         const capability = canvasActionCapability(action.id)
-        if (!allowsCanvasAction(context.owner.getMode(), action.id)) return
+        if (!capability) {
+          if (allowsCanvasAction(context.owner.getMode(), action.id))
+            return action.execute()
+          return
+        }
+        if (
+          !allowsCanvasAction(context.owner.getMode(), action.id) ||
+          !context.owner.allows(capability)
+        )
+          return
         const selectionRevision = selectionIntent.current.revision
         const needsStableSelection =
           action.id === 'connect-derivative' || action.id === 'connect-source'
+        const startsConnectionTool =
+          needsStableSelection || action.id === 'reverse-relationship-tool'
+        if (startsConnectionTool) {
+          const intent = context.owner.captureIntent(
+            capability,
+            selectionRevision
+          )
+          return context.owner
+            .executeIntent(
+              intent,
+              () => selectionIntent.current.revision === selectionRevision,
+              async () => action.execute(),
+              false
+            )
+            .then(() => undefined)
+        }
         // Other actions may own their own queue, such as paste and history.
         if (capability !== 'geometry' && capability !== 'relationship')
           return action.execute()
-        return context.owner.execute(async () => {
-          if (
-            allowsCanvasAction(context.owner.getMode(), action.id) &&
-            (!needsStableSelection ||
-              selectionIntent.current.revision === selectionRevision)
+        const intent = context.owner.captureIntent(
+          capability,
+          selectionRevision
+        )
+        return context.owner
+          .executeIntent(
+            intent,
+            () => selectionIntent.current.revision === selectionRevision,
+            async () => action.execute(),
+            true
           )
-            await action.execute()
-        })
+          .then(() => undefined)
       },
     }
   })
@@ -113,9 +153,11 @@ export function useCanvasActionSystem({
     const currentAction = actionRef.current.find(
       (item) => item.id === action.id
     )
+    const capability = canvasActionCapability(action.id)
     if (
       !currentAction?.enabled ||
-      !allowsCanvasAction(context.owner.getMode(), action.id)
+      !allowsCanvasAction(context.owner.getMode(), action.id) ||
+      (capability !== undefined && !context.owner.allows(capability))
     )
       return Promise.resolve()
     return Promise.resolve(currentAction.execute()).catch(report)

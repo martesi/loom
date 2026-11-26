@@ -22,8 +22,12 @@ import { applyCanvasNodeSelection } from '../../lib/canvas-selection'
 import { emptySelection, type Selection } from '../../lib/selection'
 import type { CanvasBoardOwner } from './canvas-board-owner'
 import type { CanvasInternalMode } from './canvas-mode-policy'
+import { writeCanvasModeViewport } from './canvas-mode-viewport'
 import { useCanvasBoardDrag } from './use-canvas-board-drag'
-import type { CanvasConnectionTool } from './use-canvas-workspace-state'
+import type {
+  CanvasConnectionTool,
+  CanvasPendingRelationGesture,
+} from './use-canvas-workspace-state'
 
 interface MenuState {
   kind: 'pane' | 'node' | 'selection' | 'edge'
@@ -72,7 +76,7 @@ interface Props {
   closeInspector: (restoreFocus?: boolean) => void
   handlePreview: (node: Node) => void
   setHoveredNodeId: Dispatch<SetStateAction<string | null>>
-  relation: MutableRefObject<{ source: number; x: number; y: number } | null>
+  relation: MutableRefObject<CanvasPendingRelationGesture | null>
   setRelationshipPreview: Dispatch<SetStateAction<RelationshipPreview | null>>
   updateTarget: (target: DropTarget | null) => void
   run: (action: () => Promise<unknown>) => void
@@ -304,10 +308,14 @@ export function CanvasFlow(props: Props) {
         }}
         onMoveEnd={(_, v) => {
           updateProjectionViewport(v)
-          if (ready && mode === 'legacy')
+          if (!ready) return
+          if (mode === 'legacy') {
             void ImageService.SetViewport(repoPath, v).catch(report)
+          } else writeCanvasModeViewport(repoPath, mode, v)
         }}
         onMove={(_, viewport) => {
+          if (ready && mode !== 'legacy')
+            writeCanvasModeViewport(repoPath, mode, viewport)
           // Zoom badges read this once per frame at most; onMove fires
           // per input event during pans.
           pendingZoom.current = viewport.zoom

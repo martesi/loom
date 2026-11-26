@@ -5,6 +5,7 @@ import {
   layoutChronologicalGraph,
 } from '../../lib/chronological-layout'
 import type { LayoutBox, LayoutNode } from '../../lib/layout'
+import { computeSubgraphLayout, placeCluster } from '../../lib/layout'
 import { clearObstacles } from '../../lib/staging-obstacles'
 
 export interface CanvasProjectionInput {
@@ -215,6 +216,54 @@ export function arrangeEditProjection(
     return { ...node, position }
   })
   return { ...state, editNodes }
+}
+
+/** Arrange only selected nodes; every other displayed node is an obstacle. */
+export function arrangeEditSelection(
+  state: CanvasProjectionState,
+  selectedIds: readonly string[]
+): CanvasProjectionState {
+  if (state.mode !== 'edit') throw new Error('arrange requires Edit')
+  const selected = new Set(selectedIds)
+  const nodes = state.editNodes.filter((node) => selected.has(node.id))
+  if (nodes.length < 2) return state
+  const dimensions = (node: Node) => ({
+    id: node.id,
+    width: node.measured?.width ?? node.width ?? 150,
+    height: node.measured?.height ?? node.height ?? 110,
+  })
+  const layout = computeSubgraphLayout(
+    nodes.map(dimensions),
+    state.edges
+      .filter((edge) => selected.has(edge.source) && selected.has(edge.target))
+      .map(({ source, target }) => ({ source, target }))
+  )
+  const obstacles: LayoutBox[] = state.editNodes
+    .filter((node) => !selected.has(node.id))
+    .map((node) => ({
+      id: node.id,
+      ...node.position,
+      width: node.measured?.width ?? node.width ?? 150,
+      height: node.measured?.height ?? node.height ?? 110,
+    }))
+  if (!nodes.length) return state
+  const minX = Math.min(...nodes.map(({ position }) => position.x))
+  const minY = Math.min(...nodes.map(({ position }) => position.y))
+  const placed = obstacles.length
+    ? placeCluster(layout, obstacles)
+    : new Map(
+        [...layout].map(([id, position]) => [
+          id,
+          { x: position.x + minX, y: position.y + minY },
+        ])
+      )
+  return {
+    ...state,
+    editNodes: state.editNodes.map((node) => {
+      const position = placed.get(node.id)
+      return position ? { ...node, position } : node
+    }),
+  }
 }
 
 export function enterView(state: CanvasProjectionState): CanvasProjectionState {

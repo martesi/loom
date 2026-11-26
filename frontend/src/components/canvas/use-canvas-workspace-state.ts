@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AssetLayout } from '../../lib/asset-views'
 import type { Selection } from '../../lib/selection'
+import type { CanvasOperationIntent } from './canvas-board-owner'
 import type { PaletteAsset } from './command-palette'
 import type { PreviewOrigin } from './use-canvas-preview'
 
@@ -31,6 +32,14 @@ export type CanvasConnectionTool =
   | 'connect-source'
   | 'reverse-relationship'
   | null
+
+export interface CanvasPendingRelationGesture {
+  source: number
+  x: number
+  y: number
+  intent: CanvasOperationIntent
+  intentRevision: number
+}
 
 export interface RevealRequest {
   id: number
@@ -231,7 +240,7 @@ export function useCanvasWorkspaceState(selection: Selection) {
   const [menu, setMenu] = useState<CanvasMenuState | null>(null)
   const [reveal, setReveal] = useState<RevealRequest | null>(null)
   const visible = useRef<number[]>([])
-  const relation = useRef<{ source: number; x: number; y: number } | null>(null)
+  const relation = useRef<CanvasPendingRelationGesture | null>(null)
   const pendingDragNode = useRef<import('@xyflow/react').Node | null>(null)
   const dragTargetRaf = useRef(0)
   const zoomRaf = useRef(0)

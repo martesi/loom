@@ -220,13 +220,27 @@ test('Sources navigation reveals and selects an unplaced asset', async ({
   const sourceID = Number(
     await asset(page, 'relation-alpha.png').getAttribute('data-asset-id')
   )
+  const derivedID = Number(
+    await asset(page, 'relation-beta.png').getAttribute('data-asset-id')
+  )
   await legacyServiceCall(page, 'imageservice.ts', 'UnplaceImages', [
     await fixturePath('sources-nav-fixtures'),
     [sourceID],
   ])
   await page.reload()
-  await expect(imageNodes(page)).toHaveCount(1)
-  await imageNodes(page).first().click()
+  await expect(imageNodes(page)).toHaveCount(2)
+  const source = await legacyServiceCall<{
+    placed: boolean
+  } | null>(page, 'imageservice.ts', 'GetImage', [
+    await fixturePath('sources-nav-fixtures'),
+    sourceID,
+  ])
+  expect(source?.placed).toBe(false)
+  const sourceNode = page.locator(`.react-flow__node[data-id="${sourceID}"]`)
+  const derivedNode = page.locator(`.react-flow__node[data-id="${derivedID}"]`)
+  await expect(sourceNode).toHaveCount(1)
+  await expect(derivedNode).toHaveCount(1)
+  await derivedNode.click()
   if (
     (await page
       .locator('aside[aria-label="Inspector"]')
@@ -238,27 +252,49 @@ test('Sources navigation reveals and selects an unplaced asset', async ({
     .locator('.loom-detail-panel section')
     .filter({ has: page.getByRole('heading', { name: 'Sources' }) })
   await expect(sources.getByText('relation-alpha.png')).toBeVisible()
+  const viewport = page.locator('.react-flow__viewport')
+  const initialViewport = await viewport.getAttribute('style')
   await sources.getByRole('button', { name: /Go to source asset/ }).click()
 
-  await expect(asset(page, 'relation-alpha.png')).toHaveAttribute(
+  await expect(sourceNode).toHaveClass(/selected/)
+  await expect(viewport).not.toHaveAttribute('style', initialViewport ?? '')
+  await expect
+    .poll(async () => {
+      const canvas = await page.locator('.react-flow__pane').boundingBox()
+      const node = await sourceNode.boundingBox()
+      if (!canvas || !node) return Number.POSITIVE_INFINITY
+      return Math.max(
+        Math.abs(node.x + node.width / 2 - (canvas.x + canvas.width / 2)),
+        Math.abs(node.y + node.height / 2 - (canvas.y + canvas.height / 2))
+      )
+    })
+    .toBeLessThan(20)
+  await expect(page.getByText(/× .* · Unplaced/)).toBeVisible()
+})
+
+test('Assets reveals an unpaired unplaced asset without projecting a node', async ({
+  page,
+}) => {
+  await openFixtureRepo(page, 'clipboard-fixtures')
+  await page.getByTestId('canvas-mode-edit').click()
+  await openAssetsShelf(page)
+  const id = Number(
+    await asset(page, 'hover-target.png').getAttribute('data-asset-id')
+  )
+  await placeAssets(page, ['hover-target.png'])
+  await legacyServiceCall(page, 'imageservice.ts', 'UnplaceImages', [
+    await fixturePath('clipboard-fixtures'),
+    [id],
+  ])
+  await page.reload()
+  await expect(imageNodes(page)).toHaveCount(0)
+  await openAssetsShelf(page)
+  await expect(asset(page, 'hover-target.png')).toBeVisible()
+  await asset(page, 'hover-target.png').click()
+  await expect(asset(page, 'hover-target.png')).toHaveAttribute(
     'aria-selected',
     'true'
   )
-  // Locate scrolls the row into view, not just selects it.
-  await expect
-    .poll(async () => {
-      const rowBox = await asset(page, 'relation-alpha.png').boundingBox()
-      const listBox = await page
-        .getByRole('listbox', { name: 'Assets' })
-        .boundingBox()
-      if (!rowBox || !listBox) return false
-      return (
-        rowBox.y >= listBox.y &&
-        rowBox.y + rowBox.height <= listBox.y + listBox.height
-      )
-    })
-    .toBe(true)
-  await expect(page.getByText(/× .* · Unplaced/)).toBeVisible()
 })
 
 test('auto-arrange respects resized node bounds', async ({ page }) => {
@@ -303,6 +339,27 @@ test('auto-arrange respects resized node bounds', async ({ page }) => {
   await dropAsset(page, 'arrange-gamma.png', { x: 500, y: 450 })
   await expect(nodes).toHaveCount(3)
   await selectImageNodes(page, [1, 2])
+  const selectedIDs = await Promise.all(
+    [1, 2].map((index) => nodes.nth(index).getAttribute('data-id'))
+  )
+  if (selectedIDs.some((id) => !id))
+    throw new Error('Selected arrangement nodes have no IDs')
+  const positions = async () =>
+    Promise.all(
+      [1, 2].map(async (index) => {
+        const box = await nodeBox(nodes.nth(index))
+        return { x: Math.round(box.x), y: Math.round(box.y) }
+      })
+    )
+  const beforeSelected = await positions()
+  const obstacleBefore = await nodeBox(nodes.nth(0))
+  const repoPath = await fixturePath('arrange-resize-pair-fixtures')
+  const beforeSnapshot = await legacyServiceCall<{
+    images?: { id: number; geometry: unknown }[]
+  }>(page, 'imageservice.ts', 'GetLayoutSnapshot', [repoPath])
+  const beforeGeometry = new Map(
+    (beforeSnapshot.images ?? []).map((image) => [image.id, image.geometry])
+  )
   await nodes.nth(1).click({ button: 'right' })
   await page
     .getByRole('menu')
@@ -316,4 +373,39 @@ test('auto-arrange respects resized node bounds', async ({ page }) => {
       return Math.min(second.y, third.y) >= obstacle.y + obstacle.height + 50
     })
     .toBe(true)
+  const afterSelected = await positions()
+  expect(afterSelected).not.toEqual(beforeSelected)
+  const obstacleAfter = await nodeBox(nodes.nth(0))
+  expect(obstacleAfter.x).toBeCloseTo(obstacleBefore.x, 0)
+  expect(obstacleAfter.y).toBeCloseTo(obstacleBefore.y, 0)
+  expect(obstacleAfter.width).toBeCloseTo(obstacleBefore.width, 0)
+  expect(obstacleAfter.height).toBeCloseTo(obstacleBefore.height, 0)
+  const afterSnapshot = await legacyServiceCall<{
+    images?: { id: number; geometry: unknown }[]
+  }>(page, 'imageservice.ts', 'GetLayoutSnapshot', [repoPath])
+  const afterGeometry = new Map(
+    (afterSnapshot.images ?? []).map((image) => [image.id, image.geometry])
+  )
+  for (const id of selectedIDs) {
+    const numericID = Number(id)
+    expect(afterGeometry.get(numericID)).not.toEqual(
+      beforeGeometry.get(numericID)
+    )
+  }
+  await page.keyboard.press('ControlOrMeta+z')
+  await expect.poll(positions).toEqual(beforeSelected)
+  const undone = await legacyServiceCall<{
+    images?: { id: number; geometry: unknown }[]
+  }>(page, 'imageservice.ts', 'GetLayoutSnapshot', [repoPath])
+  expect(
+    new Map((undone.images ?? []).map((image) => [image.id, image.geometry]))
+  ).toEqual(beforeGeometry)
+  await page.keyboard.press('ControlOrMeta+Shift+z')
+  await expect.poll(positions).toEqual(afterSelected)
+  const redone = await legacyServiceCall<{
+    images?: { id: number; geometry: unknown }[]
+  }>(page, 'imageservice.ts', 'GetLayoutSnapshot', [repoPath])
+  expect(
+    new Map((redone.images ?? []).map((image) => [image.id, image.geometry]))
+  ).toEqual(afterGeometry)
 })

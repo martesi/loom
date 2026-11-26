@@ -90,8 +90,9 @@ test('undo reconciles edge selection before additive selection and delete', asyn
     .getByRole('combobox', { name: 'Search commands' })
     .fill('Reverse relationship')
   await expect(
-    page.getByRole('option', { name: /Reverse relationship/ })
+    page.getByRole('option', { name: 'Reverse relationship', exact: true })
   ).toHaveCount(0)
+  await expect(page.getByTestId('dock-reverse-relationship')).toBeEnabled()
   await page.keyboard.press('Escape')
   await page.keyboard.down('Shift')
   await clickEdge(page, 'left', 0)

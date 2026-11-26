@@ -1,11 +1,5 @@
 import { afterEach, expect, it, mock, spyOn } from 'bun:test'
-import {
-  act,
-  cleanup,
-  fireEvent,
-  render,
-  renderHook,
-} from '@testing-library/react'
+import { act, cleanup, render, renderHook } from '@testing-library/react'
 import { createElement, useRef, useState } from 'react'
 import { ImageService } from '../../../bindings/loom/internal/service'
 import { emptySelection } from '../../lib/selection'
@@ -290,6 +284,10 @@ for (const interruption of [
 it('rechecks the current mode when a previously enabled action reaches the queue', async () => {
   const owner = createCanvasBoardOwner('/repo')
   owner.setMode('edit')
+  spyOn(owner, 'refresh').mockResolvedValue({
+    snapshot: { revision: 'revision', images: [], relationships: [] },
+    data: { images: [], relationships: [], groups: [] },
+  } as never)
   const arrange = mock(async () => {})
   const context = {
     owner,
@@ -333,7 +331,7 @@ it('rechecks the current mode when a previously enabled action reaches the queue
     'auto-arrange-selection'
   )
   if (!selectionAction) throw new Error('missing selection action')
-  expect(selectionAction.enabled).toBe(false)
+  expect(selectionAction.enabled).toBe(true)
   const dock = render(
     createElement(CanvasDock, {
       mode: 'multiple',
@@ -356,13 +354,12 @@ it('rechecks the current mode when a previously enabled action reaches the queue
   const selectionButton = dock.getByTestId(
     'dock-arrange-selection'
   ) as HTMLButtonElement
-  expect(selectionButton.disabled).toBe(true)
+  expect(selectionButton.disabled).toBe(false)
   await act(async () => {
-    fireEvent.click(selectionButton)
     await result.current.executeAction(selectionAction)
-    result.current.runDockAction('auto-arrange-selection')
   })
-  expect(arrange).not.toHaveBeenCalled()
+  expect(arrange).toHaveBeenCalledTimes(1)
+  arrange.mockClear()
   const expected = new Map(
     Object.entries(expectedCapabilities).flatMap(([capability, ids]) =>
       ids.map((id) => [id, capability] as const)
@@ -376,9 +373,8 @@ it('rechecks the current mode when a previously enabled action reaches the queue
     expect(canvasActionCapability(id)).toBe(capability)
     for (const mode of ['legacy', 'view', 'edit'] as const)
       expect(allowsCanvasAction(mode, id)).toBe(
-        !(mode === 'edit' && id === 'auto-arrange-selection') &&
-          (mode !== 'view' ||
-            (capability !== 'geometry' && capability !== 'relationship'))
+        mode !== 'view' ||
+          (capability !== 'geometry' && capability !== 'relationship')
       )
   }
   if (!action) throw new Error('missing arrange action')
@@ -404,6 +400,69 @@ it('rechecks the current mode when a previously enabled action reaches the queue
     await result.current.executeAction(action)
   })
   expect(arrange).toHaveBeenCalledTimes(1)
+})
+
+it('cancels a queued selected-subgraph arrangement after selection changes', async () => {
+  const owner = createCanvasBoardOwner('/repo')
+  owner.setMode('edit')
+  const arrange = mock(async () => {})
+  let context = {
+    owner,
+    repoPath: '/repo',
+    displayNodes: [{ id: '1' }, { id: '2' }, { id: '3' }],
+    selectedCanvasNodeIds: ['1', '2'],
+    canArrangeSelection: true,
+    selectedIds: () => [],
+    selectedImageRecords: [],
+    relationshipActions: [],
+    visible: { current: [] },
+    selection: emptySelection,
+    data: { images: [], relationships: [], groups: [] },
+    arrange,
+    undoActions: { undo: async () => {}, redo: async () => {} },
+  } as unknown as CanvasActionsContext
+  const { result, rerender } = renderHook(() => {
+    const [paletteOpen, setPaletteOpen] = useState(false)
+    const [, setRecentActionIds] = useState<string[]>([])
+    const [, setPaletteAssets] = useState<PaletteAsset[]>([])
+    const [, setPaletteAssetsLoading] = useState(false)
+    const [, setPaletteAssetsError] = useState(false)
+    return useCanvasActionSystem({
+      context,
+      report: mock(),
+      paletteOpen,
+      setPaletteOpen,
+      setRecentActionIds,
+      pendingRecentAction: useRef(null),
+      trashIds: null,
+      purgeIds: null,
+      host: useRef(null),
+      paletteAssetRequest: 0,
+      setPaletteAssets,
+      setPaletteAssetsLoading,
+      setPaletteAssetsError,
+    })
+  })
+  let release = () => {}
+  const blocker = owner.execute(
+    () => new Promise<void>((resolve) => (release = resolve))
+  )
+  await Promise.resolve()
+  const action = result.current.actionById.get('auto-arrange-selection')
+  if (!action) throw new Error('missing selection arrangement action')
+  const queued = result.current.executeAction(action)
+  context = {
+    ...context,
+    selection: { surface: 'canvas', ids: [3], edges: [], group: null },
+  } as unknown as CanvasActionsContext
+  rerender()
+  await act(async () => {
+    release()
+    await blocker
+    await queued
+  })
+  expect(arrange).not.toHaveBeenCalled()
+  owner.dispose()
 })
 
 it('does not apply a queued D action to an image after selection changes', async () => {

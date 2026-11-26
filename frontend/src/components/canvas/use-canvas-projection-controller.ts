@@ -1,13 +1,18 @@
 import type { Edge, Node, Viewport, XYPosition } from '@xyflow/react'
 import { useEffect, useRef, useState } from 'react'
-import type { UndoResult } from '../../../bindings/loom/internal/service'
+import type {
+  CanvasData,
+  UndoResult,
+} from '../../../bindings/loom/internal/service'
 import type {
   AcceptedCanvasBoard,
   CanvasBoardOwner,
 } from './canvas-board-owner'
 import type { CanvasInternalMode } from './canvas-mode-policy'
+import { readCanvasModeViewport } from './canvas-mode-viewport'
 import {
   arrangeEditProjection,
+  arrangeEditSelection,
   type CanvasProjectionState,
   createCanvasProjection,
   enterEdit,
@@ -41,6 +46,7 @@ interface Props {
   cancelPointerGesture?: () => void
   reconcileSelection: (nodes: readonly Node[], edges: readonly Edge[]) => void
   startInView?: boolean
+  projectGraph?: (data: CanvasData) => Graph
 }
 
 /** The public route opts into View; internal consumers can still exercise legacy behavior. */
@@ -88,14 +94,36 @@ export function useCanvasProjectionController(props: Props) {
     return next
   }
   function updateViewport(viewport: Viewport) {
-    if (state.current)
+    if (state.current) {
       state.current = setProjectionViewport(state.current, viewport, size())
+    }
+  }
+  function createProjection(
+    graph: Graph,
+    board: AcceptedCanvasBoard,
+    viewport: Viewport
+  ) {
+    const repoPath = current.current.owner.repoPath
+    const viewViewport = readCanvasModeViewport(repoPath, 'view')
+    const editViewport = readCanvasModeViewport(repoPath, 'edit')
+    const initial = createCanvasProjection({
+      ...graph,
+      geometry: (board.snapshot.images ?? []).map((item) => item.geometry),
+      viewport: viewViewport ?? editViewport ?? viewport,
+      viewportSize: size(),
+    })
+    return {
+      ...initial,
+      viewViewport: viewViewport ?? initial.viewViewport,
+      editViewport: editViewport ?? initial.editViewport,
+      editInitialized: editViewport !== null || initial.editInitialized,
+    }
   }
   function setAnchor(anchor: XYPosition | null) {
     if (state.current) state.current = setViewAnchor(state.current, anchor)
   }
   /** The action system calls this inside the owner's serialized queue. */
-  async function arrangeEdit() {
+  async function arrangeEdit(selectedIds?: readonly string[]) {
     const { owner } = current.current
     if (owner.getMode() !== 'edit') return
     const input = source.current
@@ -104,14 +132,28 @@ export function useCanvasProjectionController(props: Props) {
     if (!input || !previous || owner.getSnapshot() !== input.board)
       throw new Error('Canvas snapshot is not ready for arrangement')
     const before = capture(previous)
-    const next = arrangeEditProjection(before)
+    const next = selectedIds
+      ? arrangeEditSelection(before, selectedIds)
+      : arrangeEditProjection(before)
+    const persistedGeometry = new Map(
+      (input.board.snapshot.images ?? []).map((image) => [
+        image.id,
+        image.geometry,
+      ])
+    )
     const geometry = (nodes: Node[]) =>
-      nodes.map((node) => ({
-        imageId: Number(node.id),
-        ...node.position,
-        w: node.width ?? node.measured?.width ?? 150,
-        h: node.height ?? node.measured?.height ?? 110,
-      }))
+      nodes.map((node) => {
+        const imageId = Number(node.id)
+        const stored = persistedGeometry.get(imageId)
+        if (!stored)
+          throw new Error(`Missing stored geometry for image ${imageId}`)
+        return {
+          imageId,
+          ...node.position,
+          w: stored.w,
+          h: stored.h,
+        }
+      })
     await owner.commitDisplayedLayout(
       input.board,
       geometry(before.editNodes),
@@ -143,18 +185,25 @@ export function useCanvasProjectionController(props: Props) {
   }
   async function transitionMode(target: 'view' | 'edit') {
     const { owner } = current.current
-    owner.beginModeTransition()
+    const requestRevision = owner.requestModeTransition(target)
     const active = lifetime.current
     const isCurrent = () =>
       active !== null &&
       lifetime.current === active &&
       current.current.owner === owner &&
-      active.owner === owner
+      active.owner === owner &&
+      owner.getModeRequestRevision() === requestRevision
     await owner.execute(async () => {
       if (!isCurrent()) return
-      const input = source.current
-      if (!input || owner.getSnapshot() !== input.board)
+      const board = owner.getSnapshot()
+      if (!board)
         throw new Error('Canvas snapshot is not ready for a mode transition')
+      const graph =
+        current.current.projectGraph?.(board.data) ?? source.current?.graph
+      if (!graph)
+        throw new Error('Canvas graph is not ready for a mode transition')
+      const input = { board, graph }
+      source.current = input
       owner.cancelGesture()
       current.current.cancelPointerGesture?.()
       let next = state.current
@@ -164,15 +213,15 @@ export function useCanvasProjectionController(props: Props) {
           y: 0,
           zoom: 1,
         }
-        next = createCanvasProjection({
+        next = createProjection(input.graph, input.board, viewport)
+      } else {
+        next = reconcileCanvasProjection(capture(next), {
           ...input.graph,
           geometry: (input.board.snapshot.images ?? []).map(
             (item) => item.geometry
           ),
-          viewport,
-          viewportSize: size(),
         })
-      } else next = capture(next)
+      }
       next = target === 'edit' ? enterEdit(next) : enterView(next)
       if (!isCurrent()) return
       owner.setMode(target)
@@ -195,12 +244,7 @@ export function useCanvasProjectionController(props: Props) {
         y: 0,
         zoom: 1,
       }
-      const initial = createCanvasProjection({
-        ...graph,
-        geometry: (board.snapshot.images ?? []).map((item) => item.geometry),
-        viewport,
-        viewportSize: size(),
-      })
+      const initial = createProjection(graph, board, viewport)
       current.current.owner.setMode('view')
       publish(initial)
       return true

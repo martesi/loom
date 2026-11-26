@@ -41,12 +41,104 @@ export interface AcceptedCanvasBoard {
   data: CanvasData
 }
 
+export type CanvasIntentPhase =
+  | 'queued'
+  | 'dispatched'
+  | 'settled'
+  | 'reconciled'
+  | 'cancelled'
+
+export interface CanvasOperationIntent {
+  readonly owner: CanvasBoardOwner
+  readonly repoPath: string
+  readonly activationEpoch: number
+  readonly modeRequestRevision: number
+  readonly mode: CanvasInternalMode
+  readonly capability: CanvasCapability
+  readonly userIntentRevision: number
+  phase: CanvasIntentPhase
+}
+
+export interface CanvasIntentResult<T> {
+  dispatched: boolean
+  value?: T
+}
+
+export interface CanvasRepositoryQueue {
+  tail: Promise<void>
+  needsReconciliation: boolean
+  fence: { error: unknown; uncertain: boolean } | null
+  owners: Set<CanvasBoardOwner>
+  pendingWrites: number
+}
+
+const repositoryLanes = new Map<string, CanvasRepositoryQueue>()
+
+export function createCanvasRepositoryQueue(): CanvasRepositoryQueue {
+  return {
+    tail: Promise.resolve(),
+    needsReconciliation: false,
+    fence: null,
+    owners: new Set(),
+    pendingWrites: 0,
+  }
+}
+
+function repositoryLane(repoPath: string) {
+  let lane = repositoryLanes.get(repoPath)
+  if (!lane) {
+    lane = createCanvasRepositoryQueue()
+    repositoryLanes.set(repoPath, lane)
+  }
+  return lane
+}
+
+function enqueueRepository<T>(
+  lane: CanvasRepositoryQueue,
+  action: () => Promise<T>
+) {
+  const result = lane.tail.then(action)
+  lane.tail = result.then(
+    () => undefined,
+    () => undefined
+  )
+  return result
+}
+
+function uncertainTransport(error: unknown) {
+  return (
+    error instanceof TypeError &&
+    /fetch|network|connection|socket/i.test(error.message) &&
+    !('cause' in error)
+  )
+}
+
 export interface CanvasBoardOwner extends CanvasBoardExecutor {
+  readonly repoPath: string
   getMode(): CanvasInternalMode
   getModeRevision(): number
-  beginModeTransition(): void
+  getModeRequestRevision(): number
+  requestModeTransition(mode: CanvasInternalMode): number
   setMode(mode: CanvasInternalMode): void
   allows(capability: CanvasCapability): boolean
+  captureIntent(
+    capability: CanvasCapability,
+    userIntentRevision: number
+  ): CanvasOperationIntent
+  isIntentCurrent(
+    intent: CanvasOperationIntent,
+    isUserIntentCurrent: () => boolean
+  ): boolean
+  executeIntent<T>(
+    intent: CanvasOperationIntent,
+    isUserIntentCurrent: () => boolean,
+    action: () => Promise<T>,
+    write: boolean
+  ): Promise<CanvasIntentResult<T>>
+  /** Dispatch a write from inside the repository queue and reconcile afterward. */
+  write<T>(action: () => Promise<T>): Promise<T>
+  getMutationFence(): { error: unknown; uncertain: boolean } | null
+  retryReconciliation(confirmUncertain?: boolean): Promise<boolean>
   refresh(): Promise<AcceptedCanvasBoard | null>
   applyHistory(result: UndoResult): Promise<void>
   takeHistory(): UndoResult[]
@@ -78,9 +170,18 @@ export interface CanvasBoardOwner extends CanvasBoardExecutor {
 }
 
 export function useCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
-  const owner = useRef<{ repoPath: string; executor: CanvasBoardOwner }>(null)
+  const owner = useRef<{
+    repoPath: string
+    executor: CanvasBoardOwner
+    queue: CanvasRepositoryQueue
+  }>(null)
   if (!owner.current || owner.current.repoPath !== repoPath) {
-    owner.current = { repoPath, executor: createCanvasBoardOwner(repoPath) }
+    const queue = repositoryLane(repoPath)
+    owner.current = {
+      repoPath,
+      queue,
+      executor: createCanvasBoardOwner(repoPath, queue),
+    }
   }
   const current = owner.current.executor
   useEffect(() => {
@@ -90,12 +191,17 @@ export function useCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
   return current
 }
 
-export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
-  let tail: Promise<void> = Promise.resolve()
+export function createCanvasBoardOwner(
+  repoPath: string,
+  lane = createCanvasRepositoryQueue()
+): CanvasBoardOwner {
   let generation = 0
   let active = true
+  let activationEpoch = 1
   let mode: CanvasInternalMode = 'legacy'
   let modeRevision = 0
+  let modeRequestRevision = 0
+  let requestedMode: CanvasInternalMode = 'legacy'
   let accepted: AcceptedCanvasBoard | null = null
   let acceptedGeneration = -1
   let gesture: ResizeGesture | DragGesture | null = null
@@ -108,8 +214,66 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
   })
   let lifetime = new AbortController()
   const listeners = new Set<() => void>()
+  async function reconcileWithActiveOwner() {
+    const replacement = [...lane.owners].find(
+      (candidate) => candidate.isActive?.() === true
+    )
+    if (!replacement) return false
+    const reconciled = await replacement.refresh()
+    if (reconciled && !lane.fence?.uncertain) {
+      lane.needsReconciliation = false
+      lane.fence = null
+    }
+    return reconciled !== null
+  }
+  async function writeAndReconcile<T>(
+    action: () => Promise<T>,
+    alreadyPending = false
+  ) {
+    if (!alreadyPending) lane.pendingWrites++
+    lane.needsReconciliation = true
+    try {
+      const value = await action()
+      let reconciled: AcceptedCanvasBoard | boolean | null
+      if (active) {
+        reconciled = await owner.refresh()
+        if (!reconciled)
+          throw new Error('Canvas write settled without an accepted snapshot.')
+      } else {
+        reconciled = await reconcileWithActiveOwner()
+      }
+      if (reconciled && !lane.fence?.uncertain) {
+        lane.needsReconciliation = false
+        lane.fence = null
+      }
+      return value
+    } catch (error) {
+      lane.needsReconciliation = true
+      lane.fence = { error, uncertain: uncertainTransport(error) }
+      try {
+        const reconciled = active
+          ? await owner.refresh()
+          : await reconcileWithActiveOwner()
+        if (reconciled && !lane.fence.uncertain) {
+          lane.needsReconciliation = false
+          lane.fence = null
+        }
+      } catch {
+        // Keep the fence until an explicit reconciliation retry succeeds.
+      }
+      throw error
+    } finally {
+      if (!alreadyPending) lane.pendingWrites--
+    }
+  }
   function refresh() {
-    const request = loadBoard()
+    const request = loadBoard().then((board) => {
+      if (board && lane.needsReconciliation && !lane.fence?.uncertain) {
+        lane.needsReconciliation = false
+        lane.fence = null
+      }
+      return board
+    })
     latestRefresh = request
     const notify = signalRefresh
     refreshChanged = new Promise<void>((resolve) => {
@@ -149,25 +313,148 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
     return accepted
   }
   const owner: CanvasBoardOwner = {
+    repoPath,
     getMode: () => mode,
     getModeRevision: () => modeRevision,
-    beginModeTransition: () => {
+    getModeRequestRevision: () => modeRequestRevision,
+    requestModeTransition(next) {
+      modeRequestRevision++
       modeRevision++
+      requestedMode = next
+      owner.cancelGesture()
+      return modeRequestRevision
     },
     setMode(next) {
       owner.cancelGesture()
-      if (mode !== next) modeRevision++
+      if (mode !== next && requestedMode !== next) {
+        modeRevision++
+        modeRequestRevision++
+      }
       mode = next
+      requestedMode = next
     },
-    allows: (capability) => allowsCanvasCapability(mode, capability),
+    allows: (capability) =>
+      allowsCanvasCapability(mode, capability) &&
+      (requestedMode !== 'view' ||
+        (capability !== 'relationship' &&
+          capability !== 'geometry' &&
+          capability !== 'canvas-drop')),
+    captureIntent(capability, userIntentRevision) {
+      return {
+        owner,
+        repoPath,
+        activationEpoch,
+        modeRequestRevision,
+        mode: requestedMode,
+        capability,
+        userIntentRevision,
+        phase: 'queued',
+      }
+    },
+    isIntentCurrent(intent, isUserIntentCurrent) {
+      return (
+        active &&
+        intent.owner === owner &&
+        intent.repoPath === repoPath &&
+        intent.activationEpoch === activationEpoch &&
+        intent.modeRequestRevision === modeRequestRevision &&
+        intent.mode === requestedMode &&
+        isUserIntentCurrent() &&
+        owner.allows(intent.capability)
+      )
+    },
+    async executeIntent(intent, isUserIntentCurrent, action, write) {
+      return enqueueRepository(lane, async () => {
+        if (lane.needsReconciliation && active) {
+          if (lane.fence?.uncertain)
+            throw new Error(
+              'Canvas mutation outcome is uncertain. Retry reconciliation before editing.'
+            )
+          const reconciled = await owner.refresh()
+          if (!reconciled)
+            throw new Error('Canvas reconciliation did not return a snapshot.')
+          lane.needsReconciliation = false
+          lane.fence = null
+        }
+        if (!owner.isIntentCurrent(intent, isUserIntentCurrent)) {
+          intent.phase = 'cancelled'
+          return { dispatched: false }
+        }
+        intent.phase = 'dispatched'
+        if (!write) {
+          const value = await action()
+          intent.phase = 'settled'
+          return { dispatched: true, value }
+        }
+        lane.pendingWrites++
+        let pendingWrite = true
+        try {
+          const value = await action()
+          intent.phase = 'settled'
+          await writeAndReconcile(async () => value, true)
+          lane.pendingWrites--
+          pendingWrite = false
+          if (!lane.needsReconciliation) intent.phase = 'reconciled'
+          return { dispatched: true, value }
+        } catch (error) {
+          if (pendingWrite) lane.pendingWrites--
+          intent.phase = 'settled'
+          lane.needsReconciliation = true
+          lane.fence = { error, uncertain: uncertainTransport(error) }
+          if (active) {
+            try {
+              const reconciled = await owner.refresh()
+              if (reconciled) {
+                intent.phase = 'reconciled'
+                if (!lane.fence.uncertain) {
+                  lane.needsReconciliation = false
+                  lane.fence = null
+                }
+              }
+            } catch {
+              // Keep the fence until an explicit reconciliation retry succeeds.
+            }
+          } else {
+            await reconcileWithActiveOwner().catch(() => false)
+          }
+          throw error
+        }
+      })
+    },
+    getMutationFence: () => lane.fence,
+    write: writeAndReconcile,
+    async retryReconciliation(confirmUncertain = false) {
+      return enqueueRepository(lane, async () => {
+        if (!active) return false
+        if (lane.fence?.uncertain && !confirmUncertain) return false
+        const first = await owner.refresh()
+        if (!first) return false
+        if (lane.fence?.uncertain) {
+          const second = await owner.refresh()
+          if (!second || second.snapshot.revision !== first.snapshot.revision)
+            return false
+        }
+        lane.needsReconciliation = false
+        lane.fence = null
+        return true
+      })
+    },
     execute<T>(action: () => Promise<T>): Promise<T> {
       // Queue outer operations only: awaiting a nested execute would deadlock.
-      const result = tail.then(action)
-      tail = result.then(
-        () => undefined,
-        () => undefined
-      )
-      return result
+      return enqueueRepository(lane, async () => {
+        if (lane.needsReconciliation && active) {
+          if (lane.fence?.uncertain)
+            throw new Error(
+              'Canvas mutation outcome is uncertain. Retry reconciliation before editing.'
+            )
+          const reconciled = await owner.refresh()
+          if (!reconciled)
+            throw new Error('Canvas reconciliation did not return a snapshot.')
+          lane.needsReconciliation = false
+          lane.fence = null
+        }
+        return action()
+      })
     },
     refresh,
     async applyHistory(result) {
@@ -251,21 +538,15 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
           current.generation !== generation
         )
           return
-        await ImageService.SetGeometryFromDisplayAtRevision(
-          repoPath,
-          current.revision,
-          batch.expected,
-          batch.before,
-          batch.after
-        ).catch(async (error: unknown) => {
-          await owner
-            .refresh()
-            .catch((reloadError: unknown) =>
-              console.error('canvas resize reload failed', reloadError)
-            )
-          throw error
-        })
-        await owner.refresh()
+        await owner.write(() =>
+          ImageService.SetGeometryFromDisplayAtRevision(
+            repoPath,
+            current.revision,
+            batch.expected,
+            batch.before,
+            batch.after
+          )
+        )
       })
     },
     cancelResize(current) {
@@ -323,25 +604,19 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
           current.generation !== generation
         )
           return
-        await ImageService.SetGeometryFromDisplayAtRevision(
-          repoPath,
-          current.revision,
-          batch.expected,
-          batch.before,
-          batch.after
-        ).catch(async (error: unknown) => {
-          await owner
-            .refresh()
-            .catch((reloadError: unknown) =>
-              console.error('canvas drag reload failed', reloadError)
-            )
-          throw error
-        })
-        await owner.refresh()
+        await owner.write(() =>
+          ImageService.SetGeometryFromDisplayAtRevision(
+            repoPath,
+            current.revision,
+            batch.expected,
+            batch.before,
+            batch.after
+          )
+        )
       })
     },
     async commitDisplayedLayout(board, before, after, accept) {
-      if (mode !== 'edit' || !active) return
+      if (!owner.allows('geometry') || !active) return
       if (board !== accepted || acceptedGeneration !== generation)
         throw new Error('Canvas changed during layout. Try again.')
       const batch = buildDisplayGeometry(
@@ -353,22 +628,16 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
       )
       if (!batch.changed) return
       owner.cancelGesture()
-      await ImageService.SetGeometryFromDisplayAtRevision(
-        repoPath,
-        board.snapshot.revision,
-        batch.expected,
-        batch.before,
-        batch.after
-      ).catch(async (error: unknown) => {
-        await owner
-          .refresh()
-          .catch((reloadError: unknown) =>
-            console.error('canvas arrange reload failed', reloadError)
-          )
-        throw error
-      })
-      if (active && mode === 'edit') accept()
-      if (active) await owner.refresh()
+      await owner.write(() =>
+        ImageService.SetGeometryFromDisplayAtRevision(
+          repoPath,
+          board.snapshot.revision,
+          batch.expected,
+          batch.before,
+          batch.after
+        )
+      )
+      if (active && owner.allows('geometry')) accept()
     },
     cancelGesture() {
       const current = gesture
@@ -391,6 +660,16 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
     },
     dispose() {
       active = false
+      lane.owners.delete(owner)
+      if (
+        lane.owners.size === 0 &&
+        lane.pendingWrites === 0 &&
+        !lane.fence?.uncertain
+      ) {
+        lane.needsReconciliation = false
+        lane.fence = null
+      }
+      activationEpoch++
       lifetime.abort()
       generation++
       pendingHistory = []
@@ -401,10 +680,13 @@ export function createCanvasBoardOwner(repoPath: string): CanvasBoardOwner {
     activate() {
       if (!active) {
         lifetime = new AbortController()
+        activationEpoch++
       }
       active = true
+      lane.owners.add(owner)
     },
   }
+  lane.owners.add(owner)
   return owner
 }
 

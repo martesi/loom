@@ -66,6 +66,7 @@ interface Props {
   assetSelectionRecords: { key: string; records: ImageInfo[] }
   updateZoomCompensation: (zoom: number) => void
   submissionScopeRef: MutableRefObject<{ key: string; revision: number }>
+  selectionIntentRevision: number
 }
 
 export function CanvasWorkspaceContent(props: Props) {
@@ -98,8 +99,9 @@ export function CanvasWorkspaceContent(props: Props) {
     assetSelectionRecords,
     updateZoomCompensation,
     submissionScopeRef,
+    selectionIntentRevision,
   } = props
-  const { report, reload, reloadForData, run, assetSelectionKey } = repository
+  const { report, reload, run, assetSelectionKey } = repository
   const {
     compressIds,
     setCompressIds,
@@ -225,9 +227,7 @@ export function CanvasWorkspaceContent(props: Props) {
     )
   const arrange = (nodeIds?: string[]) =>
     boardModel.owner.getMode() === 'edit'
-      ? nodeIds
-        ? Promise.resolve()
-        : boardModel.arrangeEdit()
+      ? boardModel.arrangeEdit(nodeIds)
       : boardModel.owner.getMode() === 'legacy'
         ? arrangeCanvas(repo.path, nodes, edges, data, reload, nodeIds)
         : Promise.resolve()
@@ -341,6 +341,7 @@ export function CanvasWorkspaceContent(props: Props) {
     jumpTo: handlePreviewJump,
     close: closePreview,
   } = preview
+  const mutationFence = boardModel.owner.getMutationFence()
   return (
     <div className="relative h-screen overflow-hidden bg-surface-canvas text-ink">
       {error && (
@@ -351,6 +352,36 @@ export function CanvasWorkspaceContent(props: Props) {
           {error}
           <button type="button" onClick={() => setError('')}>
             <Trans>Dismiss</Trans>
+          </button>
+        </div>
+      )}
+      {mutationFence && (
+        <div
+          role="alert"
+          data-testid="canvas-mutation-fence"
+          className="absolute left-1/2 top-28 z-40 flex max-w-[min(680px,calc(100vw-24px))] -translate-x-1/2 items-center gap-3 rounded-md border border-danger/30 bg-card px-3 py-2 text-sm shadow-lg"
+        >
+          <span>
+            {mutationFence.uncertain
+              ? 'A Canvas write may still be running. Wait until it has stopped, then retry reconciliation before editing.'
+              : 'Canvas edits are paused until the latest repository state is reconciled.'}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              void boardModel.owner
+                .retryReconciliation(mutationFence.uncertain)
+                .then((reconciled) => {
+                  if (!reconciled)
+                    setError(
+                      'Canvas reconciliation is still pending. The repository state remains fenced.'
+                    )
+                })
+                .catch(report)
+            }}
+            className="rounded px-2 py-1 text-ink-muted hover:bg-accent hover:text-ink focus-visible:ring-2 focus-visible:ring-primary/40"
+          >
+            Retry reconciliation
           </button>
         </div>
       )}
@@ -399,6 +430,7 @@ export function CanvasWorkspaceContent(props: Props) {
           setEdges={setEdges}
           setSelection={setSelection}
           selectionRef={selectionRef}
+          selectionIntentRevision={selectionIntentRevision}
           setExpanded={setExpanded}
           space={space}
           ready={ready}
@@ -427,7 +459,6 @@ export function CanvasWorkspaceContent(props: Props) {
           isAssetIntentCurrent={isCurrentIntent}
           dragTargetRaf={dragTargetRaf}
           pendingDragNode={pendingDragNode}
-          reloadForData={reloadForData}
           report={report}
           setError={setError}
           assetsPinned={assetsPinned}

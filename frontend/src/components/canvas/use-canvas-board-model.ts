@@ -67,6 +67,38 @@ export function useCanvasBoardModel({
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null)
   const previousDisplayNodes = useRef(new Map<string, Node>())
   const previousSourceNodes = useRef(new Map<string, Node>())
+  const activeResizeGestures = useRef(new Map<number, ResizeGesture>())
+  const rendererEpoch = useRef(0)
+  const projectGraph = useCallback(
+    (currentData: CanvasData) => {
+      const rendererId = rendererEpoch.current
+      const board = owner.getSnapshot()
+      return canvasProjectionGraph(
+        currentData,
+        renditionGeneration,
+        (imageId, x, y, w, h) => {
+          if (rendererEpoch.current !== rendererId) return
+          const previous = activeResizeGestures.current.get(imageId)
+          if (previous) owner.cancelResize(previous)
+          const gesture = owner.beginResize(
+            board?.data === currentData ? board : null,
+            { imageId, x, y, w, h }
+          )
+          if (gesture) activeResizeGestures.current.set(imageId, gesture)
+          else activeResizeGestures.current.delete(imageId)
+        },
+        (imageId, x, y, w, h) => {
+          const gesture = activeResizeGestures.current.get(imageId)
+          activeResizeGestures.current.delete(imageId)
+          if (gesture)
+            void owner
+              .endResize(gesture, { imageId, x, y, w, h })
+              .catch(callbacks.current.report)
+        }
+      )
+    },
+    [callbacks, owner, renditionGeneration]
+  )
   const selectedImageIds = useMemo(
     () => new Set(selection.ids),
     [selection.ids]
@@ -111,6 +143,7 @@ export function useCanvasBoardModel({
     cancelPointerGesture,
     reconcileSelection,
     startInView,
+    projectGraph,
   })
   const projectionRef = useRef(projection)
   projectionRef.current = projection
@@ -118,44 +151,16 @@ export function useCanvasBoardModel({
   useEffect(() => {
     const board = owner.getSnapshot()
     if (board && board.data !== data) return
-    const activeGestures = new Map<number, ResizeGesture>()
-    let rendererActive = true
-    const graph = canvasProjectionGraph(
-      data,
-      renditionGeneration,
-      (imageId, x, y, w, h) => {
-        if (!rendererActive) return
-        const previous = activeGestures.get(imageId)
-        if (previous) owner.cancelResize(previous)
-        const gesture = owner.beginResize(board?.data === data ? board : null, {
-          imageId,
-          x,
-          y,
-          w,
-          h,
-        })
-        if (gesture) {
-          activeGestures.set(imageId, gesture)
-        } else activeGestures.delete(imageId)
-      },
-      (imageId, x, y, w, h) => {
-        const gesture = activeGestures.get(imageId)
-        // Once submitted, the owner controls cancellation even if this renderer is rebuilt.
-        activeGestures.delete(imageId)
-        if (gesture)
-          void owner
-            .endResize(gesture, { imageId, x, y, w, h })
-            .catch(callbacks.current.report)
-      }
-    )
+    const rendererId = ++rendererEpoch.current
+    const graph = projectGraph(data)
     const history = owner.takeHistory()
     if (board && projectionRef.current.reconcile(board, graph, history)) {
       focusCanvasWhenEdgeRemoved(graph.edges, host.current)
       return () => {
-        rendererActive = false
-        for (const gesture of activeGestures.values())
+        if (rendererEpoch.current === rendererId) rendererEpoch.current++
+        for (const gesture of activeResizeGestures.current.values())
           owner.cancelResize(gesture)
-        activeGestures.clear()
+        activeResizeGestures.current.clear()
       }
     }
     const placedIds = new Set(
@@ -218,20 +223,12 @@ export function useCanvasBoardModel({
     focusCanvasWhenEdgeRemoved(nextEdges, host.current)
     setEdges(nextEdges)
     return () => {
-      rendererActive = false
-      for (const gesture of activeGestures.values()) owner.cancelResize(gesture)
-      activeGestures.clear()
+      if (rendererEpoch.current === rendererId) rendererEpoch.current++
+      for (const gesture of activeResizeGestures.current.values())
+        owner.cancelResize(gesture)
+      activeResizeGestures.current.clear()
     }
-  }, [
-    data,
-    owner,
-    renditionGeneration,
-    callbacks,
-    host,
-    setEdges,
-    setNodes,
-    reconcileSelection,
-  ])
+  }, [data, owner, host, setEdges, setNodes, reconcileSelection, projectGraph])
 
   const isCanvasNodeSelected = useCallback(
     (node: Node) => {

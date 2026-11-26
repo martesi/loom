@@ -65,12 +65,10 @@ export function CommandPalette({
   )
   const recentCommands =
     !shortcutsOnly && !search
-      ? resolveRecentActions(actions, recentActionIds).map(
-          (action) => ({
-            action,
-            match: { score: Number.MAX_SAFE_INTEGER, positions: [] },
-          })
-        )
+      ? resolveRecentActions(actions, recentActionIds).map((action) => ({
+          action,
+          match: { score: Number.MAX_SAFE_INTEGER, positions: [] },
+        }))
       : []
   const recentIds = new Set(recentCommands.map(({ action }) => action.id))
   const commandResults = [

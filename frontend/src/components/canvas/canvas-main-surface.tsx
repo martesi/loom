@@ -14,16 +14,22 @@ import type { CanvasAction } from '../../lib/action-catalog'
 import type { readMedia } from '../../lib/clipboard'
 import type { Selection } from '../../lib/selection'
 import { type MenuAction, PositionedMenu } from '../menu'
-import type { CanvasBoardOwner } from './canvas-board-owner'
+import type {
+  CanvasBoardOwner,
+  CanvasOperationIntent,
+} from './canvas-board-owner'
 import { CanvasConnectionToolStatus } from './canvas-connection-tool-status'
 import { CanvasDock } from './canvas-dock'
 import { CanvasFlow } from './canvas-flow'
-import type { CanvasInternalMode } from './canvas-mode-policy'
+import type { CanvasCapability, CanvasInternalMode } from './canvas-mode-policy'
 import { PerfHud } from './perf-hud'
 import type { CanvasAssetIntent } from './use-canvas-asset-operations'
 import { useCanvasConnectionTool } from './use-canvas-connection-tool'
 import { useCanvasDropHandlers } from './use-canvas-drop-handlers'
-import type { CanvasConnectionTool } from './use-canvas-workspace-state'
+import type {
+  CanvasConnectionTool,
+  CanvasPendingRelationGesture,
+} from './use-canvas-workspace-state'
 
 interface MenuState {
   kind: 'pane' | 'node' | 'selection' | 'edge'
@@ -63,6 +69,7 @@ interface Props {
   setEdges: Dispatch<SetStateAction<Edge[]>>
   setSelection: Dispatch<SetStateAction<Selection>>
   selectionRef: MutableRefObject<Selection>
+  selectionIntentRevision: number
   setExpanded: Dispatch<SetStateAction<number | null>>
   space: boolean
   ready: boolean
@@ -88,23 +95,26 @@ interface Props {
     id: string,
     excludedRelationshipId?: number
   ) => { valid: boolean; reason?: string }
-  relation: MutableRefObject<{ source: number; x: number; y: number } | null>
+  relation: MutableRefObject<CanvasPendingRelationGesture | null>
   relationshipPreview: RelationshipPreview | null
   setRelationshipPreview: Dispatch<SetStateAction<RelationshipPreview | null>>
   updateTarget: (target: DropTarget | null) => void
   target: DropTarget | null
-  run: (action: () => Promise<unknown>, guard?: () => boolean) => void
+  run: (
+    action: () => Promise<unknown>,
+    guard?: () => boolean,
+    intent?: CanvasOperationIntent
+  ) => void
   paste: (
     media?: Awaited<ReturnType<typeof readMedia>>,
     surface?: Selection['surface'],
     dropPosition?: XYPosition,
     intent?: CanvasAssetIntent
   ) => Promise<void>
-  captureAssetIntent: () => CanvasAssetIntent
+  captureAssetIntent: (capability?: CanvasCapability) => CanvasAssetIntent
   isAssetIntentCurrent: (intent: CanvasAssetIntent) => boolean
   dragTargetRaf: MutableRefObject<number>
   pendingDragNode: MutableRefObject<Node | null>
-  reloadForData: () => Promise<CanvasData | null>
   report: (error: unknown) => void
   setError: Dispatch<SetStateAction<string>>
   assetsPinned: boolean
@@ -140,6 +150,7 @@ export function CanvasMainSurface(props: Props) {
     setEdges,
     setSelection,
     selectionRef,
+    selectionIntentRevision,
     setExpanded,
     space,
     ready,
@@ -168,7 +179,6 @@ export function CanvasMainSurface(props: Props) {
     isAssetIntentCurrent,
     dragTargetRaf,
     pendingDragNode,
-    reloadForData,
     report,
     setError,
     assetsPinned,
@@ -206,6 +216,7 @@ export function CanvasMainSurface(props: Props) {
       setConnectionAnchorId(null)
     },
     getSelection: () => selectionRef.current,
+    selectionRevision: selectionIntentRevision,
   })
   const dropHandlers = useCanvasDropHandlers({
     repoPath,
@@ -214,7 +225,6 @@ export function CanvasMainSurface(props: Props) {
     paste,
     captureIntent: captureAssetIntent,
     isCurrentIntent: isAssetIntentCurrent,
-    reloadForData,
     report,
     assetsPinned,
     closeAssets,
@@ -258,6 +268,11 @@ export function CanvasMainSurface(props: Props) {
             source: Number(id),
             x: event.clientX,
             y: event.clientY,
+            intent: owner.captureIntent(
+              'relationship',
+              selectionIntentRevision
+            ),
+            intentRevision: selectionIntentRevision,
           }
           event.stopPropagation()
           event.preventDefault()
@@ -310,6 +325,9 @@ export function CanvasMainSurface(props: Props) {
         setRelationshipPreview(null)
         updateTarget(null)
         if (!owner.allows('relationship')) return
+        const userIntentCurrent = () =>
+          selectionIntentRevision === drag.intentRevision
+        if (!owner.isIntentCurrent(drag.intent, userIntentCurrent)) return
         const id = targetAt(event.clientX, event.clientY)
         if (!isRelationshipDrag(drag, event.clientX, event.clientY)) {
           setSelection((current) => ({
@@ -325,21 +343,37 @@ export function CanvasMainSurface(props: Props) {
           }))
           return
         }
-        setSelection({
-          surface: 'canvas',
-          ids: [drag.source],
-          edges: [],
-          group: null,
-        })
-        if (id && validTarget(drag.source, id).valid)
-          run(() =>
-            owner.allows('relationship')
-              ? ImageService.LinkSource(repoPath, drag.source, Number(id))
-              : Promise.resolve()
-          )
-        else if (id) {
+        if (id && validTarget(drag.source, id).valid) {
+          void owner
+            .executeIntent(
+              drag.intent,
+              userIntentCurrent,
+              () => ImageService.LinkSource(repoPath, drag.source, Number(id)),
+              true
+            )
+            .then(({ dispatched }) => {
+              if (
+                dispatched &&
+                owner.isIntentCurrent(drag.intent, userIntentCurrent)
+              )
+                setSelection({
+                  surface: 'canvas',
+                  ids: [drag.source],
+                  edges: [],
+                  group: null,
+                })
+            })
+            .catch(report)
+        } else if (id) {
           const result = validTarget(drag.source, id)
           setError(result.reason ?? t`Cannot create this relationship`)
+        } else {
+          setSelection({
+            surface: 'canvas',
+            ids: [drag.source],
+            edges: [],
+            group: null,
+          })
         }
       }}
       onDragOver={dropHandlers.onDragOver}

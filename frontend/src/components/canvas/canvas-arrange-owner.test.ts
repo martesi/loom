@@ -101,3 +101,46 @@ it('rejects a graph change while a guarded layout write is pending', async () =>
   expect(owner.getSnapshot()?.snapshot.revision).toBe('changed graph')
   owner.dispose()
 })
+
+it('does not publish an arrangement after its owner lifetime ends', async () => {
+  const stored = { imageId: 1, x: 0, y: 0, w: 150, h: 110 }
+  const after = { ...stored, x: 20 }
+  let release = () => {}
+  let started = () => {}
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const writing = new Promise<void>((resolve) => {
+    started = resolve
+  })
+  spyOn(ImageService, 'LoadCanvas').mockResolvedValue({
+    images: [{ id: 1 }],
+    relationships: [],
+    groups: [],
+  } as never)
+  spyOn(ImageService, 'GetLayoutSnapshot').mockResolvedValue({
+    revision: 'revision',
+    relationships: [],
+    images: [{ id: 1, width: 640, height: 480, geometry: stored }],
+  } as never)
+  spyOn(ImageService, 'SetGeometryFromDisplayAtRevision').mockImplementation(
+    async () => {
+      started()
+      await gate
+      return undefined as never
+    }
+  )
+  const owner = createCanvasBoardOwner('/repo')
+  const board = await owner.refresh()
+  if (!board) throw new Error('missing board')
+  owner.setMode('edit')
+  const accept = mock(() => {})
+  const operation = owner.execute(() =>
+    owner.commitDisplayedLayout(board, [stored], [after], accept)
+  )
+  await writing
+  owner.dispose()
+  release()
+  await operation
+  expect(accept).not.toHaveBeenCalled()
+})

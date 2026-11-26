@@ -1,13 +1,18 @@
 import type { ReactFlowInstance } from '@xyflow/react'
 import type { Dispatch, SetStateAction } from 'react'
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import {
   type CanvasData,
   type ImageInfo,
   ImageService,
 } from '../../../bindings/loom/internal/service'
 import type { Selection } from '../../lib/selection'
-import type { CanvasBoardOwner } from './canvas-board-owner'
+import { sameSelection } from '../../lib/selection'
+import type {
+  CanvasBoardOwner,
+  CanvasOperationIntent,
+} from './canvas-board-owner'
+import { readCanvasModeViewport } from './canvas-mode-viewport'
 
 interface AssetSelectionRecords {
   key: string
@@ -16,6 +21,7 @@ interface AssetSelectionRecords {
 
 interface Props {
   repoPath: string
+  modeViewports?: boolean
   executor: CanvasBoardOwner
   flow: ReactFlowInstance
   updateZoomCompensation: (zoom: number) => void
@@ -29,6 +35,7 @@ interface Props {
 
 export function useCanvasRepository({
   repoPath,
+  modeViewports = false,
   executor,
   flow,
   updateZoomCompensation,
@@ -39,6 +46,13 @@ export function useCanvasRepository({
   setReady,
   setAssetSelectionRecords,
 }: Props) {
+  const selectionIntent = useRef({ selection, revision: 0 })
+  if (!sameSelection(selectionIntent.current.selection, selection)) {
+    selectionIntent.current = {
+      selection,
+      revision: selectionIntent.current.revision + 1,
+    }
+  }
   const report = useCallback(
     (error: unknown) => {
       console.error('canvas operation failed', error)
@@ -82,17 +96,24 @@ export function useCanvasRepository({
     }
   }, [assetSelectionKey, repoPath, report, setAssetSelectionRecords])
   const run = useCallback(
-    (action: () => Promise<unknown>, guard?: () => boolean) => {
+    (
+      action: () => Promise<unknown>,
+      guard?: () => boolean,
+      intent?: CanvasOperationIntent
+    ) => {
+      const revision = selectionIntent.current.revision
+      const operationIntent =
+        intent ?? executor.captureIntent('relationship', revision)
+      const isCurrent = () =>
+        (guard?.() ?? true) &&
+        (intent !== undefined ||
+          selectionIntent.current.revision ===
+            operationIntent.userIntentRevision)
       void executor
-        .execute(async () => {
-          if (executor.isActive?.() === false || guard?.() === false) return
-          await action()
-          if (executor.isActive?.() === false || guard?.() === false) return
-          await reload()
-        })
+        .executeIntent(operationIntent, isCurrent, action, true)
         .catch(report)
     },
-    [executor, reload, report]
+    [executor, report]
   )
   useEffect(() => {
     let cancelled = false
@@ -100,13 +121,18 @@ export function useCanvasRepository({
     void Promise.all([executor.refresh(), ImageService.GetViewport(repoPath)])
       .then(([result, viewport]) => {
         if (cancelled) return
-        if (viewport) {
+        const hasModeViewport =
+          modeViewports &&
+          (readCanvasModeViewport(repoPath, 'view') !== null ||
+            readCanvasModeViewport(repoPath, 'edit') !== null)
+        if (viewport && !hasModeViewport) {
           updateZoomCompensation(viewport.zoom)
           void flow.setViewport(viewport)
         }
         setReady(true)
         if (
           !viewport &&
+          (!modeViewports || !hasModeViewport) &&
           (result?.data.images ?? []).some(
             (image) => image.placed && !image.trashed
           )
@@ -123,6 +149,14 @@ export function useCanvasRepository({
       cancelled = true
       if (fitTimer) clearTimeout(fitTimer)
     }
-  }, [executor, repoPath, flow, updateZoomCompensation, setReady, report])
+  }, [
+    executor,
+    modeViewports,
+    repoPath,
+    flow,
+    updateZoomCompensation,
+    setReady,
+    report,
+  ])
   return { report, reload, reloadForData, run, assetSelectionKey }
 }

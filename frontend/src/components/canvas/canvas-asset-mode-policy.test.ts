@@ -93,7 +93,10 @@ it('does not promote a delayed View drop into an Edit placement', async () => {
       })
   )
   await Promise.resolve()
-  const pending = result.current.paste([], 'canvas')
+  const pending = result.current.paste(
+    [{ name: 'valid.png', data: 'YQ==' }],
+    'canvas'
+  )
   owner.setMode('edit')
   await act(async () => {
     release()
@@ -107,6 +110,10 @@ it('does not promote a delayed View drop into an Edit placement', async () => {
 it('keeps a file drop unpaired when it starts in View', async () => {
   const owner = createCanvasBoardOwner('/repo')
   owner.setMode('view')
+  spyOn(owner, 'refresh').mockResolvedValue({
+    snapshot: { revision: '1', images: [], relationships: [] },
+    data: { images: [], relationships: [], groups: [] },
+  } as never)
   const imported = spyOn(ImageService, 'ImportMedia').mockResolvedValue([
     1,
   ] as never)
@@ -122,8 +129,16 @@ it('keeps a file drop unpaired when it starts in View', async () => {
     setReveal,
   } as unknown as Parameters<typeof useCanvasAssetOperations>[0]
   const { result } = renderHook(() => useCanvasAssetOperations(props))
-  await act(async () => result.current.paste([], 'canvas'))
-  expect(imported).toHaveBeenCalledWith('/repo', [], false, 10, 20)
+  await act(async () =>
+    result.current.paste([{ name: 'valid.png', data: 'YQ==' }], 'canvas')
+  )
+  expect(imported).toHaveBeenCalledWith(
+    '/repo',
+    [{ name: 'valid.png', data: 'YQ==' }],
+    false,
+    10,
+    20
+  )
   expect(setSelection).toHaveBeenCalledWith({
     surface: 'assets',
     ids: [1],

@@ -1,6 +1,11 @@
-import { setViewportMethodID } from './bindings'
+import { legacyServiceCall } from './legacy-service'
 import { expect, test } from './test-fixtures'
-import { dropAsset, imageNodes, openFixtureRepo } from './test-helpers'
+import {
+  dropAsset,
+  fixturePath,
+  imageNodes,
+  openFixtureRepo,
+} from './test-helpers'
 
 async function nodePosition(node: ReturnType<typeof imageNodes>) {
   const transform = await node.evaluate(
@@ -59,30 +64,42 @@ test('select, arrange, align individual images, then restore viewport', async ({
     })
     .toBeLessThanOrEqual(1)
 
-  const beforeReload = await Promise.all(
-    [0, 1, 2].map((index) => nodePosition(nodes.nth(index)))
-  )
   await expect(page.getByTestId('dock-create-set')).toHaveCount(0)
   await expect(nodes).toHaveCount(3)
   await expect(page.locator('.react-flow__node-group')).toHaveCount(0)
 
   const viewport = page.locator('.react-flow__viewport')
-  const waitForViewportSave = () =>
-    page.waitForResponse(
-      (response) =>
-        response.url().endsWith('/wails/runtime') &&
-        response
-          .request()
-          .postData()
-          ?.includes(`"methodID":${setViewportMethodID}`) === true
+  const repoPath = await fixturePath('group-fixtures')
+  const geometryBeforeReload = await legacyServiceCall<{
+    images?: { id: number; geometry: unknown }[]
+  }>(page, 'imageservice.ts', 'GetLayoutSnapshot', [repoPath])
+  const authoritativeGeometry = geometryBeforeReload.images?.map((image) => [
+    image.id,
+    image.geometry,
+  ])
+  const readSavedViewport = () =>
+    page.evaluate((path) => {
+      const key = `loom.canvas.viewport.v1:${encodeURIComponent(path)}:edit`
+      return window.localStorage.getItem(key)
+    }, repoPath)
+  const waitForViewportSave = (previous: string | null) =>
+    page.waitForFunction(
+      ({ path, previous }) => {
+        const key = `loom.canvas.viewport.v1:${encodeURIComponent(path)}:edit`
+        return window.localStorage.getItem(key) !== previous
+      },
+      { path: repoPath, previous }
     )
-  const fitSaved = waitForViewportSave()
+  const beforeFit = await readSavedViewport()
+  const fitSaved = waitForViewportSave(beforeFit)
   await page.keyboard.press('Shift+1')
   await fitSaved
   const pane = page.locator('.react-flow__pane')
   const paneBox = await pane.boundingBox()
   if (!paneBox) throw new Error('Canvas pane has no bounding box')
-  const panSaved = waitForViewportSave()
+  await pane.click({ position: { x: 20, y: 20 } })
+  const beforePan = await readSavedViewport()
+  const panSaved = waitForViewportSave(beforePan)
   await page.mouse.move(paneBox.x + 100, paneBox.y + 100)
   await page.keyboard.down('Space')
   await page.mouse.down()
@@ -91,26 +108,24 @@ test('select, arrange, align individual images, then restore viewport', async ({
   await page.keyboard.up('Space')
   await panSaved
   const transform = await viewport.getAttribute('style')
+  const serializedSavedViewport = await readSavedViewport()
+  const savedEditViewport = serializedSavedViewport
+    ? JSON.parse(serializedSavedViewport)
+    : null
+  expect(savedEditViewport).not.toBeNull()
   await page.reload()
+  const geometryAfterReload = await legacyServiceCall<{
+    images?: { id: number; geometry: unknown }[]
+  }>(page, 'imageservice.ts', 'GetLayoutSnapshot', [repoPath])
+  expect(
+    geometryAfterReload.images?.map((image) => [image.id, image.geometry])
+  ).toEqual(authoritativeGeometry)
+  await page.getByTestId('canvas-mode-edit').click()
+  await expect(page.getByTestId('canvas-mode-edit')).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
   await expect(nodes).toHaveCount(3)
   await expect(page.locator('.react-flow__node-group')).toHaveCount(0)
   await expect(viewport).toHaveAttribute('style', transform ?? '')
-  const afterReload = await Promise.all(
-    [0, 1, 2].map((index) => nodePosition(nodes.nth(index)))
-  )
-  for (let index = 0; index < beforeReload.length; index += 1) {
-    expect(afterReload[index].x).toBeCloseTo(beforeReload[index].x, 0)
-    expect(afterReload[index].y).toBeCloseTo(beforeReload[index].y, 0)
-  }
-  await expect
-    .poll(async () => {
-      const positions = await Promise.all(
-        [0, 1, 2].map((index) => nodePosition(nodes.nth(index)))
-      )
-      return (
-        Math.max(...positions.map(({ y }) => y)) -
-        Math.min(...positions.map(({ y }) => y))
-      )
-    })
-    .toBeLessThanOrEqual(1)
 })

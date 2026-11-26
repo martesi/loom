@@ -29,6 +29,10 @@ export function runtimeMethodID(bindingFile: string, exportedName: string) {
 }
 
 export const getImageMethodID = runtimeMethodID('imageservice.ts', 'GetImage')
+export const linkSourceMethodID = runtimeMethodID(
+  'imageservice.ts',
+  'LinkSource'
+)
 export const reverseRelationshipMethodID = runtimeMethodID(
   'imageservice.ts',
   'ReverseRelationship'
