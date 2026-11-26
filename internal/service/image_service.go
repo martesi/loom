@@ -342,10 +342,11 @@ func (s *ImageService) probeSourceDimensions(path string) (media.Dimensions, err
 // store.ListImagesByIDs with a single-element slice rather than adding a new
 // store-level single-row query.
 func (s *ImageService) GetImage(repoPath string, imageID int64) (*ImageInfo, error) {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return nil, err
 	}
+	defer unlock()
 	defer repo.Close()
 
 	img, err := repo.GetImageByID(imageID)
@@ -781,10 +782,11 @@ func (s *ImageService) ListDirectory(repoPath, relPath string) (*DirListing, err
 // fresh empty folder has no corresponding database row (see
 // store.CreateDirectory), unlike every other Explorer mutation here.
 func (s *ImageService) CreateDirectory(repoPath, parentRelPath, name string) error {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return err
 	}
+	defer unlock()
 	defer repo.Close()
 
 	return repo.CreateDirectory(parentRelPath, name)

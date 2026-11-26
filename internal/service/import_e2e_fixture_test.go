@@ -114,6 +114,57 @@ func TestSeedImportRecoveryE2EFixture(t *testing.T) {
 		if err := repo.Close(); err != nil {
 			t.Fatal(err)
 		}
+	case "pre-ledger-filesystem-history":
+		ids, err := service.ImportMedia(root, []ClipboardMedia{{Name: "e2e-pre-ledger-history.png", Data: "aGlzdG9yeQ=="}}, false, 0, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := service.MoveFile(root, ids[0], "e2e-pre-ledger-history-moved.png"); err != nil {
+			t.Fatal(err)
+		}
+		_, err = service.ImportMedia(root, []ClipboardMedia{{Name: "e2e-retained-under-filesystem-fence.png", Data: "cmV0YWluZWQ="}}, false, 0, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result, err := (&UndoService{}).Undo(root); err != nil || result == nil || !result.Applied {
+			t.Fatalf("retain fixture import: result=%+v err=%v", result, err)
+		}
+		repo, err := store.Bootstrap(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tx, err := repo.DB.Begin()
+		if err != nil {
+			repo.Close()
+			t.Fatal(err)
+		}
+		selected, err := repo.PeekHistoryInTx(tx, false)
+		_ = tx.Rollback()
+		if err != nil || selected == nil {
+			repo.Close()
+			t.Fatalf("select filesystem history operation: op=%+v err=%v", selected, err)
+		}
+		prepared, err := prepareImportItems([]ClipboardMedia{{Name: "e2e-pending-under-filesystem-fence.png", Data: "cGVuZGluZw=="}})
+		if err != nil {
+			repo.Close()
+			t.Fatal(err)
+		}
+		_, reserved, err := reserveImportPaths(repo, prepared, false, 0, 0)
+		if err != nil {
+			repo.Close()
+			t.Fatal(err)
+		}
+		if err := createReservedFiles(prepared, reserved); err != nil {
+			repo.Close()
+			t.Fatal(err)
+		}
+		if err := persistLegacyPendingHistoryReplayForTest(repo, "e2e-pre-ledger-request", false, selected); err != nil {
+			repo.Close()
+			t.Fatal(err)
+		}
+		if err := repo.Close(); err != nil {
+			t.Fatal(err)
+		}
 	default:
 		t.Fatalf("unknown recovery fixture mode %q", mode)
 	}

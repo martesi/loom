@@ -164,7 +164,9 @@ type RecoverableImport struct {
 }
 
 func (s *ImageService) ListRecoverableImports(repoPath string) ([]RecoverableImport, error) {
-	repo, unlock, err := openOperationRepo(repoPath)
+	// This is an inspection endpoint. Keep retained evidence visible even when
+	// an unrelated pending history receipt fences repository mutations.
+	repo, unlock, err := openOperationRepoRaw(repoPath)
 	if err != nil {
 		return nil, err
 	}

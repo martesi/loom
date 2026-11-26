@@ -291,7 +291,9 @@ func listPendingImportBatches(repo *store.Repo) ([]PendingImportBatch, error) {
 // ListPendingImportBatches exposes pre-commit work that survived an error or
 // process exit. Unverified files remain reserved and are never auto-discovered.
 func (s *ImageService) ListPendingImportBatches(repoPath string) ([]PendingImportBatch, error) {
-	repo, unlock, err := openOperationRepo(repoPath)
+	// Listing reserved imports is read-only and must remain available while
+	// recovery blocks unrelated repository changes.
+	repo, unlock, err := openOperationRepoRaw(repoPath)
 	if err != nil {
 		return nil, err
 	}

@@ -61,6 +61,9 @@ func beginLegacyFilesystemHistoryReplay(repo *store.Repo, requestID string, redo
 	if _, err := tx.Exec(`UPDATE operation_log SET seq=seq WHERE 0`); err != nil {
 		return false, err
 	}
+	if err := rejectLegacyRedoTailRequestID(tx, requestID); err != nil {
+		return false, err
+	}
 	if _, found, err := readHistoryReplayRequest(tx, requestID, repo.Path, redo); err != nil || found {
 		if err != nil {
 			return false, err

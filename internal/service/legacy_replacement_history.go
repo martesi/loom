@@ -43,6 +43,19 @@ type legacyRedoTailSnapshot struct {
 	available    bool
 }
 
+func rejectLegacyRedoTailRequestID(queryer interface {
+	QueryRow(query string, args ...any) *sql.Row
+}, requestID string) error {
+	var used bool
+	if err := queryer.QueryRow(`SELECT EXISTS(SELECT 1 FROM legacy_redo_tail_resolution_receipts WHERE request_id=?)`, requestID).Scan(&used); err != nil {
+		return err
+	}
+	if used {
+		return fmt.Errorf("request ID was already used to resolve a legacy redo tail")
+	}
+	return nil
+}
+
 var legacyRedoTailResolutionCrashHook func()
 
 func (s *ImageService) GetUnverifiedReplacementRedoTail(repoPath string) (*UnverifiedReplacementRedoTail, error) {

@@ -36,10 +36,11 @@ type LibraryQuery struct {
 
 // ListImages queries repository assets by prompt text, filename, tag, placement, and status.
 func (s *LibraryService) ListImages(repoPath string, query LibraryQuery) ([]LibraryRow, error) {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return nil, err
 	}
+	defer unlock()
 	defer repo.Close()
 
 	images, err := repo.ListImagesFiltered(store.LibraryQuery{

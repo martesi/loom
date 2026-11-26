@@ -74,6 +74,9 @@ func beginReplacementHistoryReplay(repo *store.Repo, op *store.Operation, redo b
 	if _, err := tx.Exec(`UPDATE operation_log SET seq=seq WHERE 0`); err != nil {
 		return nil, err
 	}
+	if err := rejectLegacyRedoTailRequestID(tx, requestID); err != nil {
+		return nil, err
+	}
 	if receipt, found, err := readHistoryReplayRequest(tx, requestID, repo.Path, redo); err != nil || found {
 		if err != nil {
 			return nil, err

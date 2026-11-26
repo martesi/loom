@@ -328,7 +328,7 @@ func replacementCrash(point string) {
 	}
 }
 
-func recoverReplacementJournals(repo *store.Repo) error {
+func recoverReplacementJournalsOnly(repo *store.Repo) error {
 	requestIDs, err := activeReplacementRequestIDs(repo)
 	if err != nil {
 		return err

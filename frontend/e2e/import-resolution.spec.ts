@@ -121,6 +121,41 @@ test('workspace recovery remains reachable with the Assets shelf closed', async 
   await expect(page.getByTestId('pending-import-file').first()).toBeVisible()
 })
 
+test('pre-ledger filesystem history stays inspectable when Canvas is fenced', async ({
+  page,
+}) => {
+  const repoPath = await fixturePath('clipboard-fixtures')
+  await seedFixture(repoPath, 'pre-ledger-filesystem-history')
+  await openFixtureRepo(page, 'clipboard-fixtures')
+
+  await expect(page.getByTestId('import-recovery-panel')).toBeVisible()
+  await expect(
+    page.getByRole('alert').filter({
+      hasText: 'History request e2e-pre-ledger-request',
+    })
+  ).toBeVisible()
+  await page.getByTestId('import-recovery-trigger').click()
+  const dialog = page.getByTestId('import-recovery-dialog')
+  await expect(dialog.getByTestId('pending-import-batch')).toContainText(
+    'e2e-pending-under-filesystem-fence.png'
+  )
+  await expect(dialog.getByTestId('retained-import')).toContainText(
+    'e2e-retained-under-filesystem-fence.png'
+  )
+  const recovery = dialog.getByTestId('pending-filesystem-history-recovery')
+  await expect(recovery).toBeVisible()
+  await expect(recovery).toContainText('e2e-pre-ledger-request')
+  await expect(recovery).toContainText(
+    'predates the filesystem evidence ledger'
+  )
+  await expect(
+    recovery.getByRole('button', { name: /retry verified history move/i })
+  ).toHaveCount(0)
+  await expect(
+    recovery.getByRole('button', { name: /cancel; keep files and cursor/i })
+  ).toHaveCount(0)
+})
+
 test('Canvas loads and recovery remains visible with expired trash linked to a retained import', async ({
   page,
 }) => {

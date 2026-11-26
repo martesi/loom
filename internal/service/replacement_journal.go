@@ -40,7 +40,7 @@ func (s *ImageService) ListPendingReplacementRecoveries(repoPath string) ([]Repl
 	defer repo.Close()
 	if recoveryErr := recoverReplacementJournals(repo); recoveryErr != nil {
 		var pending *replacementRecoveryError
-		if !errors.As(recoveryErr, &pending) {
+		if !errors.As(recoveryErr, &pending) && !isFilesystemHistoryPending(recoveryErr) {
 			return nil, recoveryErr
 		}
 	}
@@ -274,6 +274,9 @@ func reserveReplacementJournal(repo *store.Repo, image store.Image, requestID, r
 	defer tx.Rollback()
 	if _, err := tx.Exec(`UPDATE operation_log SET seq=seq WHERE 0`); err != nil {
 		return replacementJournal{}, fmt.Errorf("lock replacement reservation: %w", err)
+	}
+	if err := rejectLegacyRedoTailRequestID(tx, requestID); err != nil {
+		return replacementJournal{}, err
 	}
 	var historyRequestUsed bool
 	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM history_replay_requests WHERE request_id=?)`, requestID).Scan(&historyRequestUsed); err != nil {

@@ -584,6 +584,9 @@ func (s *UndoService) replay(repoPath string, redo bool, requestID string) (*Und
 	}
 	defer unlock()
 	defer repo.Close()
+	if err := rejectLegacyRedoTailRequestID(repo.DB, requestID); err != nil {
+		return nil, err
+	}
 	requestHash := replacementReplayRequestHash(repo.Path, redo, nil)
 	if receipt, found, err := readHistoryReplayRequest(repo.DB, requestID, repo.Path, redo); err != nil || found {
 		if err != nil {
@@ -594,6 +597,8 @@ func (s *UndoService) replay(repoPath string, redo bool, requestID string) (*Und
 				var pending *replacementRecoveryError
 				if errors.As(err, &pending) {
 					receipt.Error = pending.Error()
+				} else {
+					receipt.Error = err.Error()
 				}
 				return receipt, nil
 			}
@@ -630,6 +635,10 @@ func (s *UndoService) replay(repoPath string, redo bool, requestID string) (*Und
 		var pending *replacementRecoveryError
 		if errors.As(err, &pending) {
 			return &UndoResult{PendingRecovery: true, RequestID: pending.Journal.RequestID, Phase: pending.Journal.Phase, Error: pending.Error()}, nil
+		}
+		var filesystemPending *filesystemHistoryPendingError
+		if errors.As(err, &filesystemPending) {
+			return filesystemPendingResult(filesystemPending.RequestID, "", filesystemPending.Error()), nil
 		}
 		return nil, err
 	}
@@ -678,30 +687,7 @@ func (s *UndoService) replay(repoPath string, redo bool, requestID string) (*Und
 		return nil, err
 	}
 	if replay.Kind == stepSetTrashed || replay.Kind == stepMoveFile {
-		imageID, err := historyStepImageID(replay)
-		if err != nil {
-			return &UndoResult{Applied: false, Kind: op.Kind, RequestID: requestID, Error: err.Error()}, nil
-		}
-		releaseImage, ok := acquireReplacementImageLock(repo.Path, imageID)
-		if !ok {
-			return &UndoResult{Applied: false, Kind: op.Kind, RequestID: requestID, Error: fmt.Sprintf("asset %d is busy in a preview or replacement", imageID)}, nil
-		}
-		defer releaseImage()
-		started, err := beginLegacyFilesystemHistoryReplay(repo, requestID, redo, op)
-		if err != nil {
-			return nil, err
-		}
-		if !started {
-			result, found, err := readHistoryReplayRequest(repo.DB, requestID, repo.Path, redo)
-			if err != nil {
-				return nil, err
-			}
-			if !found {
-				return nil, fmt.Errorf("filesystem history replay request disappeared")
-			}
-			return result, nil
-		}
-		return executeLegacyFilesystemHistoryReplay(repo, requestID, redo, op, replay)
+		return beginFilesystemHistoryReplay(repo, requestID, redo, op, replay)
 	}
 	if err := applyStep(repo, replay); err != nil {
 		return &UndoResult{Applied: false, Kind: op.Kind, Error: err.Error()}, nil

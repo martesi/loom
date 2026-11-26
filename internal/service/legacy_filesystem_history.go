@@ -1,8 +1,12 @@
 package service
 
 import (
+	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,188 +16,399 @@ import (
 	"loom/internal/store"
 )
 
-func executeLegacyFilesystemHistoryReplay(repo *store.Repo, requestID string, redo bool, op *store.Operation, step OpStep) (*UndoResult, error) {
+var filesystemHistoryFault func(string) error
+var filesystemHistoryCrashHook func(string)
+
+type filesystemHistoryLedger struct {
+	requestID       string
+	repoPath        string
+	direction       string
+	sequence        int64
+	expectedCursor  int64
+	imageID         int64
+	operationKind   string
+	expectedPath    string
+	expectedTrashed bool
+	expectedRowHash string
+	targetPath      string
+	targetTrashed   bool
+	sourcePath      string
+	destinationPath string
+	sourceIdentity  string
+	sourceSHA256    string
+	state           string
+	inspection      string
+}
+
+type FilesystemHistoryRecovery struct {
+	RequestID        string `json:"requestId"`
+	Direction        string `json:"direction"`
+	Kind             string `json:"kind"`
+	Sequence         int64  `json:"sequence"`
+	ImageID          int64  `json:"imageId"`
+	SourcePath       string `json:"sourcePath,omitempty"`
+	DestinationPath  string `json:"destinationPath,omitempty"`
+	State            string `json:"state"`
+	CanRetry         bool   `json:"canRetry"`
+	CanCancel        bool   `json:"canCancel"`
+	LegacyWithoutLog bool   `json:"legacyWithoutLedger"`
+	Message          string `json:"message"`
+}
+
+type filesystemEffect uint8
+
+const (
+	filesystemNoEffect filesystemEffect = iota
+	filesystemDestinationLinked
+	filesystemSourceUnlinked
+)
+
+type filesystemMoveOutcome struct {
+	effect filesystemEffect
+	err    error
+}
+
+type filesystemHistoryPendingError struct {
+	RequestID string
+	Message   string
+}
+
+func (e *filesystemHistoryPendingError) Error() string { return e.Message }
+
+func beginFilesystemHistoryReplay(repo *store.Repo, requestID string, redo bool, op *store.Operation, step OpStep) (*UndoResult, error) {
+	imageID, err := historyStepImageID(step)
+	if err != nil {
+		return &UndoResult{Applied: false, Kind: op.Kind, RequestID: requestID, Error: err.Error()}, nil
+	}
+	releaseImage, ok := acquireReplacementImageLock(repo.Path, imageID)
+	if !ok {
+		return &UndoResult{Applied: false, Kind: op.Kind, RequestID: requestID, Error: fmt.Sprintf("asset %d is busy in a preview or replacement", imageID)}, nil
+	}
+	defer releaseImage()
+	unlockRendition := lockRenditionRepositoryRead(repo.Path)
+	defer unlockRendition()
+
+	result, ledger, err := reserveFilesystemHistoryReplay(repo, requestID, redo, op, step)
+	if err != nil || result != nil {
+		return result, err
+	}
+	return advanceFilesystemHistory(repo, *ledger, "retry")
+}
+
+func reserveFilesystemHistoryReplay(repo *store.Repo, requestID string, redo bool, op *store.Operation, step OpStep) (*UndoResult, *filesystemHistoryLedger, error) {
 	tx, err := repo.DB.Begin()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer tx.Rollback()
 	if _, err := tx.Exec(`UPDATE operation_log SET seq=seq WHERE 0`); err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	if err := rejectLegacyRedoTailRequestID(tx, requestID); err != nil {
+		return nil, nil, err
+	}
+	if receipt, found, err := readHistoryReplayRequest(tx, requestID, repo.Path, redo); err != nil || found {
+		if err != nil {
+			return nil, nil, err
+		}
+		ledger, ledgerFound, ledgerErr := readFilesystemHistoryLedger(tx, requestID)
+		if ledgerErr != nil {
+			return nil, nil, ledgerErr
+		}
+		if receipt.PendingRecovery && !ledgerFound {
+			return filesystemPendingResult(receipt.RequestID, receipt.Kind, "This pending filesystem replay predates the evidence ledger. Its exact destination and source identity were not recorded, so Loom will not infer a move or cancel it automatically."), nil, nil
+		}
+		if receipt.PendingRecovery {
+			return nil, &ledger, nil
+		}
+		return receipt, nil, nil
 	}
 	selected, err := repo.PeekHistoryInTx(tx, redo)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if !sameHistoryOperation(selected, op) {
-		return nil, fmt.Errorf("filesystem history selection changed before replay")
-	}
-	if _, err := tx.Exec(`SAVEPOINT legacy_filesystem_replay`); err != nil {
-		return nil, err
-	}
-	touched, replayErr := applyLegacyFilesystemHistoryTx(repo, tx, step)
-	if replayErr != nil {
-		if _, err := tx.Exec(`ROLLBACK TO SAVEPOINT legacy_filesystem_replay`); err != nil {
-			return nil, fmt.Errorf("filesystem history failed (%v) and its DB savepoint could not roll back: %w", replayErr, err)
-		}
-		if _, err := tx.Exec(`RELEASE SAVEPOINT legacy_filesystem_replay`); err != nil {
-			return nil, err
-		}
-		if touched {
-			return &UndoResult{
-				PendingRecovery: true, RequestID: requestID, Phase: "filesystem-pending", Kind: op.Kind,
-				Error: fmt.Sprintf("Filesystem replay may have moved bytes but did not finish its transaction. The request is fenced; inspect the recorded source and destination. No automatic retry was made: %v", replayErr),
-			}, nil
-		}
-		result := &UndoResult{Applied: false, Kind: op.Kind, Error: replayErr.Error()}
-		if err := completeHistoryReplayRequestTx(tx, repo.Path, requestID, redo, op, result); err != nil {
-			return nil, err
-		}
-		if err := tx.Commit(); err != nil {
-			_, _, receipt, resolveErr := resolveAtomicHistoryCommit(repo, requestID, redo, op, err)
-			return receipt, resolveErr
-		}
-		return result, nil
-	}
-	if _, err := tx.Exec(`RELEASE SAVEPOINT legacy_filesystem_replay`); err != nil {
-		return nil, err
+		return nil, nil, fmt.Errorf("filesystem history selection changed before reservation")
 	}
 	cursor, err := replacementUndoCursor(tx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	expected, next := op.Seq, op.Seq-1
+	expectedCursor, nextCursor := op.Seq, op.Seq-1
 	if redo {
-		expected, next = op.Seq-1, op.Seq
+		expectedCursor, nextCursor = op.Seq-1, op.Seq
 	}
-	if cursor != expected {
-		return &UndoResult{
-			PendingRecovery: true, RequestID: requestID, Phase: "filesystem-pending", Kind: op.Kind,
-			Error: "Filesystem replay completed but the selected history cursor changed; the request is fenced for inspection.",
-		}, nil
+	if cursor != expectedCursor {
+		return nil, nil, fmt.Errorf("filesystem history cursor changed before reservation")
 	}
-	updated, err := tx.Exec(`UPDATE settings SET value=? WHERE scope='repo' AND key='undo_cursor' AND CAST(value AS INTEGER)=?
-		AND EXISTS(SELECT 1 FROM operation_log WHERE seq=? AND kind=? AND forward=? AND inverse=? AND created_at=?)`,
-		strconv.FormatInt(next, 10), expected, op.Seq, op.Kind, op.Forward, op.Inverse, op.CreatedAt)
+	imageID, err := historyStepImageID(step)
 	if err != nil {
-		return &UndoResult{
-			PendingRecovery: true, RequestID: requestID, Phase: "filesystem-pending", Kind: op.Kind,
-			Error: fmt.Sprintf("Filesystem replay completed but its cursor update failed; the request is fenced for inspection: %v", err),
-		}, nil
+		return completeFilesystemHistoryFailure(tx, repo, requestID, redo, op, err)
 	}
-	count, err := updated.RowsAffected()
-	if err != nil || count != 1 {
-		return &UndoResult{
-			PendingRecovery: true, RequestID: requestID, Phase: "filesystem-pending", Kind: op.Kind,
-			Error: fmt.Sprintf("Filesystem replay completed but its cursor update did not match the selected operation: rows=%d err=%v", count, err),
-		}, nil
+	var currentPath string
+	var currentTrashed bool
+	if err := tx.QueryRow(`SELECT file_path,trashed FROM images WHERE id=?`, imageID).Scan(&currentPath, &currentTrashed); err != nil {
+		return completeFilesystemHistoryFailure(tx, repo, requestID, redo, op, err)
 	}
-	result := &UndoResult{Applied: true, Kind: op.Kind}
-	if err := completeHistoryReplayRequestTx(tx, repo.Path, requestID, redo, op, result); err != nil {
-		return &UndoResult{
-			PendingRecovery: true, RequestID: requestID, Phase: "filesystem-pending", Kind: op.Kind,
-			Error: fmt.Sprintf("Filesystem replay completed but its receipt could not be committed; request is fenced for inspection: %v", err),
-		}, nil
+	rowHash, err := imageHistoryRowHash(tx, imageID)
+	if err != nil {
+		return nil, nil, err
 	}
-	if err := tx.Commit(); err != nil {
-		if receipt, found, receiptErr := readHistoryReplayRequest(repo.DB, requestID, repo.Path, redo); receiptErr == nil && found && !receipt.PendingRecovery {
-			return receipt, nil
-		}
-		return &UndoResult{
-			PendingRecovery: true, RequestID: requestID, Phase: "filesystem-pending", Kind: op.Kind,
-			Error: fmt.Sprintf("Filesystem replay transaction outcome is uncertain; request is fenced for inspection: %v", err),
-		}, nil
-	}
-	return result, nil
-}
-
-func applyLegacyFilesystemHistoryTx(repo *store.Repo, tx *sql.Tx, step OpStep) (bool, error) {
+	targetPath, targetTrashed := currentPath, currentTrashed
+	move := false
 	switch step.Kind {
 	case stepMoveFile:
 		var payload moveFileStepPayload
 		if err := json.Unmarshal(step.Payload, &payload); err != nil {
-			return false, err
+			return completeFilesystemHistoryFailure(tx, repo, requestID, redo, op, err)
 		}
-		var currentPath string
-		if err := tx.QueryRow(`SELECT file_path FROM images WHERE id=?`, payload.ImageID).Scan(&currentPath); err != nil {
-			return false, err
-		}
-		destination, err := historyPath(repo.Path, payload.NewPath)
+		targetPath, err = historyPath(repo.Path, payload.NewPath)
 		if err != nil {
-			return false, err
+			return completeFilesystemHistoryFailure(tx, repo, requestID, redo, op, err)
 		}
-		if err := validateHistoryPathParents(repo.Path, destination); err != nil {
-			return false, err
+		if targetPath == currentPath {
+			return completeFilesystemHistoryFailure(tx, repo, requestID, redo, op, fmt.Errorf("history destination already matches the image path"))
 		}
-		if destination == currentPath {
-			return false, fmt.Errorf("history destination already matches the image path")
-		}
-		occupied, err := historyMoveDestinationOccupied(tx, payload.ImageID, destination)
-		if err != nil {
-			return false, err
-		}
-		if occupied {
-			return false, fmt.Errorf("history destination is reserved or occupied: %s", destination)
-		}
-		if err := requireHistorySourceFile(currentPath); err != nil {
-			return false, fmt.Errorf("source file not found: %w", err)
-		}
-		if err := store.MovePathNoReplace(currentPath, destination); err != nil {
-			return true, fmt.Errorf("no-replace history move failed; request remains fenced: %w", err)
-		}
-		updated, err := tx.Exec(`UPDATE images SET file_path=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
-			WHERE id=? AND file_path=?`, destination, payload.ImageID, currentPath)
-		if err != nil {
-			return true, err
-		}
-		count, err := updated.RowsAffected()
-		if err != nil || count != 1 {
-			return true, fmt.Errorf("image path row changed during replay: rows=%d err=%v", count, err)
-		}
-		return true, nil
+		move = true
 	case stepSetTrashed:
 		var payload trashedStepPayload
 		if err := json.Unmarshal(step.Payload, &payload); err != nil {
-			return false, err
+			return completeFilesystemHistoryFailure(tx, repo, requestID, redo, op, err)
 		}
-		var currentPath string
-		var wasTrashed bool
-		if err := tx.QueryRow(`SELECT file_path,trashed FROM images WHERE id=?`, payload.ImageID).Scan(&currentPath, &wasTrashed); err != nil {
-			return false, err
+		targetTrashed = payload.Trashed
+		targetPath, move = historyTrashDestination(repo.Path, currentPath, payload.Trashed)
+		if !move {
+			targetPath = currentPath
 		}
-		destination, move := historyTrashDestination(repo.Path, currentPath, payload.Trashed)
-		if move {
-			var err error
-			destination, err = chooseHistoryMovePath(repo.Path, tx, payload.ImageID, destination)
-			if err != nil {
-				return false, err
-			}
-			if err := requireHistorySourceFile(currentPath); err == nil {
-				if err := store.MovePathNoReplace(currentPath, destination); err != nil {
-					return true, fmt.Errorf("no-replace trash history move failed; request remains fenced: %w", err)
-				}
-			} else if !os.IsNotExist(err) {
-				return false, err
-			} else {
-				destination = currentPath
+	default:
+		return completeFilesystemHistoryFailure(tx, repo, requestID, redo, op, fmt.Errorf("step %q is not a filesystem history operation", step.Kind))
+	}
+	if move {
+		if err := validateHistoryPathParents(repo.Path, currentPath); err != nil {
+			return completeFilesystemHistoryFailure(tx, repo, requestID, redo, op, err)
+		}
+		if err := requireHistorySourceFile(currentPath); err != nil {
+			if step.Kind == stepSetTrashed && os.IsNotExist(err) {
 				move = false
+				targetPath = currentPath
+			} else {
+				return completeFilesystemHistoryFailure(tx, repo, requestID, redo, op, fmt.Errorf("source file is unavailable: %w", err))
 			}
 		}
-		updated, err := tx.Exec(`UPDATE images SET trashed=?,file_path=?,
+	}
+	if !move {
+		result := &UndoResult{Applied: true, Kind: op.Kind}
+		if err := persistHistoryReplayRequestTx(tx, repo.Path, requestID, redo, op, "pending", nil); err != nil {
+			return nil, nil, err
+		}
+		if err := applyFilesystemHistoryRowAndCursor(tx, repo.Path, requestID, redo, op, step.Kind, imageID, currentPath, currentTrashed, rowHash, targetPath, targetTrashed, expectedCursor, nextCursor, result); err != nil {
+			return nil, nil, err
+		}
+		if err := tx.Commit(); err != nil {
+			return resolveFilesystemHistoryCommit(repo, requestID, redo, op, err)
+		}
+		return result, nil, nil
+	}
+	if step.Kind == stepSetTrashed {
+		targetPath, err = chooseHistoryMovePath(repo.Path, tx, imageID, targetPath)
+		if err != nil {
+			return completeFilesystemHistoryFailure(tx, repo, requestID, redo, op, err)
+		}
+	} else if err := validateHistoryPathParents(repo.Path, targetPath); err != nil {
+		return completeFilesystemHistoryFailure(tx, repo, requestID, redo, op, err)
+	} else if occupied, err := historyMoveDestinationOccupied(tx, imageID, targetPath); err != nil {
+		return nil, nil, err
+	} else if occupied {
+		return completeFilesystemHistoryFailure(tx, repo, requestID, redo, op, fmt.Errorf("history destination is reserved or occupied: %s", targetPath))
+	}
+	fingerprint, stableInfo, err := store.FingerprintFile(context.Background(), currentPath)
+	if err != nil {
+		return completeFilesystemHistoryFailure(tx, repo, requestID, redo, op, fmt.Errorf("fingerprint history source: %w", err))
+	}
+	identity, err := replacementObjectIdentity(stableInfo)
+	if err != nil {
+		return completeFilesystemHistoryFailure(tx, repo, requestID, redo, op, err)
+	}
+	pathInfo, err := os.Lstat(currentPath)
+	if err != nil || !os.SameFile(stableInfo, pathInfo) {
+		return completeFilesystemHistoryFailure(tx, repo, requestID, redo, op, fmt.Errorf("history source changed after fingerprinting"))
+	}
+	if err := validateHistoryPathParents(repo.Path, targetPath); err != nil {
+		return completeFilesystemHistoryFailure(tx, repo, requestID, redo, op, err)
+	}
+	if occupied, err := historyMoveDestinationOccupied(tx, imageID, targetPath); err != nil {
+		return nil, nil, err
+	} else if occupied {
+		return completeFilesystemHistoryFailure(tx, repo, requestID, redo, op, fmt.Errorf("history destination became reserved or occupied: %s", targetPath))
+	}
+	ledger := filesystemHistoryLedger{
+		requestID: requestID, repoPath: repo.Path, direction: historyDirection(redo), sequence: op.Seq,
+		expectedCursor: expectedCursor, imageID: imageID, operationKind: step.Kind,
+		expectedPath: currentPath, expectedTrashed: currentTrashed, expectedRowHash: rowHash,
+		targetPath: targetPath, targetTrashed: targetTrashed, sourcePath: currentPath,
+		destinationPath: targetPath, sourceIdentity: identity, sourceSHA256: fingerprint, state: "prepared",
+	}
+	if err := persistHistoryReplayRequestTx(tx, repo.Path, requestID, redo, op, "pending", nil); err != nil {
+		return nil, nil, err
+	}
+	if err := insertFilesystemHistoryLedger(tx, ledger); err != nil {
+		return nil, nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		if receipt, found, readErr := readHistoryReplayRequest(repo.DB, requestID, repo.Path, redo); readErr == nil && found && receipt.PendingRecovery {
+			if persisted, ledgerFound, ledgerErr := readFilesystemHistoryLedger(repo.DB, requestID); ledgerErr == nil && ledgerFound {
+				return nil, &persisted, nil
+			}
+		}
+		return nil, nil, err
+	}
+	filesystemHistoryCrash("after-reservation-commit")
+	return nil, &ledger, nil
+}
+
+func completeFilesystemHistoryFailure(tx *sql.Tx, repo *store.Repo, requestID string, redo bool, op *store.Operation, cause error) (*UndoResult, *filesystemHistoryLedger, error) {
+	result := &UndoResult{Applied: false, Kind: op.Kind, Error: cause.Error()}
+	if err := persistHistoryReplayRequestTx(tx, repo.Path, requestID, redo, op, "complete", result); err != nil {
+		return nil, nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return resolveFilesystemHistoryCommit(repo, requestID, redo, op, err)
+	}
+	return result, nil, nil
+}
+
+func applyFilesystemHistoryRowAndCursor(tx *sql.Tx, repoPath, requestID string, redo bool, op *store.Operation, operationKind string, imageID int64, expectedPath string, expectedTrashed bool, expectedRowHash, targetPath string, targetTrashed bool, expectedCursor, nextCursor int64, result *UndoResult) error {
+	actualHash, err := imageHistoryRowHash(tx, imageID)
+	if err != nil {
+		return err
+	}
+	if actualHash != expectedRowHash {
+		return fmt.Errorf("image %d changed before filesystem history update", imageID)
+	}
+	var updated sql.Result
+	if operationKind == stepMoveFile {
+		updated, err = tx.Exec(`UPDATE images SET file_path=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+			WHERE id=? AND file_path=? AND trashed=?`, targetPath, imageID, expectedPath, expectedTrashed)
+	} else {
+		updated, err = tx.Exec(`UPDATE images SET file_path=?,trashed=?,
 			trashed_at=CASE WHEN ? THEN COALESCE(trashed_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')) ELSE NULL END,
 			updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND file_path=? AND trashed=?`,
-			payload.Trashed, destination, payload.Trashed, payload.ImageID, currentPath, wasTrashed)
-		if err != nil {
-			return move, err
-		}
-		count, err := updated.RowsAffected()
-		if err != nil || count != 1 {
-			return move, fmt.Errorf("image trash row changed during replay: rows=%d err=%v", count, err)
-		}
-		return move, nil
-	default:
-		return false, fmt.Errorf("step %q is not a filesystem history operation", step.Kind)
+			targetPath, targetTrashed, targetTrashed, imageID, expectedPath, expectedTrashed)
 	}
+	if err != nil {
+		return err
+	}
+	count, err := updated.RowsAffected()
+	if err != nil || count != 1 {
+		return fmt.Errorf("image row did not match filesystem history snapshot: rows=%d err=%v", count, err)
+	}
+	return updateHistoryCursorAndReceipt(tx, repoPath, requestID, redo, op, expectedCursor, nextCursor, result)
+}
+
+func updateHistoryCursorAndReceipt(tx *sql.Tx, repoPath, requestID string, redo bool, op *store.Operation, expectedCursor, nextCursor int64, result *UndoResult) error {
+	updated, err := tx.Exec(`UPDATE settings SET value=? WHERE scope='repo' AND key='undo_cursor' AND CAST(value AS INTEGER)=?
+		AND EXISTS(SELECT 1 FROM operation_log WHERE seq=? AND kind=? AND forward=? AND inverse=? AND created_at=?)`,
+		strconv.FormatInt(nextCursor, 10), expectedCursor, op.Seq, op.Kind, op.Forward, op.Inverse, op.CreatedAt)
+	if err != nil {
+		return err
+	}
+	count, err := updated.RowsAffected()
+	if err != nil || count != 1 {
+		return fmt.Errorf("history cursor did not match selected operation: rows=%d err=%v", count, err)
+	}
+	return completeHistoryReplayRequestTx(tx, repoPath, requestID, redo, op, result)
+}
+
+func resolveFilesystemHistoryCommit(repo *store.Repo, requestID string, redo bool, op *store.Operation, commitErr error) (*UndoResult, *filesystemHistoryLedger, error) {
+	result, found, err := readHistoryReplayRequest(repo.DB, requestID, repo.Path, redo)
+	if err == nil && found && !result.PendingRecovery {
+		return result, nil, nil
+	}
+	if err != nil {
+		return nil, nil, errors.Join(commitErr, err)
+	}
+	ledger, ledgerFound, err := readFilesystemHistoryLedger(repo.DB, requestID)
+	if err != nil {
+		return nil, nil, errors.Join(commitErr, err)
+	}
+	if ledgerFound {
+		return filesystemPendingResult(requestID, op.Kind, "Filesystem replay transaction outcome is uncertain; the recorded move remains fenced for inspection."), &ledger, nil
+	}
+	return nil, nil, commitErr
+}
+
+func insertFilesystemHistoryLedger(tx *sql.Tx, ledger filesystemHistoryLedger) error {
+	_, err := tx.Exec(`INSERT INTO filesystem_history_replay_ledger(request_id,repo_path,direction,history_seq,expected_cursor,
+		image_id,operation_kind,expected_file_path,expected_trashed,expected_row_hash,target_file_path,target_trashed,
+		source_path,destination_path,source_identity,source_sha256,state,inspection_reason)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, ledger.requestID, ledger.repoPath, ledger.direction,
+		ledger.sequence, ledger.expectedCursor, ledger.imageID, ledger.operationKind, ledger.expectedPath,
+		ledger.expectedTrashed, ledger.expectedRowHash, ledger.targetPath, ledger.targetTrashed,
+		ledger.sourcePath, ledger.destinationPath, ledger.sourceIdentity, ledger.sourceSHA256, ledger.state, ledger.inspection)
+	return err
+}
+
+func readFilesystemHistoryLedger(queryer interface {
+	QueryRow(query string, args ...any) *sql.Row
+}, requestID string) (filesystemHistoryLedger, bool, error) {
+	var ledger filesystemHistoryLedger
+	err := queryer.QueryRow(`SELECT request_id,repo_path,direction,history_seq,expected_cursor,image_id,operation_kind,
+		expected_file_path,expected_trashed,expected_row_hash,target_file_path,target_trashed,source_path,
+		destination_path,source_identity,source_sha256,state,inspection_reason
+		FROM filesystem_history_replay_ledger WHERE request_id=?`, requestID).Scan(
+		&ledger.requestID, &ledger.repoPath, &ledger.direction, &ledger.sequence, &ledger.expectedCursor,
+		&ledger.imageID, &ledger.operationKind, &ledger.expectedPath, &ledger.expectedTrashed,
+		&ledger.expectedRowHash, &ledger.targetPath, &ledger.targetTrashed, &ledger.sourcePath,
+		&ledger.destinationPath, &ledger.sourceIdentity, &ledger.sourceSHA256, &ledger.state, &ledger.inspection)
+	if err == sql.ErrNoRows {
+		return ledger, false, nil
+	}
+	return ledger, err == nil, err
+}
+
+func imageHistoryRowHash(queryer interface {
+	QueryRow(query string, args ...any) *sql.Row
+}, imageID int64) (string, error) {
+	columns := `file_path,thumb_path,prompt_id,width,height,file_size,content_hash,archived,trashed,
+		canvas_x,canvas_y,group_id,created_at,updated_at,canvas_w,canvas_h,trashed_at,source_fingerprint,source_revision`
+	values := make([]any, 19)
+	targets := make([]any, len(values))
+	for index := range values {
+		targets[index] = &values[index]
+	}
+	if err := queryer.QueryRow(`SELECT `+columns+` FROM images WHERE id=?`, imageID).Scan(targets...); err != nil {
+		return "", err
+	}
+	encoded, err := json.Marshal(values)
+	if err != nil {
+		return "", err
+	}
+	hash := sha256.Sum256(encoded)
+	return hex.EncodeToString(hash[:]), nil
+}
+
+func historyDirection(redo bool) string {
+	if redo {
+		return "redo"
+	}
+	return "undo"
+}
+
+func filesystemPendingResult(requestID, kind, message string) *UndoResult {
+	return &UndoResult{PendingRecovery: true, RequestID: requestID, Kind: kind, Phase: "filesystem-pending", Error: message}
+}
+
+func filesystemHistoryCrash(point string) {
+	if filesystemHistoryCrashHook != nil {
+		filesystemHistoryCrashHook(point)
+	}
+}
+
+func filesystemHistoryFail(point string) error {
+	if filesystemHistoryFault != nil {
+		return filesystemHistoryFault(point)
+	}
+	return nil
 }
 
 func historyPath(root, relPath string) (string, error) {
@@ -238,10 +453,9 @@ func chooseHistoryMovePath(root string, tx *sql.Tx, imageID int64, requested str
 		if err != nil {
 			return "", err
 		}
-		if occupied {
-			continue
+		if !occupied {
+			return candidate, nil
 		}
-		return candidate, nil
 	}
 }
 

@@ -245,6 +245,9 @@ func (s *ImageService) ReplaceMedia(repoPath string, imageID int64, item Clipboa
 		return nil, fmt.Errorf("replacement media exceeds %d bytes", maxClipboardItemBytes)
 	}
 	requestHash := replacementRequestHash(r.Path, imageID, name, data)
+	if err := rejectLegacyRedoTailRequestID(r.DB, requestID); err != nil {
+		return nil, err
+	}
 	var historyRequestUsed bool
 	if err := r.DB.QueryRow(`SELECT EXISTS(SELECT 1 FROM history_replay_requests WHERE request_id=?)`, requestID).Scan(&historyRequestUsed); err != nil {
 		return nil, err

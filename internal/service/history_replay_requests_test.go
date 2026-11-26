@@ -271,11 +271,12 @@ func TestFilesystemReplayCursorFailureStaysFencedWithoutReapplying(t *testing.T)
 		t.Fatal(err)
 	}
 	undo := &UndoService{}
+	beforeCursor := historyCursor(t, root)
 	first, err := undo.UndoWithRequest(root, "fenced-filesystem-undo")
 	if err != nil || first == nil || !first.PendingRecovery || first.Applied {
 		t.Fatalf("cursor failure must remain pending, not success: result=%+v err=%v", first, err)
 	}
-	assertHistoryReplayCursor(t, root, 2)
+	assertHistoryReplayCursor(t, root, beforeCursor)
 	original := root + string(os.PathSeparator) + "move-fault.png"
 	moved := root + string(os.PathSeparator) + "moved-fault.png"
 	if _, err := os.Stat(original); err != nil {
@@ -295,12 +296,36 @@ func TestFilesystemReplayCursorFailureStaysFencedWithoutReapplying(t *testing.T)
 	if err != nil || second == nil || !second.PendingRecovery || second.Applied {
 		t.Fatalf("pending request was reapplied after cursor failure: result=%+v err=%v", second, err)
 	}
-	assertHistoryReplayCursor(t, root, 2)
+	assertHistoryReplayCursor(t, root, beforeCursor)
 	if _, err := os.Stat(original); err != nil {
 		t.Fatalf("retry changed the already moved source: %v", err)
 	}
 	if _, err := os.Stat(moved); !os.IsNotExist(err) {
 		t.Fatalf("retry changed the destination: %v", err)
+	}
+	repo, err = store.Bootstrap(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.DB.Exec(`DROP TRIGGER fail_filesystem_replay_cursor`); err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// Reopen the service and retry the same receipt. Recovery must finalize the
+	// verified destination-only layout, not replay another filesystem move.
+	finished, err := (&ImageService{}).RetryFilesystemHistoryRecovery(root, "fenced-filesystem-undo")
+	if err != nil || finished == nil || !finished.Applied || finished.PendingRecovery {
+		t.Fatalf("retry cursor-failed filesystem history after reopen: result=%+v err=%v", finished, err)
+	}
+	assertHistoryReplayCursor(t, root, beforeCursor-1)
+	if _, err := os.Stat(original); err != nil {
+		t.Fatalf("finalized original destination is missing: %v", err)
+	}
+	if _, err := os.Stat(moved); !os.IsNotExist(err) {
+		t.Fatalf("finalization altered source unexpectedly: %v", err)
 	}
 }
 

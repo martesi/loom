@@ -33,6 +33,9 @@ func replayAtomicHistory(repo *store.Repo, redo bool, requestID string) (bool, *
 	if _, err := tx.Exec(`UPDATE operation_log SET seq = seq WHERE 0`); err != nil {
 		return true, nil, nil, err
 	}
+	if err := rejectLegacyRedoTailRequestID(tx, requestID); err != nil {
+		return true, nil, nil, err
+	}
 	if result, found, err := readHistoryReplayRequest(tx, requestID, repo.Path, redo); err != nil || found {
 		return true, nil, result, err
 	}

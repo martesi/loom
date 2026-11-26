@@ -53,6 +53,11 @@ func TestLegacyUnverifiedReplacementRedoTailNeedsExactTransactionalConfirmation(
 	if !strings.Contains(tail.Warning, "all 2 redo operations") || !strings.Contains(strings.ToLower(tail.Warning), "not delete files") {
 		t.Fatalf("full-tail warning is incomplete: %q", tail.Warning)
 	}
+	for _, usedID := range []string{"legacy-tail-undo-archive", "legacy-tail-replacement"} {
+		if result, err := service.ResolveUnverifiedReplacementRedoTail(root, usedID, tail.Confirmation); err == nil || result != nil {
+			t.Fatalf("tail resolution accepted existing operation ID %q: result=%+v err=%v", usedID, result, err)
+		}
+	}
 	repo, err := store.Bootstrap(root)
 	if err != nil {
 		t.Fatal(err)
@@ -94,6 +99,14 @@ func TestLegacyUnverifiedReplacementRedoTailNeedsExactTransactionalConfirmation(
 	}
 	if _, err := service.ResolveUnverifiedReplacementRedoTail(root, requestID, "different-confirmation"); err == nil {
 		t.Fatal("request ID reuse with altered confirmation was accepted")
+	}
+	for name, replay := range map[string]func(string) (*UndoResult, error){
+		"undo": func(id string) (*UndoResult, error) { return (&UndoService{}).UndoWithRequest(root, id) },
+		"redo": func(id string) (*UndoResult, error) { return (&UndoService{}).RedoWithRequest(root, id) },
+	} {
+		if result, err := replay(requestID); err == nil || result != nil {
+			t.Fatalf("%s accepted a legacy-tail resolution request ID: result=%+v err=%v", name, result, err)
+		}
 	}
 	assertHistoryReplayCursor(t, root, 1)
 	if data, err := os.ReadFile(filepath.Join(root, "source.png")); err != nil || string(data) != "original bytes" {

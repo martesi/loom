@@ -2,6 +2,7 @@ import { Dialog } from '@base-ui-components/react/dialog'
 import { Trans } from '@lingui/react/macro'
 import { useCallback, useEffect, useState } from 'react'
 import {
+  type FilesystemHistoryRecovery,
   ImageService,
   ImportResolutionStatus,
   type PendingImportBatch,
@@ -38,6 +39,9 @@ export function ImportRecoveryPanel({
   const [pendingReplacements, setPendingReplacements] = useState<
     ReplacementResult[]
   >([])
+  const [filesystemRecoveries, setFilesystemRecoveries] = useState<
+    FilesystemHistoryRecovery[]
+  >([])
   const [legacyRedoTail, setLegacyRedoTail] =
     useState<UnverifiedReplacementRedoTail | null>(null)
   const [legacyTailRequest, setLegacyTailRequest] = useState<{
@@ -48,6 +52,7 @@ export function ImportRecoveryPanel({
     pending: '',
     retained: '',
     replacements: '',
+    filesystem: '',
     legacyTail: '',
   })
   const [loading, setLoading] = useState(false)
@@ -83,14 +88,18 @@ export function ImportRecoveryPanel({
         PromiseSettledResult<PendingImportBatch[] | null>,
         PromiseSettledResult<RecoverableImport[] | null>,
         PromiseSettledResult<ReplacementResult[] | null>,
+        PromiseSettledResult<FilesystemHistoryRecovery[] | null>,
         PromiseSettledResult<UnverifiedReplacementRedoTail | null>,
       ]
     ) => {
-      const [batches, imports, replacements, legacyTail] = results
+      const [batches, imports, replacements, filesystem, legacyTail] = results
       setPending(batches.status === 'fulfilled' ? (batches.value ?? []) : [])
       setRetained(imports.status === 'fulfilled' ? (imports.value ?? []) : [])
       setPendingReplacements(
         replacements.status === 'fulfilled' ? (replacements.value ?? []) : []
+      )
+      setFilesystemRecoveries(
+        filesystem.status === 'fulfilled' ? (filesystem.value ?? []) : []
       )
       if (legacyTail.status === 'fulfilled') {
         setLegacyRedoTail(legacyTail.value ?? null)
@@ -111,6 +120,10 @@ export function ImportRecoveryPanel({
           replacements.status === 'rejected'
             ? errorMessage(replacements.reason)
             : '',
+        filesystem:
+          filesystem.status === 'rejected'
+            ? errorMessage(filesystem.reason)
+            : '',
         legacyTail:
           legacyTail.status === 'rejected'
             ? errorMessage(legacyTail.reason)
@@ -128,6 +141,7 @@ export function ImportRecoveryPanel({
       ImageService.ListPendingImportBatches(path),
       ImageService.ListRecoverableImports(path),
       ImageService.ListPendingReplacementRecoveries(path),
+      ImageService.ListPendingFilesystemHistoryRecoveries(path),
       ImageService.GetUnverifiedReplacementRedoTail(path),
     ]).then((results) => {
       if (cancelled) return
@@ -145,10 +159,35 @@ export function ImportRecoveryPanel({
       ImageService.ListPendingImportBatches(path),
       ImageService.ListRecoverableImports(path),
       ImageService.ListPendingReplacementRecoveries(path),
+      ImageService.ListPendingFilesystemHistoryRecoveries(path),
       ImageService.GetUnverifiedReplacementRedoTail(path),
     ])
     applyListResults(results)
     setLoading(false)
+  }
+
+  function resolveFilesystemHistory(
+    recovery: FilesystemHistoryRecovery,
+    action: 'retry' | 'cancel'
+  ) {
+    setWorking(`filesystem:${recovery.requestId}`)
+    setError('')
+    const request =
+      action === 'retry'
+        ? ImageService.RetryFilesystemHistoryRecovery(path, recovery.requestId)
+        : ImageService.CancelFilesystemHistoryRecovery(path, recovery.requestId)
+    void request
+      .then(async (result) => {
+        if (result?.error && !result.pendingRecovery) setError(result.error)
+        await refreshLists()
+        if (result?.applied) await onRecovered()
+        if (result && !result.pendingRecovery && !result.error) setOpen(false)
+      })
+      .catch(async (cause: unknown) => {
+        setError(errorMessage(cause))
+        await refreshLists()
+      })
+      .finally(() => setWorking(null))
   }
 
   function retryReplacement(requestID: string) {
@@ -413,6 +452,7 @@ export function ImportRecoveryPanel({
     pending.length +
     retained.length +
     pendingReplacements.length +
+    filesystemRecoveries.length +
     Number(legacyRedoTail?.available ?? false)
   const hasListError = Object.values(listErrors).some(Boolean)
 
@@ -624,11 +664,13 @@ export function ImportRecoveryPanel({
               pending={pending}
               retained={retained}
               replacementRecoveries={pendingReplacements}
+              filesystemRecoveries={filesystemRecoveries}
               legacyRedoTail={legacyRedoTail}
               legacyTailLoadError={listErrors.legacyTail}
               pendingLoadError={listErrors.pending}
               retainedLoadError={listErrors.retained}
               replacementLoadError={listErrors.replacements}
+              filesystemLoadError={listErrors.filesystem}
               selectedItems={selectedItems}
               releasedItems={releasedItems}
               releaseConfirmationBatch={releaseConfirmation?.batchID ?? null}
@@ -649,6 +691,7 @@ export function ImportRecoveryPanel({
               onRestoreVerified={(item) => startRetainedResolution(item, false)}
               onShowUnverified={(item) => startRetainedResolution(item, true)}
               onRetryReplacement={retryReplacement}
+              onResolveFilesystemHistory={resolveFilesystemHistory}
               onRetryLegacyTail={() => void refreshLists()}
               onResolveLegacyTail={resolveLegacyRedoTail}
             />

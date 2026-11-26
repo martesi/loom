@@ -1,6 +1,6 @@
 import { Trans } from '@lingui/react/macro'
-import type { ReactNode } from 'react'
 import {
+  type FilesystemHistoryRecovery,
   ImportResolutionStatus,
   type PendingImportBatch,
   type RecoverableImport,
@@ -8,16 +8,22 @@ import {
   type UnverifiedReplacementRedoTail,
 } from '../../../bindings/loom/internal/service'
 import { Button } from '../ui/button'
+import {
+  EvidenceLine,
+  FilesystemHistoryRecoverySection,
+} from './filesystem-history-recovery-section'
 
 interface Props {
   pending: PendingImportBatch[]
   retained: RecoverableImport[]
   replacementRecoveries: ReplacementResult[]
+  filesystemRecoveries: FilesystemHistoryRecovery[]
   legacyRedoTail: UnverifiedReplacementRedoTail | null
   legacyTailLoadError: string
   pendingLoadError: string
   retainedLoadError: string
   replacementLoadError: string
+  filesystemLoadError: string
   selectedItems: Record<string, number[]>
   releasedItems: Record<string, number[]>
   releaseConfirmationBatch: string | null
@@ -31,6 +37,10 @@ interface Props {
   onRestoreVerified: (item: RecoverableImport) => void
   onShowUnverified: (item: RecoverableImport) => void
   onRetryReplacement: (requestID: string) => void
+  onResolveFilesystemHistory: (
+    recovery: FilesystemHistoryRecovery,
+    action: 'retry' | 'cancel'
+  ) => void
   onRetryLegacyTail: () => void
   onResolveLegacyTail: () => void
 }
@@ -39,11 +49,13 @@ export function ImportRecoverySections({
   pending,
   retained,
   replacementRecoveries,
+  filesystemRecoveries,
   legacyRedoTail,
   legacyTailLoadError,
   pendingLoadError,
   retainedLoadError,
   replacementLoadError,
+  filesystemLoadError,
   selectedItems,
   releasedItems,
   releaseConfirmationBatch,
@@ -57,11 +69,18 @@ export function ImportRecoverySections({
   onRestoreVerified,
   onShowUnverified,
   onRetryReplacement,
+  onResolveFilesystemHistory,
   onRetryLegacyTail,
   onResolveLegacyTail,
 }: Props) {
   return (
     <>
+      <FilesystemHistoryRecoverySection
+        recoveries={filesystemRecoveries}
+        loadError={filesystemLoadError}
+        working={working}
+        onResolve={onResolveFilesystemHistory}
+      />
       {(replacementRecoveries.length > 0 || replacementLoadError) && (
         <section
           className="mt-3 grid gap-2 rounded border border-warning/40 p-3"
@@ -476,12 +495,4 @@ function statusLabel(status: ImportResolutionStatus) {
     default:
       return <Trans>Ambiguous or unsafe; resolution is blocked</Trans>
   }
-}
-
-function EvidenceLine({ label, value }: { label: ReactNode; value: string }) {
-  return (
-    <span className="text-ink-subtle">
-      <strong>{label}:</strong> {value}
-    </span>
-  )
 }

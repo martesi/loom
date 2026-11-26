@@ -27,6 +27,10 @@ afterEach(() => {
 })
 
 beforeEach(() => {
+  spyOn(
+    ImageService,
+    'ListPendingFilesystemHistoryRecoveries'
+  ).mockResolvedValue([] as never)
   spyOn(ImageService, 'ListPendingReplacementRecoveries').mockResolvedValue(
     [] as never
   )
@@ -138,6 +142,53 @@ it('resolves only selected verified items and confirms safe reservation release'
     releasedItemIndexes: [1],
     confirmReservationRelease: true,
   })
+  expect(onRecovered).toHaveBeenCalledTimes(1)
+})
+
+it('shows filesystem-history recovery independently and retries a verified layout', async () => {
+  spyOn(ImageService, 'ListPendingImportBatches').mockResolvedValue([] as never)
+  spyOn(ImageService, 'ListRecoverableImports').mockResolvedValue([] as never)
+  spyOn(
+    ImageService,
+    'ListPendingFilesystemHistoryRecoveries'
+  ).mockResolvedValue([
+    {
+      requestId: 'fs-request',
+      direction: 'undo',
+      kind: 'move_file',
+      sequence: 4,
+      imageId: 22,
+      sourcePath: '/repo/moved.png',
+      destinationPath: '/repo/source.png',
+      state: 'source-present-destination-absent',
+      canRetry: true,
+      canCancel: true,
+      legacyWithoutLedger: false,
+      message: 'Source and bytes verified.',
+    },
+  ] as never)
+  const retry = spyOn(
+    ImageService,
+    'RetryFilesystemHistoryRecovery'
+  ).mockResolvedValue({ applied: true, pendingRecovery: false } as never)
+  const onRecovered = mock(async () => {})
+  render(
+    createElement(ImportRecoveryPanel, {
+      path: '/repo',
+      refresh: 0,
+      onRecovered,
+    })
+  )
+  await act(async () => Promise.resolve())
+  fireEvent.click(screen.getByTestId('import-recovery-trigger'))
+  expect(
+    await screen.findByTestId('pending-filesystem-history-recovery')
+  ).toBeTruthy()
+  expect(screen.getByText('/repo/source.png')).toBeTruthy()
+  fireEvent.click(
+    screen.getByRole('button', { name: /retry verified history move/i })
+  )
+  await waitFor(() => expect(retry).toHaveBeenCalledWith('/repo', 'fs-request'))
   expect(onRecovered).toHaveBeenCalledTimes(1)
 })
 

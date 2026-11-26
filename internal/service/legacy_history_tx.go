@@ -200,8 +200,8 @@ func applyLegacyHistoryTx(tx *sql.Tx, s OpStep) (bool, error) {
 			if err := tx.QueryRow(`SELECT COUNT(*) FROM images WHERE group_id=?`, p.GroupID).Scan(&remaining); err != nil {
 				return true, err
 			}
-			if remaining < 2 {
-				return true, fmt.Errorf("removing image %d would leave group %d with fewer than two members", p.ImageID, p.GroupID)
+			if remaining < 1 {
+				return true, fmt.Errorf("removing image %d would dissolve group %d", p.ImageID, p.GroupID)
 			}
 			if _, err := tx.Exec(`UPDATE groups SET cover_image_id=(SELECT MIN(id) FROM images WHERE group_id=?)
 				WHERE id=? AND NOT EXISTS(SELECT 1 FROM images WHERE id=cover_image_id AND group_id=?)`, p.GroupID, p.GroupID, p.GroupID); err != nil {
