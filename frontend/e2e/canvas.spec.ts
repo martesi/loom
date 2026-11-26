@@ -1,11 +1,11 @@
 import type { Page } from '@playwright/test'
-import { setViewportMethodID } from './bindings'
 import { expect, test } from './test-fixtures'
 import {
   assets,
   autoArrangeCanvas,
   imageNodes as canvasNodes,
   dropAsset,
+  fixturePath,
   openFixtureRepo as open,
   openAssetsShelf,
 } from './test-helpers'
@@ -25,6 +25,9 @@ test('Assets selection, placement, trash and viewport persistence', async ({
   page,
 }) => {
   await open(page, 'canvas-fixtures')
+  const repoPath = await fixturePath('canvas-fixtures')
+  const editViewportKey = `loom.canvas.viewport.v1:${encodeURIComponent(repoPath)}:edit`
+  await page.evaluate((key) => localStorage.removeItem(key), editViewportKey)
   await expect(page.getByRole('checkbox')).toHaveCount(0)
   await expect(page.locator('.react-flow__node')).toHaveCount(0)
   await expect(page.locator('.react-flow__viewport')).toHaveAttribute(
@@ -35,8 +38,11 @@ test('Assets selection, placement, trash and viewport persistence', async ({
     page.getByRole('heading', { name: 'Start with an asset' })
   ).toBeVisible()
   await expect(
-    page.getByText('Drag an asset from Assets onto the canvas.')
+    page.getByText(
+      'View shows images with relationships. Switch to Edit to stage and connect assets.'
+    )
   ).toBeVisible()
+  await expect(page.getByTestId('empty-canvas-edit')).toBeVisible()
   const rows = assets(page)
   await rows.first().click()
   await rows.last().click({ modifiers: ['Shift'] })
@@ -44,6 +50,11 @@ test('Assets selection, placement, trash and viewport persistence', async ({
   await page.getByRole('button', { name: 'Folders', exact: true }).click()
   await expect(page.locator('[role=option][aria-selected=true]')).toHaveCount(2)
   await page.getByRole('button', { name: 'All Assets', exact: true }).click()
+  await page.getByTestId('empty-canvas-edit').click()
+  await expect(page.getByTestId('canvas-mode-edit')).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
   await drop(page, 'canvas-alpha.png', 80, 100)
   await expect(page.locator('.react-flow__node')).toHaveCount(2)
   await expect(
@@ -82,18 +93,20 @@ test('Assets selection, placement, trash and viewport persistence', async ({
   await expect(rows).toHaveCount(1)
   await expect(page.locator('.react-flow__node')).toHaveCount(1)
   const viewport = page.locator('.react-flow__viewport')
-  const viewportSaved = page.waitForResponse(
-    (response) =>
-      response.url().endsWith('/wails/runtime') &&
-      response
-        .request()
-        .postData()
-        ?.includes(`"methodID":${setViewportMethodID}`) === true
-  )
-  await page.keyboard.press('Shift+1')
-  await viewportSaved
+  await page.keyboard.press('ControlOrMeta+Shift+1')
+  await expect
+    .poll(() =>
+      page.evaluate((key) => localStorage.getItem(key), editViewportKey)
+    )
+    .not.toBeNull()
   const transform = await viewport.getAttribute('style')
   await page.reload()
+  await expect(page.locator('.react-flow__node')).toHaveCount(0)
+  await page.getByTestId('canvas-mode-edit').click()
+  await expect(page.getByTestId('canvas-mode-edit')).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
   await expect(page.locator('.react-flow__node')).toHaveCount(1)
   await expect(page.locator('.react-flow__viewport')).toHaveAttribute(
     'style',
