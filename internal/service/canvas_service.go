@@ -45,12 +45,8 @@ func (s *ImageService) SetViewport(repoPath string, v Viewport) error {
 	return r.SetSetting("canvas_viewport", string(raw))
 }
 
-// PlaceImages preserves existing placements. The final argument remains for
-// existing clients, but Set membership is no longer supported.
-func (s *ImageService) PlaceImages(repoPath string, ids []int64, x, y float64, groupID int64) error {
-	if groupID != 0 {
-		return fmt.Errorf("sets are no longer supported")
-	}
+// PlaceImages preserves existing placements when assets are explicitly dropped.
+func (s *ImageService) PlaceImages(repoPath string, ids []int64, x, y float64) error {
 	if math.IsNaN(x) || math.IsInf(x, 0) || math.IsNaN(y) || math.IsInf(y, 0) {
 		return fmt.Errorf("invalid position")
 	}
@@ -79,34 +75,6 @@ func (s *ImageService) PlaceImages(repoPath string, ids []int64, x, y float64, g
 		}
 	}
 	return tx.Commit()
-}
-func (s *ImageService) UnplaceImages(repoPath string, ids []int64) error {
-	r, unlock, err := openOperationRepo(repoPath)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	defer r.Close()
-	tx, err := r.DB.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	for _, id := range uniqueImageIDs(ids) {
-		if _, err := tx.Exec("UPDATE images SET canvas_x = NULL, canvas_y = NULL WHERE id = ?", id); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
-func (s *GroupService) UpdateMetadata(repoPath string, id int64, name, kind string) error {
-	r, err := store.Bootstrap(repoPath)
-	if err != nil {
-		return err
-	}
-	defer r.Close()
-	_, err = r.DB.Exec("UPDATE groups SET name = ?, kind = ? WHERE id = ?", name, kind, id)
-	return err
 }
 
 // RelationshipsForImage includes unplaced endpoints for Inspector navigation.

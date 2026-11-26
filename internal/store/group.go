@@ -158,7 +158,7 @@ func (r *Repo) GetGroup(groupID int64) (*Group, error) {
 // assigned id, rather than letting SQLite auto-assign a fresh one. It
 // exists solely for undo/redo (applyStep's stepGroupExistence Exists:true
 // case) to restore a group exactly as it was — same id — when undoing an
-// Ungroup or redoing a CreateGroup; nothing in the public GroupService API
+// Ungroup or redoing a legacy CreateGroup; nothing in the retired service API
 // calls this, CreateGroup (auto-assigned id) is the only ordinary path for
 // making a new group.
 func (r *Repo) RecreateGroup(id int64, name, kind string, coverImageID int64, memberIDs []int64) error {

@@ -444,8 +444,8 @@ func applyStep(repo *store.Repo, s OpStep) error {
 			// group, so a failed replay leaves the database unchanged.
 			return fmt.Errorf("can't replay group member removal: group %d would dissolve", p.GroupID)
 		}
-		// This step kind is only ever recorded (see GroupService.RemoveMember)
-		// for a removal that GroupService already confirmed, at record time,
+		// Legacy histories recorded this step kind only for a removal that the
+		// retired group service had confirmed, at record time,
 		// would not dissolve the group — a dissolving removal is logged as a
 		// stepGroupExistence step instead, since group existence is what's
 		// actually changing there. The preflight above preserves that invariant

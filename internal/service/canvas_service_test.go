@@ -26,21 +26,18 @@ func TestCanvasPlacementImportAndPurge(t *testing.T) {
 	if err != nil || image.Placed {
 		t.Fatalf("import placement: %+v %v", image, err)
 	}
-	if err := s.PlaceImages(path, ids, 12, 34, 0); err != nil {
+	if err := s.PlaceImages(path, ids, 12, 34); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PlaceImages(path, ids, 90, 90, 0); err != nil {
+	if err := s.PlaceImages(path, ids, 90, 90); err != nil {
 		t.Fatal(err)
 	}
 	image, err = s.GetImage(path, ids[0])
 	if err != nil || image.CanvasX != 12 || image.CanvasY != 34 {
 		t.Fatalf("repeat drop moved asset: %+v %v", image, err)
 	}
-	if err := s.UnplaceImages(path, ids); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := os.Stat(filepath.Join(path, "a.png")); err != nil {
-		t.Fatalf("unplace removed file: %v", err)
+		t.Fatalf("placement removed file: %v", err)
 	}
 	copied, err := s.CopyMedia(path, ids, false)
 	if err != nil || len(copied) != 1 || copied[0].Data != media[0].Data {
@@ -64,10 +61,9 @@ func TestCanvasPlacementImportAndPurge(t *testing.T) {
 		t.Fatal("purged identity remains")
 	}
 }
-func TestSetDropIsRejected(t *testing.T) {
+func TestPlacementBatchIsAtomic(t *testing.T) {
 	path := t.TempDir()
 	s := &ImageService{}
-	g := &GroupService{}
 	media := []ClipboardMedia{}
 	for _, name := range []string{"a.png", "b.png", "c.png", "d.png"} {
 		media = append(media, ClipboardMedia{Name: name, Data: "YQ=="})
@@ -76,39 +72,53 @@ func TestSetDropIsRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := g.CreateGroup(path, "first", "", ids[:2])
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := g.CreateGroup(path, "second", "", ids[2:])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.PlaceImages(path, []int64{ids[0], 99999}, 10, 20, second.ID); err == nil {
+	first := insertLegacyGroup(t, path, "first", ids[:2])
+	if err := s.PlaceImages(path, []int64{ids[0], 99999}, 10, 20); err == nil {
 		t.Fatal("missing asset accepted")
 	}
 	image, err := s.GetImage(path, ids[0])
-	if err != nil || image.Placed || image.GroupID != first.ID {
-		t.Fatalf("partial set drop committed: %+v %v", image, err)
-	}
-	if err := s.PlaceImages(path, ids[:2], 10, 20, second.ID); err == nil {
-		t.Fatal("set drop accepted")
+	if err != nil || image.Placed || image.GroupID != first {
+		t.Fatalf("partial placement committed: %+v %v", image, err)
 	}
 	r, err := store.Bootstrap(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer r.Close()
-	if _, err := r.GetGroup(first.ID); err != nil {
+	if _, err := r.GetGroup(first); err != nil {
 		t.Fatal("rejected drop changed the original set")
 	}
 	for _, id := range ids[:2] {
 		image, err := s.GetImage(path, id)
-		if err != nil || image.Placed || image.GroupID != first.ID {
+		if err != nil || image.Placed || image.GroupID != first {
 			t.Fatalf("placement/membership: %+v %v", image, err)
 		}
 	}
 }
+
+func insertLegacyGroup(t *testing.T, repoPath, name string, imageIDs []int64) int64 {
+	t.Helper()
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	result, err := repo.DB.Exec("INSERT INTO groups(name,kind) VALUES(?, '')", name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	groupID, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, imageID := range imageIDs {
+		if _, err := repo.DB.Exec("UPDATE images SET group_id=? WHERE id=?", groupID, imageID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return groupID
+}
+
 func TestViewportAndImportFailure(t *testing.T) {
 	path := t.TempDir()
 	s := &ImageService{}

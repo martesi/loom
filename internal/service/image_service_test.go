@@ -190,7 +190,7 @@ func TestImageServiceEndToEnd(t *testing.T) {
 		t.Fatalf("could not resolve both fixture image IDs: %+v", all)
 	}
 
-	if err := s.PlaceImages(repoPath, []int64{seedID, derivedID}, 0, 0, 0); err != nil {
+	if err := s.PlaceImages(repoPath, []int64{seedID, derivedID}, 0, 0); err != nil {
 		t.Fatalf("PlaceImages: %v", err)
 	}
 

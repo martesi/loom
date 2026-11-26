@@ -23,7 +23,7 @@ func TestOrdinaryPlacementPreservesLegacyGroupMetadata(t *testing.T) {
 	if _, err := r.DB.Exec(`INSERT INTO groups (id, name, kind, cover_image_id) VALUES (99, 'legacy empty', 'pair', ?)`, ids[0]); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PlaceImages(path, ids, 12, 34, 0); err != nil {
+	if err := s.PlaceImages(path, ids, 12, 34); err != nil {
 		t.Fatal(err)
 	}
 	var name, kind string
@@ -47,11 +47,27 @@ func TestPersistedLegacyGroupSurvivesCanvasReload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	group, err := (&GroupService{}).CreateGroup(path, "legacy", "pair", ids[:2])
+	repo, err := store.Bootstrap(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PlaceImages(path, []int64{ids[0], ids[2]}, 10, 20, 0); err != nil {
+	result, err := repo.DB.Exec("INSERT INTO groups(name,kind,cover_image_id) VALUES('legacy','pair',?)", ids[0])
+	if err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	groupID, err := result.LastInsertId()
+	if err == nil {
+		_, err = repo.DB.Exec("UPDATE images SET group_id=? WHERE id IN (?,?)", groupID, ids[0], ids[1])
+	}
+	if err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PlaceImages(path, []int64{ids[0], ids[2]}, 10, 20); err != nil {
 		t.Fatal(err)
 	}
 	for _, target := range ids[1:] {
@@ -76,14 +92,14 @@ func TestPersistedLegacyGroupSurvivesCanvasReload(t *testing.T) {
 	if len(first.Images) != 3 || len(first.Relationships) != 2 || len(first.Groups) != 1 {
 		t.Fatalf("lost legacy data: %+v", first)
 	}
-	if first.Groups[0].ID != group.ID || first.Groups[0].Name != "legacy" || first.Groups[0].Kind != "pair" || first.Groups[0].CoverImageID != group.CoverImageID || !reflect.DeepEqual(first.Groups[0].MemberIDs, ids[:2]) {
+	if first.Groups[0].ID != groupID || first.Groups[0].Name != "legacy" || first.Groups[0].Kind != "pair" || first.Groups[0].CoverImageID != ids[0] || !reflect.DeepEqual(first.Groups[0].MemberIDs, ids[:2]) {
 		t.Fatalf("legacy group changed: %+v", first.Groups[0])
 	}
 	images := make(map[int64]ImageInfo)
 	for _, image := range first.Images {
 		images[image.ID] = image
 	}
-	if images[ids[1]].Placed || images[ids[1]].GroupID != group.ID || images[ids[1]].PromptText != "legacy prompt" {
+	if images[ids[1]].Placed || images[ids[1]].GroupID != groupID || images[ids[1]].PromptText != "legacy prompt" {
 		t.Fatalf("unplaced member changed: %+v", images[ids[1]])
 	}
 	for i, edge := range first.Relationships {
