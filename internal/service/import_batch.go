@@ -75,21 +75,12 @@ func (s *ImageService) importMediaBatch(repoPath string, media []ClipboardMedia,
 	}
 	for i, item := range items {
 		data, _ := base64.StdEncoding.Strict().DecodeString(item.Data)
-		if err := writeImportStage(anchors[i], data); err != nil {
-			return nil, errors.Join(err, recoverImportIntents(repo))
-		}
-		info, err := os.Stat(anchors[i])
+		identities[i], err = writeImportStage(repo, batchID, i, anchors[i], data, checksums[i])
 		if err != nil {
 			return nil, errors.Join(err, recoverImportIntents(repo))
 		}
-		identities[i] = store.FileIdentityAt(anchors[i], info)
-		if identities[i] == "" {
-			return nil, errors.Join(fmt.Errorf("staged import %q has no verifiable file identity", filepath.Base(anchors[i])), recoverImportIntents(repo))
-		}
-		if _, err := repo.DB.Exec(`UPDATE import_batch_intent_files SET file_identity = ? WHERE batch_id = ? AND ordinal = ?`, identities[i], batchID, i); err != nil {
-			return nil, errors.Join(err, recoverImportIntents(repo))
-		}
-		if err := publishImportStage(repo, batchID, i, anchors[i], targets[i], identities[i], checksums[i]); err != nil {
+		targets[i], err = publishImportStage(repo, batchID, i, anchors[i], targets[i], identities[i], checksums[i])
+		if err != nil {
 			return nil, errors.Join(err, recoverImportIntents(repo))
 		}
 	}
@@ -128,7 +119,7 @@ func commitImportBatch(repo *store.Repo, batchID string, targets, anchors, ident
 		}
 		ids = append(ids, id)
 		entries = append(entries, importBatchEntry{ImageID: id, ActivePath: targets[i], AnchorPath: anchors[i], Identity: identities[i], SHA256: checksums[i]})
-		if _, err := tx.Exec(`INSERT INTO import_file_ownership(image_id, anchor_path, file_identity, sha256) VALUES (?, ?, ?, ?)`, id, anchors[i], identities[i], checksums[i]); err != nil {
+		if _, err := tx.Exec(`INSERT INTO import_file_ownership(image_id, anchor_path, file_identity, sha256, active_file_identity, active_sha256) VALUES (?, ?, ?, ?, ?, ?)`, id, anchors[i], identities[i], checksums[i], identities[i], checksums[i]); err != nil {
 			return nil, err
 		}
 	}
@@ -382,15 +373,18 @@ func recoverPendingImportReplay(repo *store.Repo, intentID, action string) error
 }
 
 func recoverPendingImportPublication(repo *store.Repo, batchID string) error {
-	rows, err := repo.DB.Query(`SELECT target_path, anchor_path, file_identity, sha256 FROM import_batch_intent_files WHERE batch_id = ? ORDER BY ordinal`, batchID)
+	rows, err := repo.DB.Query(`SELECT target_path, anchor_path, file_identity, sha256, stage_complete FROM import_batch_intent_files WHERE batch_id = ? ORDER BY ordinal`, batchID)
 	if err != nil {
 		return err
 	}
-	type item struct{ target, anchor, identity, hash string }
+	type item struct {
+		target, anchor, identity, hash string
+		complete                       bool
+	}
 	var files []item
 	for rows.Next() {
 		var file item
-		if err := rows.Scan(&file.target, &file.anchor, &file.identity, &file.hash); err != nil {
+		if err := rows.Scan(&file.target, &file.anchor, &file.identity, &file.hash, &file.complete); err != nil {
 			rows.Close()
 			return err
 		}
@@ -403,28 +397,14 @@ func recoverPendingImportPublication(repo *store.Repo, batchID string) error {
 		if !pathInside(filepath.Join(repo.Path, ".loom", "import-anchors"), file.anchor) || !pathInside(repo.Path, file.target) {
 			return fmt.Errorf("invalid pending import path in batch %q", batchID)
 		}
-		if info, err := os.Lstat(file.anchor); err == nil {
-			if !info.Mode().IsRegular() {
-				return fmt.Errorf("pending import anchor %q is not a regular file", file.anchor)
-			}
-			if file.identity != "" && store.FileIdentityAt(file.anchor, info) != file.identity {
-				return fmt.Errorf("pending import anchor %q changed identity; it was left untouched", file.anchor)
-			}
-			hash, err := hashImportFile(file.anchor)
-			if err != nil || hash != file.hash {
-				return fmt.Errorf("pending import anchor %q has ambiguous bytes; it was left untouched", file.anchor)
+		if _, err := os.Lstat(file.anchor); err == nil {
+			if _, err := removeImportHardLink(file.anchor, file.target, file.identity, file.hash); err != nil {
+				return fmt.Errorf("recover interrupted import publication: %w", err)
 			}
 		} else if !os.IsNotExist(err) {
 			return err
-		} else if _, targetErr := os.Lstat(file.target); targetErr == nil {
-			return fmt.Errorf("pending import target %q has no ownership anchor; it was left untouched", file.target)
-		} else if !os.IsNotExist(targetErr) {
-			return targetErr
 		}
-		if _, err := removeImportHardLink(file.anchor, file.target, file.identity, file.hash); err != nil {
-			return fmt.Errorf("recover interrupted import publication: %w", err)
-		}
-		if err := removePrivateImportFile(file.anchor, file.identity, file.hash); err != nil {
+		if err := discardPendingImportStage(repo, file.anchor, file.identity, file.complete, file.hash); err != nil {
 			return fmt.Errorf("clean staged import: %w", err)
 		}
 	}

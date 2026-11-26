@@ -712,10 +712,11 @@ type DirListing struct {
 // discovery), so every returned file always has a real row — drag-and-drop
 // from Explorer never needs to special-case "not yet imported".
 func (s *ImageService) ListDirectory(repoPath, relPath string) (*DirListing, error) {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return nil, err
 	}
+	defer unlock()
 	defer repo.Close()
 
 	listing, err := repo.ListDirectory(relPath)

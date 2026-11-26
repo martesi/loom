@@ -58,12 +58,22 @@ func createImportIntent(repo *store.Repo, batchID string, items []ClipboardMedia
 	return tx.Commit()
 }
 
-func writeImportStage(path string, data []byte) error {
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+func writeImportStage(repo *store.Repo, batchID string, ordinal int, path string, data []byte, wantHash string) (string, error) {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
-		return err
+		return "", err
 	}
 	info, statErr := file.Stat()
+	if statErr != nil {
+		return "", errors.Join(statErr, file.Close())
+	}
+	identity := store.FileIdentityAt(path, info)
+	if identity == "" {
+		return "", errors.Join(fmt.Errorf("staged import %q has no verifiable file identity", filepath.Base(path)), file.Close())
+	}
+	if _, err := repo.DB.Exec(`UPDATE import_batch_intent_files SET file_identity = ? WHERE batch_id = ? AND ordinal = ?`, identity, batchID, ordinal); err != nil {
+		return "", errors.Join(err, file.Close())
+	}
 	written, writeErr := io.Copy(file, bytes.NewReader(data))
 	if writeErr == nil && written != int64(len(data)) {
 		writeErr = io.ErrShortWrite
@@ -73,36 +83,41 @@ func writeImportStage(path string, data []byte) error {
 	}
 	closeErr := file.Close()
 	err = errors.Join(statErr, writeErr, closeErr)
-	if err != nil && statErr == nil {
-		if current, statErr := os.Stat(path); statErr == nil && os.SameFile(info, current) {
-			_ = os.Remove(path)
-		}
+	if err != nil {
+		return identity, err
 	}
-	return err
+	if !sameOwnedImportFile(path, identity, wantHash) {
+		return identity, fmt.Errorf("staged import %q failed byte verification", filepath.Base(path))
+	}
+	if _, err := repo.DB.Exec(`UPDATE import_batch_intent_files SET stage_complete = 1 WHERE batch_id = ? AND ordinal = ? AND file_identity = ?`, batchID, ordinal, identity); err != nil {
+		return identity, err
+	}
+	return identity, nil
 }
 
-func publishImportStage(repo *store.Repo, batchID string, ordinal int, anchorPath, targetPath, identity, hash string) error {
+func publishImportStage(repo *store.Repo, batchID string, ordinal int, anchorPath, targetPath, identity, hash string) (string, error) {
 	for {
 		if !sameOwnedImportFile(anchorPath, identity, hash) {
-			return fmt.Errorf("staged import %q changed before publication", filepath.Base(anchorPath))
+			return targetPath, fmt.Errorf("staged import %q changed before publication", filepath.Base(anchorPath))
 		}
 		if err := os.Link(anchorPath, targetPath); err == nil {
-			return nil
+			return targetPath, nil
 		} else if !os.IsExist(err) {
-			return fmt.Errorf("publish import %q: %w", filepath.Base(targetPath), err)
+			return targetPath, fmt.Errorf("publish import %q: %w", filepath.Base(targetPath), err)
 		}
-		targetPath, err := nextImportPath(repo.Path, filepath.Base(targetPath), nil)
+		nextTarget, err := nextImportPath(repo.Path, filepath.Base(targetPath), nil)
 		if err != nil {
-			return err
+			return targetPath, err
 		}
+		targetPath = nextTarget
 		if _, err := repo.DB.Exec(`UPDATE import_batch_intent_files SET target_path = ? WHERE batch_id = ? AND ordinal = ?`, targetPath, batchID, ordinal); err != nil {
-			return err
+			return targetPath, err
 		}
 		if _, err := os.Stat(anchorPath); err != nil {
-			return err
+			return targetPath, err
 		}
 		if got, err := hashImportFile(anchorPath); err != nil || got != hash {
-			return fmt.Errorf("staged import %q changed before publication", filepath.Base(anchorPath))
+			return targetPath, fmt.Errorf("staged import %q changed before publication", filepath.Base(anchorPath))
 		}
 	}
 }

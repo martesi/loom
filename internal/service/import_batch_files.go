@@ -13,6 +13,8 @@ import (
 	"loom/internal/store"
 )
 
+var errImportCleanupChanged = errors.New("retained import bytes changed; cleanup remains queued")
+
 func sameOwnedImportFile(path, identity, wantHash string) bool {
 	pathInfo, err := os.Stat(path)
 	if err != nil || !pathInfo.Mode().IsRegular() || store.FileIdentityAt(path, pathInfo) != identity {
@@ -56,17 +58,54 @@ func drainImportCleanup(repo *store.Repo) error {
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return err
 	}
+	var unresolved error
 	for _, entry := range queued {
 		if !pathInside(filepath.Join(repo.Path, ".loom", "import-anchors"), entry.path) {
 			return fmt.Errorf("invalid import cleanup path %q", entry.path)
 		}
 		if err := removePrivateImportFile(entry.path, entry.identity, entry.hash); err != nil {
+			if errors.Is(err, errImportCleanupChanged) {
+				unresolved = errors.Join(unresolved, fmt.Errorf("retry import cleanup %q: %w", entry.path, err))
+				continue
+			}
 			return fmt.Errorf("retry import cleanup %q: %w", entry.path, err)
 		}
 		if _, err := repo.DB.Exec(`DELETE FROM import_cleanup_queue WHERE anchor_path = ?`, entry.path); err != nil {
 			return err
 		}
 	}
+	return unresolved
+}
+
+func enqueueImportCleanup(repo *store.Repo, path, identity, hash string) error {
+	_, err := repo.DB.Exec(`INSERT OR IGNORE INTO import_cleanup_queue(anchor_path, file_identity, sha256) VALUES (?, ?, ?)`, path, identity, hash)
+	return err
+}
+
+func discardPendingImportStage(repo *store.Repo, path, identity string, complete bool, hash string) error {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || (identity != "" && store.FileIdentityAt(path, info) != identity) {
+		return enqueueImportCleanup(repo, path, identity, hash)
+	}
+	if complete {
+		got, err := hashImportFile(path)
+		if err != nil {
+			return err
+		}
+		if got != hash {
+			return enqueueImportCleanup(repo, path, identity, hash)
+		}
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	_ = os.Remove(filepath.Dir(path))
 	return nil
 }
 
@@ -107,17 +146,17 @@ func removePrivateImportFile(path, identity, wantHash string) error {
 		return err
 	}
 	if !info.Mode().IsRegular() {
-		return nil
+		return fmt.Errorf("%w at %q: not a regular file", errImportCleanupChanged, path)
 	}
 	if identity != "" && store.FileIdentityAt(path, info) != identity {
-		return nil
+		return fmt.Errorf("%w at %q: file identity differs", errImportCleanupChanged, path)
 	}
 	hash, err := hashImportFile(path)
 	if err != nil {
 		return err
 	}
 	if hash != wantHash {
-		return nil
+		return fmt.Errorf("%w at %q: checksum differs", errImportCleanupChanged, path)
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err

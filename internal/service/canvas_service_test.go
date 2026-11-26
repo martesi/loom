@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -281,6 +282,66 @@ func TestInterruptedImportPublicationIsReclaimedOnReopen(t *testing.T) {
 	var intents, images int
 	if err := repo.DB.QueryRow(`SELECT (SELECT COUNT(*) FROM import_batch_intents), (SELECT COUNT(*) FROM images)`).Scan(&intents, &images); err != nil || intents != 0 || images != 0 {
 		t.Fatalf("recovered publication state = intents %d, images %d, err=%v", intents, images, err)
+	}
+}
+
+func TestInterruptedImportStageWithoutRecordedIdentityIsReclaimed(t *testing.T) {
+	repoPath := t.TempDir()
+	batchID := "partial-stage"
+	anchorDir := filepath.Join(repoPath, ".loom", "import-anchors", batchID)
+	if err := os.MkdirAll(anchorDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	anchor := filepath.Join(anchorDir, "000")
+	partial := []byte("partial bytes")
+	if err := os.WriteFile(anchor, partial, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := fmt.Sprintf("%x", sha256.Sum256([]byte("complete staged bytes")))
+	if _, err := repo.DB.Exec(`INSERT INTO import_batch_intents(batch_id, action) VALUES (?, 'publish')`, batchID); err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	if _, err := repo.DB.Exec(`INSERT INTO import_batch_intent_files(batch_id, ordinal, target_path, anchor_path, sha256) VALUES (?, 0, ?, ?, ?)`, batchID, filepath.Join(repoPath, "partial.png"), anchor, hash); err != nil {
+		repo.Close()
+		t.Fatal(err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatal(err)
+	}
+	canvas, err := (&ImageService{}).LoadCanvas(repoPath)
+	if err != nil {
+		t.Fatalf("incomplete private stage blocked repository open: %v", err)
+	}
+	if len(canvas.Images) != 0 {
+		t.Fatalf("partial stage became visible: %+v", canvas.Images)
+	}
+	if _, err := os.Stat(anchor); !os.IsNotExist(err) {
+		t.Fatalf("incomplete stage was not reclaimed: %v", err)
+	}
+}
+
+func TestImportPublicationPreservesUmaskFiltered0644Mode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not expose POSIX creation modes")
+	}
+	path := t.TempDir()
+	if _, err := (&ImageService{}).ImportMedia(path, []ClipboardMedia{{
+		Name: "mode.png", Data: base64.StdEncoding.EncodeToString([]byte("mode")),
+	}}, false, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(path, "mode.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := os.FileMode(0o644 &^ currentProcessUmask())
+	if got := info.Mode().Perm(); got != want {
+		t.Fatalf("published file mode = %04o, want 0644 filtered by umask = %04o", got, want)
 	}
 }
 

@@ -334,7 +334,7 @@ func purgeImages(r *store.Repo, ids []int64) error {
 
 func removePurgeTarget(repo *store.Repo, image store.Image) error {
 	var identity, hash string
-	err := repo.DB.QueryRow(`SELECT file_identity, sha256 FROM import_file_ownership WHERE image_id = ?`, image.ID).Scan(&identity, &hash)
+	err := repo.DB.QueryRow(`SELECT active_file_identity, active_sha256 FROM import_file_ownership WHERE image_id = ?`, image.ID).Scan(&identity, &hash)
 	if err == sql.ErrNoRows {
 		if err := os.Remove(image.FilePath); err != nil && !os.IsNotExist(err) {
 			return err

@@ -276,7 +276,7 @@ func (r *Repo) importPathPending(path string) (bool, error) {
 	err := r.DB.QueryRow(`SELECT EXISTS(
 		SELECT 1 FROM import_batch_intent_files f
 		JOIN import_batch_intents i ON i.batch_id = f.batch_id
-		WHERE i.action = 'publish' AND f.target_path = ?
+		WHERE f.target_path = ?
 	)`, path).Scan(&pending)
 	return pending, err
 }
@@ -796,17 +796,32 @@ func (r *Repo) SwapRepresentation(imageID int64, outgoingStash, incomingPath, ac
 		return fmt.Errorf("activate replacement representation: %w", err)
 	}
 
-	info, err := os.Stat(activePath)
+	fingerprint, info, err := fingerprintFile(context.Background(), activePath)
 	if err != nil {
 		_ = moveFileOnDisk(activePath, incomingPath)
 		_ = moveFileOnDisk(outgoingStash, currentPath)
 		return err
 	}
-	if _, err := r.DB.Exec(`
+	identity := FileIdentityAt(activePath, info)
+	tx, err := r.DB.Begin()
+	if err != nil {
+		_ = moveFileOnDisk(activePath, incomingPath)
+		_ = moveFileOnDisk(outgoingStash, currentPath)
+		return err
+	}
+	_, err = tx.Exec(`
 		UPDATE images
 		SET file_path = ?, file_size = ?, thumb_path = NULL, width = NULL, height = NULL,
 		    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-		WHERE id = ?`, activePath, info.Size(), imageID); err != nil {
+		WHERE id = ?`, activePath, info.Size(), imageID)
+	if err == nil {
+		_, err = tx.Exec(`UPDATE import_file_ownership SET active_file_identity = ?, active_sha256 = ? WHERE image_id = ?`, identity, fingerprint, imageID)
+	}
+	if err == nil {
+		err = tx.Commit()
+	}
+	if err != nil {
+		_ = tx.Rollback()
 		rollbackIncoming := moveFileOnDisk(activePath, incomingPath)
 		rollbackCurrent := moveFileOnDisk(outgoingStash, currentPath)
 		if rollbackIncoming != nil || rollbackCurrent != nil {

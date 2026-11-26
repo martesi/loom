@@ -1,6 +1,10 @@
 package service
 
-import "loom/internal/store"
+import (
+	"errors"
+
+	"loom/internal/store"
+)
 
 // openOperationRepo establishes the per-repository coordinator before opening
 // the database. Every undo-aware mutation keeps this lock until its state
@@ -22,7 +26,7 @@ func openOperationRepo(repoPath string) (*store.Repo, func(), error) {
 		unlock()
 		return nil, nil, err
 	}
-	if err := drainImportCleanup(repo); err != nil {
+	if err := drainImportCleanup(repo); err != nil && !errors.Is(err, errImportCleanupChanged) {
 		_ = repo.Close()
 		unlock()
 		return nil, nil, err
