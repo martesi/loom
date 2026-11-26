@@ -14,6 +14,7 @@ import {
   createCanvasSelectionIntentRef,
 } from './canvas-selection-intent'
 import {
+  type CanvasTrashOutcome,
   captureCanvasTrashCompletion,
   collectCanvasTrashFailures,
   countCanvasTrashUnknownOutcomes,
@@ -349,13 +350,18 @@ export function useCanvasAssetOperations({
     const intent = captureIntent('lifecycle')
     lifecyclePendingRef.current = true
     setLifecyclePending(true)
+    let childOutcomes: readonly CanvasTrashOutcome[] = []
     const completion = await captureCanvasTrashCompletion(
       owner.executeIntent(
         intent.operation,
         () => isCurrentIntent(intent),
-        () => executeCanvasTrashBatch(repoPath, ids),
+        () =>
+          executeCanvasTrashBatch(repoPath, ids, undefined, (outcomes) => {
+            childOutcomes = outcomes
+          }),
         true
-      )
+      ),
+      () => childOutcomes
     )
     lifecyclePendingRef.current = false
     setLifecyclePending(false)

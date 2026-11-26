@@ -31,7 +31,8 @@ export type CanvasTrashCompletion =
     }
 
 export function captureCanvasTrashCompletion(
-  execution: Promise<CanvasIntentResult<CanvasTrashOutcome[]>>
+  execution: Promise<CanvasIntentResult<CanvasTrashOutcome[]>>,
+  getOutcomes: () => readonly CanvasTrashOutcome[] = () => []
 ): Promise<CanvasTrashCompletion> {
   return execution.then(
     (result) => ({
@@ -42,7 +43,8 @@ export function captureCanvasTrashCompletion(
     (error: unknown) => ({
       status: 'failed',
       error,
-      outcomes: error instanceof CanvasTrashBatchError ? error.outcomes : [],
+      outcomes:
+        error instanceof CanvasTrashBatchError ? error.outcomes : getOutcomes(),
     })
   )
 }
@@ -53,7 +55,8 @@ export async function executeCanvasTrashBatch(
   trashImage: (
     path: string,
     id: number
-  ) => Promise<void> = ImageService.TrashImage
+  ) => Promise<void> = ImageService.TrashImage,
+  onOutcomes?: (outcomes: readonly CanvasTrashOutcome[]) => void
 ) {
   const results = await Promise.allSettled(
     ids.map((id) => Promise.resolve().then(() => trashImage(repoPath, id)))
@@ -64,6 +67,7 @@ export async function executeCanvasTrashBatch(
         ? { id: ids[index], status: 'fulfilled' }
         : { id: ids[index], status: 'rejected', error: result.reason }
   )
+  onOutcomes?.(outcomes)
   reportCanvasTrashFailures(outcomes)
   if (outcomes.some(isUnknownTrashFailure))
     throw new CanvasTrashBatchError(outcomes)

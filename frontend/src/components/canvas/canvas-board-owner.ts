@@ -458,11 +458,23 @@ export function createCanvasBoardOwner(
             error,
           })
           if (active) {
+            const rejectedFence = lane.fence
             try {
               const reconciled = await owner.refresh()
-              if (reconciled) {
-                if (!lane.fence.uncertain) intent.phase = 'reconciled'
-                if (!lane.fence.uncertain) {
+              if (
+                reconciled &&
+                lane.fence === null &&
+                !lane.needsReconciliation
+              ) {
+                if (!rejectedFence?.uncertain) intent.phase = 'reconciled'
+              } else if (
+                reconciled &&
+                lane.fence === rejectedFence &&
+                rejectedFence &&
+                !rejectedFence.uncertain
+              ) {
+                intent.phase = 'reconciled'
+                if (lane.fence === rejectedFence) {
                   lane.needsReconciliation = false
                   lane.fence = null
                 }

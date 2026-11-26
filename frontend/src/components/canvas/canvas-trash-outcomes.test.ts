@@ -1,4 +1,5 @@
 import { afterEach, expect, it, mock, spyOn } from 'bun:test'
+import { ImageService } from '../../../bindings/loom/internal/service'
 import {
   CanvasWriteRejectedError,
   createCanvasBoardOwner,
@@ -117,6 +118,163 @@ it('reconciles success plus a confirmed child rejection without an unknown fence
   expect(owner.getMutationFence()).toBeNull()
   expect(intent.phase).toBe('reconciled')
   expect(refresh).toHaveBeenCalledTimes(1)
+  owner.dispose()
+})
+
+it('retains mixed child outcomes when the follow-up refresh fails', async () => {
+  const owner = createCanvasBoardOwner('/trash-refresh-fails-mixed')
+  owner.setMode('edit')
+  const refreshError = new Error('refresh unavailable')
+  spyOn(owner, 'refresh').mockRejectedValue(refreshError)
+  const knownFailure = new CanvasWriteRejectedError('not applied')
+  const logged = spyOn(console, 'error').mockImplementation(() => {})
+  const intent = owner.captureIntent('lifecycle', 0)
+  let outcomes: readonly import('./canvas-trash-outcomes').CanvasTrashOutcome[] =
+    []
+  const completion = await captureCanvasTrashCompletion(
+    owner.executeIntent(
+      intent,
+      () => true,
+      () =>
+        executeCanvasTrashBatch(
+          '/trash-refresh-fails-mixed',
+          [41, 42],
+          (_path, id) =>
+            id === 42 ? Promise.reject(knownFailure) : Promise.resolve(),
+          (current) => {
+            outcomes = current
+          }
+        ),
+      true
+    ),
+    () => outcomes
+  )
+
+  expect(completion).toMatchObject({ status: 'failed', error: refreshError })
+  expect(completion.outcomes).toEqual([
+    { id: 41, status: 'fulfilled' },
+    { id: 42, status: 'rejected', error: knownFailure },
+  ])
+  expect(owner.getMutationFence()).toMatchObject({ effect: 'succeeded-dirty' })
+  expect(intent.phase).toBe('settled')
+  expect(logged).toHaveBeenCalled()
+  owner.dispose()
+})
+
+it('retains all-success child outcomes when the follow-up refresh fails', async () => {
+  const owner = createCanvasBoardOwner('/trash-refresh-fails-success')
+  owner.setMode('edit')
+  const refreshError = new Error('refresh unavailable')
+  spyOn(owner, 'refresh').mockRejectedValue(refreshError)
+  const intent = owner.captureIntent('lifecycle', 0)
+  let outcomes: readonly import('./canvas-trash-outcomes').CanvasTrashOutcome[] =
+    []
+  const completion = await captureCanvasTrashCompletion(
+    owner.executeIntent(
+      intent,
+      () => true,
+      () =>
+        executeCanvasTrashBatch(
+          '/trash-refresh-fails-success',
+          [51, 52],
+          () => Promise.resolve(),
+          (current) => {
+            outcomes = current
+          }
+        ),
+      true
+    ),
+    () => outcomes
+  )
+
+  expect(completion).toMatchObject({ status: 'failed', error: refreshError })
+  expect(completion.outcomes).toEqual([
+    { id: 51, status: 'fulfilled' },
+    { id: 52, status: 'fulfilled' },
+  ])
+  expect(owner.getMutationFence()).toMatchObject({ effect: 'succeeded-dirty' })
+  owner.dispose()
+})
+
+it('retains outcomes across owner replacement when reconciliation rejects', async () => {
+  const lane = createCanvasRepositoryQueue()
+  const owner = createCanvasBoardOwner('/trash-owner-replaced-refresh', lane)
+  owner.setMode('edit')
+  const replacement = createCanvasBoardOwner(
+    '/trash-owner-replaced-refresh',
+    lane
+  )
+  const refreshError = new Error('replacement refresh unavailable')
+  spyOn(replacement, 'refresh').mockRejectedValue(refreshError)
+  const intent = owner.captureIntent('lifecycle', 0)
+  const childStarted = deferred<void>()
+  const childGate = deferred<void>()
+  let outcomes: readonly import('./canvas-trash-outcomes').CanvasTrashOutcome[] =
+    []
+  const completion = captureCanvasTrashCompletion(
+    owner.executeIntent(
+      intent,
+      () => true,
+      () =>
+        executeCanvasTrashBatch(
+          '/trash-owner-replaced-refresh',
+          [61, 62],
+          () => {
+            childStarted.resolve()
+            return childGate.promise
+          },
+          (current) => {
+            outcomes = current
+          }
+        ),
+      true
+    ),
+    () => outcomes
+  )
+  await childStarted.promise
+  owner.dispose()
+  childGate.resolve()
+  const settled = await completion
+
+  expect(settled).toMatchObject({ status: 'failed', error: refreshError })
+  expect(settled.outcomes).toEqual([
+    { id: 61, status: 'fulfilled' },
+    { id: 62, status: 'fulfilled' },
+  ])
+  expect(replacement.getMutationFence()).toMatchObject({
+    effect: 'succeeded-dirty',
+    uncertain: false,
+  })
+  replacement.dispose()
+})
+
+it('reconciles a confirmed rejection through the real owner refresh path', async () => {
+  spyOn(ImageService, 'LoadCanvas').mockResolvedValue({
+    images: [],
+    relationships: [],
+    groups: [],
+  } as never)
+  spyOn(ImageService, 'GetLayoutSnapshot').mockResolvedValue({
+    revision: 'refresh-after-rejection',
+    images: [],
+    relationships: [],
+  } as never)
+  const owner = createCanvasBoardOwner('/trash-real-refresh')
+  owner.setMode('edit')
+  const intent = owner.captureIntent('lifecycle', 0)
+  const rejection = new CanvasWriteRejectedError('confirmed no effect')
+  const completion = await captureCanvasTrashCompletion(
+    owner.executeIntent(
+      intent,
+      () => true,
+      () => Promise.reject(rejection),
+      true
+    )
+  )
+
+  expect(completion).toMatchObject({ status: 'failed', error: rejection })
+  expect(owner.getMutationFence()).toBeNull()
+  expect(intent.phase).toBe('reconciled')
   owner.dispose()
 })
 

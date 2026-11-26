@@ -213,6 +213,52 @@ test('canvas context menus and auto-arrange preserve the canvas origin', async (
   await expect(assets(page)).toHaveCount(2)
 })
 
+test('Auto-arrange Canvas stages orphans at the viewport center', async ({
+  page,
+}) => {
+  await open(page, 'canvas-menu-actions-fixtures')
+  await page.getByTestId('canvas-mode-edit').click()
+  await drop(page, 'context-alpha.png', 280, 240)
+  await drop(page, 'context-beta.png', 520, 420)
+  await page.keyboard.press('ControlOrMeta+0')
+  const nodes = canvasNodes(page)
+  await expect(nodes).toHaveCount(2)
+  await page
+    .locator('.react-flow__pane')
+    .click({ position: { x: 850, y: 100 } })
+  await page.getByTestId('dock-auto-arrange').click()
+
+  const expected = await page
+    .locator('.react-flow__viewport')
+    .evaluate((element) => {
+      const pane = element.closest('.react-flow')
+      if (!pane) throw new Error('missing flow pane')
+      const { width, height } = pane.getBoundingClientRect()
+      const transform = getComputedStyle(element).transform
+      const matrix = new DOMMatrixReadOnly(transform)
+      return {
+        x: (width / 2 - matrix.m41) / matrix.a,
+        y: (height / 2 - matrix.m42) / matrix.d,
+      }
+    })
+  const arranged = [
+    await nodePosition(nodes.nth(0)),
+    await nodePosition(nodes.nth(1)),
+  ]
+  const center = {
+    x:
+      (Math.min(...arranged.map((node) => node.x)) +
+        Math.max(...arranged.map((node) => node.x + 150))) /
+      2,
+    y:
+      (Math.min(...arranged.map((node) => node.y)) +
+        Math.max(...arranged.map((node) => node.y + 110))) /
+      2,
+  }
+  expect(center.x).toBeCloseTo(expected.x, 0)
+  expect(center.y).toBeCloseTo(expected.y, 0)
+})
+
 test('explicit relationship gesture, navigation, and individual selection', async ({
   page,
 }) => {
