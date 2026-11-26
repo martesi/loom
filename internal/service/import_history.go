@@ -46,7 +46,11 @@ func writeExclusiveModeUsing(path string, data []byte, mode os.FileMode, open fu
 	}
 	info, statErr := file.Stat()
 	if statErr != nil {
+		retryInfo, retryErr := file.Stat()
 		_ = file.Close()
+		if retryErr == nil {
+			removeOwnedFilePrefix(path, retryInfo, data)
+		}
 		return nil, statErr
 	}
 	_, writeErr := file.Write(data)

@@ -20,19 +20,21 @@ type failingExclusiveFile struct {
 	writeSize int
 	writeErr  error
 	onStat    func()
+	statCalls int
 }
 
-func (f failingExclusiveFile) Stat() (os.FileInfo, error) {
-	if f.onStat != nil {
+func (f *failingExclusiveFile) Stat() (os.FileInfo, error) {
+	f.statCalls++
+	if f.statCalls == 1 && f.onStat != nil {
 		f.onStat()
 	}
-	if f.statErr != nil {
+	if f.statErr != nil && f.statCalls == 1 {
 		return nil, f.statErr
 	}
 	return f.file.Stat()
 }
 
-func (f failingExclusiveFile) Write(data []byte) (int, error) {
+func (f *failingExclusiveFile) Write(data []byte) (int, error) {
 	if f.writeSize >= 0 && f.writeSize < len(data) {
 		n, err := f.file.Write(data[:f.writeSize])
 		if err != nil {
@@ -43,7 +45,7 @@ func (f failingExclusiveFile) Write(data []byte) (int, error) {
 	return f.file.Write(data)
 }
 
-func (f failingExclusiveFile) Close() error { return f.file.Close() }
+func (f *failingExclusiveFile) Close() error { return f.file.Close() }
 
 func TestWriteExclusiveModeCleansPartialWritesAndStatFailures(t *testing.T) {
 	for _, tc := range []struct {
@@ -53,6 +55,7 @@ func TestWriteExclusiveModeCleansPartialWritesAndStatFailures(t *testing.T) {
 		replace   bool
 	}{
 		{name: "partial write", writeSize: 3},
+		{name: "stat failure original file", statErr: errors.New("stat failed"), writeSize: 0},
 		{name: "stat failure replacement", statErr: errors.New("stat failed"), writeSize: 0, replace: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -63,7 +66,7 @@ func TestWriteExclusiveModeCleansPartialWritesAndStatFailures(t *testing.T) {
 				if err != nil {
 					return nil, err
 				}
-				return failingExclusiveFile{
+				return &failingExclusiveFile{
 					file: file, statErr: tc.statErr, writeSize: tc.writeSize, writeErr: errors.New("short write"),
 					onStat: func() {
 						if tc.replace {
@@ -470,48 +473,16 @@ func TestActiveFileCleanupFailureDoesNotRediscoverDiscardedImport(t *testing.T) 
 	if _, err := (&UndoService{}).Undo(repoPath); err != nil {
 		t.Fatal(err)
 	}
+	mutation := &ImageService{removeDiscardedImportFile: func(string) error {
+		return errors.New("simulated remove failure")
+	}}
+	if err := mutation.LinkSource(repoPath, seedIDs[0], seedIDs[1]); err != nil {
+		t.Fatalf("public graph mutation failed after best-effort cleanup failure: %v", err)
+	}
 	repo, err = store.Bootstrap(repoPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.PrepareOperationLog(); err != nil {
-		t.Fatal(err)
-	}
-	tx, err := repo.DB.Begin()
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := tx.Exec(`INSERT INTO relationships (source_image_id, derived_image_id) VALUES (?, ?)`, seedIDs[0], seedIDs[1])
-	if err != nil {
-		t.Fatal(err)
-	}
-	relationshipID, err := result.LastInsertId()
-	if err != nil {
-		t.Fatal(err)
-	}
-	relationship, err := relationshipTx(tx, relationshipID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	payload := graphPayload{Relationships: []store.Relationship{relationship}}
-	forward, err := json.Marshal(step(stepGraphInsert, payload))
-	if err != nil {
-		t.Fatal(err)
-	}
-	inverse, err := json.Marshal(step(stepGraphDelete, payload))
-	if err != nil {
-		t.Fatal(err)
-	}
-	discarded, err := recordOperationInTx(repo, tx, stepGraphInsert, string(forward), string(inverse))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := tx.Commit(); err != nil {
-		t.Fatal(err)
-	}
-	cleanupDiscardedImportRedoBestEffortWith(repo, discarded, "test active-file cleanup failure", func(string) error {
-		return errors.New("simulated remove failure")
-	})
 	if _, err := repo.ScanAndRegisterImages(context.Background()); err != nil {
 		t.Fatalf("explicit scan after cleanup failure: %v", err)
 	}

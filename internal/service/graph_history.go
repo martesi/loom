@@ -125,7 +125,7 @@ func (s *ImageService) createRelationship(path string, source, derived int64) er
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	cleanupDiscardedImportRedoBestEffort(repo, discarded, "record graph mutation")
+	s.cleanupDiscardedImportRedo(repo, discarded, "record graph mutation")
 	return nil
 }
 

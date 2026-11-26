@@ -115,6 +115,14 @@ func cleanupDiscardedImportRedoBestEffort(repo *store.Repo, discarded discardedI
 	cleanupDiscardedImportRedoBestEffortWith(repo, discarded, operation, os.Remove)
 }
 
+func (s *ImageService) cleanupDiscardedImportRedo(repo *store.Repo, discarded discardedImportRedo, operation string) {
+	if s.removeDiscardedImportFile == nil {
+		cleanupDiscardedImportRedoBestEffort(repo, discarded, operation)
+		return
+	}
+	cleanupDiscardedImportRedoBestEffortWith(repo, discarded, operation, s.removeDiscardedImportFile)
+}
+
 func cleanupDiscardedImportRedoBestEffortWith(repo *store.Repo, discarded discardedImportRedo, operation string, remove func(string) error) {
 	for _, file := range discarded.active {
 		before, err := os.Stat(file.path)
