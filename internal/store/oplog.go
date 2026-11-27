@@ -98,6 +98,9 @@ func (r *Repo) RecordOperationInTx(tx *sql.Tx, kind, forward, inverse string) er
 		return err
 	}
 	capUndoSessionBoundaryValue(r.Path, cursor)
+	if err := r.retireImportRedoTailTx(tx, cursor); err != nil {
+		return err
+	}
 	// A new branch discards any archived redo tail before reusing its seqs.
 	if _, err := tx.Exec(`UPDATE settings SET value = ? WHERE scope = 'repo' AND key = 'undo_history_floor' AND CAST(value AS INTEGER) > ?`, strconv.FormatInt(cursor, 10), cursor); err != nil {
 		return err

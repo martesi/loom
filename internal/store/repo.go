@@ -48,7 +48,7 @@ func (r *Repo) Name() string {
 
 func (r *Repo) ImageCount() (int, error) {
 	var count int
-	err := r.DB.QueryRow(`SELECT COUNT(*) FROM images WHERE trashed = 0`).Scan(&count)
+	err := r.DB.QueryRow(`SELECT COUNT(*) FROM images WHERE trashed = 0 AND import_undone = 0`).Scan(&count)
 	return count, err
 }
 

@@ -544,10 +544,10 @@ func (s *ImageService) linkSourceToGroup(repoPath string, sourceID, groupID int6
 	var newLinks []store.Relationship
 	for _, derivedID := range memberIDs {
 		var sourceExists, targetExists int
-		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images WHERE id = ? AND trashed = 0)`, sourceID).Scan(&sourceExists); err != nil {
+		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images WHERE id = ? AND trashed = 0 AND import_undone = 0)`, sourceID).Scan(&sourceExists); err != nil {
 			return fmt.Errorf("check relationship source: %w", err)
 		}
-		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images WHERE id = ? AND trashed = 0)`, derivedID).Scan(&targetExists); err != nil {
+		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM images WHERE id = ? AND trashed = 0 AND import_undone = 0)`, derivedID).Scan(&targetExists); err != nil {
 			return fmt.Errorf("check group member: %w", err)
 		}
 		if sourceExists == 0 || targetExists == 0 {
@@ -712,10 +712,11 @@ type DirListing struct {
 // discovery), so every returned file always has a real row — drag-and-drop
 // from Explorer never needs to special-case "not yet imported".
 func (s *ImageService) ListDirectory(repoPath, relPath string) (*DirListing, error) {
-	repo, err := store.Bootstrap(repoPath)
+	repo, unlock, err := openOperationRepo(repoPath)
 	if err != nil {
 		return nil, err
 	}
+	defer unlock()
 	defer repo.Close()
 
 	listing, err := repo.ListDirectory(relPath)
