@@ -51,7 +51,7 @@ func importNativePaths(repoPath string, paths []string, mode string, place bool,
 		media = append(media, ClipboardMedia{Name: filepath.Base(path), Data: base64.StdEncoding.EncodeToString(data)})
 		sources = append(sources, nativeImportSource{path, identity})
 	}
-	return importPreparedBatch(repoPath, media, sources, mode, place, x, y, os.Link)
+	return importPreparedBatch(repoPath, media, sources, mode, place, x, y, os.Symlink, os.Link)
 }
 
 func readNativeImportSource(path string, limit int) ([]byte, string, error) {

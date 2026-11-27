@@ -20,8 +20,8 @@ func sameOwnedImportFile(path, identity, wantHash string) bool {
 	if err != nil || identity == "" || store.FileIdentityAt(path, pathInfo) != identity {
 		return false
 	}
-	hash, err := importEntryDigest(path, pathInfo)
-	return err == nil && hash == wantHash
+	matches, err := matchesImportEntryDigest(path, pathInfo, wantHash)
+	return err == nil && matches
 }
 
 func linkImportAnchor(anchor, target, identity, hash string) error {
@@ -105,11 +105,11 @@ func discardPendingImportStage(repo *store.Repo, path, identity string, complete
 		return enqueueImportCleanup(repo, path, identity, hash)
 	}
 	if complete {
-		got, err := importEntryDigest(path, info)
+		matches, err := matchesImportEntryDigest(path, info, hash)
 		if err != nil {
 			return err
 		}
-		if got != hash {
+		if !matches {
 			return enqueueImportCleanup(repo, path, identity, hash)
 		}
 	}
@@ -163,12 +163,12 @@ func removePrivateImportFile(path, identity, wantHash string) error {
 	if identity != "" && store.FileIdentityAt(path, info) != identity {
 		return fmt.Errorf("%w at %q: file identity differs", errImportCleanupChanged, path)
 	}
-	hash, err := importEntryDigest(path, info)
+	matches, err := matchesImportEntryDigest(path, info, wantHash)
 	if err != nil {
 		return err
 	}
-	if hash != wantHash {
-		return fmt.Errorf("%w at %q: checksum differs", errImportCleanupChanged, path)
+	if !matches {
+		return fmt.Errorf("%w at %q: ownership proof no longer matches", errImportCleanupChanged, path)
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err

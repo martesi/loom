@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"loom/internal/store"
 )
@@ -32,7 +33,7 @@ func renameOwnedImportEntry(source, target, identity, digest string) error {
 	if !sameOwnedImportFile(source, identity, digest) {
 		return fmt.Errorf("import entry %q changed; left untouched", filepath.Base(source))
 	}
-	return renameImportEntry(source, target)
+	return store.RenameNoReplace(source, target)
 }
 
 func removeOwnedImportEntry(path, identity, digest string) error {
@@ -101,20 +102,72 @@ func prepareNativeSource(root, source string, move bool) (string, error) {
 	return resolved, nil
 }
 
+var errImportMoveRecoveryDeferred = errors.New("import Move recovery is deferred")
+
 func recoverRenamedPublication(root, target, identity, digest string, transfer importTransfer) error {
 	if transfer.Kind == transferRename {
 		return removeOwnedImportEntry(target, identity, digest)
 	}
-	if transfer.Kind != transferMove || !validMoveOriginal(root, transfer.Original) {
-		return fmt.Errorf("invalid original path for pending import move")
+	if transfer.Kind != transferMove {
+		return fmt.Errorf("invalid transfer for pending import Move")
 	}
-	if !sameOwnedImportFile(target, identity, digest) {
+	// If the proof was never recorded, publication could not have started.
+	if identity == "" {
 		return nil
 	}
-	if err := renameOwnedImportEntry(target, transfer.Original, identity, digest); err != nil {
-		return fmt.Errorf("restore original import path without overwriting; bytes retained at %q: %w", target, err)
+	original := transfer.Original
+	if !validMoveOriginal(root, original) {
+		return fmt.Errorf("%w: original path is not accessible; check the retained entry at %q", errImportMoveRecoveryDeferred, target)
+	}
+	if sameOwnedImportFile(original, identity, digest) {
+		return nil // The original entry still occupies its source path.
+	}
+	if !sameOwnedImportFile(target, identity, digest) {
+		return fmt.Errorf("%w: cannot prove the published entry at %q; both paths were left untouched", errImportMoveRecoveryDeferred, target)
+	}
+	if err := renameOwnedImportEntry(target, original, identity, digest); err != nil {
+		return fmt.Errorf("%w: cannot restore without overwriting; bytes retained at %q: %w", errImportMoveRecoveryDeferred, target, err)
 	}
 	return nil
+}
+
+func deferredImportMoveTargets(repo *store.Repo) (map[string]struct{}, error) {
+	rows, err := repo.DB.Query(`SELECT f.target_path FROM import_batch_intent_files f
+		JOIN import_batch_intents i ON i.batch_id = f.batch_id
+		WHERE i.action = 'publish' AND f.transfer_kind = ?`, transferMove)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	paths := make(map[string]struct{})
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, err
+		}
+		paths[path] = struct{}{}
+	}
+	return paths, rows.Err()
+}
+
+func matchesImportEntryDigest(path string, info os.FileInfo, expected string) (bool, error) {
+	if original, linked := strings.CutPrefix(expected, "hardlink:"); linked {
+		// An extant source alias demonstrates this is still the linked
+		// inode, even when both names see externally modified bytes.
+		if !filepath.IsAbs(original) || !info.Mode().IsRegular() {
+			return false, nil
+		}
+		originInfo, err := os.Lstat(original)
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		return originInfo.Mode().IsRegular() && os.SameFile(info, originInfo), nil
+	}
+	got, err := importEntryDigest(path, info)
+	return err == nil && got == expected, err
 }
 
 func recoverRenamedReplay(root, source, target, anchor, identity, digest, action string, transfer importTransfer) error {

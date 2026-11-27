@@ -97,10 +97,10 @@ func writeImportStage(repo *store.Repo, batchID string, ordinal int, path string
 
 func publishImportStage(repo *store.Repo, batchID string, ordinal int, anchorPath, targetPath, identity, hash string) (string, error) {
 	var transfer importTransfer
-	return publishPreparedStage(repo, batchID, ordinal, anchorPath, targetPath, identity, hash, &transfer, os.Link)
+	return publishPreparedStage(repo, batchID, ordinal, anchorPath, targetPath, identity, hash, &transfer, nil, os.Link)
 }
 
-func publishPreparedStage(repo *store.Repo, batchID string, ordinal int, source, target, identity, hash string, transfer *importTransfer, hardlink func(string, string) error) (string, error) {
+func publishPreparedStage(repo *store.Repo, batchID string, ordinal int, source, target, identity, hash string, transfer *importTransfer, reserved map[string]struct{}, hardlink func(string, string) error) (string, error) {
 	for {
 		if !sameOwnedImportFile(source, identity, hash) {
 			return target, fmt.Errorf("staged import %q changed before publication", filepath.Base(source))
@@ -124,7 +124,7 @@ func publishPreparedStage(repo *store.Repo, batchID string, ordinal int, source,
 		if !os.IsExist(err) {
 			return target, fmt.Errorf("publish import %q: %w", filepath.Base(target), err)
 		}
-		target, err = nextImportPath(repo.Path, filepath.Base(target), nil)
+		target, err = nextImportPath(repo.Path, filepath.Base(target), reserved)
 		if err != nil {
 			return target, err
 		}
@@ -134,11 +134,11 @@ func publishPreparedStage(repo *store.Repo, batchID string, ordinal int, source,
 	}
 }
 
-func createImportLinkStage(repo *store.Repo, batchID string, ordinal int, source nativeImportSource, anchor, sourceHash string) (string, string, error) {
+func createImportLinkStage(repo *store.Repo, batchID string, ordinal int, source nativeImportSource, anchor, sourceHash string, symlink, hardlink func(string, string) error) (string, string, error) {
 	if !sameOwnedImportFile(source.path, source.identity, sourceHash) {
 		return "", "", fmt.Errorf("link source changed; left untouched")
 	}
-	if err := stageSourceLink(source.path, anchor, os.Symlink, os.Link); err != nil {
+	if err := stageSourceLink(source.path, anchor, symlink, hardlink); err != nil {
 		return "", "", err
 	}
 	info, err := os.Lstat(anchor)
@@ -153,8 +153,11 @@ func createImportLinkStage(repo *store.Repo, batchID string, ordinal int, source
 	if err != nil {
 		return "", "", err
 	}
-	if info.Mode().IsRegular() && (identity != source.identity || digest != sourceHash) {
-		return "", "", fmt.Errorf("hard link source changed during import")
+	if info.Mode().IsRegular() {
+		if identity != source.identity || digest != sourceHash {
+			return "", "", fmt.Errorf("hard link source changed during import")
+		}
+		digest = "hardlink:" + source.path
 	}
 	return identity, digest, markImportStageComplete(repo, batchID, ordinal, identity, digest)
 }

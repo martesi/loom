@@ -29,10 +29,10 @@ type importBatchPayload struct {
 }
 
 func (s *ImageService) importMediaBatch(repoPath string, media []ClipboardMedia, place bool, x, y float64) ([]int64, error) {
-	return importPreparedBatch(repoPath, media, nil, importCopy, place, x, y, os.Link)
+	return importPreparedBatch(repoPath, media, nil, importCopy, place, x, y, os.Symlink, os.Link)
 }
 
-func importPreparedBatch(repoPath string, media []ClipboardMedia, sources []nativeImportSource, mode string, place bool, x, y float64, hardlink func(string, string) error) ([]int64, error) {
+func importPreparedBatch(repoPath string, media []ClipboardMedia, sources []nativeImportSource, mode string, place bool, x, y float64, symlink, hardlink func(string, string) error) ([]int64, error) {
 	if err := validateClipboardMedia(media); err != nil {
 		return nil, err
 	}
@@ -57,7 +57,10 @@ func importPreparedBatch(repoPath string, media []ClipboardMedia, sources []nati
 	anchors := make([]string, len(media))
 	checksums := make([]string, len(media))
 	identities := make([]string, len(media))
-	reserved := make(map[string]struct{}, len(media))
+	reserved, err := deferredImportMoveTargets(repo)
+	if err != nil {
+		return nil, err
+	}
 	for i, item := range media {
 		items[i] = item
 		data, err := base64.StdEncoding.Strict().DecodeString(item.Data)
@@ -106,7 +109,7 @@ func importPreparedBatch(repoPath string, media []ClipboardMedia, sources []nati
 			if err := setImportTransfer(repo, batchID, i, transfers[i]); err != nil {
 				return nil, errors.Join(err, recoverImportIntents(repo))
 			}
-			identities[i], checksums[i], err = createImportLinkStage(repo, batchID, i, sources[i], anchors[i], checksums[i])
+			identities[i], checksums[i], err = createImportLinkStage(repo, batchID, i, sources[i], anchors[i], checksums[i], symlink, hardlink)
 		default:
 			publicationSource = anchors[i]
 			data, _ := base64.StdEncoding.Strict().DecodeString(item.Data)
@@ -115,7 +118,7 @@ func importPreparedBatch(repoPath string, media []ClipboardMedia, sources []nati
 		if err != nil {
 			return nil, errors.Join(err, recoverImportIntents(repo))
 		}
-		targets[i], err = publishPreparedStage(repo, batchID, i, publicationSource, targets[i], identities[i], checksums[i], &transfers[i], hardlink)
+		targets[i], err = publishPreparedStage(repo, batchID, i, publicationSource, targets[i], identities[i], checksums[i], &transfers[i], reserved, hardlink)
 		if err != nil {
 			return nil, errors.Join(err, recoverImportIntents(repo))
 		}
@@ -207,10 +210,15 @@ func recoverImportIntents(repo *store.Repo) error {
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return err
 	}
+	var deferred error
 	for _, intent := range intents {
 		switch intent.action {
 		case "publish":
 			if err := recoverPendingImportPublication(repo, intent.id); err != nil {
+				if errors.Is(err, errImportMoveRecoveryDeferred) {
+					deferred = errors.Join(deferred, err)
+					continue
+				}
 				return err
 			}
 		case "undo", "redo":
@@ -221,7 +229,7 @@ func recoverImportIntents(repo *store.Repo) error {
 			return fmt.Errorf("unsupported pending import action %q", intent.action)
 		}
 	}
-	return nil
+	return deferred
 }
 
 func replayImportBatchHistory(repo *store.Repo, redo bool) (bool, *store.Operation, error) {
@@ -457,12 +465,17 @@ func recoverPendingImportPublication(repo *store.Repo, batchID string) error {
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return err
 	}
+	var deferred error
 	for _, file := range files {
 		if !pathInside(filepath.Join(repo.Path, ".loom", "import-anchors"), file.anchor) || !pathInside(repo.Path, file.target) {
 			return fmt.Errorf("invalid pending import path in batch %q", batchID)
 		}
 		if file.Kind != "" {
 			if err := recoverRenamedPublication(repo.Path, file.target, file.identity, file.hash, file.importTransfer); err != nil {
+				if errors.Is(err, errImportMoveRecoveryDeferred) {
+					deferred = errors.Join(deferred, err)
+					continue
+				}
 				return err
 			}
 		} else if _, err := os.Lstat(file.anchor); err == nil {
@@ -475,6 +488,9 @@ func recoverPendingImportPublication(repo *store.Repo, batchID string) error {
 		if err := discardPendingImportStage(repo, file.anchor, file.identity, file.complete, file.hash); err != nil {
 			return fmt.Errorf("clean staged import: %w", err)
 		}
+	}
+	if deferred != nil {
+		return deferred
 	}
 	_, err = repo.DB.Exec(`DELETE FROM import_batch_intents WHERE batch_id = ?`, batchID)
 	return err
