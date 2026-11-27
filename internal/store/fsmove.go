@@ -140,7 +140,8 @@ type FileMove struct {
 }
 
 // MoveFilesWithoutReplace moves every file, or compensates completed moves if
-// a later move fails. It never replaces an existing destination.
+// a later move fails. It never replaces an existing destination or copies across
+// devices: replay and compensation must preserve the directory entry's identity.
 func MoveFilesWithoutReplace(moves []FileMove) error {
 	completed := make([]FileMove, 0, len(moves))
 	for i := range moves {
@@ -211,4 +212,3 @@ func moveFileWithoutReplace(move *FileMove) error {
 	}
 	return nil
 }
-
