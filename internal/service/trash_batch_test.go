@@ -200,6 +200,57 @@ func TestTrashImagesPreflightsAllIDsBeforeMovingAnyFile(t *testing.T) {
 	assertHistoryCountAndCursor(t, repo, 0, 0)
 }
 
+func TestTrashImagesReservesEverySelectedTargetName(t *testing.T) {
+	repoPath, repo, ids := graphFixture(t)
+	firstPath := filepath.Join(repoPath, "foo.png")
+	secondPath := filepath.Join(repoPath, "foo (1).png")
+	if err := os.Rename(filepath.Join(repoPath, "0.png"), firstPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(repoPath, "1.png"), secondPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.DB.Exec(`UPDATE images SET file_path = CASE id WHEN ? THEN ? WHEN ? THEN ? END WHERE id IN (?, ?)`, ids[0], firstPath, ids[1], secondPath, ids[0], ids[1]); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoPath, ".loom", "trash", "foo.png"), []byte("external blocker"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&ImageService{}).TrashImages(repoPath, ids[:2]); err != nil {
+		t.Fatal(err)
+	}
+	assertImageTrashState(t, repo, ids[0], filepath.Join(repoPath, ".loom", "trash", "foo (2).png"), true, true)
+	assertImageTrashState(t, repo, ids[1], filepath.Join(repoPath, ".loom", "trash", "foo (1).png"), true, true)
+	assertFileContents(t, filepath.Join(repoPath, ".loom", "trash", "foo.png"), "external blocker")
+}
+
+func TestRestoreImagesReservesEverySelectedTargetName(t *testing.T) {
+	repoPath, repo, ids := graphFixture(t)
+	trashRoot := filepath.Join(repoPath, ".loom", "trash")
+	firstPath := filepath.Join(trashRoot, "foo.png")
+	secondPath := filepath.Join(trashRoot, "foo (1).png")
+	if err := os.Rename(filepath.Join(repoPath, "0.png"), firstPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(repoPath, "1.png"), secondPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.DB.Exec(`UPDATE images SET file_path = CASE id WHEN ? THEN ? WHEN ? THEN ? END, trashed = 1, trashed_at = '2026-01-01T00:00:00.000Z' WHERE id IN (?, ?)`, ids[0], firstPath, ids[1], secondPath, ids[0], ids[1]); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoPath, "foo.png"), []byte("external blocker"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&ImageService{}).RestoreImages(repoPath, ids[:2]); err != nil {
+		t.Fatal(err)
+	}
+	assertImageTrashState(t, repo, ids[0], filepath.Join(repoPath, "foo (2).png"), false, false)
+	assertImageTrashState(t, repo, ids[1], filepath.Join(repoPath, "foo (1).png"), false, false)
+	assertFileContents(t, filepath.Join(repoPath, "foo.png"), "external blocker")
+}
+
 func TestBatchTrashAndRestorePreserveImportOwnershipProofs(t *testing.T) {
 	repoPath := t.TempDir()
 	service := &ImageService{}
@@ -281,14 +332,18 @@ func TestBatchTrashSurfacesFailedFilesystemCompensation(t *testing.T) {
 	root := t.TempDir()
 	source := filepath.Join(root, "source.png")
 	destination := filepath.Join(root, "moved.png")
+	if err := os.WriteFile(source, []byte("batch bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	moves := []store.FileMove{{Source: source, Destination: destination}}
+	if err := store.MoveFilesWithoutReplace(moves); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(source, []byte("new external file"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(destination, []byte("batch bytes"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	primaryErr := errors.New("database commit failed")
-	err := compensateTrashedBatch([]store.FileMove{{Source: source, Destination: destination}}, primaryErr)
+	err := compensateTrashedBatch(moves, primaryErr)
 	if !errors.Is(err, primaryErr) || !errors.Is(err, os.ErrExist) || !strings.Contains(err.Error(), "filesystem compensation failed") {
 		t.Fatalf("compensation failure was not surfaced: %v", err)
 	}

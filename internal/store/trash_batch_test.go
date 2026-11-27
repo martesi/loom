@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -51,5 +52,41 @@ func TestMoveFilesWithoutReplaceNeverOverwritesDestination(t *testing.T) {
 		if err != nil || string(got) != want {
 			t.Errorf("%q = %q err=%v, want %q", path, got, err, want)
 		}
+	}
+}
+
+func TestRollbackLeavesExternalReplacementUntouched(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source.png")
+	destination := filepath.Join(root, "destination.png")
+	heldOriginal := filepath.Join(root, "held-original.png")
+	if err := os.WriteFile(source, []byte("batch bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	moves := []FileMove{{Source: source, Destination: destination}}
+	if err := MoveFilesWithoutReplace(moves); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(destination, heldOriginal); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(destination, []byte("external replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := RollbackFileMoves(moves)
+	if err == nil || !strings.Contains(err.Error(), "file was replaced") {
+		t.Fatalf("rollback error = %v, want replacement refusal", err)
+	}
+	for path, want := range map[string]string{
+		destination:  "external replacement",
+		heldOriginal: "batch bytes",
+	} {
+		got, readErr := os.ReadFile(path)
+		if readErr != nil || string(got) != want {
+			t.Errorf("%q = %q err=%v, want %q", path, got, readErr, want)
+		}
+	}
+	if _, err := os.Lstat(source); !os.IsNotExist(err) {
+		t.Fatalf("rollback moved replacement to source: %v", err)
 	}
 }
