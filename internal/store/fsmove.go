@@ -98,21 +98,23 @@ func moveFileOnDisk(src, dst string) error {
 type FileMove struct {
 	Source      string
 	Destination string
+	identity    os.FileInfo
 }
 
 // MoveFilesWithoutReplace moves every file, or compensates completed moves if
 // a later move fails. It never replaces an existing destination.
 func MoveFilesWithoutReplace(moves []FileMove) error {
 	completed := make([]FileMove, 0, len(moves))
-	for _, move := range moves {
+	for i := range moves {
+		move := &moves[i]
 		if move.Source == move.Destination {
 			continue
 		}
-		if err := moveFileWithoutReplace(move.Source, move.Destination); err != nil {
+		if err := moveFileWithoutReplace(move); err != nil {
 			primary := fmt.Errorf("move %q to %q: %w", move.Source, move.Destination, err)
 			return errors.Join(primary, RollbackFileMoves(completed))
 		}
-		completed = append(completed, move)
+		completed = append(completed, *move)
 	}
 	return nil
 }
@@ -123,93 +125,51 @@ func RollbackFileMoves(moves []FileMove) error {
 	var rollbackErr error
 	for i := len(moves) - 1; i >= 0; i-- {
 		move := moves[i]
-		if err := moveFileWithoutReplace(move.Destination, move.Source); err != nil {
+		if move.identity == nil {
+			rollbackErr = errors.Join(rollbackErr, fmt.Errorf("compensate move %q to %q: source identity was not recorded", move.Destination, move.Source))
+			continue
+		}
+		current, err := os.Lstat(move.Destination)
+		if err != nil {
+			rollbackErr = errors.Join(rollbackErr, fmt.Errorf("verify compensation source %q: %w", move.Destination, err))
+			continue
+		}
+		if !os.SameFile(move.identity, current) {
+			rollbackErr = errors.Join(rollbackErr, fmt.Errorf("verify compensation source %q: file was replaced; leaving it untouched", move.Destination))
+			continue
+		}
+		reverse := FileMove{Source: move.Destination, Destination: move.Source, identity: move.identity}
+		if err := moveFileWithoutReplace(&reverse); err != nil {
 			rollbackErr = errors.Join(rollbackErr, fmt.Errorf("compensate move %q to %q: %w", move.Destination, move.Source, err))
 		}
 	}
 	return rollbackErr
 }
 
-func moveFileWithoutReplace(src, dst string) error {
-	if src == dst {
+func moveFileWithoutReplace(move *FileMove) error {
+	if move.Source == move.Destination {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(move.Destination), 0o755); err != nil {
 		return fmt.Errorf("create destination directory: %w", err)
 	}
-	if err := os.Link(src, dst); err == nil {
-		destinationInfo, statErr := os.Lstat(dst)
-		if statErr != nil {
-			return errors.Join(fmt.Errorf("inspect linked destination %q: %w", dst, statErr), removeCreatedFile(dst, destinationInfo))
-		}
-		sourceInfo, statErr := os.Lstat(src)
-		if statErr != nil || !os.SameFile(sourceInfo, destinationInfo) {
-			return errors.Join(fmt.Errorf("source %q changed while linking", src), statErr, removeCreatedFile(dst, destinationInfo))
-		}
-		if err := os.Remove(src); err != nil {
-			return errors.Join(fmt.Errorf("remove moved source %q: %w", src, err), removeCreatedFile(dst, destinationInfo))
-		}
-		return nil
-	} else if !errors.Is(err, syscall.EXDEV) {
-		return err
-	}
-	return copyFileWithoutReplace(src, dst)
-}
-func copyFileWithoutReplace(src, dst string) error {
-	in, err := os.Open(src)
+	sourceInfo, err := os.Lstat(move.Source)
 	if err != nil {
 		return err
 	}
-	defer in.Close()
-	sourceInfo, err := in.Stat()
-	if err != nil {
+	if move.identity != nil && !os.SameFile(move.identity, sourceInfo) {
+		return fmt.Errorf("source %q changed before move; leaving it untouched", move.Source)
+	}
+	if err := renameNoReplace(move.Source, move.Destination); err != nil {
 		return err
 	}
-	if !sourceInfo.Mode().IsRegular() {
-		return fmt.Errorf("source %q is not a regular file", src)
-	}
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, sourceInfo.Mode().Perm())
+	move.identity = sourceInfo
+	identity, err := os.Lstat(move.Destination)
 	if err != nil {
-		return err
+		return errors.Join(fmt.Errorf("inspect moved file %q: %w", move.Destination, err), RollbackFileMoves([]FileMove{*move}))
 	}
-	_, copyErr := io.Copy(out, in)
-	if copyErr == nil {
-		copyErr = out.Chmod(sourceInfo.Mode().Perm())
-	}
-	if copyErr == nil {
-		copyErr = out.Sync()
-	}
-	createdInfo, statErr := out.Stat()
-	closeErr := out.Close()
-	if err := errors.Join(copyErr, statErr, closeErr); err != nil {
-		return errors.Join(err, removeCreatedFile(dst, createdInfo))
-	}
-	currentSource, err := os.Stat(src)
-	if err != nil || !os.SameFile(sourceInfo, currentSource) {
-		return errors.Join(fmt.Errorf("source %q changed before move completed", src), err, removeCreatedFile(dst, createdInfo))
-	}
-	if err := os.Remove(src); err != nil {
-		return errors.Join(fmt.Errorf("remove moved source %q: %w", src, err), removeCreatedFile(dst, createdInfo))
-	}
-	return nil
-}
-
-func removeCreatedFile(path string, createdInfo os.FileInfo) error {
-	if createdInfo == nil {
-		return nil
-	}
-	current, err := os.Lstat(path)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("inspect created destination %q: %w", path, err)
-	}
-	if !os.SameFile(createdInfo, current) {
-		return fmt.Errorf("created destination %q was replaced; leaving it untouched", path)
-	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove created destination %q: %w", path, err)
+	if !os.SameFile(sourceInfo, identity) {
+		return errors.Join(fmt.Errorf("source %q changed while moving", move.Source), RollbackFileMoves([]FileMove{*move}))
 	}
 	return nil
 }
@@ -220,13 +180,12 @@ func copyFileContents(src, dst string) error {
 		return err
 	}
 	defer in.Close()
-
 	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
 		return err
 	}
 	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
+		_ = out.Close()
 		return err
 	}
 	return out.Close()

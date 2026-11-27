@@ -99,6 +99,7 @@ func (s *ImageService) setImagesTrashed(repoPath string, imageIDs []int64, trash
 
 func planTrashedBatch(tx *sql.Tx, repoPath string, ids []int64, target bool) ([]trashedBatchEntry, error) {
 	entries := make([]trashedBatchEntry, 0, len(ids))
+	reserved := make(map[string]int64, len(ids))
 	for _, id := range ids {
 		var entry trashedBatchEntry
 		var timestamp sql.NullString
@@ -113,21 +114,29 @@ func planTrashedBatch(tx *sql.Tx, repoPath string, ids []int64, target bool) ([]
 			value := timestamp.String
 			entry.FromTrashedAt = &value
 		}
+		entry.ImageID = id
+		entry.ToPath = targetBasePath(repoPath, entry.FromPath, target)
+		reserved[entry.ToPath] = id
+		entries = append(entries, entry)
+	}
+	planned := entries[:0]
+	allocated := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
 		if entry.FromTrashed == target {
 			continue
 		}
-		entry.ImageID = id
 		entry.ToTrashed = target
 		entry.ToTrashedAt = targetTrashedAt(entry.FromTrashedAt, target)
-		toPath, moveFile, err := plannedTrashedPath(repoPath, entry.FromPath, target)
+		toPath, moveFile, err := plannedTrashedPath(repoPath, entry.FromPath, target, entry.ImageID, reserved, allocated)
 		if err != nil {
-			return nil, fmt.Errorf("preflight image %d file move: %w", id, err)
+			return nil, fmt.Errorf("preflight image %d file move: %w", entry.ImageID, err)
 		}
 		entry.ToPath = toPath
 		entry.MoveFile = moveFile
-		entries = append(entries, entry)
+		planned = append(planned, entry)
+		allocated[toPath] = struct{}{}
 	}
-	return entries, nil
+	return planned, nil
 }
 
 func targetTrashedAt(from *string, target bool) *string {
@@ -142,24 +151,11 @@ func targetTrashedAt(from *string, target bool) *string {
 	return &value
 }
 
-func plannedTrashedPath(repoPath, currentPath string, target bool) (string, bool, error) {
+func plannedTrashedPath(repoPath, currentPath string, target bool, imageID int64, reserved map[string]int64, allocated map[string]struct{}) (string, bool, error) {
 	trashRoot := filepath.Join(repoPath, ".loom", "trash")
-	var candidate string
-	if target {
-		if isPathInside(trashRoot, currentPath) {
-			return currentPath, false, nil
-		}
-		rel, ok := pathRelativeInside(repoPath, currentPath)
-		if !ok {
-			return currentPath, false, nil
-		}
-		candidate = filepath.Join(trashRoot, rel)
-	} else {
-		rel, ok := pathRelativeInside(trashRoot, currentPath)
-		if !ok {
-			return currentPath, false, nil
-		}
-		candidate = filepath.Join(repoPath, rel)
+	candidate := targetBasePath(repoPath, currentPath, target)
+	if candidate == currentPath {
+		return currentPath, false, nil
 	}
 	info, exists, err := inspectTrashedSource(repoPath, trashRoot, currentPath)
 	if err != nil {
@@ -173,11 +169,30 @@ func plannedTrashedPath(repoPath, currentPath string, target bool) (string, bool
 	if info.IsDir() {
 		return "", false, fmt.Errorf("file path %q is a directory", currentPath)
 	}
-	available, err := nextUnoccupiedPath(candidate)
+	available, err := nextUnoccupiedBatchPath(candidate, imageID, reserved, allocated)
 	if err != nil {
 		return "", false, err
 	}
 	return available, true, nil
+}
+
+func targetBasePath(repoPath, currentPath string, target bool) string {
+	trashRoot := filepath.Join(repoPath, ".loom", "trash")
+	if target {
+		if isPathInside(trashRoot, currentPath) {
+			return currentPath
+		}
+		rel, ok := pathRelativeInside(repoPath, currentPath)
+		if !ok {
+			return currentPath
+		}
+		return filepath.Join(trashRoot, rel)
+	}
+	rel, ok := pathRelativeInside(trashRoot, currentPath)
+	if !ok {
+		return currentPath
+	}
+	return filepath.Join(repoPath, rel)
 }
 
 func inspectTrashedSource(repoPath, trashRoot, path string) (os.FileInfo, bool, error) {
@@ -224,13 +239,19 @@ func inspectTrashedSource(repoPath, trashRoot, path string) (os.FileInfo, bool, 
 	return info, true, nil
 }
 
-func nextUnoccupiedPath(path string) (string, error) {
+func nextUnoccupiedBatchPath(path string, imageID int64, reserved map[string]int64, allocated map[string]struct{}) (string, error) {
 	for suffix := 0; ; suffix++ {
 		candidate := path
 		if suffix > 0 {
 			ext := filepath.Ext(path)
 			base := strings.TrimSuffix(filepath.Base(path), ext)
 			candidate = filepath.Join(filepath.Dir(path), fmt.Sprintf("%s (%d)%s", base, suffix, ext))
+		}
+		if owner, exists := reserved[candidate]; exists && owner != imageID {
+			continue
+		}
+		if _, exists := allocated[candidate]; exists {
+			continue
 		}
 		_, err := os.Lstat(candidate)
 		if os.IsNotExist(err) {
