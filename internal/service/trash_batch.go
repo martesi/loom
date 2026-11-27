@@ -119,6 +119,10 @@ func planTrashedBatch(tx *sql.Tx, repoPath string, ids []int64, target bool) ([]
 		reserved[entry.ToPath] = id
 		entries = append(entries, entry)
 	}
+	catalogPaths, err := imageCatalogPaths(tx)
+	if err != nil {
+		return nil, fmt.Errorf("reserve image catalog paths: %w", err)
+	}
 	planned := entries[:0]
 	allocated := make(map[string]struct{}, len(entries))
 	for _, entry := range entries {
@@ -127,7 +131,7 @@ func planTrashedBatch(tx *sql.Tx, repoPath string, ids []int64, target bool) ([]
 		}
 		entry.ToTrashed = target
 		entry.ToTrashedAt = targetTrashedAt(entry.FromTrashedAt, target)
-		toPath, moveFile, err := plannedTrashedPath(repoPath, entry.FromPath, target, entry.ImageID, reserved, allocated)
+		toPath, moveFile, err := plannedTrashedPath(repoPath, entry.FromPath, target, entry.ImageID, reserved, allocated, catalogPaths)
 		if err != nil {
 			return nil, fmt.Errorf("preflight image %d file move: %w", entry.ImageID, err)
 		}
@@ -137,6 +141,27 @@ func planTrashedBatch(tx *sql.Tx, repoPath string, ids []int64, target bool) ([]
 		allocated[toPath] = struct{}{}
 	}
 	return planned, nil
+}
+
+func imageCatalogPaths(tx *sql.Tx) (map[string]struct{}, error) {
+	rows, err := tx.Query(`SELECT file_path FROM images`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	paths := make(map[string]struct{})
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, err
+		}
+		paths[path] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return paths, nil
 }
 
 func targetTrashedAt(from *string, target bool) *string {
@@ -151,7 +176,7 @@ func targetTrashedAt(from *string, target bool) *string {
 	return &value
 }
 
-func plannedTrashedPath(repoPath, currentPath string, target bool, imageID int64, reserved map[string]int64, allocated map[string]struct{}) (string, bool, error) {
+func plannedTrashedPath(repoPath, currentPath string, target bool, imageID int64, reserved map[string]int64, allocated, catalogPaths map[string]struct{}) (string, bool, error) {
 	trashRoot := filepath.Join(repoPath, ".loom", "trash")
 	candidate := targetBasePath(repoPath, currentPath, target)
 	if candidate == currentPath {
@@ -169,7 +194,7 @@ func plannedTrashedPath(repoPath, currentPath string, target bool, imageID int64
 	if info.IsDir() {
 		return "", false, fmt.Errorf("file path %q is a directory", currentPath)
 	}
-	available, err := nextUnoccupiedBatchPath(candidate, imageID, reserved, allocated)
+	available, err := nextUnoccupiedBatchPath(candidate, imageID, reserved, allocated, catalogPaths)
 	if err != nil {
 		return "", false, err
 	}
@@ -239,7 +264,7 @@ func inspectTrashedSource(repoPath, trashRoot, path string) (os.FileInfo, bool, 
 	return info, true, nil
 }
 
-func nextUnoccupiedBatchPath(path string, imageID int64, reserved map[string]int64, allocated map[string]struct{}) (string, error) {
+func nextUnoccupiedBatchPath(path string, imageID int64, reserved map[string]int64, allocated, catalogPaths map[string]struct{}) (string, error) {
 	for suffix := 0; ; suffix++ {
 		candidate := path
 		if suffix > 0 {
@@ -251,6 +276,9 @@ func nextUnoccupiedBatchPath(path string, imageID int64, reserved map[string]int
 			continue
 		}
 		if _, exists := allocated[candidate]; exists {
+			continue
+		}
+		if _, exists := catalogPaths[candidate]; exists {
 			continue
 		}
 		_, err := os.Lstat(candidate)

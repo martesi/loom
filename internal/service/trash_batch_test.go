@@ -251,6 +251,69 @@ func TestRestoreImagesReservesEverySelectedTargetName(t *testing.T) {
 	assertFileContents(t, filepath.Join(repoPath, "foo.png"), "external blocker")
 }
 
+func TestRestoreImagesReservesMissingCatalogPath(t *testing.T) {
+	repoPath, repo, ids := graphFixture(t)
+	trashRoot := filepath.Join(repoPath, ".loom", "trash")
+	if err := os.MkdirAll(trashRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	trashedPath := filepath.Join(trashRoot, "photo.png")
+	registeredPath := filepath.Join(repoPath, "photo.png")
+	if err := os.Rename(filepath.Join(repoPath, "0.png"), trashedPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(repoPath, "1.png")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.DB.Exec(`UPDATE images SET file_path = CASE id WHEN ? THEN ? WHEN ? THEN ? END, trashed = CASE id WHEN ? THEN 1 ELSE 0 END, trashed_at = CASE id WHEN ? THEN '2026-01-01T00:00:00.000Z' ELSE NULL END WHERE id IN (?, ?)`, ids[0], trashedPath, ids[1], registeredPath, ids[0], ids[0], ids[0], ids[1]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(registeredPath); !os.IsNotExist(err) {
+		t.Fatalf("stale registered path unexpectedly exists: %v", err)
+	}
+
+	if err := (&ImageService{}).RestoreImages(repoPath, []int64{ids[0]}); err != nil {
+		t.Fatal(err)
+	}
+	restoredPath := filepath.Join(repoPath, "photo (1).png")
+	assertImageTrashState(t, repo, ids[0], restoredPath, false, false)
+	assertImageTrashState(t, repo, ids[1], registeredPath, false, false)
+	assertFileContents(t, restoredPath, "fixture")
+	if _, err := os.Lstat(registeredPath); !os.IsNotExist(err) {
+		t.Fatalf("restore recreated unrelated stale row path: %v", err)
+	}
+}
+
+func TestTrashImagesReservesMissingTrashedCatalogPath(t *testing.T) {
+	repoPath, repo, ids := graphFixture(t)
+	trashRoot := filepath.Join(repoPath, ".loom", "trash")
+	if err := os.MkdirAll(trashRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	activePath := filepath.Join(repoPath, "photo.png")
+	staleTrashedPath := filepath.Join(trashRoot, "photo.png")
+	if err := os.Rename(filepath.Join(repoPath, "0.png"), activePath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.DB.Exec(`UPDATE images SET file_path = CASE id WHEN ? THEN ? WHEN ? THEN ? END, trashed = CASE id WHEN ? THEN 0 ELSE 1 END, trashed_at = CASE id WHEN ? THEN NULL ELSE '2026-01-01T00:00:00.000Z' END WHERE id IN (?, ?)`, ids[0], activePath, ids[1], staleTrashedPath, ids[0], ids[0], ids[0], ids[1]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(staleTrashedPath); !os.IsNotExist(err) {
+		t.Fatalf("stale trashed path unexpectedly exists: %v", err)
+	}
+
+	if err := (&ImageService{}).TrashImages(repoPath, []int64{ids[0]}); err != nil {
+		t.Fatal(err)
+	}
+	trashedPath := filepath.Join(trashRoot, "photo (1).png")
+	assertImageTrashState(t, repo, ids[0], trashedPath, true, true)
+	assertImageTrashState(t, repo, ids[1], staleTrashedPath, true, true)
+	assertFileContents(t, trashedPath, "fixture")
+	if _, err := os.Lstat(staleTrashedPath); !os.IsNotExist(err) {
+		t.Fatalf("trash recreated unrelated stale row path: %v", err)
+	}
+}
+
 func TestBatchTrashAndRestorePreserveImportOwnershipProofs(t *testing.T) {
 	repoPath := t.TempDir()
 	service := &ImageService{}
