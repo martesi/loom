@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 )
 
 // clampRelPath resolves relPath against root, guaranteeing the result can
@@ -49,17 +48,19 @@ func relUnder(base, path string) (rel string, ok bool) {
 // path with a " (1)", " (2)", ... suffix inserted before the extension,
 // stopping at the first name that isn't taken — the same collision scheme
 // most desktop file managers use.
-func uniquePath(path string) string {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return path
-	}
+func uniquePath(path string) (string, error) {
 	dir := filepath.Dir(path)
 	ext := filepath.Ext(path)
 	base := strings.TrimSuffix(filepath.Base(path), ext)
-	for i := 1; ; i++ {
-		candidate := filepath.Join(dir, fmt.Sprintf("%s (%d)%s", base, i, ext))
-		if _, err := os.Stat(candidate); os.IsNotExist(err) {
-			return candidate
+	for i := 0; ; i++ {
+		candidate := path
+		if i > 0 {
+			candidate = filepath.Join(dir, fmt.Sprintf("%s (%d)%s", base, i, ext))
+		}
+		if _, err := os.Lstat(candidate); os.IsNotExist(err) {
+			return candidate, nil
+		} else if err != nil {
+			return "", err
 		}
 	}
 }
@@ -73,40 +74,59 @@ func moveFileOnDisk(src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return fmt.Errorf("create destination directory: %w", err)
 	}
-	err := os.Rename(src, dst)
-	if err == nil {
-		return nil
-	}
-	if !errors.Is(err, syscall.EXDEV) {
+	err := RenameNoReplace(src, dst)
+	if err == nil || !renameCrossDevice(err) {
 		return err
 	}
-	if cpErr := copyFileContents(src, dst); cpErr != nil {
-		os.Remove(dst)
-		return cpErr
-	}
-	if rmErr := os.Remove(src); rmErr != nil {
-		// The copy succeeded but we couldn't remove the original — leave
-		// both copies in place rather than lose data; surface the error so
-		// the caller knows the move didn't fully complete.
-		return fmt.Errorf("copied to %s but failed to remove source %s: %w", dst, src, rmErr)
-	}
-	return nil
+	return copyEntryAcrossDevice(src, dst)
 }
 
-func copyFileContents(src, dst string) error {
+func copyEntryAcrossDevice(src, dst string) error {
+	info, err := os.Lstat(src)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("cannot move a link or non-regular entry across volumes")
+	}
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
+	opened, err := in.Stat()
+	if err != nil || !os.SameFile(info, opened) {
+		return errors.Join(err, fmt.Errorf("source changed before cross-volume copy"))
+	}
 
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o644)
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
+	created, statErr := out.Stat()
+	_, copyErr := io.Copy(out, in)
+	if err := errors.Join(statErr, copyErr, out.Sync(), out.Close()); err != nil {
+		// Never remove the destination if the open file could not be proven
+		// to still occupy that path.
+		if current, statErr := os.Lstat(dst); statErr == nil && created != nil && os.SameFile(created, current) {
+			err = errors.Join(err, os.Remove(dst))
+		}
 		return err
 	}
-	return out.Close()
+	installed, err := os.Lstat(dst)
+	if err != nil || !os.SameFile(created, installed) || installed.Size() != info.Size() {
+		return errors.Join(err, fmt.Errorf("destination changed during cross-volume copy; source preserved"))
+	}
+	unchanged, err := os.Lstat(src)
+	if err != nil || !os.SameFile(info, unchanged) || info.Size() != unchanged.Size() || !info.ModTime().Equal(unchanged.ModTime()) {
+		return errors.Join(err, fmt.Errorf("source changed during cross-volume copy; both paths were preserved"))
+	}
+	// Close before unlinking so Windows can complete the move.
+	if err := in.Close(); err != nil {
+		return err
+	}
+	if err := os.Remove(src); err != nil {
+		return fmt.Errorf("copied to %s but failed to remove source %s: %w", dst, src, err)
+	}
+	return nil
 }

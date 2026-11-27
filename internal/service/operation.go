@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"loom/internal/store"
 )
 
@@ -14,7 +15,9 @@ func openOperationRepo(repoPath string) (*store.Repo, func(), error) {
 		unlock()
 		return nil, nil, err
 	}
-	if err := recoverImportIntents(repo); err != nil {
+	// An unresolved external Move rolls back independently of ordinary
+	// repository reads; its durable record keeps affected paths hidden.
+	if err := recoverImportIntents(repo); err != nil && !errors.Is(err, errImportMoveRecoveryDeferred) {
 		_ = repo.Close()
 		unlock()
 		return nil, nil, err

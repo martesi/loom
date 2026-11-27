@@ -297,7 +297,11 @@ func (r *Repo) mediaFiles(ctx context.Context) ([]string, error) {
 			}
 			return nil
 		}
-		if IsMediaFile(path) {
+		available, err := availableMediaEntry(path, d)
+		if err != nil {
+			return err
+		}
+		if available {
 			found = append(found, path)
 		}
 		return nil
@@ -306,6 +310,23 @@ func (r *Repo) mediaFiles(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	return found, nil
+}
+
+func availableMediaEntry(path string, entry os.DirEntry) (bool, error) {
+	if !IsMediaFile(path) {
+		return false, nil
+	}
+	if entry.Type()&os.ModeSymlink == 0 {
+		return true, nil
+	}
+	target, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return false, nil // Keep any catalog row; the external target may return.
+	}
+	if err != nil {
+		return false, err
+	}
+	return target.Mode().IsRegular(), nil
 }
 
 func fingerprintFile(ctx context.Context, path string) (string, os.FileInfo, error) {
@@ -405,7 +426,11 @@ func (r *Repo) ListDirectory(relPath string) (DirListing, error) {
 			dirs = append(dirs, e.Name())
 			continue
 		}
-		if IsMediaFile(full) {
+		available, err := availableMediaEntry(full, e)
+		if err != nil {
+			return DirListing{}, err
+		}
+		if available {
 			pending, err := r.importPathPending(full)
 			if err != nil {
 				return DirListing{}, err
@@ -667,16 +692,19 @@ func (r *Repo) SetTrashed(imageID int64, trashed bool) error {
 			// in practice) — nothing sane to move, just flip the flag.
 			return r.setTrashedFlag(imageID, trashed, curPath)
 		}
-		destPath = uniquePath(filepath.Join(trashRoot, relFromRoot))
+		destPath, err = uniquePath(filepath.Join(trashRoot, relFromRoot))
 	case !trashed && underTrash:
-		destPath = uniquePath(filepath.Join(r.Path, relFromTrash))
+		destPath, err = uniquePath(filepath.Join(r.Path, relFromTrash))
 	default: // !trashed && !underTrash
 		// Already physically outside trash (e.g. a redundant/replayed
 		// restore) — just make sure the flag agrees.
 		return r.setTrashedFlag(imageID, trashed, curPath)
 	}
 
-	if _, statErr := os.Stat(curPath); statErr != nil {
+	if err != nil {
+		return err
+	}
+	if _, statErr := os.Lstat(curPath); statErr != nil {
 		// The file is already missing on disk (deleted out-of-band) —
 		// there's nothing to move. Still record the flag so the DB stays
 		// the source of truth for the intended state.
@@ -735,9 +763,12 @@ func (r *Repo) MoveFile(imageID int64, newRelPath string) (oldPath, newPath stri
 	if err != nil {
 		return "", "", err
 	}
-	newAbs = uniquePath(newAbs)
+	newAbs, err = uniquePath(newAbs)
+	if err != nil {
+		return "", "", err
+	}
 
-	if _, statErr := os.Stat(oldPath); statErr != nil {
+	if _, statErr := os.Lstat(oldPath); statErr != nil {
 		return "", "", fmt.Errorf("source file not found: %w", statErr)
 	}
 

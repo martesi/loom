@@ -22,6 +22,14 @@ func (s *SettingsService) Get(repoPath, key string) (string, error) {
 
 // Set upserts key's value.
 func (s *SettingsService) Set(repoPath, key, value string) error {
+	if key == importModeSetting {
+		mode, err := parseImportMode(value)
+		if err != nil {
+			return err
+		}
+		value = mode
+	}
+
 	repo, err := store.Bootstrap(repoPath)
 	if err != nil {
 		return err

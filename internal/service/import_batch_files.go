@@ -16,12 +16,12 @@ import (
 var errImportCleanupChanged = errors.New("retained import bytes changed; cleanup remains queued")
 
 func sameOwnedImportFile(path, identity, wantHash string) bool {
-	pathInfo, err := os.Stat(path)
-	if err != nil || !pathInfo.Mode().IsRegular() || store.FileIdentityAt(path, pathInfo) != identity {
+	pathInfo, err := os.Lstat(path)
+	if err != nil || identity == "" || store.FileIdentityAt(path, pathInfo) != identity {
 		return false
 	}
-	hash, err := hashImportFile(path)
-	return err == nil && hash == wantHash
+	matches, err := matchesImportEntryDigest(path, pathInfo, wantHash)
+	return err == nil && matches
 }
 
 func linkImportAnchor(anchor, target, identity, hash string) error {
@@ -101,15 +101,15 @@ func discardPendingImportStage(repo *store.Repo, path, identity string, complete
 	if err != nil {
 		return err
 	}
-	if !info.Mode().IsRegular() || (identity != "" && store.FileIdentityAt(path, info) != identity) {
+	if (!info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0) || (identity != "" && store.FileIdentityAt(path, info) != identity) {
 		return enqueueImportCleanup(repo, path, identity, hash)
 	}
 	if complete {
-		got, err := hashImportFile(path)
+		matches, err := matchesImportEntryDigest(path, info, hash)
 		if err != nil {
 			return err
 		}
-		if got != hash {
+		if !matches {
 			return enqueueImportCleanup(repo, path, identity, hash)
 		}
 	}
@@ -121,25 +121,25 @@ func discardPendingImportStage(repo *store.Repo, path, identity string, complete
 }
 
 func removeImportHardLink(anchor, path, identity, wantHash string) (bool, error) {
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if os.IsNotExist(err) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	anchorInfo, err := os.Stat(anchor)
+	anchorInfo, err := os.Lstat(anchor)
 	if err != nil {
 		return false, nil
 	}
-	if !info.Mode().IsRegular() || !os.SameFile(info, anchorInfo) || (identity != "" && store.FileIdentityAt(path, info) != identity) {
+	if !info.Mode().IsRegular() || !anchorInfo.Mode().IsRegular() || !os.SameFile(info, anchorInfo) || (identity != "" && store.FileIdentityAt(path, info) != identity) {
 		return false, nil
 	}
-	hash, err := hashImportFile(path)
+	matches, err := matchesImportEntryDigest(path, info, wantHash)
 	if err != nil {
 		return false, err
 	}
-	if hash != wantHash {
+	if !matches {
 		return false, nil
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
@@ -151,23 +151,24 @@ func removeImportHardLink(anchor, path, identity, wantHash string) (bool, error)
 func removePrivateImportFile(path, identity, wantHash string) error {
 	info, err := os.Lstat(path)
 	if os.IsNotExist(err) {
+		_ = os.Remove(filepath.Dir(path))
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("%w at %q: not a regular file", errImportCleanupChanged, path)
+	if !info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
+		return fmt.Errorf("%w at %q: unsupported file type", errImportCleanupChanged, path)
 	}
 	if identity != "" && store.FileIdentityAt(path, info) != identity {
 		return fmt.Errorf("%w at %q: file identity differs", errImportCleanupChanged, path)
 	}
-	hash, err := hashImportFile(path)
+	matches, err := matchesImportEntryDigest(path, info, wantHash)
 	if err != nil {
 		return err
 	}
-	if hash != wantHash {
-		return fmt.Errorf("%w at %q: checksum differs", errImportCleanupChanged, path)
+	if !matches {
+		return fmt.Errorf("%w at %q: ownership proof no longer matches", errImportCleanupChanged, path)
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err

@@ -96,28 +96,80 @@ func writeImportStage(repo *store.Repo, batchID string, ordinal int, path string
 }
 
 func publishImportStage(repo *store.Repo, batchID string, ordinal int, anchorPath, targetPath, identity, hash string) (string, error) {
+	var transfer importTransfer
+	return publishPreparedStage(repo, batchID, ordinal, anchorPath, targetPath, identity, hash, &transfer, nil, os.Link)
+}
+
+func publishPreparedStage(repo *store.Repo, batchID string, ordinal int, source, target, identity, hash string, transfer *importTransfer, reserved map[string]struct{}, hardlink func(string, string) error) (string, error) {
 	for {
-		if !sameOwnedImportFile(anchorPath, identity, hash) {
-			return targetPath, fmt.Errorf("staged import %q changed before publication", filepath.Base(anchorPath))
+		if !sameOwnedImportFile(source, identity, hash) {
+			return target, fmt.Errorf("staged import %q changed before publication", filepath.Base(source))
 		}
-		if err := os.Link(anchorPath, targetPath); err == nil {
-			return targetPath, nil
-		} else if !os.IsExist(err) {
-			return targetPath, fmt.Errorf("publish import %q: %w", filepath.Base(targetPath), err)
+		var err error
+		if transfer.Kind == "" {
+			err = hardlink(source, target)
+			if err != nil && !os.IsExist(err) && linkCapabilityError(err) && !strings.HasPrefix(hash, store.ImportHardlinkProofPrefix) {
+				transfer.Kind = transferRename
+				if dbErr := setImportTransfer(repo, batchID, ordinal, *transfer); dbErr != nil {
+					return target, errors.Join(err, dbErr)
+				}
+				err = renameOwnedImportEntry(source, target, identity, hash)
+			}
+		} else {
+			err = renameOwnedImportEntry(source, target, identity, hash)
 		}
-		nextTarget, err := nextImportPath(repo.Path, filepath.Base(targetPath), nil)
+		if err == nil {
+			return target, nil
+		}
+		if !os.IsExist(err) {
+			return target, fmt.Errorf("publish import %q: %w", filepath.Base(target), err)
+		}
+		target, err = nextImportPath(repo.Path, filepath.Base(target), reserved)
 		if err != nil {
-			return targetPath, err
+			return target, err
 		}
-		targetPath = nextTarget
-		if _, err := repo.DB.Exec(`UPDATE import_batch_intent_files SET target_path = ? WHERE batch_id = ? AND ordinal = ?`, targetPath, batchID, ordinal); err != nil {
-			return targetPath, err
-		}
-		if _, err := os.Stat(anchorPath); err != nil {
-			return targetPath, err
-		}
-		if got, err := hashImportFile(anchorPath); err != nil || got != hash {
-			return targetPath, fmt.Errorf("staged import %q changed before publication", filepath.Base(anchorPath))
+		if _, err := repo.DB.Exec(`UPDATE import_batch_intent_files SET target_path = ? WHERE batch_id = ? AND ordinal = ?`, target, batchID, ordinal); err != nil {
+			return target, err
 		}
 	}
+}
+
+func createImportLinkStage(repo *store.Repo, batchID string, ordinal int, source nativeImportSource, anchor, sourceHash string, symlink, hardlink func(string, string) error) (string, string, error) {
+	if !sameOwnedImportFile(source.path, source.identity, sourceHash) {
+		return "", "", fmt.Errorf("link source changed; left untouched")
+	}
+	if err := stageSourceLink(source.path, anchor, symlink, hardlink); err != nil {
+		return "", "", err
+	}
+	info, err := os.Lstat(anchor)
+	if err != nil {
+		return "", "", err
+	}
+	identity := store.FileIdentityAt(anchor, info)
+	if identity == "" {
+		return "", "", fmt.Errorf("link has no verifiable identity")
+	}
+	digest, err := importEntryDigest(anchor, info)
+	if err != nil {
+		return "", "", err
+	}
+	if info.Mode().IsRegular() {
+		if identity != source.identity || digest != sourceHash {
+			return "", "", fmt.Errorf("hard link source changed during import")
+		}
+		digest = store.ImportHardlinkProofPrefix + anchor
+	}
+	return identity, digest, markImportStageComplete(repo, batchID, ordinal, identity, digest)
+}
+
+func stageSourceLink(source, anchor string, symlink, hardlink func(string, string) error) error {
+	if err := symlink(source, anchor); err != nil {
+		if !linkCapabilityError(err) {
+			return fmt.Errorf("create symbolic import link: %w", err)
+		}
+		if hardErr := hardlink(source, anchor); hardErr != nil {
+			return fmt.Errorf("neither symbolic nor hard import links are available: %w", errors.Join(err, hardErr))
+		}
+	}
+	return nil
 }

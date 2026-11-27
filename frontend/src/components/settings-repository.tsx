@@ -1,13 +1,14 @@
 import { Dialog } from '@base-ui-components/react/dialog'
 import { plural, t } from '@lingui/core/macro'
 import { Trans } from '@lingui/react/macro'
-import { useRef, useState } from 'react'
+import { type ReactNode, useRef, useState } from 'react'
 import { Button } from './ui/button'
 import { useToast } from './ui/toast'
 
 type Operation = 'rescan' | 'invalidate'
 
 interface Props {
+  children?: ReactNode
   repoPath: string | null
   rescanRepository: (repoPath: string) => Promise<number>
   invalidateRenditions: (repoPath: string) => Promise<number>
@@ -102,6 +103,7 @@ export function RepositorySettings(props: Props) {
           <Trans>Open a repository to use repository actions.</Trans>
         </p>
       )}
+      {props.children}
       <div className="flex flex-wrap gap-2">
         <Button
           variant="secondary"

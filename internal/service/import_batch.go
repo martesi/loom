@@ -15,6 +15,7 @@ import (
 )
 
 type importBatchEntry struct {
+	importTransfer
 	ImageID    int64  `json:"imageId"`
 	ActivePath string `json:"activePath"`
 	AnchorPath string `json:"anchorPath"`
@@ -28,6 +29,10 @@ type importBatchPayload struct {
 }
 
 func (s *ImageService) importMediaBatch(repoPath string, media []ClipboardMedia, place bool, x, y float64) ([]int64, error) {
+	return importPreparedBatch(repoPath, media, nil, importCopy, place, x, y, os.Symlink, os.Link)
+}
+
+func importPreparedBatch(repoPath string, media []ClipboardMedia, sources []nativeImportSource, mode string, place bool, x, y float64, symlink, hardlink func(string, string) error) ([]int64, error) {
 	if err := validateClipboardMedia(media); err != nil {
 		return nil, err
 	}
@@ -47,11 +52,15 @@ func (s *ImageService) importMediaBatch(repoPath string, media []ClipboardMedia,
 	}
 	anchorDir := filepath.Join(repo.Path, ".loom", "import-anchors", batchID)
 	items := make([]ClipboardMedia, len(media))
+	transfers := make([]importTransfer, len(media))
 	targets := make([]string, len(media))
 	anchors := make([]string, len(media))
 	checksums := make([]string, len(media))
 	identities := make([]string, len(media))
-	reserved := make(map[string]struct{}, len(media))
+	reserved, err := deferredImportMoveTargets(repo)
+	if err != nil {
+		return nil, err
+	}
 	for i, item := range media {
 		items[i] = item
 		data, err := base64.StdEncoding.Strict().DecodeString(item.Data)
@@ -67,6 +76,9 @@ func (s *ImageService) importMediaBatch(repoPath string, media []ClipboardMedia,
 		anchors[i] = filepath.Join(anchorDir, fmt.Sprintf("%03d", i))
 		checksums[i] = fmt.Sprintf("%x", sha256.Sum256(data))
 	}
+	if mode != importCopy && len(sources) != len(items) {
+		return nil, fmt.Errorf("import mode requires native source paths")
+	}
 	if err := createImportIntent(repo, batchID, items, targets, anchors, checksums); err != nil {
 		return nil, err
 	}
@@ -74,26 +86,59 @@ func (s *ImageService) importMediaBatch(repoPath string, media []ClipboardMedia,
 		return nil, errors.Join(err, recoverImportIntents(repo))
 	}
 	for i, item := range items {
-		data, _ := base64.StdEncoding.Strict().DecodeString(item.Data)
-		identities[i], err = writeImportStage(repo, batchID, i, anchors[i], data, checksums[i])
+		var publicationSource string
+		switch mode {
+		case importMove:
+			publicationSource = sources[i].path
+			transfers[i] = importTransfer{Kind: transferMove, Original: publicationSource}
+			info, statErr := os.Lstat(publicationSource)
+			if statErr != nil {
+				return nil, errors.Join(statErr, recoverImportIntents(repo))
+			}
+			identities[i] = sources[i].identity
+			if !info.Mode().IsRegular() || !sameOwnedImportFile(publicationSource, identities[i], checksums[i]) {
+				return nil, errors.Join(fmt.Errorf("original import file changed"), recoverImportIntents(repo))
+			}
+			if err := setImportTransfer(repo, batchID, i, transfers[i]); err != nil {
+				return nil, errors.Join(err, recoverImportIntents(repo))
+			}
+			err = markImportStageComplete(repo, batchID, i, identities[i], checksums[i])
+		case importLink:
+			publicationSource = anchors[i]
+			transfers[i] = importTransfer{Kind: transferRename}
+			if err := setImportTransfer(repo, batchID, i, transfers[i]); err != nil {
+				return nil, errors.Join(err, recoverImportIntents(repo))
+			}
+			identities[i], checksums[i], err = createImportLinkStage(repo, batchID, i, sources[i], anchors[i], checksums[i], symlink, hardlink)
+			if err == nil && strings.HasPrefix(checksums[i], store.ImportHardlinkProofPrefix) {
+				// Keep the private hard-link anchor. The user may rename or
+				// delete their original name without changing what Loom owns.
+				transfers[i] = importTransfer{}
+				err = setImportTransfer(repo, batchID, i, transfers[i])
+			}
+		default:
+			publicationSource = anchors[i]
+			data, _ := base64.StdEncoding.Strict().DecodeString(item.Data)
+			identities[i], err = writeImportStage(repo, batchID, i, anchors[i], data, checksums[i])
+		}
 		if err != nil {
 			return nil, errors.Join(err, recoverImportIntents(repo))
 		}
-		targets[i], err = publishImportStage(repo, batchID, i, anchors[i], targets[i], identities[i], checksums[i])
+		targets[i], err = publishPreparedStage(repo, batchID, i, publicationSource, targets[i], identities[i], checksums[i], &transfers[i], reserved, hardlink)
 		if err != nil {
 			return nil, errors.Join(err, recoverImportIntents(repo))
 		}
 	}
-	ids, err := commitImportBatch(repo, batchID, targets, anchors, identities, checksums, place, x, y)
+	ids, err := commitImportBatch(repo, batchID, targets, anchors, identities, checksums, transfers, place, x, y)
 	if err != nil {
 		return nil, errors.Join(err, recoverImportIntents(repo))
 	}
 	return ids, nil
 }
 
-func commitImportBatch(repo *store.Repo, batchID string, targets, anchors, identities, checksums []string, place bool, x, y float64) ([]int64, error) {
+func commitImportBatch(repo *store.Repo, batchID string, targets, anchors, identities, checksums []string, transfers []importTransfer, place bool, x, y float64) ([]int64, error) {
 	for i := range targets {
-		if !sameOwnedImportFile(anchors[i], identities[i], checksums[i]) || !sameOwnedImportFile(targets[i], identities[i], checksums[i]) {
+		if !sameOwnedImportFile(targets[i], identities[i], checksums[i]) || (transfers[i].Kind == "" && !sameOwnedImportFile(anchors[i], identities[i], checksums[i])) {
 			return nil, fmt.Errorf("published import %q changed before commit", filepath.Base(targets[i]))
 		}
 	}
@@ -118,7 +163,7 @@ func commitImportBatch(repo *store.Repo, batchID string, targets, anchors, ident
 			return nil, err
 		}
 		ids = append(ids, id)
-		entries = append(entries, importBatchEntry{ImageID: id, ActivePath: targets[i], AnchorPath: anchors[i], Identity: identities[i], SHA256: checksums[i]})
+		entries = append(entries, importBatchEntry{importTransfer: transfers[i], ImageID: id, ActivePath: targets[i], AnchorPath: anchors[i], Identity: identities[i], SHA256: checksums[i]})
 		if _, err := tx.Exec(`INSERT INTO import_file_ownership(image_id, anchor_path, file_identity, sha256, active_file_identity, active_sha256) VALUES (?, ?, ?, ?, ?, ?)`, id, anchors[i], identities[i], checksums[i], identities[i], checksums[i]); err != nil {
 			return nil, err
 		}
@@ -171,10 +216,15 @@ func recoverImportIntents(repo *store.Repo) error {
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return err
 	}
+	var deferred error
 	for _, intent := range intents {
 		switch intent.action {
 		case "publish":
 			if err := recoverPendingImportPublication(repo, intent.id); err != nil {
+				if errors.Is(err, errImportMoveRecoveryDeferred) {
+					deferred = errors.Join(deferred, err)
+					continue
+				}
 				return err
 			}
 		case "undo", "redo":
@@ -185,7 +235,7 @@ func recoverImportIntents(repo *store.Repo) error {
 			return fmt.Errorf("unsupported pending import action %q", intent.action)
 		}
 	}
-	return nil
+	return deferred
 }
 
 func replayImportBatchHistory(repo *store.Repo, redo bool) (bool, *store.Operation, error) {
@@ -218,7 +268,7 @@ func replayImportBatchHistory(repo *store.Repo, redo bool) (bool, *store.Operati
 	if replay.Kind != "import_batch" || json.Unmarshal(replay.Payload, &payload) != nil || len(payload.Files) == 0 {
 		return true, op, fmt.Errorf("invalid import batch history payload")
 	}
-	if err := validateImportReplayTx(tx, payload, action); err != nil {
+	if err := validateImportReplayTx(tx, repo.Path, payload, action); err != nil {
 		return true, op, err
 	}
 	intentID := fmt.Sprintf("%s-%s-%d", payload.BatchID, action, op.Seq)
@@ -233,8 +283,11 @@ func replayImportBatchHistory(repo *store.Repo, redo bool) (bool, *store.Operati
 		target := entry.ActivePath
 		if action == "undo" {
 			target = entry.AnchorPath
+			if entry.Kind == transferMove {
+				target = entry.Original
+			}
 		}
-		if _, err := tx.Exec(`INSERT INTO import_batch_intent_files(batch_id, ordinal, image_id, source_path, target_path, anchor_path, file_identity, sha256) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, intentID, ordinal, entry.ImageID, source, target, entry.AnchorPath, entry.Identity, entry.SHA256); err != nil {
+		if _, err := tx.Exec(`INSERT INTO import_batch_intent_files(batch_id, ordinal, image_id, source_path, target_path, anchor_path, file_identity, sha256, transfer_kind, original_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, intentID, ordinal, entry.ImageID, source, target, entry.AnchorPath, entry.Identity, entry.SHA256, entry.Kind, entry.Original); err != nil {
 			return true, op, err
 		}
 	}
@@ -252,7 +305,7 @@ func replayImportBatchHistory(repo *store.Repo, redo bool) (bool, *store.Operati
 	return true, op, err
 }
 
-func validateImportReplayTx(tx *sql.Tx, payload importBatchPayload, action string) error {
+func validateImportReplayTx(tx *sql.Tx, root string, payload importBatchPayload, action string) error {
 	for _, entry := range payload.Files {
 		var path, anchor, identity, hash string
 		var undone bool
@@ -267,6 +320,23 @@ func validateImportReplayTx(tx *sql.Tx, payload importBatchPayload, action strin
 		if (action == "undo" && undone) || (action == "redo" && !undone) {
 			return fmt.Errorf("imported asset %d is not in the expected history state", entry.ImageID)
 		}
+		// An occupied target for a rename operation is known before recording
+		// the replay intent, so it cannot strand the repository in recovery.
+		if entry.Kind != "" {
+			if entry.Kind == transferMove && !validMoveOriginal(root, entry.Original) {
+				return fmt.Errorf("invalid original path for import replay")
+			}
+			target := entry.ActivePath
+			if action == "undo" {
+				target = entry.AnchorPath
+				if entry.Kind == transferMove {
+					target = entry.Original
+				}
+			}
+			if err := checkTransferTarget(target); err != nil {
+				return err
+			}
+		}
 		if !sameOwnedImportFile(path, identity, hash) {
 			return fmt.Errorf("imported asset %d changed outside Loom; it was left untouched", entry.ImageID)
 		}
@@ -275,11 +345,12 @@ func validateImportReplayTx(tx *sql.Tx, payload importBatchPayload, action strin
 }
 
 func recoverPendingImportReplay(repo *store.Repo, intentID, action string) error {
-	rows, err := repo.DB.Query(`SELECT ordinal, image_id, source_path, target_path, anchor_path, file_identity, sha256 FROM import_batch_intent_files WHERE batch_id = ? ORDER BY ordinal`, intentID)
+	rows, err := repo.DB.Query(`SELECT ordinal, image_id, source_path, target_path, anchor_path, file_identity, sha256, transfer_kind, original_path FROM import_batch_intent_files WHERE batch_id = ? ORDER BY ordinal`, intentID)
 	if err != nil {
 		return err
 	}
 	type item struct {
+		importTransfer
 		ordinal  int
 		imageID  int64
 		source   string
@@ -291,7 +362,7 @@ func recoverPendingImportReplay(repo *store.Repo, intentID, action string) error
 	var files []item
 	for rows.Next() {
 		var file item
-		if err := rows.Scan(&file.ordinal, &file.imageID, &file.source, &file.target, &file.anchor, &file.identity, &file.hash); err != nil {
+		if err := rows.Scan(&file.ordinal, &file.imageID, &file.source, &file.target, &file.anchor, &file.identity, &file.hash, &file.Kind, &file.Original); err != nil {
 			rows.Close()
 			return err
 		}
@@ -304,6 +375,12 @@ func recoverPendingImportReplay(repo *store.Repo, intentID, action string) error
 		file := &files[i]
 		if !pathInside(filepath.Join(repo.Path, ".loom", "import-anchors"), file.anchor) {
 			return fmt.Errorf("invalid import anchor path %q", file.anchor)
+		}
+		if file.Kind != "" {
+			if err := recoverRenamedReplay(repo.Path, file.source, file.target, file.anchor, file.identity, file.hash, action, file.importTransfer); err != nil {
+				return err
+			}
+			continue
 		}
 		if (action == "undo" && (!pathInside(repo.Path, file.source) || file.target != file.anchor)) ||
 			(action == "redo" && (file.source != file.anchor || !pathInside(repo.Path, file.target))) {
@@ -373,18 +450,19 @@ func recoverPendingImportReplay(repo *store.Repo, intentID, action string) error
 }
 
 func recoverPendingImportPublication(repo *store.Repo, batchID string) error {
-	rows, err := repo.DB.Query(`SELECT target_path, anchor_path, file_identity, sha256, stage_complete FROM import_batch_intent_files WHERE batch_id = ? ORDER BY ordinal`, batchID)
+	rows, err := repo.DB.Query(`SELECT target_path, anchor_path, file_identity, sha256, stage_complete, transfer_kind, original_path FROM import_batch_intent_files WHERE batch_id = ? ORDER BY ordinal`, batchID)
 	if err != nil {
 		return err
 	}
 	type item struct {
+		importTransfer
 		target, anchor, identity, hash string
 		complete                       bool
 	}
 	var files []item
 	for rows.Next() {
 		var file item
-		if err := rows.Scan(&file.target, &file.anchor, &file.identity, &file.hash, &file.complete); err != nil {
+		if err := rows.Scan(&file.target, &file.anchor, &file.identity, &file.hash, &file.complete, &file.Kind, &file.Original); err != nil {
 			rows.Close()
 			return err
 		}
@@ -393,11 +471,20 @@ func recoverPendingImportPublication(repo *store.Repo, batchID string) error {
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return err
 	}
+	var deferred error
 	for _, file := range files {
 		if !pathInside(filepath.Join(repo.Path, ".loom", "import-anchors"), file.anchor) || !pathInside(repo.Path, file.target) {
 			return fmt.Errorf("invalid pending import path in batch %q", batchID)
 		}
-		if _, err := os.Lstat(file.anchor); err == nil {
+		if file.Kind != "" {
+			if err := recoverRenamedPublication(repo.Path, file.target, file.identity, file.hash, file.importTransfer); err != nil {
+				if errors.Is(err, errImportMoveRecoveryDeferred) {
+					deferred = errors.Join(deferred, err)
+					continue
+				}
+				return err
+			}
+		} else if _, err := os.Lstat(file.anchor); err == nil {
 			if _, err := removeImportHardLink(file.anchor, file.target, file.identity, file.hash); err != nil {
 				return fmt.Errorf("recover interrupted import publication: %w", err)
 			}
@@ -407,6 +494,9 @@ func recoverPendingImportPublication(repo *store.Repo, batchID string) error {
 		if err := discardPendingImportStage(repo, file.anchor, file.identity, file.complete, file.hash); err != nil {
 			return fmt.Errorf("clean staged import: %w", err)
 		}
+	}
+	if deferred != nil {
+		return deferred
 	}
 	_, err = repo.DB.Exec(`DELETE FROM import_batch_intents WHERE batch_id = ?`, batchID)
 	return err

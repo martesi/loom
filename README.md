@@ -14,6 +14,20 @@ Loom is a local-first desktop workspace for image collections and derivation gra
 
 Trash, restore, rename, move, import, clipboard operations, placement, relationships, viewport state, and core metadata are persisted per repository. Trash is retained for 30 days, then permanently purged automatically.
 
+### Importing files
+
+**Settings → Repository → Import files as** controls the desktop file picker
+for that repository. **Copy** is the default. **Move** uses a no-overwrite
+rename on the same volume; it fails without removing the source when a safe
+move is not available. Undo puts the file back at its original path without
+overwriting anything there. **Link** tries a symbolic link first, then a hard
+link when symbolic links are unavailable. A link does not copy the bytes:
+changes to the linked file can affect the asset.
+
+Native file paste copies unless Windows reports an explicit Cut. Browser
+imports and browser file drops copy the bytes they receive. Undo/Redo and
+Trash actions do not follow an imported symbolic link to remove its target.
+
 ### Undo and concurrent writers
 
 Graph and geometry replay selects history, changes the database, and moves the

@@ -26,6 +26,7 @@ interface Props {
   openPalette: (shortcuts?: boolean, initialQuery?: string) => void
   executeActionById: (id: string) => void
   toggleFocusMode: () => void
+  onPickImportFiles: () => void
   onImportFiles: (files: File[]) => void
 }
 
@@ -46,6 +47,7 @@ export function CanvasToolbar({
   openPalette,
   executeActionById,
   toggleFocusMode,
+  onPickImportFiles,
   onImportFiles,
 }: Props) {
   return (
@@ -184,7 +186,7 @@ export function CanvasToolbar({
                 role="menuitem"
                 onClick={() => {
                   setRepoMenuOpen(false)
-                  importInput.current?.click()
+                  onPickImportFiles()
                 }}
                 className="rounded px-3 py-2 text-left text-xs hover:bg-accent focus-visible:ring-2 focus-visible:ring-primary/40"
               >
