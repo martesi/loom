@@ -3,6 +3,8 @@ package service
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strconv"
 
 	"loom/internal/store"
@@ -44,6 +46,7 @@ func replayAtomicHistory(repo *store.Repo, redo bool) (bool, *store.Operation, [
 		return true, nil, nil, err
 	}
 	var ids []int64
+	var fileMoves []store.FileMove
 	switch s.Kind {
 	case stepGeometry, stepPositions, stepSizes:
 		ids, err = applyHistoryGeometryTx(tx, s)
@@ -52,6 +55,8 @@ func replayAtomicHistory(repo *store.Repo, redo bool) (bool, *store.Operation, [
 		if err = json.Unmarshal(s.Payload, &p); err == nil {
 			err = applyGraphTx(tx, s.Kind, p)
 		}
+	case stepSetTrashedBatch:
+		fileMoves, err = applyTrashedBatchTx(repo.Path, tx, s.Payload)
 	default:
 		var handled bool
 		handled, err = applyLegacyHistoryTx(tx, s)
@@ -60,20 +65,30 @@ func replayAtomicHistory(repo *store.Repo, redo bool) (bool, *store.Operation, [
 		}
 	}
 	if err != nil {
-		return true, op, nil, err
+		return true, op, nil, compensateHistoryFileMoves(fileMoves, err)
 	}
 	_, err = tx.Exec(`INSERT INTO settings (scope, key, value) VALUES ('repo', 'undo_cursor', ?) ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value`, strconv.FormatInt(cursor, 10))
 	if err != nil {
-		return true, op, nil, err
+		return true, op, nil, compensateHistoryFileMoves(fileMoves, err)
 	}
 	geometry, err := historyGeometryTx(tx, ids)
 	if err != nil {
-		return true, op, nil, err
+		return true, op, nil, compensateHistoryFileMoves(fileMoves, err)
 	}
 	if err := tx.Commit(); err != nil {
-		return true, op, nil, err
+		return true, op, nil, compensateHistoryFileMoves(fileMoves, err)
 	}
 	return true, op, geometry, nil
+}
+
+func compensateHistoryFileMoves(moves []store.FileMove, cause error) error {
+	if len(moves) == 0 {
+		return cause
+	}
+	if err := store.RollbackFileMoves(moves); err != nil {
+		return errors.Join(cause, fmt.Errorf("history replay compensation failed: %w", err))
+	}
+	return cause
 }
 
 func historyGeometryTx(tx *sql.Tx, ids []int64) ([]GeometryUpdate, error) {

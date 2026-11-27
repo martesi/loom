@@ -130,3 +130,85 @@ func copyEntryAcrossDevice(src, dst string) error {
 	}
 	return nil
 }
+
+// FileMove describes one exact no-replace move. Batch lifecycle operations use
+// these recorded paths for both initial execution and history replay.
+type FileMove struct {
+	Source      string
+	Destination string
+	identity    os.FileInfo
+}
+
+// MoveFilesWithoutReplace moves every file, or compensates completed moves if
+// a later move fails. It never replaces an existing destination.
+func MoveFilesWithoutReplace(moves []FileMove) error {
+	completed := make([]FileMove, 0, len(moves))
+	for i := range moves {
+		move := &moves[i]
+		if move.Source == move.Destination {
+			continue
+		}
+		if err := moveFileWithoutReplace(move); err != nil {
+			primary := fmt.Errorf("move %q to %q: %w", move.Source, move.Destination, err)
+			return errors.Join(primary, RollbackFileMoves(completed))
+		}
+		completed = append(completed, *move)
+	}
+	return nil
+}
+
+// RollbackFileMoves compensates completed moves in reverse order. It uses the
+// same no-replace rule so an external file is never overwritten during repair.
+func RollbackFileMoves(moves []FileMove) error {
+	var rollbackErr error
+	for i := len(moves) - 1; i >= 0; i-- {
+		move := moves[i]
+		if move.identity == nil {
+			rollbackErr = errors.Join(rollbackErr, fmt.Errorf("compensate move %q to %q: source identity was not recorded", move.Destination, move.Source))
+			continue
+		}
+		current, err := os.Lstat(move.Destination)
+		if err != nil {
+			rollbackErr = errors.Join(rollbackErr, fmt.Errorf("verify compensation source %q: %w", move.Destination, err))
+			continue
+		}
+		if !os.SameFile(move.identity, current) {
+			rollbackErr = errors.Join(rollbackErr, fmt.Errorf("verify compensation source %q: file was replaced; leaving it untouched", move.Destination))
+			continue
+		}
+		reverse := FileMove{Source: move.Destination, Destination: move.Source, identity: move.identity}
+		if err := moveFileWithoutReplace(&reverse); err != nil {
+			rollbackErr = errors.Join(rollbackErr, fmt.Errorf("compensate move %q to %q: %w", move.Destination, move.Source, err))
+		}
+	}
+	return rollbackErr
+}
+
+func moveFileWithoutReplace(move *FileMove) error {
+	if move.Source == move.Destination {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(move.Destination), 0o755); err != nil {
+		return fmt.Errorf("create destination directory: %w", err)
+	}
+	sourceInfo, err := os.Lstat(move.Source)
+	if err != nil {
+		return err
+	}
+	if move.identity != nil && !os.SameFile(move.identity, sourceInfo) {
+		return fmt.Errorf("source %q changed before move; leaving it untouched", move.Source)
+	}
+	if err := RenameNoReplace(move.Source, move.Destination); err != nil {
+		return err
+	}
+	move.identity = sourceInfo
+	identity, err := os.Lstat(move.Destination)
+	if err != nil {
+		return errors.Join(fmt.Errorf("inspect moved file %q: %w", move.Destination, err), RollbackFileMoves([]FileMove{*move}))
+	}
+	if !os.SameFile(sourceInfo, identity) {
+		return errors.Join(fmt.Errorf("source %q changed while moving", move.Source), RollbackFileMoves([]FileMove{*move}))
+	}
+	return nil
+}
+

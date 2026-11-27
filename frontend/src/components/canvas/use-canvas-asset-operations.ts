@@ -221,37 +221,16 @@ export function useCanvasAssetOperations({
     if (!trashIds?.length || lifecyclePendingRef.current) return
     lifecyclePendingRef.current = true
     setLifecyclePending(true)
-    const outcomes = await Promise.allSettled(
-      trashIds.map((id) => ImageService.TrashImage(repoPath, id))
-    )
-    const failures = outcomes.flatMap((outcome, index) =>
-      outcome.status === 'rejected'
-        ? [{ id: trashIds[index], cause: outcome.reason }]
-        : []
-    )
+    const ids = trashIds
+    await ImageService.TrashImages(repoPath, ids)
     setTrashIds(null)
     setSelection({ ...selection, ids: [], edges: [], group: null })
-    let refreshError: unknown
-    await reload().then(
-      () => undefined,
-      (cause: unknown) => {
-        refreshError = cause
-      }
-    )
-    for (const failure of failures)
-      console.error('asset trash failed', {
-        assetId: failure.id,
-        cause: failure.cause,
-      })
-    if (refreshError)
-      console.error('asset trash refresh failed', { cause: refreshError })
-    if (failures.length || refreshError) {
-      const details = failures.map(
-        ({ id, cause }) =>
-          `Asset ${id}: ${cause instanceof Error ? cause.message : String(cause)}`
-      )
+    try {
+      await reload()
+    } catch (cause) {
+      console.error('asset trash refresh failed', { cause })
       setError(
-        `${trashIds.length - failures.length} of ${trashIds.length} assets moved to Trash.${details.length ? ` ${details.join('; ')}` : ''}${refreshError ? ' Refresh failed; the current state may be stale.' : ' The current state was refreshed.'}`
+        `${ids.length} assets moved to Trash, but the current view could not be refreshed.`
       )
       return
     }

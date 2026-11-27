@@ -18,18 +18,19 @@ type OpStep struct {
 }
 
 const (
-	stepLink           = "link"
-	stepUnlink         = "unlink"
-	stepLinks          = "links"
-	stepUnlinks        = "unlinks"
-	stepSetArchived    = "set_archived"
-	stepSetTrashed     = "set_trashed"
-	stepTagAdd         = "tag_add"
-	stepTagRemove      = "tag_remove"
-	stepPositions      = "set_positions"
-	stepSizes          = "set_sizes"
-	stepMoveFile       = "move_file"
-	stepRepresentation = "swap_representation"
+	stepLink            = "link"
+	stepUnlink          = "unlink"
+	stepLinks           = "links"
+	stepUnlinks         = "unlinks"
+	stepSetArchived     = "set_archived"
+	stepSetTrashed      = "set_trashed"
+	stepSetTrashedBatch = "set_trashed_batch"
+	stepTagAdd          = "tag_add"
+	stepTagRemove       = "tag_remove"
+	stepPositions       = "set_positions"
+	stepSizes           = "set_sizes"
+	stepMoveFile        = "move_file"
+	stepRepresentation  = "swap_representation"
 
 	// stepGroupExistence covers both CreateGroup and Ungroup — mirroring the
 	// boolean-toggle idiom of stepSetArchived/stepSetTrashed, but for a
