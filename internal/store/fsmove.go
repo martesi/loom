@@ -93,6 +93,127 @@ func moveFileOnDisk(src, dst string) error {
 	return nil
 }
 
+// FileMove describes one exact no-replace move. Batch lifecycle operations use
+// these recorded paths for both initial execution and history replay.
+type FileMove struct {
+	Source      string
+	Destination string
+}
+
+// MoveFilesWithoutReplace moves every file, or compensates completed moves if
+// a later move fails. It never replaces an existing destination.
+func MoveFilesWithoutReplace(moves []FileMove) error {
+	completed := make([]FileMove, 0, len(moves))
+	for _, move := range moves {
+		if move.Source == move.Destination {
+			continue
+		}
+		if err := moveFileWithoutReplace(move.Source, move.Destination); err != nil {
+			primary := fmt.Errorf("move %q to %q: %w", move.Source, move.Destination, err)
+			return errors.Join(primary, RollbackFileMoves(completed))
+		}
+		completed = append(completed, move)
+	}
+	return nil
+}
+
+// RollbackFileMoves compensates completed moves in reverse order. It uses the
+// same no-replace rule so an external file is never overwritten during repair.
+func RollbackFileMoves(moves []FileMove) error {
+	var rollbackErr error
+	for i := len(moves) - 1; i >= 0; i-- {
+		move := moves[i]
+		if err := moveFileWithoutReplace(move.Destination, move.Source); err != nil {
+			rollbackErr = errors.Join(rollbackErr, fmt.Errorf("compensate move %q to %q: %w", move.Destination, move.Source, err))
+		}
+	}
+	return rollbackErr
+}
+
+func moveFileWithoutReplace(src, dst string) error {
+	if src == dst {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return fmt.Errorf("create destination directory: %w", err)
+	}
+	if err := os.Link(src, dst); err == nil {
+		destinationInfo, statErr := os.Lstat(dst)
+		if statErr != nil {
+			return errors.Join(fmt.Errorf("inspect linked destination %q: %w", dst, statErr), removeCreatedFile(dst, destinationInfo))
+		}
+		sourceInfo, statErr := os.Lstat(src)
+		if statErr != nil || !os.SameFile(sourceInfo, destinationInfo) {
+			return errors.Join(fmt.Errorf("source %q changed while linking", src), statErr, removeCreatedFile(dst, destinationInfo))
+		}
+		if err := os.Remove(src); err != nil {
+			return errors.Join(fmt.Errorf("remove moved source %q: %w", src, err), removeCreatedFile(dst, destinationInfo))
+		}
+		return nil
+	} else if !errors.Is(err, syscall.EXDEV) {
+		return err
+	}
+	return copyFileWithoutReplace(src, dst)
+}
+func copyFileWithoutReplace(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	sourceInfo, err := in.Stat()
+	if err != nil {
+		return err
+	}
+	if !sourceInfo.Mode().IsRegular() {
+		return fmt.Errorf("source %q is not a regular file", src)
+	}
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, sourceInfo.Mode().Perm())
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(out, in)
+	if copyErr == nil {
+		copyErr = out.Chmod(sourceInfo.Mode().Perm())
+	}
+	if copyErr == nil {
+		copyErr = out.Sync()
+	}
+	createdInfo, statErr := out.Stat()
+	closeErr := out.Close()
+	if err := errors.Join(copyErr, statErr, closeErr); err != nil {
+		return errors.Join(err, removeCreatedFile(dst, createdInfo))
+	}
+	currentSource, err := os.Stat(src)
+	if err != nil || !os.SameFile(sourceInfo, currentSource) {
+		return errors.Join(fmt.Errorf("source %q changed before move completed", src), err, removeCreatedFile(dst, createdInfo))
+	}
+	if err := os.Remove(src); err != nil {
+		return errors.Join(fmt.Errorf("remove moved source %q: %w", src, err), removeCreatedFile(dst, createdInfo))
+	}
+	return nil
+}
+
+func removeCreatedFile(path string, createdInfo os.FileInfo) error {
+	if createdInfo == nil {
+		return nil
+	}
+	current, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect created destination %q: %w", path, err)
+	}
+	if !os.SameFile(createdInfo, current) {
+		return fmt.Errorf("created destination %q was replaced; leaving it untouched", path)
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove created destination %q: %w", path, err)
+	}
+	return nil
+}
+
 func copyFileContents(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {

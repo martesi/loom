@@ -106,10 +106,11 @@ export function canvasAssetActions(
       enabled: selectedImageRecords.some((image) => image.trashed),
       disabledReason: t`Select a trashed Asset`,
       execute: () =>
-        Promise.all(
+        ImageService.RestoreImages(
+          repoPath,
           selectedImageRecords
             .filter((image) => image.trashed)
-            .map((image) => ImageService.RestoreImage(repoPath, image.id))
+            .map((image) => image.id)
         ).then(() => reload()),
     },
     {
