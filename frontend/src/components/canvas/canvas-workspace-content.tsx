@@ -172,7 +172,8 @@ export function CanvasWorkspaceContent(props: Props) {
     selectedCanvasNodeIds,
     setHoveredNodeId,
   } = boardModel
-  const { paste, importMedia, finishTrash, confirmPurge } = assetOperations
+  const { paste, importMedia, pickImportFiles, finishTrash, confirmPurge } =
+    assetOperations
 
   const validTarget = (source: number, id: string) =>
     validateRelationshipTarget(source, id, data, groupMembers)
@@ -456,6 +457,9 @@ export function CanvasWorkspaceContent(props: Props) {
         openPalette={openPalette}
         executeActionById={executeActionById}
         toggleFocusMode={toggleFocusMode}
+        onPickImportFiles={() => {
+          void pickImportFiles(() => importInput.current?.click()).catch(report)
+        }}
         onImportFiles={(files) => {
           void filesToMedia(files).then(importMedia).catch(report)
         }}

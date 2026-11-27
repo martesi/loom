@@ -20,14 +20,24 @@ func Write(paths []string) error {
 	return nil
 }
 func Read() ([]string, error) {
-	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-STA", "-Command", `Add-Type -AssemblyName System.Windows.Forms; ConvertTo-Json -Compress -InputObject @([System.Windows.Forms.Clipboard]::GetFileDropList())`)
+	paths, _, err := ReadIntent()
+	return paths, err
+}
+
+// ReadIntent reads the file list and preferred drop effect from one data
+// object. Anything other than an unambiguous MOVE remains non-destructive.
+func ReadIntent() ([]string, bool, error) {
+	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-STA", "-Command", `Add-Type -AssemblyName System.Windows.Forms; [Console]::OutputEncoding = [Text.Encoding]::UTF8; $item = [System.Windows.Forms.Clipboard]::GetDataObject(); $paths = @(); $move = $false; if ($null -ne $item -and $item.GetDataPresent('FileDrop', $false)) { $paths = @($item.GetData('FileDrop', $false)); $effect = $item.GetData('Preferred DropEffect', $false); if ($effect -is [System.IO.MemoryStream]) { $effect = $effect.ToArray() }; if ($effect -is [byte[]] -and $effect.Length -eq 4) { $move = [BitConverter]::ToUInt32($effect, 0) -eq 2 } }; ConvertTo-Json -Compress -InputObject @{ paths = $paths; move = $move }`)
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	var paths []string
-	if err := json.Unmarshal(out, &paths); err != nil {
-		return nil, err
+	var result struct {
+		Paths []string `json:"paths"`
+		Move  bool     `json:"move"`
 	}
-	return paths, nil
+	if err := json.Unmarshal(out, &result); err != nil {
+		return nil, false, err
+	}
+	return result.Paths, result.Move, nil
 }

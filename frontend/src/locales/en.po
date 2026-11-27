@@ -3336,3 +3336,31 @@ msgstr "zoom reset"
 #: src/routes/canvas-actions-view.ts:37
 msgid "zoom to selection"
 msgstr "zoom to selection"
+
+#: src/components/settings-import.tsx:77
+msgid "Applies when importing from the desktop file picker. Clipboard import copies unless it is explicitly marked as cut."
+msgstr "Applies when importing from the desktop file picker. Clipboard import copies unless it is explicitly marked as cut."
+
+#: src/components/settings-import.tsx:64
+msgid "Copy"
+msgstr "Copy"
+
+#: src/components/settings-import.tsx:29
+msgid "Could not load the import setting"
+msgstr "Could not load the import setting"
+
+#: src/components/settings-import.tsx:44
+msgid "Could not save the import setting"
+msgstr "Could not save the import setting"
+
+#: src/components/settings-import.tsx:53
+msgid "Import files as"
+msgstr "Import files as"
+
+#: src/components/settings-import.tsx:70
+msgid "Link"
+msgstr "Link"
+
+#: src/components/settings-import.tsx:67
+msgid "Move"
+msgstr "Move"

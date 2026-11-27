@@ -16,11 +16,11 @@ import (
 var errImportCleanupChanged = errors.New("retained import bytes changed; cleanup remains queued")
 
 func sameOwnedImportFile(path, identity, wantHash string) bool {
-	pathInfo, err := os.Stat(path)
-	if err != nil || !pathInfo.Mode().IsRegular() || store.FileIdentityAt(path, pathInfo) != identity {
+	pathInfo, err := os.Lstat(path)
+	if err != nil || identity == "" || store.FileIdentityAt(path, pathInfo) != identity {
 		return false
 	}
-	hash, err := hashImportFile(path)
+	hash, err := importEntryDigest(path, pathInfo)
 	return err == nil && hash == wantHash
 }
 
@@ -101,11 +101,11 @@ func discardPendingImportStage(repo *store.Repo, path, identity string, complete
 	if err != nil {
 		return err
 	}
-	if !info.Mode().IsRegular() || (identity != "" && store.FileIdentityAt(path, info) != identity) {
+	if (!info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0) || (identity != "" && store.FileIdentityAt(path, info) != identity) {
 		return enqueueImportCleanup(repo, path, identity, hash)
 	}
 	if complete {
-		got, err := hashImportFile(path)
+		got, err := importEntryDigest(path, info)
 		if err != nil {
 			return err
 		}
@@ -151,18 +151,19 @@ func removeImportHardLink(anchor, path, identity, wantHash string) (bool, error)
 func removePrivateImportFile(path, identity, wantHash string) error {
 	info, err := os.Lstat(path)
 	if os.IsNotExist(err) {
+		_ = os.Remove(filepath.Dir(path))
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("%w at %q: not a regular file", errImportCleanupChanged, path)
+	if !info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
+		return fmt.Errorf("%w at %q: unsupported file type", errImportCleanupChanged, path)
 	}
 	if identity != "" && store.FileIdentityAt(path, info) != identity {
 		return fmt.Errorf("%w at %q: file identity differs", errImportCleanupChanged, path)
 	}
-	hash, err := hashImportFile(path)
+	hash, err := importEntryDigest(path, info)
 	if err != nil {
 		return err
 	}

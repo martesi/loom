@@ -21,6 +21,7 @@ import {
   writeShortcutOverrides,
 } from '../lib/shortcut-overrides'
 import { AppearanceSettings } from './settings-appearance'
+import { ImportSettings } from './settings-import'
 import { RepositorySettings } from './settings-repository'
 import { Button } from './ui/button'
 import { Kbd } from './ui/kbd'
@@ -435,7 +436,11 @@ export function SettingsDialog({
               sectionRef={(element) => {
                 sectionRefs.current.repository = element
               }}
-            />
+            >
+              {repoPath && (
+                <ImportSettings key={repoPath} repoPath={repoPath} />
+              )}
+            </RepositorySettings>
           </main>
         </Dialog.Popup>
       </Dialog.Portal>

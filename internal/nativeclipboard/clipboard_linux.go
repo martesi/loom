@@ -50,3 +50,9 @@ func Read() ([]string, error) {
 	}
 	return paths, nil
 }
+
+// No interoperable cut marker is decoded on this platform.
+func ReadIntent() ([]string, bool, error) {
+	paths, err := Read()
+	return paths, false, err
+}

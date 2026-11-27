@@ -1,7 +1,10 @@
 import type { ReactFlowInstance } from '@xyflow/react'
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import { useEffect, useRef } from 'react'
-import { ImageService } from '../../../bindings/loom/internal/service'
+import {
+  ImageService,
+  SystemService,
+} from '../../../bindings/loom/internal/service'
 import { readMedia } from '../../lib/clipboard'
 import { type Selection, sameSelection } from '../../lib/selection'
 import type { CanvasBoardOwner } from './canvas-board-owner'
@@ -138,16 +141,23 @@ export function useCanvasAssetOperations({
     surface = selection.surface
   ) {
     const point = center()
-    const assets = media ?? (await readMedia())
+    const desktopClipboard = !media && !(await SystemService.IsServerMode())
     const { ids, canvas } = await owner.execute(async () => {
       const canvas = surface === 'canvas' && owner.allows('canvas-drop')
-      const ids = await ImageService.ImportMedia(
-        repoPath,
-        assets,
-        canvas,
-        point.x,
-        point.y
-      )
+      const ids = desktopClipboard
+        ? await ImageService.PasteNativeFiles(
+            repoPath,
+            canvas,
+            point.x,
+            point.y
+          )
+        : await ImageService.ImportMedia(
+            repoPath,
+            media ?? (await readMedia()),
+            canvas,
+            point.x,
+            point.y
+          )
       await reload()
       return { ids, canvas }
     })
@@ -161,10 +171,24 @@ export function useCanvasAssetOperations({
   }
 
   async function importMedia(media: Awaited<ReturnType<typeof readMedia>>) {
-    const ids = await ImageService.ImportMedia(repoPath, media, false, 0, 0)
+    await showImportedAssets(
+      await ImageService.ImportMedia(repoPath, media, false, 0, 0)
+    )
+  }
+
+  async function pickImportFiles(browserPicker: () => void) {
+    if (await SystemService.IsServerMode()) {
+      browserPicker()
+      return
+    }
+    await showImportedAssets(await ImageService.ImportNativePicker(repoPath))
+  }
+
+  async function showImportedAssets(ids: number[] | null) {
+    if (!ids?.length) return
     await reload()
-    setSelection({ surface: 'assets', ids: ids ?? [], edges: [], group: null })
-    if (ids?.length) setReveal({ id: ids[0], folder: null })
+    setSelection({ surface: 'assets', ids, edges: [], group: null })
+    setReveal({ id: ids[0], folder: null })
   }
 
   async function remove(purge: boolean) {
@@ -266,6 +290,7 @@ export function useCanvasAssetOperations({
     go,
     paste,
     importMedia,
+    pickImportFiles,
     remove,
     confirmTrash,
     finishTrash,

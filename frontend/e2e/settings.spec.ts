@@ -42,6 +42,27 @@ test.describe('Settings', () => {
     await expect(dialog).toHaveCount(0)
   })
 
+  test('defaults file imports to Copy and persists the selected mode', async ({
+    page,
+  }) => {
+    await openFixtureRepo(page, 'direct-fixtures', { drawers: 'closed' })
+    await page.keyboard.press('ControlOrMeta+,')
+    const dialog = page.getByRole('dialog', { name: 'Settings' })
+    await dialog
+      .getByRole('button', { name: 'Repository', exact: true })
+      .click()
+    const mode = dialog.getByLabel('Import files as')
+    await expect(mode).toHaveValue('copy')
+    await mode.selectOption('link')
+    await expect(mode).toBeEnabled()
+    await page.reload()
+    await page.keyboard.press('ControlOrMeta+,')
+    await dialog
+      .getByRole('button', { name: 'Repository', exact: true })
+      .click()
+    await expect(mode).toHaveValue('link')
+  })
+
   test('persists appearance and density preferences after reload', async ({
     page,
   }) => {

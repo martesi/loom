@@ -297,6 +297,18 @@ func (r *Repo) mediaFiles(ctx context.Context) ([]string, error) {
 			}
 			return nil
 		}
+		if d.Type()&os.ModeSymlink != 0 && IsMediaFile(path) {
+			target, err := os.Stat(path)
+			if os.IsNotExist(err) {
+				return nil // Keep the catalog entry; its external target may return.
+			}
+			if err != nil {
+				return err
+			}
+			if !target.Mode().IsRegular() {
+				return nil
+			}
+		}
 		if IsMediaFile(path) {
 			found = append(found, path)
 		}
