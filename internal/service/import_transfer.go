@@ -151,20 +151,20 @@ func deferredImportMoveTargets(repo *store.Repo) (map[string]struct{}, error) {
 }
 
 func matchesImportEntryDigest(path string, info os.FileInfo, expected string) (bool, error) {
-	if original, linked := strings.CutPrefix(expected, "hardlink:"); linked {
-		// An extant source alias demonstrates this is still the linked
-		// inode, even when both names see externally modified bytes.
-		if !filepath.IsAbs(original) || !info.Mode().IsRegular() {
+	if anchor, linked := strings.CutPrefix(expected, store.ImportHardlinkProofPrefix); linked {
+		// The private anchor holds the original inode even if the user
+		// removes their source name or rewrites the shared bytes.
+		if !filepath.IsAbs(anchor) || !info.Mode().IsRegular() {
 			return false, nil
 		}
-		originInfo, err := os.Lstat(original)
+		anchorInfo, err := os.Lstat(anchor)
 		if os.IsNotExist(err) {
 			return false, nil
 		}
 		if err != nil {
 			return false, err
 		}
-		return originInfo.Mode().IsRegular() && os.SameFile(info, originInfo), nil
+		return anchorInfo.Mode().IsRegular() && os.SameFile(info, anchorInfo), nil
 	}
 	got, err := importEntryDigest(path, info)
 	return err == nil && got == expected, err

@@ -121,25 +121,25 @@ func discardPendingImportStage(repo *store.Repo, path, identity string, complete
 }
 
 func removeImportHardLink(anchor, path, identity, wantHash string) (bool, error) {
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if os.IsNotExist(err) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	anchorInfo, err := os.Stat(anchor)
+	anchorInfo, err := os.Lstat(anchor)
 	if err != nil {
 		return false, nil
 	}
-	if !info.Mode().IsRegular() || !os.SameFile(info, anchorInfo) || (identity != "" && store.FileIdentityAt(path, info) != identity) {
+	if !info.Mode().IsRegular() || !anchorInfo.Mode().IsRegular() || !os.SameFile(info, anchorInfo) || (identity != "" && store.FileIdentityAt(path, info) != identity) {
 		return false, nil
 	}
-	hash, err := hashImportFile(path)
+	matches, err := matchesImportEntryDigest(path, info, wantHash)
 	if err != nil {
 		return false, err
 	}
-	if hash != wantHash {
+	if !matches {
 		return false, nil
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {

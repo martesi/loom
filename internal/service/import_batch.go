@@ -110,6 +110,12 @@ func importPreparedBatch(repoPath string, media []ClipboardMedia, sources []nati
 				return nil, errors.Join(err, recoverImportIntents(repo))
 			}
 			identities[i], checksums[i], err = createImportLinkStage(repo, batchID, i, sources[i], anchors[i], checksums[i], symlink, hardlink)
+			if err == nil && strings.HasPrefix(checksums[i], store.ImportHardlinkProofPrefix) {
+				// Keep the private hard-link anchor. The user may rename or
+				// delete their original name without changing what Loom owns.
+				transfers[i] = importTransfer{}
+				err = setImportTransfer(repo, batchID, i, transfers[i])
+			}
 		default:
 			publicationSource = anchors[i]
 			data, _ := base64.StdEncoding.Strict().DecodeString(item.Data)

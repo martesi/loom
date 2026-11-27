@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -214,6 +215,141 @@ func TestOwnedHardlinkCanUndoAndPurgeAfterSourceEdit(t *testing.T) {
 	}
 	expectImportBytes(t, target, "changed shared bytes")
 	expectImportBytes(t, source, "changed shared bytes")
+}
+
+func TestOwnedHardlinkSurvivesOriginalNameChangeAndRestart(t *testing.T) {
+	repoPath, sources := makeImportModeFixture(t, t.TempDir(), "linked.png")
+	original := sources[0]
+	renamed := original + ".moved"
+	visible := filepath.Join(repoPath, "linked.png")
+	ids, anchor := createHardlinkForLifecycleTest(t, repoPath, original)
+
+	if err := os.Rename(original, renamed); err != nil {
+		t.Fatal(err)
+	}
+	assertImportHistory(t, repoPath, false)
+	expectAbsentImport(t, visible)
+	expectImportBytes(t, renamed, "linked.png")
+	assertImportHistory(t, repoPath, true)
+	if err := os.Remove(renamed); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(original, []byte("new unrelated source"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	images := &ImageService{}
+	if err := images.TrashImage(repoPath, ids[0]); err != nil {
+		t.Fatal(err)
+	}
+	if err := images.RestoreImage(repoPath, ids[0]); err != nil {
+		t.Fatal(err)
+	}
+	expectImportBytes(t, visible, "linked.png")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestImportSessionBoundaryChild$")
+	cmd.Env = append(os.Environ(), "LOOM_IMPORT_SESSION_REPO="+repoPath)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fresh-process session cleanup failed: %v\n%s", err, output)
+	}
+	expectImportBytes(t, anchor, "linked.png")
+	if err := images.PurgeImages(repoPath, ids); err != nil {
+		t.Fatal(err)
+	}
+	expectAbsentImport(t, visible)
+	expectAbsentImport(t, anchor)
+	expectImportBytes(t, original, "new unrelated source")
+}
+
+func TestRemovedHardlinkSourceDoesNotMakeReplacementOwned(t *testing.T) {
+	repoPath, sources := makeImportModeFixture(t, t.TempDir(), "linked.png")
+	ids, anchor := createHardlinkForLifecycleTest(t, repoPath, sources[0])
+	expectImportBytes(t, anchor, "linked.png")
+	visible := filepath.Join(repoPath, "linked.png")
+	if err := os.Remove(sources[0]); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(visible); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(visible, []byte("linked.png"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := (&UndoService{}).Undo(repoPath); err != nil || result == nil || result.Applied || result.Error == "" {
+		t.Fatalf("undo accepted unrelated replacement: %+v, %v", result, err)
+	}
+	if err := (&ImageService{}).PurgeImages(repoPath, ids); err != nil {
+		t.Fatal(err)
+	}
+	expectImportBytes(t, visible, "linked.png")
+	expectAbsentImport(t, anchor)
+}
+
+func TestUndoRetirementCleansHardlinkAnchor(t *testing.T) {
+	repoPath, sources := makeImportModeFixture(t, t.TempDir(), "linked.png")
+	_, anchor := createHardlinkForLifecycleTest(t, repoPath, sources[0])
+	assertImportHistory(t, repoPath, false)
+	expectImportBytes(t, anchor, "linked.png")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestImportSessionBoundaryChild$")
+	cmd.Env = append(os.Environ(), "LOOM_IMPORT_SESSION_REPO="+repoPath)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fresh-process session cleanup failed: %v\n%s", err, output)
+	}
+	expectAbsentImport(t, anchor)
+	expectAbsentImport(t, filepath.Join(repoPath, "linked.png"))
+	expectImportBytes(t, sources[0], "linked.png")
+}
+
+func TestFailedHardlinkBatchReclaimsPrivateAndVisibleAliases(t *testing.T) {
+	repoPath, sources := makeImportModeFixture(t, t.TempDir(), "linked.png")
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	if _, err := repo.DB.Exec(`CREATE TRIGGER fail_hardlink_import BEFORE INSERT ON images BEGIN SELECT RAISE(ABORT, 'injected failed commit'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := submitHardlinkForLifecycleTest(t, repoPath, sources[0]); err == nil {
+		t.Fatal("failed import was accepted")
+	}
+	expectAbsentImport(t, filepath.Join(repoPath, "linked.png"))
+	expectImportBytes(t, sources[0], "linked.png")
+	dir := filepath.Join(repoPath, ".loom", "import-anchors")
+	if entries, err := os.ReadDir(dir); (err != nil && !os.IsNotExist(err)) || len(entries) != 0 {
+		t.Fatalf("failed hardlink retained anchor entries %v: %v", entries, err)
+	}
+	var count int
+	if err := repo.DB.QueryRow(`SELECT COUNT(*) FROM import_batch_intents`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("failed hardlink retained %d intents: %v", count, err)
+	}
+}
+
+func createHardlinkForLifecycleTest(t *testing.T, repoPath, source string) ([]int64, string) {
+	t.Helper()
+	ids, err := submitHardlinkForLifecycleTest(t, repoPath, source)
+	if err != nil || len(ids) != 1 {
+		t.Fatalf("hard-link fallback: ids=%v err=%v", ids, err)
+	}
+	repo, err := store.Bootstrap(repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	var anchor string
+	if err := repo.DB.QueryRow(`SELECT anchor_path FROM import_file_ownership WHERE image_id = ?`, ids[0]).Scan(&anchor); err != nil {
+		t.Fatal(err)
+	}
+	return ids, anchor
+}
+
+func submitHardlinkForLifecycleTest(t *testing.T, repoPath, source string) ([]int64, error) {
+	t.Helper()
+	data, identity, err := readNativeImportSource(source, maxClipboardItemBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	media := []ClipboardMedia{{Name: filepath.Base(source), Data: base64.StdEncoding.EncodeToString(data)}}
+	noSymlink := func(_, _ string) error { return errors.ErrUnsupported }
+	return importPreparedBatch(repoPath, media, []nativeImportSource{{source, identity}}, importLink, false, 0, 0, noSymlink, os.Link)
 }
 
 func TestInterruptedNativeMoveRecoversOriginalFile(t *testing.T) {

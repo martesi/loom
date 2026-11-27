@@ -108,7 +108,7 @@ func publishPreparedStage(repo *store.Repo, batchID string, ordinal int, source,
 		var err error
 		if transfer.Kind == "" {
 			err = hardlink(source, target)
-			if err != nil && !os.IsExist(err) && linkCapabilityError(err) {
+			if err != nil && !os.IsExist(err) && linkCapabilityError(err) && !strings.HasPrefix(hash, store.ImportHardlinkProofPrefix) {
 				transfer.Kind = transferRename
 				if dbErr := setImportTransfer(repo, batchID, ordinal, *transfer); dbErr != nil {
 					return target, errors.Join(err, dbErr)
@@ -157,7 +157,7 @@ func createImportLinkStage(repo *store.Repo, batchID string, ordinal int, source
 		if identity != source.identity || digest != sourceHash {
 			return "", "", fmt.Errorf("hard link source changed during import")
 		}
-		digest = "hardlink:" + source.path
+		digest = store.ImportHardlinkProofPrefix + anchor
 	}
 	return identity, digest, markImportStageComplete(repo, batchID, ordinal, identity, digest)
 }
